@@ -49,6 +49,7 @@ import { PLUGIN_PATH, servePluginFile } from "./plugin-files.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
 import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.js";
 import { adoptRuns } from "../auth/run-owner.js";
+import { hasIdentityProvider } from "../auth/identity.js";
 import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
 import { starterRoutes } from "./api-starters.js";
@@ -210,12 +211,6 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     effective = stored.length ? { ...config, watchers: [...config.watchers, ...stored] } : config;
   };
   const listen = config.server.listen;
-  // Before anything starts (queue, watchers): a non-local address needs accounts.
-  const problem = listenProblem(listen, hasAdmin);
-  if (problem) {
-    log(problem);
-    throw new Error(problem);
-  }
   // Plugins load once, in order, before the queue and the watchers exist. A failure stops the start.
   let plugins: PluginRegistry;
   try {
@@ -229,6 +224,12 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     throw e;
   }
   loaded.plugins = plugins;
+  // Before the queue and the watchers start: a non-local address needs accounts, or an identity provider (it registers above).
+  const problem = listenProblem(listen, () => hasIdentityProvider() || hasAdmin());
+  if (problem) {
+    log(problem);
+    throw new Error(problem);
+  }
   // Busy mode set by hand outlasts a restart: its cap is put back before the scheduler can pump, and renewed every minute (a cap always has an end).
   const renewBusy = (busyRuns: number) => {
     try {

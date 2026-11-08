@@ -205,6 +205,28 @@ loaded ones, or cannot be read, the health line shows it. `PUT /api/config` refu
 (400), and a save without the key keeps the stored list (`withStoredPlugins`), so the settings page
 cannot change it. The settings inventory lists `plugins.*` as exceptions: the file is the only place to set them.
 
+### Identity provider (#833)
+
+A plugin may supply one identity provider (`api.identityProvider({ resolve })`, plugin API `0.4`). The
+provider owns sign-in, role and workspace; the Foundry keeps a mirror record per account in `users.json`
+(`source: "provider"`, optional `workspace`) so the places that call `getUser(id)` keep working, and the
+scheduler's account check does not cancel the queued work of an unknown account.
+
+- `src/auth/identity.ts` is the slot, the 5 s deadline with an `AbortSignal`, the 8-call cap and the
+  strict answer check (zod, `.strict()`). It imports only zod and `workspaces/list.ts`, so `plugins/load.ts`
+  can use it without a cycle. It reports fixed reasons only.
+- `src/server/identity-session.ts` copies the request without the session cookie, and signs in or rechecks.
+  Reads of the stores happen after the provider answers, so a change made meanwhile wins.
+- `src/auth/provider-users.ts` writes the mirror record under the auth lock. A recheck takes no lock when
+  nothing changed and never creates a record.
+- `src/server/api-auth.ts` asks the provider on every API call of a provider session (`requireSession`), and
+  `GET /api/session` signs in. While a provider is active, sessions of local accounts do not count, and
+  password sign-in, setup and password routes are refused.
+- Provider accounts have no password; `src/auth/users.ts` refuses the password and profile actions with
+  `provider-account` (409) and leaves local admins alone in `hasAdmin` and `isLastAdmin`.
+- `src/server/workspace-scope.ts` gives a provider user its one workspace; `src/server/server.ts` checks
+  authentication after the plugins register, so a provider-only install may listen on a non-local address.
+
 ### Workspaces (#816)
 
 A workspace is a team. Each repository record, each watcher's runs and each queue entry belongs to exactly one

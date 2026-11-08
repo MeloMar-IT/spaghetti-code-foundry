@@ -63,6 +63,15 @@ change or a block (`scf user password`, `scf user block`) signs that account out
 are blocked, you cannot sign in. If the session ends while a page is open, the next action
 brings you back to the sign-in form.
 
+**With an identity provider.** If an administrator installed a plugin that calls `api.identityProvider`
+(see [PLUGIN_API.md](PLUGIN_API.md#identity-provider)), the provider says who you are, and sign-in,
+role and workspace come from your own account system. You are signed in on your next visit to the page
+and need no password here. The Foundry's own password sign-in is switched off: an e-mail and password
+answer "wrong e-mail or password", and first-account setup is not offered. Your role and workspace are
+re-read on every action, so a change in the account system applies at once. A blocked or removed
+account cannot use the Foundry, and a provider that does not answer stops your session for that call (the page shows that sign-in is not working for now). Passwords,
+links and profile edits of such accounts are changed in the account system only.
+
 **Forgot password.** The sign-in form says so: ask an admin for a new set-password link (the admin
 uses **Reset password** on the Users page), or run `scf user password <e-mail>` on the machine.
 

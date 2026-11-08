@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "yaml";
 import { FACTORY_HOME } from "../flow/load.js";
+import { disposeIdentity, supplyIdentity, type IdentityProvider } from "../auth/identity.js";
 import { disposeUsage, subscribeUsage } from "../usage/hub.js";
 import type { UsageHandler } from "../usage/schema.js";
 import { disposeWorkspaces, supplyWorkspaces, suppliedWorkspaces, type WorkspaceStore } from "../workspaces/list.js";
@@ -12,7 +13,7 @@ import { CHECK_POINTS, MAX_CHECKS, disposeChecks, registerPluginCheck, type Chec
 import { checkUiSpec, pluginUiName, registrationsOf, settingsValues, type PluginUiEntry, type PluginUiHandle } from "./ui.js";
 
 /** The version of the plugin API: what `register(api)` gets as `api.version`. */
-export const PLUGIN_API_VERSION = "0.3";
+export const PLUGIN_API_VERSION = "0.4";
 export const REGISTER_TIMEOUT_MS = 30_000;
 export const MAX_PLUGINS = 20;
 export const MAX_USAGE_HANDLERS = 10;
@@ -43,6 +44,12 @@ export interface PluginApi {
    * with a reason. At most 10 per plugin, and only while register(api) runs. Detect it with `typeof api.check === "function"`.
    */
   readonly check: (point: CheckPoint, fn: PluginCheck) => void;
+  /**
+   * Supplies the identity provider (#833): `provider.resolve(request, signal)` says who is signing in (sign-in, role and workspace
+   * come from your own account system). One provider for the whole install, once, and only while register(api) runs; a second
+   * call, a call after register ended, or a provider without resolve() stops the start. Detect it with `typeof api.identityProvider === "function"`.
+   */
+  readonly identityProvider: (provider: IdentityProvider) => void;
 }
 export interface Registration {
   point: string;
@@ -182,6 +189,7 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
     disposeUsage(owner);
     disposeWorkspaces(owner);
     disposeChecks(owner);
+    disposeIdentity(owner);
     throw e;
   }
 }
@@ -193,6 +201,13 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
   const blocked = deps.blockedDirs.map(real);
   const plugins: LoadedPlugin[] = [];
   const uiEntries: PluginUiEntry[] = [];
+  // A wrong identityProvider() call is recorded here and stops the start, also when the plugin catches the error it got.
+  let fatal: { spec: string; reason: string } | undefined;
+  let finished = false;
+  const failIdentity = (spec: string, reason: string): string => {
+    fatal ??= { spec, reason };
+    return reason;
+  };
   for (const entry of entries) {
     const spec = entry.module;
     const bad = pluginModuleProblem(spec);
@@ -222,6 +237,7 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
     const usage: Registration[] = [];
     let suppliesWorkspaces = false;
     let checkCount = 0;
+    let suppliesIdentity = false;
     const api: PluginApi = Object.freeze({
       version: PLUGIN_API_VERSION,
       options: Object.freeze(structuredClone(entry.options)),
@@ -287,21 +303,53 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
         }
         usage.push({ point: "workspaces", name: "workspaces" });
       },
+      identityProvider: (provider: IdentityProvider): void => {
+        if (!open) {
+          if (finished) {
+            const reason = "identityProvider(provider) was called after register(api) ended; it is not used";
+            problems.push({ plugin: label, reason });
+            deps.log?.(`plugin ${label}: ${reason}`);
+          } else {
+            failIdentity(spec, "called identityProvider(provider) after register(api) ended");
+          }
+          return; // no throw: the error must not land in another plugin's register() or a timer
+        }
+        if (!provider || typeof provider !== "object" || typeof provider.resolve !== "function") {
+          throw new TypeError(failIdentity(spec, "identityProvider(provider): the provider needs a resolve() function"));
+        }
+        if (suppliesIdentity) throw new Error(failIdentity(spec, "identityProvider(provider) can only be called once"));
+        const r = supplyIdentity({
+          owner,
+          plugin: label,
+          provider,
+          report: (reason) => {
+            problems.push({ plugin: label, reason });
+            deps.log?.(`plugin ${label}: ${reason}`);
+          },
+        });
+        if (r !== "ok") throw new Error(failIdentity(spec, `identityProvider(provider): plugin "${r.taken}" is the identity provider already`));
+        suppliesIdentity = true;
+        usage.push({ point: "identity", name: "identityProvider" });
+      },
     });
+    let failed: PluginLoadError | undefined;
     try {
       await withDeadline(spec, "register(api)", timeoutMs, () => (register as (a: PluginApi) => unknown)(api));
     } catch (e) {
-      if (e instanceof PluginLoadError) throw e;
-      throw new PluginLoadError(spec, `register(api) failed: ${firstLine(e)}`);
+      failed = e instanceof PluginLoadError ? e : new PluginLoadError(spec, `register(api) failed: ${firstLine(e)}`);
     } finally {
       open = false;
     }
+    if (fatal) throw new PluginLoadError(fatal.spec, fatal.reason);
+    if (failed) throw failed;
     const loaded: LoadedPlugin = { label, module: spec, version: versionOf(mod, def, path), registered: [...(ui ? registrationsOf(ui) : []), ...usage] };
     if (ui) uiEntries.push(ui);
     plugins.push(loaded);
     if (suppliesWorkspaces) suppliedWorkspaces(); // a bad list shows in the problem list at start
     deps.log?.(`plugin ${loaded.label} ${loaded.version} loaded`);
   }
+  if (fatal) throw new PluginLoadError(fatal.spec, fatal.reason);
+  finished = true;
   return {
     entries: structuredClone(entries),
     plugins,
@@ -311,6 +359,7 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
       disposeUsage(owner);
       disposeWorkspaces(owner);
       disposeChecks(owner);
+      disposeIdentity(owner);
     },
   };
 }

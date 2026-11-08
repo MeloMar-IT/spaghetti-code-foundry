@@ -192,7 +192,7 @@ describe("api.onUsage", () => {
     });
 
   it("reports version 0.2 and lists the handlers in `registered`", async () => {
-    expect(PLUGIN_API_VERSION).toBe("0.3");
+    expect(PLUGIN_API_VERSION).toBe("0.4");
     const reg = await load([(api) => (api.onUsage(() => {}), api.onUsage(() => {}))]);
     expect(reg.plugins[0]!.registered).toEqual([{ point: "usage", name: "onUsage" }, { point: "usage", name: "onUsage" }]);
     reg.dispose!();
