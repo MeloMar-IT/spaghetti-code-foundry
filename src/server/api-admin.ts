@@ -4,6 +4,7 @@ import { changeDetail, configChanges } from "../auth/audit-changes.js";
 import { emptyRegistry, pluginsView, readFilePlugins } from "../plugins/load.js";
 import { pluginSettingsProblem, settingSections, uiView } from "../plugins/ui.js";
 import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredWebhook } from "./config-view.js";
+import { hasIdentityProvider } from "../auth/identity.js";
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -154,7 +155,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         if (!listenCovers(next.listen, req.socket.localAddress)) {
           throw new Error(`listen "${next.listen}" would not answer on ${req.socket.localAddress}, where you are connected`);
         }
-        const problem = listenProblem(next.listen, hasAdmin);
+        const problem = listenProblem(next.listen, () => hasIdentityProvider() || hasAdmin());
         if (problem) throw new Error(problem);
         const inFile = before.watchers;
         // ids are unique on the whole install: only new duplicates and new collisions with the store are refused

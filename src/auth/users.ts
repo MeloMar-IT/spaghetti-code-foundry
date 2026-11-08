@@ -11,10 +11,11 @@ import { removeProgressLocked } from "../onboarding/progress-store.js";
 import { removeLimitsLocked } from "./limits.js";
 import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
 import { addSessionLocked, removeSessionsLocked, sessionId } from "./sessions.js";
+import { WORKSPACE_ID_RE } from "../workspaces/list.js";
 import { ViewSchema, viewsFor, type View } from "./views.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 
-export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits";
+export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits" | "provider-account";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class UserError extends Error {
@@ -26,6 +27,12 @@ export class UserError extends Error {
     this.name = "UserError";
   }
 }
+
+/** Why a password or profile action is refused on a mirror account of the identity provider. */
+export const PROVIDER_ACCOUNT = "this account signs in through the identity provider; change it there";
+const noProvider = (u: { source?: "provider" }) => {
+  if (u.source === "provider") throw new UserError("provider-account", PROVIDER_ACCOUNT);
+};
 
 export const usersPath = () => join(dataHome(), "users.json");
 
@@ -118,6 +125,10 @@ const UserSchema = z
     stopWork: z.uuid().optional(),
     /** The view the account chose; missing means the default of its role. */
     view: ViewSchema.optional(),
+    /** "provider": a mirror of an account of the identity provider (#833). It has no password. */
+    source: z.literal("provider").optional(),
+    /** The one workspace of a provider account. */
+    workspace: z.string().regex(WORKSPACE_ID_RE).optional(),
   })
   .strict();
 
@@ -130,6 +141,8 @@ const FileSchema = z
     const links = new Set<string>();
     f.users.forEach((u, i) => {
       if (u.passwordHash !== undefined && u.passwordLink) ctx.addIssue({ code: "custom", message: "hash and link", path: ["users", i, "passwordLink"] });
+      if (u.source === "provider" && (u.passwordHash !== undefined || u.passwordLink)) ctx.addIssue({ code: "custom", message: "provider with password", path: ["users", i, "source"] });
+      if (u.workspace !== undefined && u.source !== "provider") ctx.addIssue({ code: "custom", message: "workspace without provider", path: ["users", i, "workspace"] });
       if (u.passwordLink) {
         if (links.has(u.passwordLink.id)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["users", i, "passwordLink", "id"] });
         links.add(u.passwordLink.id);
@@ -143,9 +156,14 @@ const FileSchema = z
 
 export type User = z.infer<typeof UserSchema>;
 export type PublicUser = Omit<User, "passwordHash" | "passwordLink">;
-type UsersFile = z.infer<typeof FileSchema>;
+export type UsersFile = z.infer<typeof FileSchema>;
 
 const read = (): UsersFile => readJsonFile(usersPath(), FileSchema, { version: 1, users: [] });
+export const readUsersFile = read;
+/** Writes users.json. Only inside withAuthLock. */
+export function writeUsersFileLocked(file: UsersFile): void {
+  writeJsonFile(usersPath(), file);
+}
 
 export function listUsers(): User[] {
   return read().users;
@@ -158,8 +176,8 @@ export const findUserByEmail = (email: string): User | undefined => {
   return listUsers().find((u) => u.email === e);
 };
 
-/** True when any admin exists, blocked or not. */
-export const hasAdmin = (): boolean => listUsers().some((u) => u.role === "admin");
+/** True when any local admin exists, blocked or not. Mirror accounts of an identity provider do not count. */
+export const hasAdmin = (): boolean => listUsers().some((u) => u.role === "admin" && u.source !== "provider");
 
 /** The admin account that was created first, blocked or not. Undefined when there is none. */
 export const firstAdmin = (): User | undefined =>
@@ -197,7 +215,7 @@ export async function createUser(input: NewUser, opts: { onlyIfNoAdmin?: boolean
   };
   return withAuthLock(() => {
     const file = read();
-    if (opts.onlyIfNoAdmin && file.users.some((u) => u.role === "admin")) throw new UserError("admin-exists", "an admin account exists already");
+    if (opts.onlyIfNoAdmin && file.users.some((u) => u.role === "admin" && u.source !== "provider")) throw new UserError("admin-exists", "an admin account exists already");
     if (file.users.some((u) => u.email === email)) throw new UserError("email-taken", "an account with that e-mail exists already");
     audited(opts.bySelf ? user.id : opts.by, { action: "create", userId: user.id }, () => writeJsonFile(usersPath(), { ...file, users: [...file.users, user] }));
     return user;
@@ -218,6 +236,7 @@ export interface UserChanges {
 const LAST_ADMIN = "this is the only admin that is not blocked; make another admin first";
 // An admin that has no password yet cannot sign in, so it does not count as another admin.
 const isLastAdmin = (users: User[], u: User) =>
+  u.source !== "provider" &&
   u.role === "admin" &&
   u.status === "active" &&
   !users.some((o) => o.id !== u.id && o.role === "admin" && o.status === "active" && o.passwordHash !== undefined);
@@ -272,6 +291,7 @@ export async function setPassword(id: string, password: string, opts: ChangeOpti
   return change(
     id,
     (u) => {
+      noProvider(u);
       const { passwordLink: _link, ...rest } = u;
       return { next: { ...rest, passwordHash }, event: { action: "password" } };
     },
@@ -287,6 +307,7 @@ export async function changePassword(id: string, current: string, password: stri
   checkPassword(password);
   const u = getUser(id);
   if (!u) throw new UserError("not-found", "no such account");
+  noProvider(u);
   const stored = u.passwordHash;
   const fits = typeof current === "string" && current.length <= PASSWORD_MAX;
   const ok = stored !== undefined && fits && (await verifyPassword(current, stored));
@@ -295,6 +316,7 @@ export async function changePassword(id: string, current: string, password: stri
   return change(
     id,
     (cur) => {
+      noProvider(cur);
       if (cur.passwordHash !== stored) throw new UserError("wrong-password", "the current password is wrong");
       const { passwordLink: _link, ...rest } = cur;
       return { next: { ...rest, passwordHash }, event: { action: "password" } };
@@ -343,6 +365,7 @@ export async function newPasswordLink(id: string, opts: ChangeOptions = {}): Pro
   const user = change(
     id,
     (u) => {
+      noProvider(u);
       if (u.passwordHash !== undefined) throw new UserError("has-password", "this account has a password already");
       return { next: { ...u, passwordLink: link }, event: { action: "link" } };
     },
@@ -360,6 +383,7 @@ export async function resetPassword(id: string, opts: ChangeOptions = {}): Promi
   const user = change(
     id,
     (u, all) => {
+      noProvider(u);
       if (u.passwordHash === undefined) throw new UserError("no-password", "this account has no password; make a new link instead");
       if (isLastAdmin(all, u)) throw new UserError("last-admin", LAST_ADMIN);
       const { passwordHash: _hash, ...rest } = u;
@@ -440,6 +464,7 @@ export async function updateUser(id: string, changes: UserChanges, opts: ChangeO
   return change(
     id,
     (u, all) => {
+      noProvider(u);
       if (email !== undefined && all.some((o) => o.id !== id && o.email === email)) {
         throw new UserError("email-taken", "an account with that e-mail exists already");
       }

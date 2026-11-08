@@ -211,6 +211,39 @@ it. The list is read once at start.
 - The check that the module is outside the runs folders compares real paths of the module file, not
   of its dependencies: a plugin may import code from anywhere.
 
+## Identity provider (#833)
+
+**Trust.** A plugin that calls `api.identityProvider` decides who is signed in, with which role and
+which workspace. Its answer is trusted as to identity: the Foundry checks only the form of the answer.
+Whoever can add a plugin can therefore make anyone an admin, as with any plugin ([Plugins from config](#plugins-from-config)).
+
+**Protected by.**
+- The provider gets a copy of the request without the Foundry session cookie, so it cannot read the
+  Foundry's session token from the request it is given. The copy is frozen.
+- The answer is checked strictly (UUID id, name of 1 to 100 characters, roles `admin` or `user` only,
+  a workspace id, no other keys). Anything else signs nobody in.
+- A throw, a timeout (5 s) or an invalid answer signs nobody in, and no provider text reaches logs,
+  problems or responses: only fixed sentences are shown.
+- At most 8 provider calls wait at once; further calls are refused without being made, so a slow
+  provider cannot pile up work.
+- Each API call of a provider session asks the provider again. A changed id or a null answer ends the
+  session at once; a provider error answers 503 and does not end it. A session cannot outlive the
+  provider's answer by more than one call.
+- A provider account is a mirror in `users.json` with no password. Password sign-in, password setting,
+  links, resets and edits of the account are refused (409), so a local password cannot be used for an
+  account the provider owns. A blocked account cannot sign in, and a recheck never creates an account.
+- A local account with the same id or e-mail is never taken over: the provider's sign-in is refused.
+- A provider user's workspace scope is its one workspace (or `default`), and an unreadable account gives
+  an empty scope (fail closed).
+
+**Limits.**
+- The provider's answer is not verified by the Foundry. A compromised or buggy provider is trusted.
+- A timed-out `resolve` cannot be cancelled; it keeps running in the provider, and the call still counts
+  against the 8 waiting calls until it settles.
+- A provider that is slow adds up to 5 s to each API call of a provider session.
+- Only one provider is allowed, and the Foundry does not say which one is in use beyond the plugin's name in `GET /api/plugins`.
+- A provider-only install with no account may listen on a non-local address; the provider is then the only way in.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

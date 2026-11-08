@@ -1,5 +1,5 @@
 {
-  "apiVersion": "0.3",
+  "apiVersion": "0.4",
   "exports": {
     "ApprovalStep": "type",
     "ClaudeStep": "type",

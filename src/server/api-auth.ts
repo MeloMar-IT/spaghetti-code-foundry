@@ -3,9 +3,11 @@ import { basename } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { adoptRuns } from "../auth/run-owner.js";
 import { writeAudit } from "../auth/audit.js";
+import { hasIdentityProvider } from "../auth/identity.js";
 import {
-  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, redeemPasswordLink, setView, startSession, UserError, type User,
+  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
 } from "../auth/users.js";
+import { providerSignIn, recheckProviderSession } from "./identity-session.js";
 import { isView, viewOf, viewsFor } from "../auth/views.js";
 import { SESSION_TTL_MS, csrfToken, findSession, revokeSession, sessionId } from "../auth/sessions.js";
 import { StoreError } from "../auth/store.js";
@@ -101,8 +103,11 @@ function currentSession(ctx: ApiContext, req: IncomingMessage): Current | undefi
   const session = findSession(token);
   if (!token || !session) return undefined;
   const user = getUser(session.userId);
-  return user && user.status === "active" ? { token, user } : undefined;
+  // With an identity provider only provider sessions count; without one, provider records have no sessions
+  return user && user.status === "active" && hasIdentityProvider() === (user.source === "provider") ? { token, user } : undefined;
 }
+
+const IDENTITY_DOWN = "sign-in is not working; try again in a moment";
 
 /** What the browser may know about the account: never the hash. */
 const viewFields = (u: Pick<User, "role" | "view">) => ({ view: viewOf(u), views: viewsFor(u.role) });
@@ -126,10 +131,16 @@ function passwordOf(body: Record<string, unknown>): string {
 export async function requireSession(ctx: ApiContext, req: IncomingMessage, method: string): Promise<User> {
   const cur = await guarded(ctx, () => currentSession(ctx, req));
   if (!cur) throw new HttpError(401, "sign in first");
-  if (method === "GET" || method === "HEAD") return cur.user;
-  const sent = req.headers["x-csrf-token"];
-  if (typeof sent !== "string" || !sameToken(sent, csrfToken(cur.token))) throw new HttpError(403, "bad CSRF token");
-  return cur.user;
+  if (method !== "GET" && method !== "HEAD") {
+    const sent = req.headers["x-csrf-token"];
+    if (typeof sent !== "string" || !sameToken(sent, csrfToken(cur.token))) throw new HttpError(403, "bad CSRF token");
+  }
+  if (!hasIdentityProvider()) return cur.user;
+  // a provider session asks the provider again on every call
+  const check = await guarded(ctx, () => recheckProviderSession(req, cookieName(ctx), cur));
+  if (check.kind === "error") throw new HttpError(503, IDENTITY_DOWN);
+  if (check.kind !== "ok") throw new HttpError(401, "sign in first");
+  return check.user;
 }
 
 /** The id of the request's session (the hash of the cookie token, never the token), or undefined without a cookie. */
@@ -170,8 +181,33 @@ function auditFailedSignIn(ctx: ApiContext, userId?: string): void {
   }
 }
 
+/** GET /api/session while an identity provider is active: recheck a live provider session, else sign in whoever the provider names. */
+async function providerSessionView(ctx: ApiContext, req: IncomingMessage, res: ServerResponse) {
+  const flags = { identityProvider: true, setupNeeded: false };
+  const cur = await guarded(ctx, () => currentSession(ctx, req));
+  if (cur) {
+    const check = await guarded(ctx, () => recheckProviderSession(req, cookieName(ctx), cur));
+    if (check.kind === "ok") return send(res, 200, { ...sessionBody({ token: cur.token, user: check.user }), ...flags });
+    if (check.kind === "error") return send(res, 200, { user: null, identityError: true, ...flags });
+    clearCookie(ctx, req, res); // revoked or refused: the next call signs in again
+    return send(res, 200, { user: null, ...flags });
+  }
+  notMoved();
+  const old = cookieToken(ctx, req);
+  const r = await guarded(ctx, () => providerSignIn(req, cookieName(ctx), old ? sessionId(old) : undefined));
+  if (r.kind === "ok") {
+    if (r.auditFailed) auditLost(ctx);
+    setCookie(ctx, req, res, r.token);
+    return send(res, 200, { ...sessionBody({ token: r.token, user: r.user }), ...flags });
+  }
+  if (r.kind === "error") return send(res, 200, { user: null, identityError: true, ...flags });
+  if (r.kind === "blocked") auditFailedSignIn(ctx, r.id);
+  send(res, 200, { user: null, ...flags });
+}
+
 async function signIn(ctx: ApiContext, req: IncomingMessage, res: ServerResponse) {
   notMoved();
+  if (hasIdentityProvider()) throw new HttpError(401, BAD_LOGIN); // the provider is in charge of sign-in
   const body = await readJson(req);
   const { accounts, clients } = throttlesOf(ctx);
   const email = str(body, "email").trim().toLowerCase();
@@ -257,6 +293,7 @@ async function setPasswordWithLink(ctx: ApiContext, req: IncomingMessage, res: S
 
 async function setup(ctx: ApiContext, req: IncomingMessage, res: ServerResponse) {
   notMoved();
+  if (hasIdentityProvider()) throw new HttpError(409, "an identity provider is in charge of sign-in");
   if (!accessOf(ctx, req).local) throw new HttpError(403, "the first account can only be created on the Mac itself");
   const body = await readJson(req);
   const name = str(body, "name");
@@ -296,6 +333,7 @@ export async function authRoutes(ctx: ApiContext, req: IncomingMessage, res: Ser
   if (seg[0] === "set-password" && method === "POST") return await setPasswordWithLink(ctx, req, res), true;
   if (seg[0] !== "session") return false;
   if (method === "GET") {
+    if (hasIdentityProvider()) return await providerSessionView(ctx, req, res), true;
     await guarded(ctx, () => {
       const cur = currentSession(ctx, req);
       send(res, 200, { user: cur ? publicFields(cur.user) : null, ...(cur ? { csrfToken: csrfToken(cur.token) } : {}), setupNeeded: !hasAdmin() });
@@ -348,6 +386,7 @@ export const meRoutes: Route = async (ctx, req, res, seg, method, user) => {
 export const passwordRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg.length !== 1 || seg[0] !== "password" || method !== "POST") return false;
   notMoved();
+  if (user.source === "provider") throw new HttpError(409, PROVIDER_ACCOUNT);
   const body = await readJson(req);
   if (typeof body.current !== "string" || body.current === "") throw new HttpError(400, `"current" must be the current password`);
   const password = passwordOf(body);
