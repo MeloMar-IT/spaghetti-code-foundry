@@ -279,8 +279,9 @@ describe("the data", () => {
     // the set-password link is read by the sign-in screen (ui/auth.js) before any page exists; the command line prints it for an admin to pass on
     found.delete("#/set-password");
     for (const h of found) {
-      // #/help and #/start-guide are pages of the user display only
-      const to = ia.resolve(h === "#/help" || h === "#/start-guide" ? "user" : "admin", h);
+      // #/help and #/start-guide are pages of the user display only; #/change needs a project id (#/change/<id>)
+      const user = h === "#/help" || h === "#/start-guide" || h === "#/change";
+      const to = ia.resolve(user ? "user" : "admin", h === "#/change" ? "#/change/x" : h);
       expect([null, "alias"], h).toContain(to.reason);
     }
   });

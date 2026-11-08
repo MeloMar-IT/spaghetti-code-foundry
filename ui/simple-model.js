@@ -1,6 +1,7 @@
 import { sameRepo } from "./filters.js";
 import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
+import { plannedCards } from "./simple-change-model.js";
 import { FINAL, WORDS, kindWords, phaseOf, progressText, safeText, stateLine, summaryOf } from "./simple-words.js";
 
 // The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
@@ -110,7 +111,7 @@ export function cardOf(entry) {
 }
 
 /** → { id, name, todo, groups: { planned, building, check, done }, state } of one project. */
-export function projectModel(repo, all, runs, pending) {
+export function projectModel(repo, all, runs, pending, changes = []) {
   const key = projectKey(repo);
   const groups = { planned: [], building: [], check: [], done: [] };
   let answer = false;
@@ -124,6 +125,8 @@ export function projectModel(repo, all, runs, pending) {
       if (g === "check" && ANSWER.has(recordOf(e).kind)) answer = true;
     }
   }
+  // requests kept with "Not now" wait under Planned, each with its own "Yes, build this"
+  groups.planned.push(...plannedCards(changes));
   return {
     id: repo.id,
     name: projectName(repo, all),
@@ -135,10 +138,10 @@ export function projectModel(repo, all, runs, pending) {
 }
 
 /** The projects in the order of the repositories, each with its one big `next` button. */
-export function projectsModel(repos, runs, pending) {
+export function projectsModel(repos, runs, pending, changes = {}) {
   const all = Array.isArray(repos) ? repos : [];
   return all.map((repo) => {
-    const m = projectModel(repo, all, runs, pending);
+    const m = projectModel(repo, all, runs, pending, changes?.[String(repo.id)] ?? []);
     const first = m.todo.find((c) => c.link || c.decide);
     // A card that decides in place has no link: the big button goes to the project page, where the card is.
     const next = first
