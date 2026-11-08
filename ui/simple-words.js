@@ -38,6 +38,8 @@ export const HELP = {
   contactTitle: "Who to ask",
 };
 
+export { CHANGE } from "./simple-change-words.js";
+
 export const WORDS = {
   myProjects: "My projects",
   todo: "What you need to do",

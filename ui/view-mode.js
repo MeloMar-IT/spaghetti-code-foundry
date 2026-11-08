@@ -7,7 +7,7 @@ import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
 /** The pages of the Simple view (the first part of the hash path): My projects, the project page and the setup check. Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help"];
+export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help", "change"];
 /** The navigation links Simple keeps (`data-nav` names), in the menu and the top bar. */
 export const SIMPLE_NAV = ["home", "help"];
 /** Links only Simple shows; the other views hide them. */
@@ -94,9 +94,9 @@ export function typedText() {
 
 /** True when typed text has no `beforeunload` guard: a Start work draft, a closed New refinement form, a text box. */
 export async function unsentText() {
-  const [{ readDraft }, { keptSession }] = await Promise.all([import("./user/start-draft.js"), import("./refinement-new.js")]);
+  const [{ readDraft }, { keptSession }, { hasUnsentChange }] = await Promise.all([import("./user/start-draft.js"), import("./refinement-new.js"), import("./simple-change-model.js")]);
   const kept = keptSession();
-  return readDraft() !== null || [kept?.title, kept?.idea, kept?.issue].some((v) => String(v ?? "").trim() !== "") || typedText();
+  return readDraft() !== null || [kept?.title, kept?.idea, kept?.issue].some((v) => String(v ?? "").trim() !== "") || typedText() || hasUnsentChange();
 }
 
 const askUnsent = () => confirmDialog({ title: "Switch view?", text: UNSENT_TEXT, confirm: "Switch view" });

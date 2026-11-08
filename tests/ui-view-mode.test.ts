@@ -57,6 +57,12 @@ describe("the rules", () => {
     expect(vm.inView("advanced", "#/start-guide")).toBe(true);
   });
 
+  it("has the Ask for a change page in Simple and in Advanced, but not without a project id", () => {
+    expect(vm.inView("simple", "#/change/x")).toBe(true);
+    expect(vm.inView("advanced", "#/change/x")).toBe(true);
+    expect(vm.inView("simple", "#/change")).toBe(false);
+  });
+
   it("has the Help page in Simple and in Advanced", () => {
     expect(vm.inView("simple", "#/help")).toBe(true);
     expect(vm.inView("advanced", "#/help")).toBe(true);
@@ -168,6 +174,14 @@ describe("unsentText", () => {
     typeIn(answer, "use B");
     expect(await vm.unsentText()).toBe(true);
     typeIn(answer, "");
+    expect(await vm.unsentText()).toBe(false);
+  });
+
+  it("is true for a change request that is typed and not sent, and false once it is cleared", async () => {
+    const change = await import("../ui/simple-change-model.js" as string);
+    change.changeDraft("p9").text = "Make it blue";
+    expect(await vm.unsentText()).toBe(true);
+    change.clearChangeDraft("p9");
     expect(await vm.unsentText()).toBe(false);
   });
 

@@ -93,6 +93,7 @@ describe("user router", () => {
     "/onboarding-agents.js": { renderOnboardingAgents: vi.fn(async () => () => {}) },
     "/onboarding-guide.js": { renderOnboardingGuide: vi.fn(async () => () => {}) },
     "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() },
+    "/simple-change.js": { renderSimpleChange: vi.fn() },
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
     "/view-mode.js": real.viewMode,
@@ -175,6 +176,35 @@ describe("user router", () => {
       setup("#/repos/abc");
       await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub }));
       expect(stub.renderSimpleProject).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: "abc" }));
+    });
+
+    it("gives the Simple project page the Ask for a change link", async () => {
+      setup("#/repos/abc");
+      const stub = simpleStub();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub }));
+      expect(stub.renderSimpleProject).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ actions: [{ id: "change", href: "#/change/abc" }] }));
+    });
+
+    it("draws Ask for a change for #/change/<id> in Simple and in Advanced, and keeps the address", async () => {
+      for (const me of [simpleMe, as({ id: "u", role: "user", view: "advanced" })]) {
+        setup("#/change/abc");
+        const renderSimpleChange = vi.fn();
+        const stub = simpleStub();
+        await loadRouter("user/app.js", deps({ ...me, "/simple.js": stub, "/simple-change.js": { renderSimpleChange } }));
+        expect(renderSimpleChange).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: "abc" }));
+        expect(stub.renderSimpleProject).not.toHaveBeenCalled();
+        expect(g.location.hash).toBe("#/change/abc");
+      }
+    });
+
+    it("sends a read-only preview from the Ask for a change page to the project page", async () => {
+      setup("#/change/abc");
+      const renderSimpleChange = vi.fn();
+      const renderRepo = vi.fn();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple-change.js": { renderSimpleChange }, "/repo-view.js": { renderRepo }, "/view-as.js": { beginView: () => ({ readOnly: true, ready: true }) } }));
+      expect(renderSimpleChange).not.toHaveBeenCalled();
+      expect(g.location.hash).toBe("#/repos/abc");
+      expect(renderRepo).toHaveBeenCalled();
     });
 
     it("sends Simple from the bare repository list and from unknown pages to #/home", async () => {
