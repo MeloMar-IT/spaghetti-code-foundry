@@ -71,11 +71,11 @@ export function errorText(e) {
 }
 
 /** Sends the form. Returns "" on success, else the text to show. Nothing is sent while the input has a problem. */
-export async function submitForm(a, kind, v) {
+export async function submitForm(a, kind, v, out = {}) {
   const problem = formProblem(kind, v);
   if (problem) return problem;
   try {
-    if (kind === "password") await a.setPassword(v.token, v.password);
+    if (kind === "password") out.reply = await a.setPassword(v.token, v.password);
     else if (kind === "change") await a.changePassword(v.current, v.password);
     else if (kind === "setup") await a.setup(v.name.trim(), v.email.trim(), v.password);
     else await a.signIn(v.email.trim(), v.password);
@@ -131,6 +131,7 @@ export async function signOut(a, reload) {
 const browserPage = {
   hash: () => (typeof location === "undefined" ? "" : location.hash),
   clearHash: () => history.replaceState(null, "", location.pathname + location.search),
+  setHash: (h) => history.replaceState(null, "", location.pathname + location.search + h),
   onHashChange: (fn) => typeof window !== "undefined" && window.addEventListener("hashchange", fn),
 };
 
@@ -157,9 +158,15 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
     e.preventDefault();
     button.disabled = true;
     const values = Object.fromEntries(fields.map((f) => [f.name, f.el.value]));
-    const problem = await submitForm(a, kind, choose ? { ...values, token } : values);
+    const out = {};
+    const problem = await submitForm(a, kind, choose ? { ...values, token } : values, out);
     if (!problem && choose) {
       state.kind = "signin";
+      // an invited Simple account: signing in then opens the Get started guide
+      if (out.reply?.guide === true && page.setHash) {
+        page.setHash("#/start-guide");
+        return renderForm(a, "signin", reload, { state, page, note: "Your password is set. Sign in with it to start the guide." });
+      }
       page.clearHash();
       return renderForm(a, "signin", reload, { state, page, note: "Your password is set. Sign in with it." });
     }

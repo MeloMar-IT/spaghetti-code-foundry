@@ -322,13 +322,24 @@ function makeLink(now = Date.now()): { token: string; link: { id: string; expire
 }
 
 /** Creates an account without a password and a one-time link to set it. */
-export async function createUserWithLink(input: { name: string; email: string; role?: "admin" | "user" }, opts: ChangeOptions = {}): Promise<LinkResult> {
+export async function createUserWithLink(input: { name: string; email: string; role?: "admin" | "user"; view?: View }, opts: ChangeOptions = {}): Promise<LinkResult> {
   const name = checkName(input.name);
   const email = checkEmail(input.email);
   const role = input.role ?? "user";
   if (role !== "admin" && role !== "user") throw new UserError("bad-role", "the role must be admin or user");
+  if (input.view !== undefined && !viewsFor(role).includes(input.view)) throw new UserError("bad-role", "this view is not open to this role");
   const { token, link } = makeLink();
-  const user: User = { id: randomUUID(), name, email, role, status: "active", passwordLink: link, created: new Date().toISOString(), lastSignIn: null };
+  const user: User = {
+    id: randomUUID(),
+    name,
+    email,
+    role,
+    ...(input.view !== undefined ? { view: input.view } : {}),
+    status: "active",
+    passwordLink: link,
+    created: new Date().toISOString(),
+    lastSignIn: null,
+  };
   return withAuthLock(() => {
     const file = read();
     if (file.users.some((u) => u.email === email)) throw new UserError("email-taken", "an account with that e-mail exists already");

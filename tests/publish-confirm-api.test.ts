@@ -307,3 +307,35 @@ describe("the plain push to the remote needs Yes, publish", () => {
     expect(getRepo(local.id)!.settings).toBeUndefined();
   });
 });
+
+describe("a project made by the Get started guide (#823)", () => {
+  const guideMade = async (): Promise<{ id: string; record: string }> => {
+    const parent = join(work, `guide-${n}`);
+    mkdirSync(parent);
+    const made = await post("starters/website/project", { name: "Site", parent, guide: true });
+    // one guide project per account: a later case finds the one an earlier case made (200, `existing`)
+    expect([200, 201], JSON.stringify(made.json)).toContain(made.status);
+    const id = made.json.repo.id as string;
+    return { id, record: JSON.stringify(getRepo(id)) };
+  };
+  const untouched = (id: string, record: string) => {
+    expect(remoteRefs()).toBe("");
+    expect(repoCreates()).toBe(0);
+    expect(JSON.stringify(getRepo(id))).toBe(record);
+    expect(getRepo(id)!.settings?.pushRemote).toBeUndefined();
+  };
+
+  it("Move to GitHub is refused without confirm: 409, nothing sent, record unchanged", async () => {
+    const { id, record } = await guideMade();
+    const r = await post(`repos/${id}/move-to-github`, { target: TARGET });
+    expect(r.status).toBe(409);
+    untouched(id, record);
+  });
+
+  it("publish-remote is refused without a valid confirm: nothing sent, no push remote", async () => {
+    const { id, record } = await guideMade();
+    expect((await post(`repos/${id}/publish-remote`, {})).status).toBe(400);
+    expect((await post(`repos/${id}/publish-remote`, { confirm: "x".repeat(43) })).status).toBe(409);
+    untouched(id, record);
+  });
+});

@@ -16,6 +16,7 @@ import {
   listUsers,
   newPasswordLink,
   redeemPasswordLink,
+  resetPassword,
   setPassword,
   setStatus,
   startSession,
@@ -110,6 +111,25 @@ describe("createUserWithLink", () => {
     expect(bytes()).toEqual(before);
   });
 
+  it("stores a view that the role may use, in the same write", async () => {
+    const r = await createUserWithLink(newcomer({ view: "simple" }));
+    expect(r.user.view).toBe("simple");
+    expect(getUser(r.user.id)!.view).toBe("simple");
+    const adm = await createUserWithLink(newcomer({ email: "adm@example.com", role: "admin", view: "advanced" }));
+    expect(getUser(adm.user.id)!.view).toBe("advanced");
+  });
+
+  it("refuses a view that the role may not use, and writes nothing", async () => {
+    expect(await code(createUserWithLink(newcomer({ view: "admin" })))).toBe("bad-role");
+    expect(existsSync(usersPath())).toBe(false);
+    await createUserWithLink(newcomer({ email: "other@example.com" }));
+    const before = bytes();
+    const lines = audit().length;
+    expect(await code(createUserWithLink(newcomer({ view: "admin" })))).toBe("bad-role");
+    expect(bytes()).toEqual(before);
+    expect(audit()).toHaveLength(lines);
+  });
+
   it("writes one `create` audit line with `by`", async () => {
     const r = await createUserWithLink(newcomer(), { by: "cli" });
     expect(audit()).toMatchObject([{ action: "create", by: "cli", userId: r.user.id }]);
@@ -140,6 +160,12 @@ describe("redeemPasswordLink", () => {
     expect(audit()).toMatchObject([{ action: "password", by: r.user.id, userId: r.user.id }]);
     expect(readFileSync(sessionsPath())).toEqual(sessions);
     expect(readSessions().some((s) => s.userId === r.user.id)).toBe(false);
+  });
+
+  it("refuses an expired link of an invited Simple account", async () => {
+    const r = await createUserWithLink(newcomer({ view: "simple" }));
+    expect(await redeemPasswordLink(r.token, PW2, Date.now() + LINK_TTL_MS + 1)).toBeUndefined();
+    expect(getUser(r.user.id)!.passwordHash).toBeUndefined();
   });
 
   it("answers undefined for a link that is not live, and changes nothing", async () => {
@@ -412,6 +438,30 @@ describe("POST /api/set-password", () => {
     expect(existsSync(sessionsPath())).toBe(false);
     const login = await signIn(s, "new@example.com", PW2);
     expect(login.status).toBe(200);
+  });
+
+  it("tells a new Simple account to open the guide, and nobody else", async () => {
+    const simple = await mk(newcomer({ view: "simple" }));
+    const res = await setPw(s, simple.token);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, guide: true });
+    // signed in once, then reset: not the first sign-in any more
+    expect((await signIn(s, "new@example.com", PW2)).status).toBe(200);
+    const again = await resetPassword(simple.user.id);
+    secrets.push(again.token, sessionId(again.token));
+    expect(await (await setPw(s, again.token)).json()).toEqual({ ok: true });
+    // an advanced account
+    const adv = await mk(newcomer({ email: "adv@example.com", view: "advanced" }));
+    expect(await (await setPw(s, adv.token)).json()).toEqual({ ok: true });
+  });
+
+  it("refuses an expired link of an invited Simple account", async () => {
+    const r = await mk(newcomer({ view: "simple" }));
+    editLink(r.token, { expires: "2000-01-01T00:00:00.000Z" });
+    const res = await setPw(s, r.token);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(DEAD);
+    expect(getUser(r.user.id)!.passwordHash).toBeUndefined();
   });
 
   it("answers sign-in to an account without a password like a wrong password", async () => {

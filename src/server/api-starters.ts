@@ -1,5 +1,5 @@
 import { auditAction } from "../auth/audit.js";
-import { addRepo, getRepo, removeRepo, setRepoSettings } from "../auth/repos.js";
+import { addRepo, getRepo, removeRepo, setRepoBudget, setRepoSettings } from "../auth/repos.js";
 import { StoreError } from "../auth/store.js";
 import type { User } from "../auth/users.js";
 import { ProgressError, beginGuideProject, guideGeneration, guideIdea, readProgress, recordCreatingLocked, recordGuideProject, recordGuideSession } from "../onboarding/progress-store.js";
@@ -143,6 +143,7 @@ interface GuideMarks {
 
 async function makeProject(ctx: ApiContext, user: User, starterId: string, body: Record<string, unknown>, o: StartOptions, guide?: GuideMarks) {
   return guardedStarters(ctx, async () => {
+    let budgetSet: number | undefined;
     const starter = getStarter(starterId, listOptions(ctx, o));
     const made = await createProject({
       starter,
@@ -165,6 +166,15 @@ async function makeProject(ctx: ApiContext, user: User, starterId: string, body:
             }),
           );
           const saved = guardedRepos(ctx, () => (o.settings ?? setRepoSettings)(repo.id, { testCommand: starter.test }));
+          if (guide) {
+            // the guide's project gets the Simple daily cap as its own: its owner is an admin, so the default would not apply
+            const configured = ctx.config().simple_project_daily_budget_usd;
+            if (typeof configured === "number" && configured > 0) {
+              const usd = Math.min(configured, 1_000_000);
+              guardedRepos(ctx, () => setRepoBudget(repo.id, usd));
+              budgetSet = usd;
+            }
+          }
           const connection = await (o.test ?? testRepo)(ctx, user, repo.id);
           if (connection.ok !== true) throw new StarterError("failed", "the project could not be made; see the server log", "starters: the connection test failed");
           o.afterTest?.();
@@ -179,6 +189,7 @@ async function makeProject(ctx: ApiContext, user: User, starterId: string, body:
     });
     const { repo } = made.result;
     auditAction(ctx.diagLog, user.id, "repo-add", repo.id, repo.url);
+    if (budgetSet !== undefined) auditAction(ctx.diagLog, user.id, "repo-change", repo.id, `daily budget: $${budgetSet}`);
     return made.result;
   });
 }

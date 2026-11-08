@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { AppReposError, getAppRepos, setAppRepos } from "../auth/app-repos.js";
 import { auditAction } from "../auth/audit.js";
-import { viewOf } from "../auth/views.js";
+import { isView, viewOf } from "../auth/views.js";
 import { checkLimitsPatch, getLimits, setDefaultLimits, setUserLimits, type LimitsChange } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import {
@@ -102,7 +102,8 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       const name = checkName(body.name as string);
       const email = checkEmail(body.email as string);
       if (body.role !== "admin" && body.role !== "user") throw new UserError("bad-role", "the role must be admin or user");
-      return createUserWithLink({ name, email, role: body.role }, { by });
+      if (body.view !== undefined && !isView(body.view)) throw new UserError("bad-role", "view must be simple, advanced or admin");
+      return createUserWithLink({ name, email, role: body.role, ...(body.view !== undefined ? { view: body.view } : {}) }, { by });
     });
     return send(res, 201, { user: view(ctx, r.user, 0, false), token: r.token, expires: r.expires }), true;
   }

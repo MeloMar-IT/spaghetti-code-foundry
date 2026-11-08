@@ -211,6 +211,10 @@ describe("pure functions", () => {
     expect(ui.userProblem({ name: "A", email: "a@b.c" })).toBe("");
     expect(ui.newUserBody({ name: " A ", email: " a@b.c ", role: "admin" })).toEqual({ name: "A", email: "a@b.c", role: "admin" });
     expect(ui.newUserBody({ name: "A", email: "a@b.c", role: "root" }).role).toBe("user");
+    expect("view" in ui.newUserBody({ name: "A", email: "a@b.c", role: "admin", simple: false })).toBe(false);
+  });
+  it("newUserBody with a Simple account", () => {
+    expect(ui.newUserBody({ name: "A", email: "a@example.com", role: "admin", simple: true })).toEqual({ name: "A", email: "a@example.com", role: "user", view: "simple" });
   });
   it("userChanges", () => {
     const u = user();
