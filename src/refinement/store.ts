@@ -124,6 +124,8 @@ const SessionSchema = z
     brief: BriefSchema.optional(),
     architect: ArchitectSchema.optional(),
     talk: TalkSchema.optional(),
+    /** Set on a change request of the Simple view (#812): the architect chains by itself. `built` lists the drafts whose story has the build label; `build` is set when all have it. */
+    changeRequest: z.object({ built: z.array(z.uuid()).max(100).optional(), build: z.literal(true).optional() }).strict().optional(),
     log: z.array(LogEntry).min(1).max(LOG_LIMIT),
     created: z.iso.datetime(),
     updated: z.iso.datetime(),
@@ -224,6 +226,8 @@ export interface NewSession {
   title?: unknown;
   /** The id of the owner's Ask SCF conversation the session was started from (checked by the caller). */
   fromHelp?: string;
+  /** The session is a change request of the Simple view. */
+  changeRequest?: true;
 }
 
 // ---- reading ---------------------------------------------------------------------------------------
@@ -261,6 +265,7 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
     title: title ?? titleFromIdea(idea),
     idea,
     ...(input.fromHelp ? { fromHelp: input.fromHelp } : {}),
+    ...(input.changeRequest ? { changeRequest: {} } : {}),
     state: "exploring",
     drafts: [],
     log: [{ at, by: owner, what: "created" }],
@@ -739,6 +744,18 @@ function changeTalk(actor: Actor, id: string, opts: TalkOptions, fn: (talk: Talk
 }
 
 export const answerQuestion = (actor: Actor, id: string, questionId: string, input: unknown, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t, at) => answer(t, questionId, input, at));
+/** All answers of a round in one write: they are applied one after the other on a copy; when one is bad, nothing is stored. */
+export const answerRound = (actor: Actor, id: string, answers: { question: string; answer: unknown }[], opts: TalkOptions = {}): Session =>
+  changeTalk(actor, id, opts, (t, at) => {
+    let talk = t;
+    const lines: TalkLine[] = [];
+    for (const a of answers) {
+      const c = answer(talk, a.question, a.answer, at);
+      talk = c.talk;
+      lines.push(...c.lines);
+    }
+    return { talk, lines };
+  });
 export const acceptProposal = (actor: Actor, id: string, proposalId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t, at) => accept(t, proposalId, at));
 export const rejectProposal = (actor: Actor, id: string, proposalId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => reject(t, proposalId));
 export const changeEntry = (actor: Actor, id: string, entryId: string, text: unknown, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => changeText(t, entryId, text));
@@ -887,6 +904,20 @@ export function recordPublished(actor: Actor, id: string, draftId: string, issue
     },
     true,
   );
+}
+
+/** A change request: the story of this draft has the build label now. Only while the session is being published (the mark). */
+export function recordChangeBuilt(actor: Actor, id: string, draftId: string, opts: StoreOptions = {}): Session {
+  return change(actor, id, opts, false, (s, at) => {
+    const cr = s.changeRequest;
+    if (!cr || cr.built?.includes(draftId)) return undefined;
+    return { ...s, changeRequest: { ...cr, built: [...(cr.built ?? []), draftId] }, updated: at };
+  }, true);
+}
+
+/** A change request: every card has the build label. Only while the session is being published. */
+export function recordChangeBuild(actor: Actor, id: string, opts: StoreOptions = {}): Session {
+  return change(actor, id, opts, false, (s, at) => (!s.changeRequest || s.changeRequest.build ? undefined : { ...s, changeRequest: { ...s.changeRequest, build: true }, updated: at }), true);
 }
 
 /** Forgets the pending update (the replacement did not reach GitHub). Only while the session is being published. */

@@ -34,14 +34,14 @@ export interface Rule {
 export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "list" | "none";
 
 /** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
-const LIST_PATHS = new Set(["queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
+const LIST_PATHS = new Set(["changes", "queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
 const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
 
 function scopeOfYes(path: string): RuleScope | undefined {
   if (path === "repos/methods") return "none";
   if (path === "repos/:owner/:name") return "repo-name";
   if (path.startsWith("repos/:id")) return "repo";
-  if (path.startsWith("refinement/:id")) return "session";
+  if (path.startsWith("refinement/:id") || path.startsWith("changes/:id")) return "session";
   if (LIST_PATHS.has(path)) return "list";
   if (NONE_PATHS.has(path) || path.startsWith("help/")) return "none";
   return undefined;
@@ -197,6 +197,14 @@ export const RULES: Rule[] = [
   r("DELETE", "admin/view-as", "no", "end the view of a user's display"),
   r("GET", "admin/credentials", "no", "the stored credentials of all accounts, without any secret"),
   r("GET", "admin/components", "no", "the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths"),
+  r("GET", "changes", "yes", "your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; only your own"),
+  r("POST", "changes", "yes", "ask for a change in plain words, `{ repo, text }` (text at most 10,000 characters; 403 `not-yours` for a project that is not yours); the architect then reads the code, asks its questions and writes the cards by itself (202, `thinking`)"),
+  r("GET", "changes/:id", "yes", "one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words); only the owner (an admin who is not the owner: 403)"),
+  r("POST", "changes/:id/answers", "yes", "answer every open question of a change request at once, `{ answers: [{ question, option | text | unknown }] }`; the cards are then written (202); only the owner"),
+  r("PUT", "changes/:id/cards/:did", "yes", "change the title and/or the criteria of a card of a change request; a card that is published is refused (409); only the owner"),
+  r("POST", "changes/:id/build", "yes", "\"Yes, build this\": publishes every card and adds the build label (`Factory_go` on GitHub, state `go` locally); a repeat or a retry adds it once to each card; only the owner"),
+  r("POST", "changes/:id/later", "yes", "\"Not now\": publishes every card without the build label; a later `build` adds it; only the owner"),
+  r("POST", "changes/:id/retry", "yes", "starts the architect's step again after a change request is `stuck` (409 when it is not); only the owner"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use: your GitHub names, then your local projects (`local:<slug>-<id8>`) (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories or local projects, from an idea; from an open issue only on a GitHub repository (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it; 400 `bad-repo` for a local name with an issue; 403 `not-yours` for a local project that is not yours; 400 `bad-repo` for a malformed name); with `guide: true` (and nothing else) the session of the Get started guide on the guide's local project, made once from the saved answers (201, then 200 with the same session; 409 without a project of the guide or outside your workspaces)"),
   r("GET", "refinement/backlog", "yes", "the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, \"Depends on\" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403)"),

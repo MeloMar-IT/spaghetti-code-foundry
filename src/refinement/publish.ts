@@ -46,6 +46,8 @@ export interface PlanInput {
   source?: { issue: number; draft?: string };
   /** The source issue was replaced by its parts already (`replacedBy` is set). */
   replaced?: boolean;
+  /** A change request's build or later: a draft with a title is ready (the person accepted it). */
+  everyCard?: boolean;
 }
 
 export type ReplacePart = { issue: number } | { item: number; title: string };
@@ -192,7 +194,7 @@ export function planOf(
     const known = states.get(d.id);
     if (known) return known;
     let r: { state: PlanState; reason?: string };
-    const own = notReadyReason(d, o.list);
+    const own = o.everyCard && d.title ? undefined : notReadyReason(d, o.list);
     if (o.onGithub.has(d.id)) r = { state: "on-github" };
     else if (circle.has(d.id)) r = { state: "not-ready", reason: "it depends on itself through other drafts" };
     else if (own !== undefined) r = { state: "not-ready", reason: own };

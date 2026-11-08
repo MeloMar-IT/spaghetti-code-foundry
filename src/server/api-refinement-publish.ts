@@ -331,7 +331,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
  * Creates the issues of the ready drafts, in the order of the plan, and remembers each one as soon as it exists. The session is marked as
  * being published for the whole time, so nothing else changes it. An issue that carries the draft's marker is taken over, not made again.
  */
-async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input: unknown) {
+export async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input: unknown, opts: { everyCard?: boolean } = {}) {
   const { user, s: first, by } = ownedSession(ctx, req, id);
   // The end of a finished run is taken in before the mark: the mark refuses every change of the session, also that one.
   settleSession(architectDeps(ctx), id);
@@ -366,6 +366,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
       by,
       date,
       replaced: !!s.source?.replacedBy,
+      ...(opts.everyCard ? { everyCard: true } : {}),
       ...(s.source ? { source: { issue: s.source.issue, ...(mark !== undefined ? { draft: mark } : {}) } } : {}),
       ...rules,
     });
