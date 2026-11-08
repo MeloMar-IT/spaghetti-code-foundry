@@ -77,8 +77,23 @@ export function cardOf(entry) {
     card.todo = words.todo;
     const l = recordLink(n, "user", idOf(entry));
     if (l) card.link = { href: l.href, external: !!l.external };
+    // a question card can be answered in place when the page finds the run among the items the person may answer
+    if (ANSWER.has(n.kind) && idOf(entry)) card.ask = idOf(entry);
     // a real run that waits for a check can be opened with Try it ("the version being checked")
     if (run && !n.final && idOf(entry)) card.tryRun = idOf(entry);
+    // A check (not the final one) can be decided in place; `own`: the run itself waits and no watcher follows it (the server says so)
+    if (!n.final && (n.kind === "approval" || n.kind === "approve_plan") && idOf(entry)) {
+      card.approve = idOf(entry);
+      // the server refuses approve and reject of a refinement run (409), so such a run is not the person's own
+      if (run?.status === "waiting" && !n.watched && !run.refinement) card.own = true;
+    }
+    // A failed run: "stuck". `resume`: the run itself can be resumed; `stuckAt` tells one failure from the next.
+    if (n.kind === "failed" && idOf(entry)) {
+      card.stuck = idOf(entry);
+      card.stuckAt = String(run?.finishedAt ?? "");
+      // the server refuses resume of a refinement run (409): such a run gets Ask for help only
+      if (run && !n.watched && !run.refinement && run.state?.next != null && !n.retired) card.resume = true;
+    }
     // "Make this version final": the card decides by itself (the run page is not a Simple page); the stories in plain words.
     if (n.final && idOf(entry)) {
       card.todo = FINAL.yes;

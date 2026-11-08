@@ -1,4 +1,4 @@
-import { adoptRun, listRunBriefs } from "../engine/state.js";
+import { adoptRun, listRunBriefs, runDirOf } from "../engine/state.js";
 import { basename, join } from "node:path";
 import { StoreError } from "./store.js";
 import { findUserByEmail, firstAdmin, listUsers } from "./users.js";
@@ -54,7 +54,9 @@ export function adoptRuns(runsDir: string, log?: (msg: string) => void): number 
   let n = 0;
   for (const b of listRunBriefs(runsDir)) {
     // the folder name, never the runId stored in the file, decides which file is changed
-    if (!b.owner && !isRefinementRun(b.source) && /^[\w-]+$/.test(b.dirName) && adoptRun(join(runsDir, b.dirName), owner)) n++;
+    if (b.owner || isRefinementRun(b.source)) continue;
+    const dir = runDirOf(runsDir, b.dirName); // undefined for a name that is not a run id
+    if (dir && adoptRun(dir, owner)) n++;
   }
   if (n) log?.(`${n} run${n === 1 ? "" : "s"} without an owner given to the first admin`);
   return n;

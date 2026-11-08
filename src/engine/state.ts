@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
@@ -273,15 +273,15 @@ const briefCache = new Map<string, { mtimeMs: number; size: number; brief: RunBr
 
 /** A brief of every run, newest first. A run.json is read again only when its time or size changed; broken files are skipped. */
 export function listRunBriefs(runsDir: string): RunBrief[] {
-  return listRunIds(runsDir).flatMap((id) => briefOf(runsDir, id) ?? []);
+  return listAllRunIds(runsDir).flatMap((e) => briefOf(e.runsDir, e.id) ?? []);
 }
 
 /** Like listRunBriefs, but gives the event loop a turn after every 50 runs (a cold start reads every file). */
 export async function listRunBriefsAsync(runsDir: string): Promise<RunBrief[]> {
   const out: RunBrief[] = [];
-  for (const [i, id] of listRunIds(runsDir).entries()) {
+  for (const [i, e] of listAllRunIds(runsDir).entries()) {
     if (i > 0 && i % 50 === 0) await new Promise<void>((r) => setImmediate(r));
-    const b = briefOf(runsDir, id);
+    const b = briefOf(e.runsDir, e.id);
     if (b) out.push(b);
   }
   return out;
@@ -432,21 +432,30 @@ function rewriteRunMark(runDir: string, change: (s: Record<string, unknown>) => 
 }
 
 export function loadRun(runsDir: string, runId: string): RunSummary | undefined {
-  if (!/^[\w-]+$/.test(runId)) return undefined;
-  const p = runFile(join(runsDir, runId));
-  if (!existsSync(p)) return undefined;
-  return JSON.parse(readFileSync(p, "utf8")) as RunSummary;
+  const dir = runDirOf(runsDir, runId);
+  if (!dir) return undefined;
+  return JSON.parse(readFileSync(runFile(dir), "utf8")) as RunSummary;
 }
 
 /** Like loadRun, but reads with fs/promises so the event loop stays free. A missing run.json gives undefined. */
 export async function loadRunAsync(runsDir: string, runId: string): Promise<RunSummary | undefined> {
-  if (!/^[\w-]+$/.test(runId)) return undefined;
-  try {
-    return JSON.parse(await readFile(runFile(join(runsDir, runId)), "utf8")) as RunSummary;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw e;
+  if (!RUN_ID_RE.test(runId)) return undefined;
+  for (const dir of allRunsDirs(runsDir)) {
+    try {
+      return JSON.parse(await readFile(runFile(join(dir, runId)), "utf8")) as RunSummary;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
+    }
   }
+  return undefined;
+}
+
+/** Reads one run from one runs folder; undefined when it is not there. */
+function loadRunIn(dir: string, id: string): RunSummary | undefined {
+  const p = runFile(join(dir, id));
+  if (!existsSync(p)) return undefined;
+  return JSON.parse(readFileSync(p, "utf8")) as RunSummary;
 }
 
 export function listRunIds(runsDir: string): string[] {
@@ -471,8 +480,8 @@ export function readLiveLog(runDir: string): string[] {
 export function spentToday(runsDir: string, now = new Date()): number {
   const day = now.toDateString();
   let total = 0;
-  for (const id of listRunIds(runsDir).slice(0, 500)) {
-    const s = loadRun(runsDir, id);
+  for (const e of listAllRunIds(runsDir).slice(0, 500)) {
+    const s = loadRunIn(e.runsDir, e.id);
     if (!s) continue;
     if (new Date(s.startedAt).toDateString() === day) total += s.totalCostUsd;
     else if (new Date(s.startedAt) < new Date(now.getTime() - 2 * 86_400_000)) break; // sorted newest first
@@ -484,6 +493,13 @@ export function spentToday(runsDir: string, now = new Date()): number {
 export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
 /** The stop reason of a run whose project reached its daily cap (#792). It carries no amount. */
 export const PROJECT_BUDGET_REASON = "the project's daily limit is reached — resume tomorrow";
+/** The stop reason of a run whose issue reached its spending limit (#786). It carries amounts: only admins see run reasons. */
+export const ISSUE_LIMIT_START = "the issue's spending limit";
+export function issueLimitReason(spentUsd: number, limitUsd: number): string {
+  return `${ISSUE_LIMIT_START} is reached: $${spentUsd.toFixed(2)} spent of $${limitUsd.toFixed(2)} (the issue, its split parts and retries) — an administrator can raise it on the run page`;
+}
+export const ISSUE_LIMIT_UNCHECKED = `${ISSUE_LIMIT_START} could not be checked — an administrator can look at the run and resume it`;
+export const isIssueLimitStop = (reason?: string): boolean => (reason ?? "").startsWith(ISSUE_LIMIT_START);
 export const isProjectBudgetStop = (reason?: string): boolean => /^the project's daily limit is reached/.test(reason ?? "");
 /** A stop by a daily spending limit, the owner's or (#792) the project's; paused work that goes on by itself. */
 export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "") || isProjectBudgetStop(reason);
@@ -508,10 +524,10 @@ export function spentTodayByProject(runsDir: string, project: ProjectRef, now = 
   const day = now.toDateString();
   const want = project.githubRepo?.toLowerCase();
   let total = 0;
-  for (const id of listRunIds(runsDir)) {
+  for (const e of listAllRunIds(runsDir)) {
     let s: RunSummary | undefined;
     try {
-      s = loadRun(runsDir, id);
+      s = loadRunIn(e.runsDir, e.id);
     } catch {
       continue;
     }
@@ -528,36 +544,89 @@ export function spentTodayByProject(runsDir: string, project: ProjectRef, now = 
 const monthCache = new Map<string, { mtimeMs: number; size: number; startedAt: string; workspace: string; cost: number }>();
 
 /**
- * Total spend of the runs of one workspace that started in the current UTC calendar month (#819). A run without a
- * `workspace` counts for "default". Costs that are not finite and files that cannot be read are skipped. Never throws.
- * Every run is looked at: run ids are made when a job is queued, not when it starts, so the list order says nothing
- * about start times. A small cache keyed by the file's mtime and size keeps a look to one stat per run.
+ * The runs folders for spend accounting (#786): the given one, then the `runs` folder of every workspace folder. Unlike
+ * allRunsDirs it THROWS when the workspaces cannot be listed or a workspace's `runs` cannot be looked at: an absent folder is
+ * unused, but a failed look would understate the total and release work (fail closed).
+ */
+export function accountingRunsDirs(runsDir: string): string[] {
+  const data = dirname(runsDir);
+  const container = join(data, WORKSPACES_DIR);
+  const out = [runsDir];
+  try {
+    lstatSync(container);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT" || (e as NodeJS.ErrnoException).code === "ENOTDIR") return out;
+    throw e;
+  }
+  // a container that leaves the data folder is not followed (the same rule as allRunsDirs)
+  if (!realInside(data, container)) return out;
+  for (const d of readdirSync(container, { withFileTypes: true })) {
+    if (!d.isDirectory() || !validWorkspaceId(d.name) || d.name === DEFAULT_WORKSPACE) continue;
+    const runs = join(container, d.name, "runs");
+    try {
+      if (lstatSync(runs).isDirectory()) out.push(runs);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ENOTDIR") throw e;
+    }
+  }
+  return out;
+}
+
+/** The ids with a run.json in one folder; THROWS when the folder exists but cannot be listed. */
+export function accountingRunIds(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  return names.filter((d) => {
+    try {
+      statSync(runFile(join(dir, d)));
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT" || (e as NodeJS.ErrnoException).code === "ENOTDIR") return false;
+      throw e;
+    }
+  });
+}
+
+/** Every run.json of the accounting folders, parsed with the mtime/size cache. THROWS when a file cannot be read. */
+function monthSpend(runsDir: string, now: Date, keep: (workspace: string) => boolean): number {
+  const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+  let total = 0;
+  for (const dir of accountingRunsDirs(runsDir)) {
+    for (const id of accountingRunIds(dir)) {
+      const file = runFile(join(dir, id));
+      const st = statSync(file);
+      let e = monthCache.get(file);
+      if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
+        const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
+        e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
+        monthCache.set(file, e);
+      }
+      const at = Date.parse(e.startedAt);
+      if (keep(e.workspace) && at >= from && at < to && Number.isFinite(e.cost)) total += e.cost;
+    }
+  }
+  return total;
+}
+
+/**
+ * Total spend of the runs of one workspace that started in the current UTC calendar month (#819), also those kept in
+ * workspace folders (#824). A run without a `workspace` counts for "default". Costs that are not finite are skipped. THROWS
+ * when a folder or a run file cannot be read: a caller that holds work treats that as "over" (fail closed). A small cache
+ * keyed by the file's mtime and size keeps a look to one stat per run.
  */
 export function spentThisMonthByWorkspace(runsDir: string, workspace: string, now = new Date()): number {
-  try {
-    const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
-    const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
-    let total = 0;
-    for (const id of listRunIds(runsDir)) {
-      try {
-        const file = runFile(join(runsDir, id));
-        const st = statSync(file);
-        let e = monthCache.get(file);
-        if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
-          const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
-          e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
-          monthCache.set(file, e);
-        }
-        const at = Date.parse(e.startedAt);
-        if (e.workspace === workspace && at >= from && at < to && Number.isFinite(e.cost)) total += e.cost;
-      } catch {
-        continue;
-      }
-    }
-    return total;
-  } catch {
-    return 0;
-  }
+  return monthSpend(runsDir, now, (w) => w === workspace);
+}
+
+/** Total spend of all runs of all workspaces that started in the current UTC month (#786). May throw, like spentThisMonthByWorkspace. */
+export function spentThisMonth(runsDir: string, now = new Date()): number {
+  return monthSpend(runsDir, now, () => true);
 }
 
 /** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */
@@ -567,10 +636,10 @@ export const isTimeLimitStop = (reason?: string): boolean => /^ran out of time i
 export function spentTodayBy(runsDir: string, owner: string, now = new Date()): number {
   const day = now.toDateString();
   let total = 0;
-  for (const id of listRunIds(runsDir).slice(0, 500)) {
+  for (const e of listAllRunIds(runsDir).slice(0, 500)) {
     let s: RunSummary | undefined;
     try {
-      s = loadRun(runsDir, id);
+      s = loadRunIn(e.runsDir, e.id);
     } catch {
       continue;
     }
@@ -580,4 +649,194 @@ export function spentTodayBy(runsDir: string, owner: string, now = new Date()): 
     } else if (new Date(s.startedAt) < new Date(now.getTime() - 2 * 86_400_000)) break; // sorted newest first
   }
   return total;
+}
+
+// ---- Workspace folders (#824) ----------------------------------------------------------------------------------------
+// The runs folder is the anchor every caller passes. `default` runs stay in it; the runs of any other listed workspace
+// live in `<dirname(runsDir)>/workspaces/<id>/runs/`. Folder names come only from validated ids.
+
+export const WORKSPACES_DIR = "workspaces";
+export const RUN_ID_RE = /^[\w-]+$/;
+export const WORKSPACE_REMOVED = "WORKSPACE_REMOVED: this run's workspace is no longer in the list; its runs can be read but not started, resumed or changed";
+
+export class WorkspaceFolderError extends Error {
+  constructor(message: string) {
+    super("WORKSPACE_FOLDER_REFUSED: " + message);
+  }
+}
+
+/** Throws when `p` is a link whose real path is not inside the real data folder. A missing path is fine. */
+function refuseEscapingLink(realData: string, p: string): void {
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch {
+    return;
+  }
+  if (!st.isSymbolicLink()) return;
+  let real: string;
+  try {
+    real = realpathSync(p);
+  } catch {
+    throw new WorkspaceFolderError("a link in the workspace folder cannot be resolved");
+  }
+  if (real !== realData && !real.startsWith(realData + sep)) throw new WorkspaceFolderError("a link in the workspace folder leaves the data folder");
+}
+
+/** `<data>/workspaces/<id>` for a valid id other than `default`. Throws for a bad id or a link that leaves the data folder. */
+export function workspaceFolderIn(data: string, id: string): string {
+  if (!validWorkspaceId(id) || id === DEFAULT_WORKSPACE) throw new WorkspaceFolderError("that is not a workspace folder id");
+  const container = join(data, WORKSPACES_DIR);
+  const dir = join(container, id);
+  let realData: string;
+  try {
+    realData = realpathSync(data);
+  } catch {
+    return dir; // no data folder yet: nothing can be a link
+  }
+  for (const p of [container, dir, join(dir, "runs"), join(dir, "locks")]) refuseEscapingLink(realData, p);
+  return dir;
+}
+
+/** `<data>/workspaces/<id>/skills` (#825). Refuses a link that leaves the data folder; a bad skills link does not block the rest of the workspace. */
+export function workspaceSkillsFolderIn(data: string, id: string): string {
+  const dir = join(workspaceFolderIn(data, id), "skills");
+  let realData: string;
+  try {
+    realData = realpathSync(data);
+  } catch {
+    return dir;
+  }
+  refuseEscapingLink(realData, dir);
+  return dir;
+}
+
+export const workspaceDir = (runsDir: string, id: string): string => workspaceFolderIn(dirname(runsDir), id);
+
+/** The runs folder of a workspace; the given runs folder for `default` or none. */
+export function workspaceRunsDir(runsDir: string, ws?: string): string {
+  return ws === undefined || ws === DEFAULT_WORKSPACE ? runsDir : join(workspaceDir(runsDir, ws), "runs");
+}
+
+/** The workspace folders under `<data>/workspaces`: real folders with a valid id other than `default` (links and files are skipped). Never throws. */
+export function workspaceFoldersIn(data: string): { id: string; dir: string }[] {
+  try {
+    const container = join(data, WORKSPACES_DIR);
+    // a container that is a link must still point inside the data folder, or nothing under it is listed
+    if (!realInside(data, container)) return [];
+    return readdirSync(container, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && validWorkspaceId(d.name) && d.name !== DEFAULT_WORKSPACE)
+      .map((d) => ({ id: d.name, dir: join(container, d.name) }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  } catch {
+    return [];
+  }
+}
+
+export const workspaceDirsIn = (runsDir: string): { id: string; dir: string }[] => workspaceFoldersIn(dirname(runsDir));
+
+function isRealDir(p: string): boolean {
+  try {
+    return lstatSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** True when `p` exists and its real path is the data folder or inside it (a link that leaves the data folder is false). */
+function realInside(data: string, p: string): boolean {
+  try {
+    const real = realpathSync(p);
+    const root = realpathSync(data);
+    return real === root || real.startsWith(root + sep);
+  } catch {
+    return false;
+  }
+}
+
+/** The given runs folder, then the `runs` folder of every workspace folder (only real folders). Never throws. */
+export function allRunsDirs(runsDir: string): string[] {
+  return [runsDir, ...workspaceDirsIn(runsDir).map((w) => join(w.dir, "runs")).filter(isRealDir)];
+}
+
+/** Ids of runs with a run.json in every runs folder, newest first. On a duplicate id the first folder (the given runs folder) wins. */
+export function listAllRunIds(runsDir: string): { id: string; runsDir: string }[] {
+  const seen = new Map<string, string>();
+  for (const dir of allRunsDirs(runsDir)) for (const id of listRunIds(dir)) if (!seen.has(id)) seen.set(id, dir);
+  return [...seen.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0)).map(([id, dir]) => ({ id, runsDir: dir }));
+}
+
+/** The folder of a run: the first runs folder with `<id>/run.json`. Undefined for an invalid or unknown id. */
+export function runDirOf(runsDir: string, runId: string): string | undefined {
+  if (typeof runId !== "string" || !RUN_ID_RE.test(runId)) return undefined;
+  const first = join(runsDir, runId);
+  if (existsSync(runFile(first))) return first;
+  // the same rule as allRunsDirs: a `runs` link is not followed
+  for (const dir of workspaceDirsIn(runsDir).map((w) => join(w.dir, "runs")).filter(isRealDir)) {
+    const d = join(dir, runId);
+    if (existsSync(runFile(d))) return d;
+  }
+  return undefined;
+}
+
+/** True when any runs folder (but `except`, a runs folder) has an entry with this id, with or without run.json. */
+export function runIdTaken(runsDir: string, runId: string, except?: string): boolean {
+  for (const dir of allRunsDirs(runsDir)) {
+    if (dir === except) continue;
+    try {
+      lstatSync(join(dir, runId));
+      return true;
+    } catch {
+      // not here
+    }
+  }
+  return false;
+}
+
+/**
+ * Reserves the run folder of `summary` (its parent is the runs folder): `mkdir` without `recursive` on the run folder itself,
+ * so an existing folder, with or without run.json, is refused and never touched. Then the id must not exist in another runs
+ * folder; if it does, only our own empty folder is removed again. Throws `run id <id> is already taken`.
+ */
+export function claimRunDir(runsDir: string, summary: Pick<RunSummary, "runDir">, hooks: { afterClaim?: () => void } = {}): void {
+  const dir = summary.runDir;
+  const parent = dirname(dir);
+  const id = dir.slice(parent.length + 1);
+  if (!RUN_ID_RE.test(id)) throw new Error("invalid run id");
+  mkdirSync(parent, { recursive: true });
+  try {
+    mkdirSync(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`run id ${id} is already taken`);
+    throw e;
+  }
+  hooks.afterClaim?.();
+  if (runIdTaken(runsDir, id, parent)) {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // not empty: not ours to remove
+    }
+    throw new Error(`run id ${id} is already taken`);
+  }
+}
+
+/**
+ * Test slots stay machine-wide: flows and the test gate use `<runDir>/../../test-slots`, which for a workspace run is
+ * `<data>/workspaces/<id>/test-slots`. That is a relative link to `<data>/test-slots`. An existing entry is left alone.
+ */
+export function ensureWorkspaceTestSlots(runsDir: string, ws: string): void {
+  const data = dirname(runsDir);
+  const dir = workspaceDir(runsDir, ws);
+  mkdirSync(join(data, "test-slots"), { recursive: true });
+  mkdirSync(dir, { recursive: true });
+  try {
+    lstatSync(join(dir, "test-slots"));
+  } catch {
+    try {
+      symlinkSync(join("..", "..", "test-slots"), join(dir, "test-slots"));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+  }
 }

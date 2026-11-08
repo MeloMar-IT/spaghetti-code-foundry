@@ -64,6 +64,11 @@ const enc = encodeURIComponent;
 /** How long a call about the view may take; a stalled server must not hold the page. */
 export const VIEW_TIMEOUT_MS = 10000;
 
+/** How long making a project from a starter may take (the git copy and the connection test). */
+export const START_TIMEOUT_MS = 180000;
+/** How long a read or save of the guide's place may take: a stalled one must not hold the guide's buttons. */
+export const PROGRESS_TIMEOUT_MS = 15000;
+
 /** The audit filters as a query: only the ones that are set, in the order user, action, from, to. "" for none. */
 const auditQuery = (f = {}) => {
   const q = ["user", "action", "from", "to"].filter((k) => f[k]).map((k) => `${k}=${enc(f[k])}`).join("&");
@@ -107,6 +112,8 @@ export const api = {
   startRun: (body) => req("POST", "/api/runs", body),
   cancelRun: (id) => req("POST", `/api/runs/${enc(id)}/cancel`, {}),
   resumeRun: (id, from) => req("POST", `/api/runs/${enc(id)}/resume`, { from }),
+  issueLimit: (id) => req("GET", `/api/runs/${enc(id)}/issue-limit`),
+  setIssueLimit: (id, usd) => req("PUT", `/api/runs/${enc(id)}/issue-limit`, { limitUsd: usd }),
   approveRun: (id, note) => req("POST", `/api/runs/${enc(id)}/approve`, { note }),
   rejectRun: (id, note) => req("POST", `/api/runs/${enc(id)}/reject`, { note }),
   answerRun: (id, text) => req("POST", `/api/runs/${enc(id)}/answer`, { text }),
@@ -175,6 +182,10 @@ export const api = {
   restoreRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/restore`, {}),
   removeBuildLabel: (id) => req("POST", `/api/refinement/${enc(id)}/source/remove-build-label`, {}),
   askArchitect: (id) => req("POST", `/api/refinement/${enc(id)}/architect`, {}),
+  askUnderstand: (id, words) => req("POST", `/api/refinement/${enc(id)}/understand`, words ? { words } : {}),
+  // The guide's own session (Get started, step 6): made once per account from the saved answers.
+  guideSession: () => req("POST", "/api/refinement", { guide: true }, true),
+  repoWatchers: (repoId) => req("GET", `/api/admin/repos/${enc(repoId)}/watchers`),
   askRound: (id) => req("POST", `/api/refinement/${enc(id)}/round`, {}),
   askOwnQuestion: (id, question) => req("POST", `/api/refinement/${enc(id)}/ask`, { question }),
   answerQuestion: (id, qid, body) => req("POST", `/api/refinement/${enc(id)}/questions/${enc(qid)}/answer`, body),
@@ -232,8 +243,10 @@ export const api = {
     return req("PUT", "/api/onboarding/agents", { answers, replace }, false, false, v ? { "x-config-version": v } : undefined);
   },
   // Where this account is in the Get started guide: { step, answers }.
-  onboardingProgress: () => req("GET", "/api/onboarding/progress"),
-  saveOnboardingProgress: (p) => req("PUT", "/api/onboarding/progress", p),
+  starters: () => req("GET", "/api/starters"),
+  startProject: (id, body) => req("POST", `/api/starters/${enc(id)}/project`, body, false, false, undefined, AbortSignal.timeout(START_TIMEOUT_MS)),
+  onboardingProgress: () => req("GET", "/api/onboarding/progress", undefined, false, false, undefined, AbortSignal.timeout(PROGRESS_TIMEOUT_MS)),
+  saveOnboardingProgress: (p) => req("PUT", "/api/onboarding/progress", p, false, false, undefined, AbortSignal.timeout(PROGRESS_TIMEOUT_MS)),
   clearOnboardingProgress: () => req("DELETE", "/api/onboarding/progress"),
   onboardingSignIn: (tool) => req("POST", "/api/onboarding/sign-in", { tool }),
   onboardingTestCall: (tool) => req("POST", "/api/onboarding/test-call", { tool }),
@@ -247,6 +260,7 @@ export const api = {
   dismissTurn: (key) => req("POST", "/api/your-turn/dismiss", { key }),
   // Without a key every dismissed item comes back; only a missing key means "all".
   restoreTurn: (key) => req("POST", "/api/your-turn/restore", key === undefined ? {} : { key }),
+  myTurn: () => req("GET", "/api/your-turn/mine"),
   turnDetail: (key) => req("GET", `/api/your-turn/detail?key=${enc(key)}`),
   actTurn: (body) => req("POST", "/api/your-turn/act", body),
   clarity: () => req("GET", "/api/clarity"),

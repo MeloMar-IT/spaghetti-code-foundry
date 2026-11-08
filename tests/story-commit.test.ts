@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -241,5 +241,59 @@ describe("the moved commit", () => {
     await s.setGithubIssue(1, 9, "acme/app");
     expect(commits()).toHaveLength(n + 2);
     expect(git(d, "show", "scf/stories:.scf/stories/1-hello.md")).toContain("updated: 2030-01-01T00:00:00.000Z");
+  });
+});
+
+describe("commitCreated", () => {
+  const branch = "scf/stories";
+  /** A story saved without its commit, as after a failed commit. */
+  async function saved(): Promise<{ d: string; s: LocalStore }> {
+    const d = repo();
+    await new LocalStore(d, "local/x", { lockPollMs: 5, commit: false }).create({ title: "Hello", body: "b", labels: [] });
+    return { d, s: new LocalStore(d, "local/x", { lockPollMs: 5, branch }) };
+  }
+
+  it("commits the saved story and the number file once, and does nothing the second time", async () => {
+    const { d, s } = await saved();
+    await s.commitCreated(1);
+    const n = lines(git(d, "log", "--format=%s", branch)).length;
+    expect(git(d, "show", "--name-only", "--format=%s", branch).split("\n").filter(Boolean).sort()).toEqual(["scf: story #1 created", `${stories}/1-hello.md`, `${stories}/next-number`].sort());
+    await s.commitCreated(1);
+    expect(lines(git(d, "log", "--format=%s", branch))).toHaveLength(n);
+  });
+
+  it("runs the guard under the lock before anything is written, and a throwing guard commits nothing", async () => {
+    const { d, s } = await saved();
+    await expect(s.commitCreated(1, undefined, () => { throw new Error("not-yours"); })).rejects.toThrow("not-yours");
+    expect(git(d, "branch", "--list", branch)).toBe("");
+    const f = new LocalStore(d, "local/x", { lockPollMs: 5, commit: false });
+    const before = readFileSync(join(d, stories, "next-number"), "utf8");
+    await expect(f.create({ title: "Two", body: "", labels: [] }, undefined, () => { throw new Error("not-yours"); })).rejects.toThrow("not-yours");
+    expect(readFileSync(join(d, stories, "next-number"), "utf8")).toBe(before);
+    expect(existsSync(join(d, stories, "2-two.md"))).toBe(false);
+  });
+
+  it("refuses a linked stories directory before it makes a lock file in the target", async () => {
+    const d = repo();
+    const target = tmp();
+    mkdirSync(join(d, ".scf"));
+    symlinkSync(target, join(d, stories));
+    await expect(new LocalStore(d, "local/x", { lockPollMs: 5, branch }).commitCreated(1)).rejects.toThrow();
+    expect(readdirSync(target)).toEqual([]);
+  });
+
+  it("refuses a linked or malformed number file, and commits nothing from it", async () => {
+    const { d, s } = await saved();
+    const next = join(d, stories, "next-number");
+    const outside = join(tmp(), "n");
+    writeFileSync(outside, "5\n");
+    rmSync(next);
+    symlinkSync(outside, next);
+    await expect(s.commitCreated(1)).rejects.toThrow(/next-number/);
+    rmSync(next);
+    writeFileSync(next, "banana\n");
+    await expect(s.commitCreated(1)).rejects.toThrow(/next-number/);
+    expect(git(d, "branch", "--list", branch)).toBe("");
+    expect(readFileSync(outside, "utf8")).toBe("5\n");
   });
 });

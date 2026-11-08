@@ -96,6 +96,8 @@ export interface SkillRegistry {
 export interface DiscoverOptions {
   repo?: string;
   home?: string;
+  /** The administrator skills folder; default `<home>/skills`. A workspace has its own (#825). */
+  skillsDir?: string;
   builtinRoot?: string;
   env?: NodeJS.ProcessEnv;
   /** The user's home folder (where ~/.claude and ~/.codex live). */
@@ -115,7 +117,7 @@ export { personalAgentPath };
 /** Order: data folder, approved store releases (newest version first), skills.roots, built-in, repository. Store paths in skills.roots are skipped. */
 function buildSources(skills: Config["skills"], opts: DiscoverOptions, listing: StoreListing, approved: readonly ApprovedRelease[]): SkillSource[] {
   const home = opts.home ?? dataHome();
-  const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(home, "skills"), optional: true }];
+  const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: opts.skillsDir ?? join(home, "skills"), optional: true }];
   for (const s of storeSources(listing, approved).sources) list.push({ kind: "catalogue", optional: false, ...s });
   skills.roots.forEach((root, i) => {
     if (!releaseStorePath(root, home)) list.push({ kind: "admin", label: `skills.roots[${i}]`, root, optional: false });
@@ -524,7 +526,8 @@ export function pinBuiltinSkillsAtStart(skills: Config["skills"], log: (line: st
   }
 }
 
-let cache: { key: string; at: number; reg: SkillRegistry } | undefined;
+const MAX_CACHED = 16;
+const cache = new Map<string, { at: number; reg: SkillRegistry }>();
 
 /** Like discoverSkills, kept for a minute: health asks every 30 seconds. */
 export function cachedSkillRegistry(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): SkillRegistry {
@@ -533,13 +536,17 @@ export function cachedSkillRegistry(skills: Config["skills"], now = Date.now(), 
 
 /** Like cachedSkillRegistry, and says when the registry was really read (ms since the epoch). */
 export function cachedSkillRegistryAt(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): { registry: SkillRegistry; at: number } {
-  const key = JSON.stringify(skills) + "\0" + (opts.home ?? dataHome()) + "\0" + (opts.repo ?? "");
-  if (cache && cache.key === key && now - cache.at >= 0 && now - cache.at < maxAgeMs) return { registry: cache.reg, at: cache.at };
+  const home = opts.home ?? dataHome();
+  const key = JSON.stringify(skills) + "\0" + home + "\0" + (opts.repo ?? "") + "\0" + (opts.skillsDir ?? join(home, "skills"));
+  const hit = cache.get(key);
+  if (hit && now - hit.at >= 0 && now - hit.at < maxAgeMs) return { registry: hit.reg, at: hit.at };
   const reg = discoverSkills(skills, opts);
-  cache = { key, at: now, reg };
+  cache.delete(key);
+  cache.set(key, { at: now, reg });
+  while (cache.size > MAX_CACHED) cache.delete(cache.keys().next().value as string);
   return { registry: reg, at: now };
 }
 
 export function clearSkillRegistryCache(): void {
-  cache = undefined;
+  cache.clear();
 }

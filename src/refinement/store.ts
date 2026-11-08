@@ -6,6 +6,7 @@ import { findLocalRepo, findOwnedProject, listRepos, ownsProject } from "../auth
 import { isLocalRepoName } from "../auth/local-name.js";
 import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
+import { rememberSplit } from "../engine/split-links.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
@@ -937,7 +938,8 @@ export const recordDependantDone = (actor: Actor, id: string, issue: number, out
 
 /** The issue is replaced by its parts: `replacedBy`, `closed` and `closedAt` are set, the journal goes, one log line. Only while the session is being published. */
 export function recordReplaced(actor: Actor, id: string, end: { closed: Closed; closedAt?: string }, opts: StoreOptions = {}): Session {
-  return change(
+  let link: { repo: string; issue: number; parts: number[] } | undefined;
+  const s = change(
     actor,
     id,
     opts,
@@ -946,11 +948,15 @@ export function recordReplaced(actor: Actor, id: string, end: { closed: Closed; 
       if (!s.source) throw new RefinementError("bad-state", NO_SOURCE);
       const r = withReplaced(s.source, end);
       if (!r) return undefined;
+      link = { repo: s.repo, issue: s.source.issue, parts: r.parts };
       room(s, LOG_LIMIT - 1);
       return { ...s, source: r.source, updated: at, log: [...s.log, { at, by: actor.id, what: "issue-replaced", detail: cut(`#${s.source.issue}: ${r.parts.map((n) => `#${n}`).join(", ")}`, TITLE_MAX) }] };
     },
     true,
   );
+  // the link outlives the session: a dropped session is removed later, its parts still belong to the issue's family (#786)
+  if (link) rememberSplit(dataHome(), link.repo, link.issue, link.parts);
+  return s;
 }
 
 /**

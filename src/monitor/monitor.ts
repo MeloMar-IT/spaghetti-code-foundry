@@ -11,6 +11,7 @@ import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/w
 import type { Scheduler } from "../queue/scheduler.js";
 import { markAutoDemotions, runAutoDemotions } from "../governance/auto-demote.js";
 import { appendLiveLog } from "../engine/state.js";
+import { allLockRoots } from "../engine/running.js";
 import { ownerRepo, runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
 import { type Seen, decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
@@ -120,6 +121,20 @@ export function readAreaLocks(dir: string = areaLockDir()): LockFile[] {
     }
   } catch {
     // no lock folder: no locks
+  }
+  return out;
+}
+
+/** The locks of the default lock folder and of every workspace lock folder (key prefix `workspaces/<id>/`, #824). At most 500 in all. Never throws. */
+export function readAllAreaLocks(): LockFile[] {
+  const out = readAreaLocks(areaLockDir());
+  for (const r of allLockRoots()) {
+    if (r.workspace === undefined) continue;
+    if (out.length >= MAX_LOCKS) break;
+    for (const l of readAreaLocks(r.dir)) {
+      if (out.length >= MAX_LOCKS) break;
+      out.push({ ...l, key: `workspaces/${r.workspace}/${l.key}` });
+    }
   }
   return out;
 }
@@ -292,7 +307,7 @@ export class Monitor {
     // Taken just before the locks are read: a lock freed before this point is not in the list the detectors see.
     const freedNow = new Map(this.freed);
     const seen = withoutStoryRuns(
-      { runs: allRuns, active: allActive, watchers: this.d.watchers(), locks: readAreaLocks() },
+      { runs: allRuns, active: allActive, watchers: this.d.watchers(), locks: readAllAreaLocks() },
       stories,
       storyRuns.flatMap((b) => [b.runId, b.dirName]),
     );

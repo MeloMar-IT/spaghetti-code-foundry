@@ -238,6 +238,7 @@ async function main(argv: string[]): Promise<number> {
       ref: { type: "string" },
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
+      workspace: { type: "string" },
       "public-key": { type: "string" },
       "claude-bin": { type: "string" },
       "codex-bin": { type: "string" },

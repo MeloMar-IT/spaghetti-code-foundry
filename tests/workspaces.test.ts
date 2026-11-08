@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,8 @@ import { RepoError, addRepo, reposPath, setRepoAuth, setRepoWorkspace, transferR
 import { ConfigSchema, parseConfigText } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
 import { Scheduler, queuedWorkspace, type Job } from "../src/queue/scheduler.js";
+import { cleanRuns } from "../src/clean.js";
+import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, resumeRun, runFlow } from "../src/engine/runner.js";
 import { limitsOf, knownWorkspace, workspaceForJob, workspaceOfRepo, workspaceOfRun, workspacesOf } from "../src/workspaces/index.js";
 import { WORKSPACE_ID_RE } from "../src/workspaces/list.js";
 import { UsageEventSchema } from "../src/usage/schema.js";
@@ -169,6 +171,7 @@ describe("usage schema", () => {
 describe("the queue", () => {
   const SLOW = "name: slow\nworkspace: inplace\nvars:\n  github_repo: acme/flowdefault\nsteps:\n  - {id: a, type: shell, run: \"true\"}\n";
   const setup = () => {
+    config(TEAMS); // a workspace has to be in the list to take a new run (#824)
     const repo = join(home, "repo");
     mkdirSync(repo);
     const queueFile = join(home, "queue.json");
@@ -240,6 +243,7 @@ describe("the queue reads a run's variables once", () => {
     const repo = join(home, "repo-frozen");
     mkdirSync(join(repo, ".claude-factory"), { recursive: true });
     writeFileSync(join(repo, ".claude-factory", "config.yaml"), "vars:\n  github_repo: acme/a\n");
+    config(TEAMS);
     const a = addRepo(ANN, { url: "acme/a" }, OK);
     setRepoWorkspace(a.id, { workspace: "team-a" }, () => true);
     const s = new Scheduler({ runsDir: join(home, "runs"), queueFile: join(home, "queue-frozen.json"), config: () => ({ ...ConfigSchema.parse({}), concurrency: 1 }) });
@@ -249,7 +253,7 @@ describe("the queue reads a run's variables once", () => {
     writeFileSync(join(repo, ".claude-factory", "config.yaml"), "vars:\n  github_repo: acme/b\n");
     s.resume();
     await s.idle();
-    const run = JSON.parse(readFileSync(join(home, "runs", id, "run.json"), "utf8")) as { vars: Record<string, string>; workspace?: string };
+    const run = JSON.parse(readFileSync(join(home, "workspaces", "team-a", "runs", id, "run.json"), "utf8")) as { vars: Record<string, string>; workspace?: string };
     expect(run.vars.github_repo).toBe("acme/a");
     expect(run.workspace).toBe("team-a");
   });
@@ -323,5 +327,68 @@ describe("plugin point", () => {
     reg.dispose!();
     await expect(load([(api) => (api.workspaces({ list: () => [] }), api.workspaces({ list: () => [] }))])).rejects.toThrow(/once/);
     expect(workspacesOf(ANN)).toEqual(["default"]); // the failed load removed its supplier
+  });
+});
+
+describe("a workspace that is not in the list is read-only (#824)", () => {
+  const FLOW = "name: ro\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: \"true\"}\n";
+  const cfg = ConfigSchema.parse({ protected_branches: [] });
+  const runsDir = () => join(home, "runs");
+  const start = async () => {
+    config(TEAMS);
+    const repo = join(home, "repo-ro");
+    mkdirSync(repo, { recursive: true });
+    const run = await runFlow(parseFlow(FLOW), { task: "t", repo, runsDir: runsDir(), config: cfg, workspace: "team-a" });
+    const file = join(home, "workspaces", "team-a", "runs", run.runId, "run.json");
+    config(""); // team-a is taken out of the list
+    const s = new Scheduler({ runsDir: runsDir(), queueFile: join(home, "queue-ro.json"), config: () => cfg });
+    s.drain();
+    return { run, file, s, repo };
+  };
+  it("refuses resume, answer, park, unpark and archive, and leaves run.json as it was", async () => {
+    const { run, file, s } = await start();
+    const before = readFileSync(file, "utf8");
+    expect(() => s.submit({ kind: "resume", runId: run.runId })).toThrow(/WORKSPACE_REMOVED/);
+    expect(() => s.answer(run.runId, "yes", ANN)).toThrow(AnswerRefused);
+    expect(s.setArchived(run.runId, true, ANN)).toBe("removed");
+    expect(s.setParked(run.runId)).toBe(false);
+    expect(s.clearParked(run.runId)).toBe(false);
+    await expect(resumeRun({ runId: run.runId, runsDir: runsDir(), config: cfg, from: "a" })).rejects.toThrow(/WORKSPACE_REMOVED/);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(s.briefs().map((b) => b.runId)).toContain(run.runId); // still listed
+  });
+  it("refuses a new run in the queue and in runFlow, before anything is written", async () => {
+    config(""); // no list at all
+    const repo = join(home, "repo-ro2");
+    mkdirSync(repo, { recursive: true });
+    const s = new Scheduler({ runsDir: runsDir(), queueFile: join(home, "queue-ro2.json"), config: () => cfg });
+    s.drain();
+    const job: Job = { kind: "run", flow: parseFlow(FLOW), task: "t", repo, vars: {} };
+    expect(() => s.submit(job, { owner: ANN, workspace: "team-a" })).toThrow(/WORKSPACE_REMOVED/);
+    expect(s.queue().pending).toHaveLength(0);
+    await expect(runFlow(parseFlow(FLOW), { task: "t", repo, runsDir: runsDir(), config: cfg, workspace: "team-a" })).rejects.toThrow(/WORKSPACE_REMOVED/);
+    expect(existsSync(join(home, "workspaces"))).toBe(false);
+    expect(existsSync(runsDir())).toBe(false);
+  });
+  it("cancelling a stopped or waiting run of a removed workspace writes nothing", async () => {
+    const { run, file, s } = await start();
+    const before = readFileSync(file, "utf8");
+    // a stopped run of the removed workspace, written by hand so the cancel helpers see the state
+    const stopped = join(home, "workspaces", "team-a", "runs", "20261105-000000-stop");
+    mkdirSync(stopped, { recursive: true });
+    const body = JSON.stringify({ runId: "20261105-000000-stop", status: "stopped", workspace: "team-a", startedAt: new Date().toISOString(), runDir: stopped, totalCostUsd: 0, flow: "ro", task: "t", vars: {}, repo: join(home, "repo-ro"), history: [], state: { next: null, steps: {}, visits: {} } });
+    writeFileSync(join(stopped, "run.json"), body);
+    expect(cancelStoppedRun(runsDir(), "20261105-000000-stop", cfg)).toBeUndefined();
+    expect(cancelWaitingRun(runsDir(), run.runId, cfg)).toBeUndefined();
+    expect(readFileSync(join(stopped, "run.json"), "utf8")).toBe(body);
+    expect(existsSync(join(stopped, "live.log"))).toBe(false);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(s).toBeDefined();
+  });
+  it("can still be cleaned", async () => {
+    const { run, file } = await start();
+    const res = cleanRuns({ runsDir: runsDir(), olderThanDays: 0, purge: true });
+    expect(res.runs).toContain(run.runId);
+    expect(existsSync(file)).toBe(false);
   });
 });

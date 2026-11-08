@@ -13,10 +13,13 @@ import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
 import { liveCanonicalDeps } from "../skills/run-canonical.js";
+import { discoverSkills } from "../skills/registry.js";
+import { workspaceSkillsDir } from "../home.js";
 import { dataHome } from "../auth/store.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
 import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant, type SessionTools, type ToolCheck } from "../skills/tool-policy.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
+import { lockRoot } from "../engine/running.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
@@ -146,6 +149,8 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           workspaceReadOnly: readOnly,
           requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
           pushLogDir: env.FACTORY_PUSH_LOG ? dirname(env.FACTORY_PUSH_LOG) : undefined,
+          runsDir: engine.runsDir,
+          lockDir: lockRoot(engine.summary.workspace),
         }),
       );
     }
@@ -529,7 +534,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     step.skills === "catalog"
       ? runSkillCatalogue(
           { workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) },
-          canon ? { canonical: canon } : {},
+          { discover: (skills) => discoverSkills(skills, { skillsDir: workspaceSkillsDir(engine.summary.workspace) }), ...(canon ? { canonical: canon } : {}) },
         )
       : undefined;
   if (catalogue) engine.log(`    · ${catalogue.log}`);

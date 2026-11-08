@@ -1,4 +1,6 @@
-import { findOwnedRepo, type RepoRecord } from "../auth/repos.js";
+import { isLocalRepoName } from "../auth/local-name.js";
+import { findOwnedProject, findOwnedRepo, type RepoRecord } from "../auth/repos.js";
+import { RefinementError } from "../refinement/store.js";
 import { repoGhIdentity } from "../queue/gh-identity.js";
 import { withGhEnv } from "../github.js";
 import { HttpError } from "./http.js";
@@ -27,4 +29,22 @@ export async function asOwnedRepo<T>(ctx: ApiContext, owner: string, githubRepo:
   } finally {
     id.dispose();
   }
+}
+
+const NOT_YOURS = "that is not one of your projects any more";
+
+/**
+ * `asOwnedRepo` for a GitHub name. For a local project (`local:<slug>-<id8>`): `fn` runs with the owner's record and no sign-in (no `gh`);
+ * a project that is not the owner's (any more) is `not-yours` (403).
+ */
+export async function asOwnedProject<T>(ctx: ApiContext, owner: string, name: string, fn: (rec: RepoRecord) => Promise<T>): Promise<T> {
+  if (!isLocalRepoName(name)) return asOwnedRepo(ctx, owner, name, fn);
+  const rec = findOwnedProject(owner, name);
+  if (!rec) throw new RefinementError("not-yours", NOT_YOURS);
+  return fn(rec);
+}
+
+/** Local project only: throws `not-yours` when `owner` no longer owns it. Synchronous, so it can run inside the story lock. */
+export function stillOwnsProject(owner: string, name: string): void {
+  if (!findOwnedProject(owner, name)) throw new RefinementError("not-yours", NOT_YOURS);
 }

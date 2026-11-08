@@ -7,9 +7,26 @@ import {
   acquireLock, dropEmptyHomeVars, explicitHome, jsonFiles, lockHolder, lockPath, pidAlive, releaseLock, removeTree,
   replacePath, runningRuns, sameSnapshot, sleepSync, snapshot, type RunningRun,
 } from "./home-migrate.js";
+import { allRunsDirs, workspaceFolderIn, workspaceSkillsFolderIn } from "./engine/state.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "./workspaces/list.js";
 import { RESTART_CODE } from "./supervise.js";
 
 export { explicitHome, dropEmptyHomeVars, runningRuns };
+
+/** Running runs of a data folder: the runs folder and the runs folder of every workspace (#824). */
+function runningInAll(home: string): RunningRun[] {
+  return allRunsDirs(join(home, "runs")).flatMap((d) => runningRuns(d));
+}
+
+/** `<data>/workspaces/<id>`, the folder of a workspace other than `default` (#824). Throws for a bad id or a link that leaves the data folder. */
+export function workspaceHome(id: string): string {
+  return workspaceFolderIn(process.env.FACTORY_HOME ?? FACTORY_HOME, id);
+}
+
+/** The administrator skills folder of a workspace (#825): `<data>/workspaces/<id>/skills`, or `<data>/skills` for `default`, none or a bad id. Throws when the folder is a link that leaves the data folder. */
+export function workspaceSkillsDir(ws?: string, data: string = process.env.FACTORY_HOME ?? FACTORY_HOME): string {
+  return ws === undefined || ws === DEFAULT_WORKSPACE || !validWorkspaceId(ws) ? join(data, "skills") : workspaceSkillsFolderIn(data, ws);
+}
 
 export const NOTE_NAME = "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt";
 export const MARKER_NAME = ".migrated-from";
@@ -159,9 +176,14 @@ function rewriteConfig(file: string, root: string, from: string, to: string, che
 function worktreeGroups(home: string): { groups: Map<string, string[]>; warnings: string[] } {
   const groups = new Map<string, string[]>();
   const warnings: string[] = [];
-  const runsDir = join(home, "runs");
-  if (!existsSync(runsDir)) return { groups, warnings };
-  for (const id of readdirSync(runsDir)) {
+  const entries = allRunsDirs(join(home, "runs")).flatMap((d) => {
+    try {
+      return readdirSync(d).map((id) => ({ runsDir: d, id }));
+    } catch {
+      return [];
+    }
+  });
+  for (const { runsDir, id } of entries) {
     let run: { workdir?: string; repo?: string };
     try {
       run = JSON.parse(readFileSync(join(runsDir, id, "run.json"), "utf8"));
@@ -281,7 +303,7 @@ export function migrateDataHome(o: MigrateOptions): MigrateResult {
     // parent unreadable: the later steps report it
   }
 
-  const running = runningRuns(join(from, "runs"));
+  const running = runningInAll(from);
   const blocked = (r: RunningRun[]) =>
     `${r.length} run(s) in ${from} are running: ${r.map((x) => `${x.id} (${x.why})`).join("; ")}. The move waits. Clear stale runs with \`scf resume <id>\`.`;
   if (running.length) return result("postponed", from, blocked(running), { reason: "running" });
@@ -345,7 +367,7 @@ export function migrateDataHome(o: MigrateOptions): MigrateResult {
       cleanup();
       return result("skipped", to, "the new data folder already exists");
     }
-    const again = runningRuns(join(from, "runs"));
+    const again = runningInAll(from);
     if (again.length || !sameSnapshot(before, snapshot(from))) {
       cleanup();
       return result("postponed", from, again.length ? blocked(again) : `${from} changed while it was copied; the move is tried again later`, { reason: "busy" });
@@ -493,7 +515,7 @@ export function homeRestartReason(o: { freeBytes?: (dir: string) => number } = {
   const moved = homeMoved();
   if (moved) return `the data folder moved to ${moved}`;
   if (last?.status !== "postponed" || (last.reason !== "running" && last.reason !== "busy" && last.reason !== "space")) return undefined;
-  if (runningRuns(join(oldHome, "runs")).length) return undefined;
+  if (runningInAll(oldHome).length) return undefined;
   if (last.reason === "space") {
     try {
       if ((o.freeBytes ?? defaultFree)(dirname(newHome)) < (last.needBytes ?? 0)) return undefined;

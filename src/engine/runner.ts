@@ -37,9 +37,9 @@ import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPub
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { localRepoEnv, removeSignInDir } from "./repo-access.js";
-import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
+import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
-import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -52,7 +52,9 @@ import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
 import { flowFileId } from "../promotion/flow-id.js";
-import { loadRunPacks, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
+import { baseFacts, loadRunPacks, repositoryFact, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
+import { issueLimitStop } from "./issue-limit.js";
+import { askPluginChecks, hasPluginChecks, type CheckPoint, type PluginCheckInput } from "../plugins/checks.js";
 import type { ProcessMeter } from "../steps/process.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
@@ -60,7 +62,7 @@ import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
 import { runEndEvents, runStartedEvent } from "../usage/events.js";
 import { emitUsage } from "../usage/hub.js";
-import { workspaceForJob, workspaceSlotEnv } from "../workspaces/index.js";
+import { knownWorkspace, workspaceForJob, workspaceSlotEnv } from "../workspaces/index.js";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -107,6 +109,8 @@ export interface RunOptions extends CommonOptions {
   frozenVars?: boolean;
   /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
   workspace?: string;
+  /** Tests only: called after the run folder is reserved, before the id is looked for in the other runs folders. */
+  afterClaim?: () => void;
   /** Pre-allocated run id (e.g. so a UI can subscribe before the run starts). */
   runId?: string;
   /** Who started the run; saved in run.json. */
@@ -189,7 +193,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const config = opts.config ?? loadConfig();
   configureTelemetry(config);
   const runId = opts.runId ?? newRunId();
-  const runDir = join(opts.runsDir, runId);
+  if (!RUN_ID_RE.test(runId)) throw new Error("invalid run id");
 
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
@@ -199,6 +203,9 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
   // the flow's own `workspace` setting plays no part: "empty" only means "no checkout" (#816)
   const workspace = validWorkspaceId(opts.workspace) ? opts.workspace : workspaceForJob({ githubRepo: vars.github_repo, owner });
+  // a workspace that is not in the list is read-only: nothing is written for a new run
+  if (!knownWorkspace(workspace)) throw new Error(WORKSPACE_REMOVED);
+  const runDir = join(workspaceRunsDir(opts.runsDir, workspace), runId);
   const summary: RunSummary = {
     runId,
     autonomy: autonomy.autonomy,
@@ -224,7 +231,9 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
   };
   claimRunStart(opts.runsDir, () => {
-    mkdirSync(join(runDir, "logs"), { recursive: true });
+    claimRunDir(opts.runsDir, summary, opts.afterClaim ? { afterClaim: opts.afterClaim } : undefined);
+    if (workspace !== DEFAULT_WORKSPACE) ensureWorkspaceTestSlots(opts.runsDir, workspace);
+    mkdirSync(join(runDir, "logs"));
     saveRun(summary);
   });
   try {
@@ -246,6 +255,10 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const start = policy?.at("run.start");
   if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
+  // plugin checks (#786) are asked here too, before the workspace is made: a stop touches no repository. No workspace exists
+  // yet, so there is nothing to resume: the run ends as failed and a new run asks again.
+  const pluginBefore = await runBeforeStop(summary, log);
+  if (pluginBefore) return finish(summary, opts, config, { outcome: "failed", reason: pluginBefore, next: null, lastOutput: "" });
   const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
   if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: null, lastOutput: "" });
   if (await promotionRefused(summary, opts, config, log, packs)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
@@ -331,6 +344,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   configureTelemetry(config);
   const summary = loadRun(opts.runsDir, opts.runId);
   if (!summary) throw new Error(`run ${opts.runId} not found`);
+  if (!knownWorkspace(validWorkspaceId(summary.workspace) ? summary.workspace : DEFAULT_WORKSPACE)) throw new Error(WORKSPACE_REMOVED);
   if (!summary.flowDef || !summary.state) throw new Error("this run was created by an older version of Spaghetti Code Foundry and can't be resumed");
   if (opts.decision && summary.status !== "waiting") throw new Error(`run ${opts.runId} is not waiting for approval`);
   if (summary.status === "waiting" && !opts.decision && !opts.from) throw new Error("run is waiting for approval: approve or reject it");
@@ -398,6 +412,9 @@ async function drive(
     if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: summary.state.next, lastOutput: "" });
     const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
     if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: summary.state.next, lastOutput: "" });
+    // a resume asks the plugin checks again (#786); the run waits at the step it was at
+    const pluginBefore = await runBeforeStop(summary, log);
+    if (pluginBefore) return finish(summary, opts, config, { outcome: "stopped", reason: pluginBefore, next: resume?.startAt ?? summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner) ?? skillWriteRefused(summary.flowDef?.name, summary.owner);
@@ -436,6 +453,7 @@ async function drive(
       FACTORY_BRANCH: summary.branch ?? "",
       FACTORY_LEARNINGS_FILE: lf,
       FACTORY_TOOLS: TOOLS_DIR,
+      ...(validWorkspaceId(summary.workspace) && summary.workspace !== DEFAULT_WORKSPACE ? { FACTORY_LOCK_DIR: lockRoot(summary.workspace), SCF_LOCK_DIR: lockRoot(summary.workspace) } : {}),
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...localRepoEnv(summary.vars.github_repo),
@@ -481,6 +499,7 @@ async function drive(
   };
   const engine: Engine = {
     summary,
+    runsDir: opts.runsDir,
     config,
     baseEnv,
     botEnv,
@@ -512,6 +531,17 @@ async function drive(
       return left.length ? Math.min(...left) : undefined;
     },
     runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir, userLeft, projectLeft),
+    pluginSeen: new Set<string>(),
+    // the issue's spending limit (agent steps only; a free fallback does not lift it) and the plugin checks (#786)
+    stepGate: async (step, scope, visit) => {
+      if (step.type !== "shell" && step.type !== "approval") {
+        const stop = issueLimitStop(opts.runsDir, summary, config);
+        if (stop) return stop;
+      }
+      if (!hasPluginChecks("step.before")) return undefined;
+      const r = await askPluginChecks("step.before", checkInput(summary, "step.before", { step, scope, visit }), log, engine.pluginSeen);
+      return r.stop ? `stopped by plugin ${r.stop.plugin}: ${r.stop.reason}` : undefined;
+    },
   };
 
   const scope: Scope = {
@@ -543,7 +573,7 @@ async function drive(
     return finish(summary, opts, config, { outcome: "stopped", reason: skillStop, next, lastOutput: "" });
   }
   sweepRunning(opts.runsDir);
-  const marker = markRunning(summary.runId);
+  const marker = markRunning(summary.runId, summary.workspace);
   if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
   let result: LoopResult;
   if (!resume) engine.evidence?.started(summary);
@@ -552,7 +582,7 @@ async function drive(
   } catch (e) {
     result = { outcome: "failed", reason: `internal error: ${(e as Error).message}`, next: summary.state.next, lastOutput: "" };
   } finally {
-    unmarkRunning(summary.runId, marker);
+    unmarkRunning(summary.runId, marker, summary.workspace);
   }
   result = completeRun(policy, evidence, result, summary.totalCostUsd, log);
   return finish(summary, opts, config, result);
@@ -569,10 +599,13 @@ export function completeRun(policy: Pick<RunPolicy, "at"> | undefined, evidence:
   return { outcome: "failed", reason: `${reason} — ${RUN_COMPLETE_DENIED}`, next: null, lastOutput: result.lastOutput };
 }
 
-/** Cancel a run that waits for approval (no process runs for it). Returns the saved run; undefined when it is not waiting. */
+/** A run of a workspace that is no longer in the list is read-only: nothing is written for it (#824). */
+const readOnlyRun = (s: RunSummary): boolean => !knownWorkspace(validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE);
+
+/** Cancel a run that waits for approval (no process runs for it). Returns the saved run; undefined when it is not waiting, or its workspace is removed. */
 export function cancelWaitingRun(runsDir: string, runId: string, config: Config = loadConfig(), by?: Actor): RunSummary | undefined {
   const s = loadRun(runsDir, runId);
-  if (!s || s.status !== "waiting") return undefined;
+  if (!s || s.status !== "waiting" || readOnlyRun(s)) return undefined;
   s.status = "cancelled";
   s.reason = "cancelled by user";
   s.waiting = undefined;
@@ -591,7 +624,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
 /** Cancel a run that stopped (no process runs for it). Returns the saved run; undefined when it is not stopped. */
 export function cancelStoppedRun(runsDir: string, runId: string, config: Config = loadConfig(), by?: Actor): RunSummary | undefined {
   const s = loadRun(runsDir, runId);
-  if (!s || s.status !== "stopped") return undefined;
+  if (!s || s.status !== "stopped" || readOnlyRun(s)) return undefined;
   s.status = "cancelled";
   s.reason = STOPPED_CANCEL_REASON;
   s.finishedAt = new Date().toISOString();
@@ -686,6 +719,31 @@ function resumePoint(step: Step, scope: Scope, engine: Engine): string {
   return mine.at(-2)?.id.slice(scope.prefix.length) ?? step.id;
 }
 
+/** What a plugin check gets (#786): ids, names and counts only. No task, issue text or paths. */
+function checkInput(summary: RunSummary, point: CheckPoint, at?: { step: { id: string; type: string }; scope: Scope; visit: number }): PluginCheckInput {
+  const facts = baseFacts(summary);
+  const n = Number(summary.vars?.issue);
+  const repository = repositoryFact(summary.vars);
+  return {
+    point,
+    runId: summary.runId,
+    flow: String(facts.flow ?? summary.flow),
+    workspace: summary.workspace ?? "default",
+    owner: facts.owner as PluginCheckInput["owner"],
+    ...(repository ? { repository } : {}),
+    ...(Number.isInteger(n) && n > 0 ? { issue: n } : {}),
+    ...(at ? { step: `${at.scope.prefix}${at.step.id}`, stepType: at.step.type, visit: at.visit } : {}),
+    runCostUsd: Number.isFinite(summary.totalCostUsd) ? summary.totalCostUsd : 0,
+  };
+}
+
+/** The run.before check (#786): the reason that stops the run, or undefined. */
+async function runBeforeStop(summary: RunSummary, log: (l: string) => void): Promise<string | undefined> {
+  if (!hasPluginChecks("run.before")) return undefined;
+  const r = await askPluginChecks("run.before", checkInput(summary, "run.before"), log);
+  return r.stop ? `stopped by plugin ${r.stop.plugin}: ${r.stop.reason}` : undefined;
+}
+
 async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string, userLeft: () => number | undefined, projectLeft: () => number | undefined): Promise<LoopResult> {
   const { flow, ctx, visits } = scope;
   const { summary, config } = engine;
@@ -723,6 +781,15 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (pl !== undefined && pl <= 0) {
       engine.log(`■ stopped before "${scope.prefix}${step.id}": the project's daily limit is reached`);
       return { outcome: "stopped", reason: PROJECT_BUDGET_REASON, ...here() };
+    }
+
+    // The spending limit of the issue and the plugin checks (#786): a stop here is not a failure. Inside a sub-flow the
+    // parent loop ends the run too (engine.nestedStop), so `on_failure` is not followed.
+    const gate = await engine.stepGate?.(step, scope, (visits[step.id] ?? 0) + 1);
+    if (gate) {
+      engine.log(`■ stopped before "${scope.prefix}${step.id}": ${gate}`);
+      if (!top) engine.nestedStop ??= gate;
+      return { outcome: "stopped", reason: gate, ...here() };
     }
 
     const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
@@ -822,6 +889,15 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       return { outcome: "stopped", reason, next: step.id, lastOutput };
     }
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason(`cancelled during step "${step.id}"`), ...here() };
+    if (engine.nestedStop !== undefined) {
+      // a limit or plugin stop inside a parallel step or a sub-flow: each loop up to the top one stops here, and only the
+      // top loop clears it, so the parent of a sub-flow never sees an ordinary failure (on_failure is not followed)
+      const reason = engine.nestedStop;
+      if (top) engine.nestedStop = undefined;
+      visits[step.id] = visit - 1;
+      setNext(step.id);
+      return { outcome: "stopped", reason, next: step.id, lastOutput };
+    }
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
     // A story handed over for being too big: only a real split or a real question goes on.

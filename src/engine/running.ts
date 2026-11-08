@@ -3,7 +3,8 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdi
 import { uptime } from "node:os";
 import { join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
-import { pidAlive } from "./state.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
+import { pidAlive, runDirOf, workspaceFolderIn, workspaceFoldersIn } from "./state.js";
 
 /**
  * A small "running" marker per run in `<lock folder>/.running`, so `tools/area-lock` can tell that a run is still running
@@ -11,24 +12,47 @@ import { pidAlive } from "./state.js";
  * that made it; only that driver removes it.
  */
 
-export const lockRoot = (): string => process.env.SCF_LOCK_DIR || process.env.FACTORY_LOCK_DIR || join(process.env.FACTORY_HOME ?? FACTORY_HOME, "locks");
+/**
+ * The lock folder: for a workspace other than `default` it is `<data>/workspaces/<id>/locks` (#824; throws for a link that
+ * leaves the data folder); otherwise the environment's, or `<data>/locks`.
+ */
+export const lockRoot = (ws?: string): string =>
+  validWorkspaceId(ws) && ws !== DEFAULT_WORKSPACE
+    ? join(workspaceFolderIn(process.env.FACTORY_HOME ?? FACTORY_HOME, ws), "locks")
+    : process.env.SCF_LOCK_DIR || process.env.FACTORY_LOCK_DIR || join(process.env.FACTORY_HOME ?? FACTORY_HOME, "locks");
+
+/** The default lock folder, then the `locks` folder of every workspace folder that has a real one. Never throws. */
+export function allLockRoots(): { workspace?: string; dir: string }[] {
+  const out: { workspace?: string; dir: string }[] = [{ dir: lockRoot() }];
+  for (const w of workspaceFoldersIn(process.env.FACTORY_HOME ?? FACTORY_HOME)) {
+    try {
+      const dir = lockRoot(w.id);
+      if (lstatSync(dir).isDirectory()) out.push({ workspace: w.id, dir });
+    } catch {
+      // no lock folder, or a link that leaves the data folder
+    }
+  }
+  return out;
+}
 
 const markerName = (runId: string): string => runId.replace(/[^\w.-]/g, "_");
 const STALE_TMP_MS = 60_000;
 
 /** Marks the run as running. Returns the token, or undefined when the marker could not be written (the run goes on). */
-export function markRunning(runId: string): string | undefined {
-  const dir = join(lockRoot(), ".running");
+export function markRunning(runId: string, ws?: string): string | undefined {
   const token = randomBytes(8).toString("hex");
-  const tmp = join(dir, `.tmp-${markerName(runId)}-${token}`);
+  let dir = "";
+  let tmp = "";
   try {
+    dir = join(lockRoot(ws), ".running");
+    tmp = join(dir, `.tmp-${markerName(runId)}-${token}`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(tmp, token);
     renameSync(tmp, join(dir, markerName(runId)));
     return token;
   } catch {
     try {
-      rmSync(tmp, { force: true });
+      if (tmp) rmSync(tmp, { force: true });
     } catch {
       // nothing to clean
     }
@@ -37,10 +61,10 @@ export function markRunning(runId: string): string | undefined {
 }
 
 /** Removes the marker when it still holds this token. */
-export function unmarkRunning(runId: string, token: string | undefined): void {
+export function unmarkRunning(runId: string, token: string | undefined, ws?: string): void {
   if (!token) return;
-  const f = join(lockRoot(), ".running", markerName(runId));
   try {
+    const f = join(lockRoot(ws), ".running", markerName(runId));
     if (readFileSync(f, "utf8") === token) rmSync(f, { force: true });
   } catch {
     // already gone
@@ -81,14 +105,20 @@ function runState(runDir: string): "running" | "ended" | "unknown" {
 
 /** Removes markers (and old temp files) of runs that ended or are gone, and lock files without the flag of ended runs. Never throws. */
 export function sweepRunning(runsDir: string): void {
-  const root = lockRoot();
+  for (const r of allLockRoots()) sweepRunningIn(r.dir, runsDir);
+}
+
+/** The folder of a run by its id: where its run.json is, else the (missing) default place. */
+const runFolder = (runsDir: string, id: string): string => runDirOf(runsDir, id) ?? join(runsDir, id);
+
+function sweepRunningIn(root: string, runsDir: string): void {
   try {
     for (const f of readdirSync(join(root, ".running"))) {
       const path = join(root, ".running", f);
       try {
         if (f.startsWith(".tmp-")) {
           if (Date.now() - lstatSync(path).mtimeMs > STALE_TMP_MS) rmSync(path, { force: true });
-        } else if (!/^\.+$/.test(f) && runState(join(runsDir, f)) === "ended") rmSync(path, { force: true });
+        } else if (!/^\.+$/.test(f) && runState(runFolder(runsDir, f)) === "ended") rmSync(path, { force: true });
       } catch {
         // skip
       }
@@ -109,7 +139,7 @@ export function sweepRunning(runsDir: string): void {
           // the run folder comes from the runs folder and the run id, never from the lock's own `runDir`
           if (lock.marker === true || typeof lock.runId !== "string" || !/^[\w.-]+$/.test(lock.runId) || /^\.+$/.test(lock.runId)) continue;
           // only a run folder that is there and says it ended frees the lock; a run that lives elsewhere is left to area-lock itself
-          const dir = join(runsDir, lock.runId);
+          const dir = runFolder(runsDir, lock.runId);
           const known = !("missing" in safeRead(join(dir, "run.json"), 4_000_000));
           if (known && runState(dir) === "ended") rmSync(path, { force: true });
         } catch {
@@ -158,15 +188,19 @@ function owner(runDir: string, bootMs: number): "live" | "dead" | "missing" | "u
  */
 export function sweepStaleRunning(runsDir: string, isActive: (runId: string) => boolean, o: { atStart?: boolean; bootMs?: number } = {}): StaleSweep {
   const out: StaleSweep = { markers: [], locks: [] };
-  const root = lockRoot();
   const bootMs = o.bootMs ?? Date.now() - uptime() * 1000;
+  for (const r of allLockRoots()) sweepStaleIn(r.dir, runsDir, isActive, o, bootMs, out);
+  return out;
+}
+
+function sweepStaleIn(root: string, runsDir: string, isActive: (runId: string) => boolean, o: { atStart?: boolean }, bootMs: number, out: StaleSweep): void {
   const gone = (state: ReturnType<typeof owner>, withMissing: boolean): boolean =>
     state === "dead" || (withMissing && state === "missing") || (state === "unreadable" && o.atStart === true);
   try {
     for (const f of readdirSync(join(root, ".running"))) {
       if (f.startsWith(".")) continue;
       try {
-        if (isActive(f) || !gone(owner(join(runsDir, f), bootMs), true)) continue;
+        if (isActive(f) || !gone(owner(runFolder(runsDir, f), bootMs), true)) continue;
         rmSync(join(root, ".running", f), { force: true });
         out.markers.push(f);
       } catch {
@@ -190,7 +224,7 @@ export function sweepStaleRunning(runsDir: string, isActive: (runId: string) => 
           if (isActive(lock.runId)) continue;
           if (lock.marker === true) {
             if (!("missing" in safeRead(join(root, ".running", markerName(lock.runId))))) continue;
-          } else if (!gone(owner(join(runsDir, lock.runId), bootMs), false)) continue;
+          } else if (!gone(owner(runFolder(runsDir, lock.runId), bootMs), false)) continue;
           rmSync(path, { force: true });
           const areas = Array.isArray(lock.areas) ? lock.areas.filter((a): a is string => typeof a === "string").slice(0, 5) : [];
           out.locks.push({ runId: lock.runId, repo: repo.name, areas });
@@ -202,5 +236,4 @@ export function sweepStaleRunning(runsDir: string, isActive: (runId: string) => 
   } catch {
     // no lock folder yet
   }
-  return out;
 }

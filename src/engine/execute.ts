@@ -17,6 +17,7 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess, wantsRepoAccess } from "./repo-access.js";
 import { AUTONOMY_DENIED, AUTONOMY_POLICY, autonomyOfRun, autonomyRefusal, autonomyRefuses, type AutonomyAction } from "../governance/autonomy.js";
+import { lockRoot } from "./running.js";
 import { ownDir, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
 import { isTimedOut } from "../errors.js";
@@ -70,6 +71,8 @@ export interface LoopResult {
 
 export interface Engine {
   summary: RunSummary;
+  /** The runs folder the run was started from: the anchor of the workspace folders (#824). */
+  runsDir?: string;
   config: Config;
   baseEnv: Record<string, string>;
   /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. Not fetched up front when a mandatory policy cannot be used. */
@@ -88,6 +91,15 @@ export interface Engine {
   signal?: AbortSignal;
   /** Asked before each top-level step: a non-empty answer stops the run there with that reason (the step runs on resume). */
   stopBefore?: (stepId: string) => string | undefined;
+  /**
+   * The spending limit of the issue and the plugin checks (#786), asked before every step, also those inside a parallel step
+   * and a sub-flow. A string stops the run there with that reason.
+   */
+  stepGate?: (step: Pick<Step, "id" | "type">, scope: Scope, visit: number) => Promise<string | undefined>;
+  /** A stop inside a parallel step or a sub-flow: the loop above ends the run with this reason and does not follow `on_failure`. */
+  nestedStop?: string;
+  /** The plugin check lines that were written for this run start already (an allow is logged once). */
+  pluginSeen?: Set<string>;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
   /** Today's spend in US dollars, for the policy's daily budget rule. Only set when a daily budget is in effect. */
@@ -150,7 +162,7 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // A story handed to the planner for timing out must reach a person with its questions: the Foundry does not decide them itself.
   if (scope.ctx.steps.implement?.too_big) env.FACTORY_DECIDE_TECHNICAL = "0";
   // A base branch known to be red: the baseline step stops at once (the sandbox hides the data folder, so the facts come by env).
-  if (step?.id === "baseline_tests" && engine.summary) Object.assign(env, redBaseEnv(dirname(engine.summary.runDir), scope.ctx.vars));
+  if (step?.id === "baseline_tests" && engine.summary) Object.assign(env, redBaseEnv(engine.runsDir ?? dirname(engine.summary.runDir), scope.ctx.vars));
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
   // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
   const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };
@@ -470,7 +482,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           // the learnings folder is made here: the step may write the file but not move or remove its folder
           if (env.FACTORY_LEARNINGS_FILE) mkdirSync(dirname(env.FACTORY_LEARNINGS_FILE), { recursive: true });
           sandboxProfileText = sandboxProfile(
-            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read }),
+            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read, runsDir: engine.runsDir, lockDir: lockRoot(engine.summary.workspace) }),
           );
         }
         // the waits of test-slot are recorded for the time limit (a container does not see the folder)
@@ -536,6 +548,12 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
           const identity = stepIdentity(sub, scope.prefix, visit);
+          const gate = await engine.stepGate?.(sub, scope, visit);
+          if (gate) {
+            engine.nestedStop ??= gate;
+            scope.visits[id] = visit - 1;
+            return { id, res: { ok: false, output: "", error: gate } as StepResult };
+          }
           const began = beginStep(engine, scope, sub, identity);
           const meter: ProcessMeter = {};
           let res: StepResult;
@@ -587,6 +605,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       engine.log(`  ↳ sub-flow ${flow.name}`);
       const r = await engine.runLoop(subScope, null);
       const ok = r.outcome === "succeeded";
+      // a limit or plugin stop inside the sub-flow sets engine.nestedStop: the parent loop ends the run there, `on_failure` is not followed
       return { ok, output: r.lastOutput, error: ok ? undefined : `sub-flow ${flow.name} ${r.outcome}${r.reason ? `: ${r.reason}` : ""}` };
     }
 

@@ -1,12 +1,14 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { allRunsDirs, runDirOf, runFile } from "../engine/state.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import {
   effectiveLifecycle, INELIGIBLE_STATES, LIFECYCLE_STATES, readSkillLifecycle, recordLifecycleTransition, recordRunAllowance, RUN_ID_RE,
   type AllowRunLine, type SkillLifecycleState, type TransitionLine,
 } from "./lifecycle.js";
 import { parseSkillKey } from "./lock.js";
 import type { SkillRegistry } from "./registry.js";
-import { readRunSkillLock } from "./run-lock.js";
+import { readRunSkillLock, RUN_SKILL_LOCK_FILE } from "./run-lock.js";
 
 // `scf skills lifecycle` and `scf skills allow-run`. The apply functions return status unions and are shared with the admin API,
 // so both apply the same checks. The command functions print.
@@ -18,18 +20,58 @@ export interface LockedRun {
 
 type Reg = Pick<SkillRegistry, "byKey" | "problems" | "lifecycle" | "revoked">;
 
-/** The runs in `runsDir` whose skill lock holds `key`, sorted. `unreadable` when the folder cannot be listed. */
-export function runsLocking(runsDir: string, key: string): { runs: string[]; unreadable: boolean } {
-  const runs: string[] = [];
+/**
+ * One folder per run id over the runs folder and every workspace runs folder (#825). The first folder with a run.json wins (as runDirOf does);
+ * a folder with only a skill lock counts only when no folder has a run.json for that id. `unreadable` when a folder fails to list (not ENOENT).
+ */
+export function chosenRunDirs(runsDir: string): { dirs: Map<string, string>; unreadable: boolean } {
+  const primary = new Map<string, string>();
+  const fallback = new Map<string, string>();
   let unreadable = false;
-  try {
-    for (const d of readdirSync(runsDir, { withFileTypes: true })) {
-      if (!d.isDirectory() || d.name.startsWith(".")) continue;
-      const r = readRunSkillLock(join(runsDir, d.name));
-      if (r.ok && r.lock.skills.some((s) => `${s.id}@${s.version}` === key)) runs.push(d.name);
+  for (const folder of allRunsDirs(runsDir)) {
+    let entries;
+    try {
+      entries = readdirSync(folder, { withFileTypes: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable = true;
+      continue;
     }
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable = true;
+    for (const d of entries) {
+      if (!d.isDirectory() || d.name.startsWith(".")) continue;
+      const dir = join(folder, d.name);
+      if (existsSync(runFile(dir))) {
+        if (!primary.has(d.name)) primary.set(d.name, dir);
+      } else if (existsSync(join(dir, RUN_SKILL_LOCK_FILE)) && !fallback.has(d.name)) fallback.set(d.name, dir);
+    }
+  }
+  return { dirs: new Map([...fallback, ...primary]), unreadable };
+}
+
+/** The folder of a run for its lock: the run's own folder (runDirOf), else the first folder holding only a skill lock. */
+function lockRunDir(runsDir: string, runId: string): string | undefined {
+  const own = runDirOf(runsDir, runId);
+  if (own) return own;
+  return allRunsDirs(runsDir).map((f) => join(f, runId)).find((d) => existsSync(join(d, RUN_SKILL_LOCK_FILE)));
+}
+
+/** The workspace a run belongs to, from its run.json; `default` when absent, unreadable or not valid. */
+function runWorkspace(runDir: string | undefined): string {
+  if (!runDir) return DEFAULT_WORKSPACE;
+  try {
+    const ws = (JSON.parse(readFileSync(runFile(runDir), "utf8")) as { workspace?: unknown }).workspace;
+    return validWorkspaceId(ws) ? ws : DEFAULT_WORKSPACE;
+  } catch {
+    return DEFAULT_WORKSPACE;
+  }
+}
+
+/** The runs, in the runs folder and every workspace runs folder, whose skill lock holds `key`, sorted. `unreadable` when a folder cannot be listed. */
+export function runsLocking(runsDir: string, key: string): { runs: string[]; unreadable: boolean } {
+  const { dirs, unreadable } = chosenRunDirs(runsDir);
+  const runs: string[] = [];
+  for (const [id, dir] of dirs) {
+    const r = readRunSkillLock(dir);
+    if (r.ok && r.lock.skills.some((s) => `${s.id}@${s.version}` === key)) runs.push(id);
   }
   return { runs: runs.sort(), unreadable };
 }
@@ -86,17 +128,20 @@ export function applyTransition(
 }
 
 export function applyAllowance(
-  reg: Reg,
+  regOf: Reg | ((workspace: string) => Reg),
   i: { runId: string; key: string; reason: string; by: string; runsDir: string; waitMs?: number },
 ): { status: "ok"; allowance: AllowRunLine; added: boolean } | ApplyFail {
   if (!RUN_ID_RE.test(i.runId)) return { status: "bad-input", reason: "not a run id" };
   if (!parseSkillKey(i.key)) return { status: "bad-input", reason: "not a skill key (expected id@version)" };
+  // The registry of the run's own workspace (#825); a run that is not found is checked against the default one.
+  const dir = lockRunDir(i.runsDir, i.runId);
+  const reg = typeof regOf === "function" ? regOf(runWorkspace(dir)) : regOf;
   const broken = lifecycleProblem(reg);
   if (broken) return broken;
   const revoked = releaseRevoked(reg, i.key);
   if (revoked) return revoked;
-  const lock = readRunSkillLock(join(i.runsDir, i.runId));
-  if (!lock.ok || lock.lock.runId !== i.runId) return { status: "no-run", reason: `no run ${i.runId} with a skill lock was found` };
+  const lock = dir ? readRunSkillLock(dir) : undefined;
+  if (!lock || !lock.ok || lock.lock.runId !== i.runId) return { status: "no-run", reason: `no run ${i.runId} with a skill lock was found` };
   if (!lock.lock.skills.some((s) => `${s.id}@${s.version}` === i.key)) return { status: "not-locked", reason: `run ${i.runId} does not lock ${i.key}` };
   const w = recordRunAllowance({ key: i.key, runId: i.runId, reason: i.reason, by: i.by, ...(i.waitMs !== undefined ? { waitMs: i.waitMs } : {}) });
   if (w.status !== "ok") return { status: w.status, reason: w.reason };
@@ -175,7 +220,7 @@ export function allowRunCommand(
   operands: string[],
   values: { reason?: string },
   out: (line: string) => void,
-  o: { reg: Reg; runsDir: string; home: string },
+  o: { reg: Reg | ((workspace: string) => Reg); runsDir: string; home: string },
 ): number {
   const [runId, key] = operands;
   const r = applyAllowance(o.reg, { runId: runId ?? "", key: key ?? "", reason: values.reason ?? "", by: "cli", runsDir: o.runsDir });

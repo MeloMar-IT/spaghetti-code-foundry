@@ -2961,13 +2961,18 @@ const REFINE_CLONE = {
   repo_access: true,
   description: "Clone the repository into repo/ and check out develop (or the default branch)",
   run: [
-    'r="$FACTORY_VAR_GITHUB_REPO"; ok=no',
+    'r="$FACTORY_VAR_GITHUB_REPO"; ok=no; loc=no',
     'case "$r" in */*) ok=yes ;; esac',
     'case "$r" in ""|-*|/*|*/|*/*/*|*[!A-Za-z0-9._/-]*) ok=no ;; esac',
+    // A local project: local:<slug>-<id8> (src/auth/local-name.ts, slug 1-40, so at most 49 characters after "local:").
+    // The engine gives its folder ($FACTORY_LOCAL_REPO_DIR) only for a registered name.
+    'case "$r" in local:*) ok=no; s="${r#local:}"; case "$s" in [a-z0-9]*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) case "$s" in *[!a-z0-9._-]*) ;; *) [ "${#s}" -le 49 ] && { ok=yes; loc=yes; } ;; esac ;; esac ;; esac',
     '[ "$ok" = yes ] || { echo "set the variable github_repo to owner/name"; exit 1; }',
+    // A local project is cloned from its folder with plain git, never with gh.
+    'if [ "$loc" = yes ]; then [ -n "$FACTORY_LOCAL_REPO_DIR" ] || { echo "the folder of this local project is not known to the Foundry"; exit 1; }; git clone -q -- "$FACTORY_LOCAL_REPO_DIR" repo || { echo "could not clone $r"; exit 1; }',
     // With $FACTORY_REPO_URL (nothing sets it yet), plain git clones that address. Otherwise: an https address and gh as
     // git's only credential helper, so no token is in the command line or in .git/config.
-    'if [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" repo || { echo "could not clone $r"; exit 1; }',
+    'elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" repo || { echo "could not clone $r"; exit 1; }',
     `else gh repo clone "https://github.com/$r" repo -- -q -c credential.helper= -c 'credential.helper=!gh auth git-credential' || { echo "could not clone $r"; exit 1; }; fi`,
     // The clone fetched every branch, so ask the local copy: a network failure can't pass for "no develop".
     'if git -C repo show-ref --verify --quiet refs/remotes/origin/develop; then branch=develop; else branch=$(git -C repo symbolic-ref --short HEAD); fi',
@@ -2978,7 +2983,7 @@ const REFINE_CLONE = {
 write("refine-brief", {
   title: "Refinement: the architect's context brief",
   lines: [
-    'scf run refine-brief --task "your idea" --var github_repo=owner/repo',
+    'scf run refine-brief --task "your idea" --var github_repo=owner/repo (or local:<slug>-<id8>)',
     "",
     "clone (develop, else the default branch) → read the open issues → brief (read-only: Read, Glob, Grep)",
     "The brief has five parts; a brief that misses one fails the run. Nothing is written to GitHub.",

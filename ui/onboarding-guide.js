@@ -1,7 +1,11 @@
 import { api } from "./api.js";
 import { confirmDialog, h, mount, toast } from "./dom.js";
-import { allGreen, canContinue, cleanAgentsDraft, knownStep, nextStep, prevStep, progressFrom, requestOf, stepInfo, stepLabel } from "./onboarding-guide-model.js";
+import { allGreen, canContinue, cleanAgentsDraft, clearGuideReturn, isId, knownStep, makeOutcome, markGuideReturn, nextStep, prevStep, progressFrom, requestOf, stepInfo, stepLabel, withAnswer } from "./onboarding-guide-model.js";
 import { renderOnboardingAgents } from "./onboarding-agents.js";
+import { aboutStep, makeStep, whereStep } from "./onboarding-project.js";
+import { growStep, planStep } from "./onboarding-plan.js";
+import { safeStore } from "./shell.js";
+import { chooseView } from "./view-mode.js";
 import { pageClipboard, setupRowNode, setupRows } from "./setup-check.js";
 import { GUIDE, forbiddenIn } from "./simple-words.js";
 import { errorState, explainError, loadingState } from "./states.js";
@@ -21,7 +25,8 @@ const text = (s) => (forbiddenIn(s).length ? "" : s);
 
 export async function renderOnboardingGuide(box, {
   a = api, admin = false, readOnly = false, credentialsHref = "#/credentials", clipboard = pageClipboard(), notify = toast, ask = confirmDialog,
-  go = (hash) => { location.hash = hash; }, agents = renderOnboardingAgents,
+  go = (hash) => { location.hash = hash; }, agents = renderOnboardingAgents, simple = false, store = safeStore(), choose = chooseView,
+  wait = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
   let gone = false;
   let epoch = 0; // changes with every step and every restart: an answer that arrives for an older one is dropped
@@ -29,6 +34,8 @@ export async function renderOnboardingGuide(box, {
   let report = null; // the setup check of the computer step
   let failed = false; // the setup check could not be made
   let stopStep = () => {};
+  let current = null; // the controller of step 3, 4 or 5 (onboarding-project.js)
+  let makePromise = null; // a project is being made
   let status = "";
   const stepBox = h("div", {});
   const statusBox = h("p", { role: "status" });
@@ -53,15 +60,28 @@ export async function renderOnboardingGuide(box, {
     );
   };
 
+  // Saves the progress after the saves asked before it, and answers when it is stored. A failed save rejects: the caller decides what to do.
+  const persist = () => {
+    const body = requestOf(progress);
+    return enqueue(() => a.saveOnboardingProgress(body)).then(() => { if (!gone && status) setStatus(""); });
+  };
+
   const drawNav = () => {
     if (gone) return;
     const step = knownStep(progress.step);
     const next = nextStep(step);
-    const can = canContinue(step, { admin: admin && !readOnly, report, failed });
+    const busy = !!makePromise;
+    const can = !busy && (current ? current.canContinue() : canContinue(step, { admin: admin && !readOnly, report, failed }));
+    const mine = epoch;
+    const forward = async () => {
+      if (!can || busy) return;
+      if (current?.onContinue && !(await current.onContinue())) return;
+      if (live(mine)) goTo(next);
+    };
     mount(navBox, h("p", { class: "row" },
-      h("button", { type: "button", "data-focus": "guide-back", onClick: back }, GUIDE.back),
-      next && h("button", { type: "button", class: "primary", disabled: !can, "data-focus": "guide-continue", onClick: () => { if (can) goTo(next); } }, GUIDE.next),
-      h("button", { type: "button", "data-focus": "guide-again", onClick: restart }, GUIDE.again)));
+      h("button", { type: "button", disabled: busy, "data-focus": "guide-back", onClick: () => { if (!busy) back(); } }, GUIDE.back),
+      next && h("button", { type: "button", class: "primary", disabled: !can, "data-focus": "guide-continue", onClick: forward }, GUIDE.next),
+      h("button", { type: "button", disabled: busy, "data-focus": "guide-again", onClick: () => { if (!busy) restart(); } }, GUIDE.again)));
   };
 
   const welcome = () => mount(stepBox, h("h1", {}, GUIDE.title), h("h2", {}, GUIDE.welcome.title), GUIDE.welcome.lines.map((l) => h("p", {}, l)));
@@ -127,19 +147,80 @@ export async function renderOnboardingGuide(box, {
     });
   };
 
+  // Makes the project of steps 3 to 5 once. The server holds "made once" (guide: true); a lost answer is settled by reading the place again.
+  const adopt = (id) => { progress = withAnswer(progress, "repoId", id); };
+  const makeProject = () => {
+    if (isId(progress.answers.repoId)) return Promise.resolve({ ok: true });
+    if (makePromise) return makePromise;
+    makePromise = (async () => {
+      try {
+        await tail; // saves asked before the press land first
+        const { starter, name } = progress.answers;
+        const r = await a.startProject(starter, { name: String(name ?? "").trim(), guide: true });
+        if (!isId(r?.repo?.id)) return { ok: false, kind: "other" };
+        adopt(r.repo.id);
+        return { ok: true };
+      } catch (e) {
+        const kind = makeOutcome(e);
+        if (kind === "exists" || kind === "lost") {
+          try {
+            const reply = await a.onboardingProgress();
+            if (isId(reply?.answers?.repoId)) {
+              adopt(reply.answers.repoId);
+              return { ok: true };
+            }
+          } catch { /* the place could not be read either: the person can try again */ }
+        }
+        return { ok: false, kind };
+      } finally {
+        makePromise = null;
+        drawNav();
+      }
+    })();
+    drawNav();
+    return makePromise;
+  };
+
+  // Saves the place, marks the way back and opens the page to connect GitHub. The marker stays until the guide is reached again.
+  const connectGithub = async () => {
+    try {
+      await enqueue(() => a.saveOnboardingProgress(requestOf(progress)));
+    } catch {
+      if (!gone) setStatus(GUIDE.notSaved);
+    }
+    if (gone) return;
+    markGuideReturn(store, simple ? "simple" : "advanced");
+    if (!simple) return go("#/repos");
+    const r = await choose("advanced", { hash: () => "#/repos" });
+    if (r && !gone) setStatus(r);
+  };
+
+  const setAnswer = (key, value, saveNow = true) => {
+    progress = withAnswer(progress, key, value);
+    if (saveNow) save();
+  };
+
   const later = (info) => mount(stepBox, h("h1", {}, GUIDE.title), h("h2", {}, GUIDE.later.title(info.number)), h("p", {}, GUIDE.later.text));
 
   function draw() {
     if (gone) return;
     stopStep();
     stopStep = () => {};
+    current = null;
     const mine = ++epoch;
     const info = stepInfo(progress.step);
     mount(label, stepLabel(info.id));
+    const env = { a, admin: admin && !readOnly, box: stepBox, answers: () => progress.answers, setAnswer, saveNow: save, persist, redrawNav: () => { if (live(mine)) drawNav(); }, live: () => live(mine), goTo, go, ask, wait, making: () => !!makePromise, make: makeProject, connectGithub };
+    const maker = { "step-3": makeStep, "step-4": aboutStep, "step-5": whereStep, "step-6": planStep, "step-7": growStep }[info.id];
+    if (maker) {
+      current = maker(env);
+      stopStep = () => current?.stop?.();
+    }
     drawNav();
     const done = info.id === "welcome" ? welcome()
       : info.id === "computer" ? computer(mine)
       : info.id === "agents" ? claude(mine)
+      : current ? current.start()
       : later(info);
     Promise.resolve(done).catch(() => {});
   }
@@ -173,6 +254,7 @@ export async function renderOnboardingGuide(box, {
     const mine = ++epoch;
     mount(stepBox, h("h1", {}, GUIDE.title), loadingState(GUIDE.loading, { rows: 3 }));
     mount(label, "");
+    clearGuideReturn(store);
     await tail; // the saves of an earlier guide on this page come first
     let reply;
     try {
@@ -188,6 +270,7 @@ export async function renderOnboardingGuide(box, {
 
   await load();
   return () => {
+    current?.leave?.();
     gone = true;
     epoch++;
     stopStep();

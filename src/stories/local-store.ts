@@ -246,11 +246,22 @@ export class LocalStore implements StoryStore {
     return n;
   }
 
-  async create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<RestIssue> {
+  async create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number, guard?: () => void): Promise<RestIssue> {
     if (typeof o.title !== "string" || !o.title.trim()) throw new Error("the story title is empty");
     checkDirs(this.dir, true);
     const wait = Math.min(this.lockWaitMs, timeoutMs ?? Infinity);
-    return withStoryLock(this.folder, { ...this.lock, waitMs: wait }, (held) => this.makeStory(o, held, timeoutMs));
+    return withStoryLock(this.folder, { ...this.lock, waitMs: wait }, (held) => this.makeStory(o, held, timeoutMs, guard));
+  }
+  /** Commits a story saved by `create` whose commit failed, with the number file. Same checks as `create`; `guard` runs under the lock first. */
+  async commitCreated(issue: number, timeoutMs?: number, guard?: () => void): Promise<void> {
+    const n = num(issue);
+    if (!checkDirs(this.dir, false)) throw new Error(`${STORIES_DIR} does not exist`);
+    await withStoryLock(this.folder, { ...this.lock, waitMs: Math.min(this.lockWaitMs, timeoutMs ?? Infinity) }, (held) => {
+      if (!held()) throw new Error("the lock was lost; try again");
+      guard?.();
+      const counter = this.nextNumber() === undefined ? [] : [`${STORIES_DIR}/${NEXT_NUMBER_FILE}`];
+      this.commitFiles(n, [...counter, this.need(this.all(), n).rel], "created", timeoutMs);
+    });
   }
   private createNow(o: { title: string; body: string; labels: string[] }): RestIssue {
     if (typeof o.title !== "string" || !o.title.trim()) throw new Error("the story title is empty");
@@ -258,7 +269,7 @@ export class LocalStore implements StoryStore {
     return withStoryLockSync(this.folder, { ...this.lock, waitMs: this.lockWaitMs }, (held) => this.makeStory(o, held));
   }
   /** The body of `create`, under the lock. */
-  private makeStory(o: { title: string; body: string; labels: string[] }, held: () => boolean, timeoutMs?: number): RestIssue {
+  private makeStory(o: { title: string; body: string; labels: string[] }, held: () => boolean, timeoutMs?: number, guard?: () => void): RestIssue {
     const unique = o.labels.filter((l, i) => o.labels.findIndex((x) => same(x, l)) === i);
     const labels = unique.filter((l) => !same(l, GO_LABEL));
     const names = storyNames(this.folder);
@@ -268,6 +279,7 @@ export class LocalStore implements StoryStore {
     const text = this.checked(formatStoryFile(story));
     const file = storyFileName(n, o.title);
     if (!held()) throw new Error("the lock was lost; try again");
+    guard?.();
     // The number goes first: a crash leaves a gap, never a reused number.
     writeAtomic(join(this.folder, NEXT_NUMBER_FILE), `${n + 1}\n`);
     writeAtomic(join(this.folder, file), text);

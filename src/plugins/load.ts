@@ -8,6 +8,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { disposeUsage, subscribeUsage } from "../usage/hub.js";
 import type { UsageHandler } from "../usage/schema.js";
 import { disposeWorkspaces, supplyWorkspaces, suppliedWorkspaces, type WorkspaceStore } from "../workspaces/list.js";
+import { CHECK_POINTS, MAX_CHECKS, disposeChecks, registerPluginCheck, type CheckPoint, type PluginCheck } from "./checks.js";
 import { checkUiSpec, pluginUiName, registrationsOf, settingsValues, type PluginUiEntry, type PluginUiHandle } from "./ui.js";
 
 /** The version of the plugin API: what `register(api)` gets as `api.version`. */
@@ -37,6 +38,11 @@ export interface PluginApi {
    * config.yaml. One plugin only, once, and only while register(api) runs.
    */
   readonly workspaces: (store: WorkspaceStore) => void;
+  /**
+   * Adds a check before a run (`run.before`) or before each step (`step.before`) (#786). The check answers allow, warn or stop
+   * with a reason. At most 10 per plugin, and only while register(api) runs. Detect it with `typeof api.check === "function"`.
+   */
+  readonly check: (point: CheckPoint, fn: PluginCheck) => void;
 }
 export interface Registration {
   point: string;
@@ -175,6 +181,7 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
     // what the plugins before the failing one subscribed to must not outlive the failed start
     disposeUsage(owner);
     disposeWorkspaces(owner);
+    disposeChecks(owner);
     throw e;
   }
 }
@@ -214,6 +221,7 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
     let open = true;
     const usage: Registration[] = [];
     let suppliesWorkspaces = false;
+    let checkCount = 0;
     const api: PluginApi = Object.freeze({
       version: PLUGIN_API_VERSION,
       options: Object.freeze(structuredClone(entry.options)),
@@ -240,6 +248,24 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
           },
         });
         usage.push({ point: "usage", name: "onUsage" });
+      },
+      check: (point: CheckPoint, fn: PluginCheck): void => {
+        if (!open) throw new Error("check(point, fn) can only be called while register(api) runs");
+        if (!(CHECK_POINTS as readonly string[]).includes(point)) throw new Error(`check(point, fn): the point must be one of ${CHECK_POINTS.join(", ")}`);
+        if (typeof fn !== "function") throw new TypeError("check(point, fn): the check must be a function");
+        if (checkCount >= MAX_CHECKS) throw new Error(`check(point, fn): at most ${MAX_CHECKS} checks per plugin`);
+        checkCount++;
+        registerPluginCheck({
+          owner,
+          plugin: label,
+          point,
+          fn,
+          report: (reason) => {
+            problems.push({ plugin: label, reason });
+            deps.log?.(`plugin ${label}: ${reason}`);
+          },
+        });
+        usage.push({ point: "check", name: point });
       },
       workspaces: (store: WorkspaceStore): void => {
         if (!open) throw new Error("workspaces(store) can only be called while register(api) runs");
@@ -284,6 +310,7 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
     dispose: () => {
       disposeUsage(owner);
       disposeWorkspaces(owner);
+      disposeChecks(owner);
     },
   };
 }

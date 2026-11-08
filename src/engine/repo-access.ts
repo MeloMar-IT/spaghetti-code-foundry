@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isLocalRepoName } from "../auth/local-name.js";
-import { type RepoAccess, findLocalRepo, repoAccess } from "../auth/repos.js";
+import { NO_RUN_OWNER, type RepoAccess, TOKEN_UNREADABLE, findLocalRepo, ownsProject, repoAccess } from "../auth/repos.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import type { Config } from "../config.js";
 import type { Step } from "../flow/schema.js";
@@ -38,6 +38,16 @@ export function stepRepoAccess(
   if (flowName === "refine-round" && step.id === "list_issues" && depth === 0 && vars.ask !== "impact") return undefined;
   const refinement = isRefinementRun(summary.source);
   if (!summary.owner && !refinement) return undefined;
+  // A local project: a refinement run reads the folder for its owner only; there is no stored credential.
+  const name = vars.github_repo ?? "";
+  if (refinement && isLocalRepoName(name)) {
+    if (!summary.owner) return { kind: "refused", reason: NO_RUN_OWNER };
+    try {
+      return ownsProject(summary.owner, name) ? { kind: "server" } : { kind: "refused", reason: `"${name}" is not one of your repositories` };
+    } catch {
+      return { kind: "refused", reason: TOKEN_UNREADABLE };
+    }
+  }
   return repoAccess(summary.owner, vars.github_repo ?? "", { unlisted: refinement ? "refuse" : "admin-server" });
 }
 

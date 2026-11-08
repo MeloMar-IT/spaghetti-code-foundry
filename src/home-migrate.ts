@@ -148,7 +148,8 @@ export function runningRuns(runsDir: string): RunningRun[] {
   return out;
 }
 
-const isWorkspace = (r: string[]) => r[0] === "runs" && r.length === 3 && r[2] === "workspace";
+const isWorkspace = (r: string[]) =>
+  (r[0] === "runs" && r.length === 3 && r[2] === "workspace") || (r[0] === "workspaces" && r.length === 5 && r[2] === "runs" && r[4] === "workspace");
 
 /** Relative path → size and mtime for files ("d" for folders); nothing inside runs/<id>/workspace. */
 export function snapshot(root: string, skip: string[] = []): Map<string, string> {

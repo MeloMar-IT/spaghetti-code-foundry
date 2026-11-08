@@ -3,10 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { StoreError } from "../src/auth/store.js";
+import { StoreError, withAuthLock } from "../src/auth/store.js";
 import { createUser, deleteUser, getUser, hashPassword, type User } from "../src/auth/users.js";
 import {
-  GUIDE_STEPS, MAX_ANSWERS_BYTES, ProgressError, clearProgress, parseProgressRequest, progressPath, readProgress, saveProgress,
+  GUIDE_STEPS, MAX_ANSWERS_BYTES, ProgressError, beginGuideProject, clearProgress, parseProgressRequest, progressPath, readProgress, recordCreatingLocked, recordGuideProject, saveProgress,
 } from "../src/onboarding/progress-store.js";
 import { deleteProgress, getProgress, putProgress } from "../src/server/api-onboarding.js";
 import { HttpError } from "../src/server/http.js";
@@ -188,6 +188,135 @@ describe("progress routes", () => {
       expect(e.message).not.toContain("secret-value");
       expect(e.message).not.toContain(home);
     }
+  });
+});
+
+describe("guide answers", () => {
+  const ok = (answers: any) => parseProgressRequest({ step: "step-4", answers });
+  const bad = (answers: any) => {
+    const e = thrown(() => ok(answers)) as ProgressError;
+    expect(e).toBeInstanceOf(ProgressError);
+    expect(e.code).toBe("bad");
+    return e.message;
+  };
+
+  it("accepts a full valid set", () => {
+    expect(() => ok({ starter: "website", about: { who: "me", what: "a\nb\tc" }, name: "!!!", style: "blue", where: "local", repoId: randomUUID(), making: randomUUID(), agents: { have: "both" } })).not.toThrow();
+  });
+
+  it("allows each limit exactly and refuses one more, without the value in the message", () => {
+    const cases: [string, (n: number) => any, number][] = [
+      ["who", (n) => ({ about: { who: "x".repeat(n) } }), 200],
+      ["what", (n) => ({ about: { what: "y".repeat(n) } }), 2000],
+      ["style", (n) => ({ style: "z".repeat(n) }), 200],
+      ["name", (n) => ({ name: "q".repeat(n) }), 100],
+    ];
+    for (const [field, make, max] of cases) {
+      expect(() => ok(make(max))).not.toThrow();
+      const m = bad(make(max + 1));
+      expect(m).toContain(field);
+      expect(m).not.toMatch(/[xyzq]{5}/);
+    }
+  });
+
+  it("refuses control characters (new lines only in what)", () => {
+    expect(bad({ about: { what: "a\u0007" } })).toContain("what");
+    expect(bad({ about: { who: "a\nb" } })).toContain("who");
+    expect(bad({ name: "a\u0001" })).toContain("name");
+    expect(bad({ style: "a\tb" })).toContain("style");
+  });
+
+  it("refuses other shapes with a message that names the field only", () => {
+    expect(bad({ where: "ftp" })).toContain("where");
+    expect(bad({ repoId: "x" })).toContain("repoId");
+    expect(bad({ making: "x" })).toContain("making");
+    expect(bad({ starter: "Bad_ID" })).toContain("starter");
+    expect(bad({ about: { extra: "secret-text" } })).not.toContain("secret-text");
+    expect(bad({ about: "x" })).toContain("about");
+  });
+
+  it("a PUT keeps the repoId and making that are stored, and ignores the ones it sends", () => {
+    const id = randomUUID();
+    const token = randomUUID();
+    saveProgress(ann.id, { step: "step-5", answers: { name: "a" } });
+    expect(saveProgress(ann.id, { step: "step-5", answers: { repoId: id, making: token } }).answers).toEqual({});
+    const m = beginGuideProject(ann.id, () => false) as { token: string };
+    recordGuideProject(ann.id, m.token, id);
+    const after = saveProgress(ann.id, { step: "step-5", answers: { name: "b", repoId: randomUUID() } });
+    expect(after.answers).toEqual({ name: "b", repoId: id });
+    // after Start again a stale PUT cannot bring the old id back
+    clearProgress(ann.id);
+    expect(saveProgress(ann.id, { step: "step-5", answers: { repoId: id } }).answers).toEqual({});
+  });
+});
+
+describe("beginGuideProject and recordGuideProject", () => {
+  it("starts at step 5 with a token when there is no entry", () => {
+    const b = beginGuideProject(ann.id, () => false) as { token: string };
+    const p = readProgress(ann.id)!;
+    expect(p.step).toBe("step-5");
+    expect(p.answers).toEqual({ making: b.token });
+  });
+
+  it("returns the id of a repository that exists and writes nothing", () => {
+    const id = randomUUID();
+    const b = beginGuideProject(ann.id, () => false) as { token: string };
+    recordGuideProject(ann.id, b.token, id);
+    const before = readFileSync(progressPath(), "utf8");
+    expect(beginGuideProject(ann.id, (x) => x === id)).toEqual({ existing: id });
+    expect(readFileSync(progressPath(), "utf8")).toBe(before);
+    // the repository is gone: the id is dropped and there is a new token
+    const again = beginGuideProject(ann.id, () => false) as { token: string };
+    expect(readProgress(ann.id)!.answers).toEqual({ making: again.token });
+  });
+
+  it("records only for the token that is stored, and never after Start again", () => {
+    const id = randomUUID();
+    const b = beginGuideProject(ann.id, () => false) as { token: string };
+    expect((thrown(() => recordGuideProject(ann.id, randomUUID(), id)) as ProgressError).code).toBe("stale");
+    recordGuideProject(ann.id, b.token, id);
+    expect(readProgress(ann.id)!.answers).toEqual({ repoId: id });
+    const c = beginGuideProject(ann.id, () => false) as { token: string };
+    clearProgress(ann.id);
+    const before = existsSync(progressPath()) ? readFileSync(progressPath(), "utf8") : "";
+    expect((thrown(() => recordGuideProject(ann.id, c.token, id)) as ProgressError).code).toBe("stale");
+    expect(existsSync(progressPath()) ? readFileSync(progressPath(), "utf8") : "").toBe(before);
+  });
+
+  it("records the creating id only inside the lock and only with the current token; the server keeps it", () => {
+    const id = randomUUID();
+    const b = beginGuideProject(ann.id, () => false) as { token: string };
+    expect(() => recordCreatingLocked(ann.id, b.token, id)).toThrow("inside withAuthLock");
+    expect((thrown(() => withAuthLock(() => recordCreatingLocked(ann.id, randomUUID(), id))) as ProgressError).code).toBe("stale");
+    withAuthLock(() => recordCreatingLocked(ann.id, b.token, id));
+    expect(readProgress(ann.id)!.answers).toEqual({ making: b.token, creating: id });
+    // a PUT can neither set nor remove it
+    expect(saveProgress(ann.id, { step: "step-5", answers: { creating: randomUUID() } }).answers).toEqual({ making: b.token, creating: id });
+    saveProgress(ann.id, { step: "step-5", answers: {} });
+    expect(readProgress(ann.id)!.answers).toEqual({ making: b.token, creating: id });
+    // the made project clears it
+    recordGuideProject(ann.id, b.token, randomUUID());
+    expect(readProgress(ann.id)!.answers).not.toHaveProperty("creating");
+  });
+
+  it("refuses a full entry before anything is written, and keeps other accounts readable", () => {
+    const answers: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) answers[`k${i}`] = "x";
+    saveProgress(ann.id, { step: "step-5", answers });
+    saveProgress(bob.id, { step: "agents", answers: {} });
+    const before = readFileSync(progressPath(), "utf8");
+    expect((thrown(() => beginGuideProject(ann.id, () => false)) as ProgressError).code).toBe("bad");
+    expect(readFileSync(progressPath(), "utf8")).toBe(before);
+    expect(readProgress(bob.id)?.step).toBe("agents");
+  });
+
+  it("is gone for an account that does not exist, and a retry after a restart finds the project", () => {
+    expect((thrown(() => beginGuideProject(randomUUID(), () => false)) as ProgressError).code).toBe("gone");
+    const id = randomUUID();
+    const b = beginGuideProject(ann.id, () => false) as { token: string };
+    recordGuideProject(ann.id, b.token, id);
+    // nothing is kept in memory: a new begin reads the file
+    expect(beginGuideProject(ann.id, (x) => x === id)).toEqual({ existing: id });
   });
 });
 

@@ -418,6 +418,9 @@ export function actions(s, run = () => {}) {
     b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, "✔ Approve"));
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => run("reject") }, "✘ Reject"));
   }
+  if (s.status === "stopped" && /^the issue's spending limit /.test(s.reason ?? "") && !closed) {
+    b.push(h("button", { "data-focus": "act-raise-limit", onClick: () => run("raise-limit") }, "Raise the issue's limit"));
+  }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
     b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => run("resume") }, "Retry from the failing step"));
   }

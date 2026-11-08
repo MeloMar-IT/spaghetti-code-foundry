@@ -6,7 +6,7 @@ import { dataHome } from "../src/auth/store.js";
 import { ConfigSchema } from "../src/config.js";
 import { canWrite, commentOnIssue, issueComments, repoPermission, setLabels } from "../src/github.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
-import { readAct, turnAct, turnDetail } from "../src/server/turn-actions.js";
+import { readAct, turnAct as turnActAs, turnDetail as turnDetailAs } from "../src/server/turn-actions.js";
 import { turnFor } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
 import { saveIssueStates } from "../src/issue-states.js";
@@ -17,6 +17,9 @@ import { fakeGithub } from "./helpers/fake-github.js";
 
 const NOW = new Date("2026-10-01T12:00:00Z");
 const user = { id: "u1", name: "Marcel K" };
+// These cases run as an admin; the owner rule is tested in server-turn-actions-owner.test.ts.
+const turnDetail = (ctx: ApiContext, key: string, now?: Date) => turnDetailAs(ctx, user, true, key, now);
+const turnAct = (ctx: ApiContext, u: { id: string; name?: string }, req: Parameters<typeof turnActAs>[3], now?: Date) => turnActAs(ctx, u, true, req, now);
 const cfg = (status_labels?: Record<string, string>) => ConfigSchema.parse({ watchers: [{ id: "a", github_repo: "acme/app", flow: "github-issue", ...(status_labels ? { status_labels } : {}) }] });
 
 const hold = (next: NextStep, since: string) => ({ issue: next.issue, reason: next.text, next, since });

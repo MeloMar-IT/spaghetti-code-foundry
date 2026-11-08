@@ -234,7 +234,7 @@ describe("the drawer", () => {
     const { d, api, win } = make();
     const fire = (id: unknown) => (win.listeners["scf-ask-open"] ?? []).forEach((f) => f({ detail: { id } }));
     fire("c1");
-    fire(undefined);
+    fire(null);
     await flush();
     expect(api.helpConversation).not.toHaveBeenCalled();
     expect(d.state.open).toBe(false);
@@ -244,6 +244,36 @@ describe("the drawer", () => {
     expect(api.helpConversation).toHaveBeenCalledWith(CONV);
     d.stop();
     expect(win.listeners["scf-ask-open"]).toEqual([]);
+  });
+
+  it("opens a new conversation for scf-ask-open without an id, and takes the event", async () => {
+    const { d, api, win } = make();
+    const e = { detail: {}, preventDefault: vi.fn() };
+    (win.listeners["scf-ask-open"] ?? []).forEach((f) => f(e));
+    await flush();
+    expect(d.state.open).toBe(true);
+    expect(d.state.conversation).toBeNull();
+    expect(d.state.restore).toBeNull();
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(api.helpConversation).not.toHaveBeenCalled();
+  });
+
+  it("openAsk sends the event without an id and says whether a drawer took it", () => {
+    const g = globalThis as any;
+    const saved = g.dispatchEvent;
+    const seen: any[] = [];
+    try {
+      g.dispatchEvent = (ev: any) => { seen.push(ev); return true; };
+      expect(mod.openAsk()).toBe(false);
+      g.dispatchEvent = (ev: any) => { seen.push(ev); return false; };
+      expect(mod.openAsk()).toBe(true);
+      expect(seen[0].type).toBe(mod.ASK_OPEN_EVENT);
+      expect(seen[0].detail.id).toBeUndefined();
+      g.dispatchEvent = undefined;
+      expect(mod.openAsk()).toBe(false);
+    } finally {
+      g.dispatchEvent = saved;
+    }
   });
 
   it("draws the records under the reply", async () => {

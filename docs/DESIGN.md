@@ -260,6 +260,69 @@ The limits are enforced by the scheduler (`src/queue/scheduler.ts`), not by a se
   `^[a-z0-9][a-z0-9-]{0,39}$` before it is used in a path. A workspace limit is never skipped: when the slot does
   not come free, the command is not run and the tool exits 75.
 
+### Workspace folders (#824)
+
+Runs and area locks of a workspace other than `default` live under `<data>/workspaces/<id>/` (`runs/`, `locks/`).
+`default` keeps `<data>/runs` and `<data>/locks`; nothing is migrated. The runs folder stays the anchor: `runsDir`
+is still the one folder the callers pass around, and `workspaceDir()` derives the container from its parent
+(`dirname(runsDir)`). `src/engine/state.ts` holds the helpers: `workspaceDirsIn()` lists the workspace folders
+(real folders with a valid id; links and files are skipped), `workspaceRunsDir()` and `allRunsDirs()` give the
+runs folders (`<data>/runs` first, so it wins a duplicate id), `runDirOf()` and `listAllRunIds()` find a run in
+any of them, and `runIdTaken()` checks a supplied id. `workspaceDir()` and `workspaceRunsDir()` refuse a bad id
+and a `workspaces/<id>`, `runs` or `locks` link that leaves the data folder. `src/home.ts` has `workspaceHome()`.
+
+- **Ids are reserved, not checked and written.** A new run takes its id with `mkdir` without `recursive`, so an
+  existing folder is an error and a run is never overwritten. The same check covers a supplied id and two creations
+  at once.
+- **Locks.** `lockRoot(ws)` and `allLockRoots()` (`src/engine/running.ts`) give a workspace run `<data>/workspaces/<id>/locks`,
+  set as `SCF_LOCK_DIR` and `FACTORY_LOCK_DIR` for its steps (`src/engine/execute.ts`, `src/agents/run.ts`). The
+  monitor's area locks use the key prefix `workspaces/<id>/`.
+- **Sandbox.** `src/engine/os-sandbox.ts` allows the workspace's lock folder and denies the default runs root, the
+  workspace container derived from `runsDir`, and the plugin exclusions. This holds for a custom `--runs-dir` outside
+  the home, data and temporary folders.
+- **Sweeps, budgets and clean.** `sweepRunning`, `sweepStaleRunning`, the server's sign-in-folder sweep,
+  `migrateDataHome` (`src/home-migrate.ts`), `clean` (`src/clean.ts`) and the daily budgets (`spentToday`,
+  `spentTodayBy`, `spentTodayByProject`) read every folder. `adoptRuns` (`src/auth/run-owner.ts`) adopts ownerless
+  runs in both layouts and still skips refinement runs.
+- **Removed workspaces are read-only.** A workspace that is no longer in `config.yaml` (`knownWorkspace()`) fails a
+  new run or a resume with `WORKSPACE_REMOVED` (`Scheduler`, both at queueing and in `runFlow`). `Scheduler.answer`
+  throws `AnswerRefused`; `setArchived` returns `"removed"`, which `api-runs.ts` sends as 409; park and clear-park
+  return false. The check runs before the saved run is written, so a refused operation leaves it unchanged. Cancel
+  and explicit clean still work; the runs stay listed.
+- **Watcher.** `src/queue/watcher.ts` no longer creates a run folder for its "planned" log lines. It keeps them in
+  memory and writes them once the run exists, so a restart before that loses them.
+
+**Known gaps for part 2 (#818).** These still read one runs folder and see only `<data>/runs`: `scf ops`, evidence
+(`evidence` and delivery verify), `analyst/cli`, `ops/usage.ts` and `ops/flaky.ts`. Runs of other workspaces are
+invisible to them until a later change covers them. `lifecycle-cli` and `release-cli` read every runs folder since #825.
+
+### Workspace skills folders (#825)
+
+A workspace other than `default` has its own administrator skills folder, `<data>/workspaces/<id>/skills/`.
+`workspaceSkillsDir(ws, data?)` (`src/home.ts`) gives it for a valid id other than `default`, and `<data>/skills` for
+`default`, no workspace or an invalid id. `workspaceSkillsFolderIn()` (`src/engine/state.ts`) builds the path and
+throws when a `workspaces/<id>` or `skills` link leaves the data folder.
+
+- **Registry.** `DiscoverOptions.skillsDir` replaces the first source, the data-folder root, in `buildSources()`
+  (`src/skills/registry.ts`). The release store, `skills.roots`, the built-in skills and the repository stay
+  install-wide, and so do the pins (`skills.lock.json`), the lifecycle record and the release manifests. The cache
+  of `cachedSkillRegistryAt()` keys on the home, the repository and the skills folder, and holds up to 16 registries
+  (`MAX_CACHED`) instead of one.
+- **Callers.** A run uses the registry of its own workspace in the skill catalogue (`src/agents/run.ts`), the skill
+  lock and draft list (`src/engine/skill-lock.ts`), the plan check (`src/skills/run-plan.ts`), the run page's skill
+  view (`src/server/api-runs.ts`) and the allowance (`src/server/api-skills.ts`). `scf skills` takes `--workspace <id>`
+  for `list`, `pin` and `lifecycle` (`src/skills/cli.ts`); `allow-run` takes none.
+- **Finding a run.** `chosenRunDirs()` (`src/skills/lifecycle-cli.ts`) maps each run id of every runs folder
+  (`allRunsDirs()`) to one folder. The first folder with a `run.json` wins, as in `runDirOf()`; a folder with only a
+  skill lock counts only when no folder has a `run.json` for that id. `runsLocking()` (used when a lifecycle state
+  changes) and `releaseList()` (`src/skills/release-cli.ts`) use it, so a team's run is listed.
+- **Allowance.** `applyAllowance()` takes a registry per workspace. `runWorkspace()` reads the workspace from the
+  run's `run.json` and uses `default` when it is missing or invalid. A run that is not found is checked against the
+  `default` registry and answers `no-run`; the allowance never falls through to another folder's lock.
+- **Tests.** `tests/workspace-skills.test.ts` (folders, link check, cache, run lookup, allowance, CLI flags) and
+  `tests/workspace-skills-run.test.ts` (a team run with its skill, the run page, an allowance through the team
+  registry, the catalogue).
+
 ---
 
 ## 4. Flows and the engine
@@ -2001,8 +2064,11 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 |---|---|
 | `config.yaml` | Settings and watchers |
 | `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace, `evidence.jsonl` (the events of the run), `evidence.json` (the manifest of a run that ended), `evidence.diff`, `evidence.incomplete` (a mark: the events are not whole) |
+| `workspaces/<id>/runs/<run-id>/` | The runs of a workspace other than `default`, same layout as `runs/` (#824) |
 | `queue.json` | Queued jobs |
-| `locks/` | Code-area and run locks |
+| `locks/` | Code-area and run locks (`default`) |
+| `workspaces/<id>/locks/` | Code-area and run locks of a workspace other than `default` (#824) |
+| `workspaces/<id>/skills/` | The administrator skills of a workspace other than `default` (#825); `skills/` in the data folder is the one of `default` |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |

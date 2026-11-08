@@ -4,6 +4,7 @@ import { effectiveLifecycle, LIFECYCLE_STATES, lifecycleReasonProblem, RUN_ID_RE
 import { parseSkillKey } from "../skills/lock.js";
 import { applyAllowance, applyTransition, type ApplyFail } from "../skills/lifecycle-cli.js";
 import { clearSkillRegistryCache, discoverSkills } from "../skills/registry.js";
+import { workspaceSkillsDir } from "../home.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { Route } from "./server.js";
 
@@ -69,7 +70,7 @@ export const skillRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[2] === "allow-run" && !seg[3] && method === "POST") {
     const b = body(Allowance, await readJson(req));
     try {
-      const r = applyAllowance(reg(), { ...b, by: user.id, runsDir: ctx.opts.runsDir, waitMs: 0 });
+      const r = applyAllowance((ws) => discoverSkills(ctx.config().skills, { skillsDir: workspaceSkillsDir(ws) }), { ...b, by: user.id, runsDir: ctx.opts.runsDir, waitMs: 0 });
       if (r.status !== "ok") throw new HttpError(STATUS[r.status], r.reason);
       clearSkillRegistryCache();
       return send(res, 200, { allowance: r.allowance, added: r.added }), true;
