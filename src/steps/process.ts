@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess, type ChildProcessWithoutNullStreams, type SpawnOptions } from "node:child_process";
 import { accessSync, constants, createWriteStream, statSync } from "node:fs";
 import { getPriority } from "node:os";
 import { resolve as resolvePath } from "node:path";
@@ -130,6 +130,15 @@ export function spawnTarget(cmd: string, args: string[], profile?: string, prior
   const words = [...(machine ? priorityPrefix(priority, machine) : []), ...inner];
   return { cmd: words[0]!, args: words.slice(1) };
 }
+
+/** Where a step's process starts (#785). Only a local one exists; this is the plugin point for a remote executor later. */
+export interface StepExecutor {
+  readonly where: "local";
+  start(target: { cmd: string; args: string[] }, o: SpawnOptions): ChildProcess;
+}
+
+/** Starts the process on this computer. Every step process starts through it. */
+export const localExecutor: StepExecutor = { where: "local", start: (t, o) => spawn(t.cmd, t.args, o) };
 
 /** Whether `cmd` can be found and executed the way spawn looks it up (a path with `/` from the cwd, else the PATH folders; no PATH means /usr/bin:/bin). */
 function canStart(cmd: string, pathVar: string | undefined, cwd: string): boolean {
@@ -291,12 +300,13 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
     const grouped = Boolean(opts.ownGroup || opts.groupKill);
     const wrapped = Boolean(machine && priorityPrefix(opts.priority, machine).length);
     const target = spawnTarget(cmd, args, opts.sandboxProfile, opts.priority, machine);
-    const child = spawn(target.cmd, target.args, {
+    // stdio is "pipe" for all three, so the streams exist
+    const child = localExecutor.start(target, {
       cwd: opts.cwd,
       env: mergeEnv(opts.env, opts.cleanEnv),
       stdio: ["pipe", "pipe", "pipe"],
       ...(grouped ? { detached: true } : {}),
-    });
+    }) as ChildProcessWithoutNullStreams;
     const unmark = child.pid ? markStep(opts.logFile, child.pid) : () => {};
     const tracker = opts.groupKill && child.pid ? new ProcessTracker(child.pid, { everyMs: opts.trackEveryMs ?? 10_000 }) : undefined;
     if (grouped && child.pid) {

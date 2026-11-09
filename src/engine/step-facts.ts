@@ -1,7 +1,7 @@
 import type { Step } from "../flow/schema.js";
 import { runChangedPaths, ensurePathsBase } from "./diff.js";
 import type { Engine, Scope } from "./execute.js";
-import { sandboxedRun } from "./os-sandbox.js";
+import { runSandbox } from "./os-sandbox.js";
 import { shortEnvRun } from "./short-env.js";
 
 /** The Docker image a sandboxed shell step of this flow runs in, if any. */
@@ -13,7 +13,7 @@ export const shellImage = (scope: Scope, engine: Engine): string | undefined => 
  */
 export function shellSandboxed(engine: Engine, scope: Scope, step: Pick<Step, "type"> & { sandbox?: boolean }): boolean | undefined {
   if (step.type !== "shell") return undefined;
-  return (sandboxedRun(engine.summary.owner, engine.config) === "on" && shortEnvRun(engine.summary.owner)) || Boolean(step.sandbox && shellImage(scope, engine));
+  return (runSandbox(engine.summary, engine.config) === "on" && shortEnvRun(engine.summary.owner, engine.summary.workspace)) || Boolean(step.sandbox && shellImage(scope, engine));
 }
 
 /**

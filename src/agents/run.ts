@@ -8,7 +8,7 @@ import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js"
 import type { ProcessMeter } from "../steps/process.js";
 import type { SlotWaitWatch } from "../steps/slot-waits.js";
 import { DEFAULT_PERMISSION_MODE, autonomyStop, pushLogFor, refuseByPolicy, slotWaitsFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
-import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, heldWorkspace, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
@@ -20,7 +20,8 @@ import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skil
 import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant, type SessionTools, type ToolCheck } from "../skills/tool-policy.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { lockRoot } from "../engine/running.js";
-import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
+import { runSandbox, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, workspaceCacheEnv, workspaceJavaDir, workspaceSlotsDir } from "../engine/os-sandbox.js";
+import { modelHosts, proxyEnv, startEgress, type Egress } from "../engine/egress.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
@@ -96,7 +97,9 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
   if (pushLog) base.FACTORY_PUSH_LOG = pushLog;
   const ghDir = ghConfigDir();
+  let egress: Egress | undefined;
   try {
+    const held = heldWorkspace(engine.summary.workspace);
     const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
     // A boxed step signs in by the server's token variable only: a key a flow brings in `agent_env` is ignored.
     const dropped = boxed ? dropLoginVars(extra, providerKeyVars(engine.config)) : [];
@@ -109,13 +112,16 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     // The request file of a repo_ops step (made fresh for every try); any other step has no such variable.
     env = { ...env, ...repoRequestsEnv(engine, scope, step) };
     // A user's run gets only the short environment plus what this agent and provider need (see short-env.ts).
-    const short = shortEnvRun(engine.summary.owner);
+    const short = shortEnvRun(engine.summary.owner, engine.summary.workspace);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
     if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, tokenVarNames(engine.config)) };
-    // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder.
+    // a team's Claude session sends nothing but the model calls (the proxy lets only the model host through)
+    if (held && t.agent === "claude") env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+    // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder, except a team's step: its profile opens the slots.
     let slotWaits: SlotWaitWatch | undefined;
-    if (!boxed) {
-      env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME) };
+    if (!boxed || held) {
+      // the Java stand-in of a team's run is made by the server in a folder the step only reads
+      env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME, held ? workspaceJavaDir(engine.summary.workspace!) : undefined) };
       // The waits for a slot are recorded in a folder of this try, so the time limit can leave them out. A read-only Codex session cannot write it.
       slotWaits = slotWaitsRecordable(t.agent, gate.mapping.codexSandbox) ? slotWaitsFor(engine, logFile) : undefined;
       if (slotWaits) env.FACTORY_TEST_SLOT_WAIT_DIR = slotWaits.dir;
@@ -127,6 +133,20 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
       if (missing) {
         engine.accessFailed = true;
         return { ok: false, output: missing, error: missing, final: true };
+      }
+      // a team's step reaches only its model host, through its own proxy; a model host that is not allowed fails the step (#785)
+      let team: { network: { proxyPort: number; localPorts: number[] }; shared: string[]; readOnly: string[]; slots: ReturnType<typeof workspaceSlotsDir> } | undefined;
+      if (held) {
+        const ws = engine.summary.workspace!;
+        const mh = modelHosts(t, env);
+        if ("refused" in mh) {
+          engine.accessFailed = true;
+          return { ok: false, output: mh.refused, error: mh.refused, final: true };
+        }
+        const cache = workspaceCacheEnv(ws, env);
+        egress = await startEgress(mh.hosts);
+        Object.assign(env, proxyEnv(egress.port, env, mh.noProxy), cache.env);
+        team = { network: { proxyPort: egress.port, localPorts: mh.localPorts }, shared: [cache.dir], readOnly: [workspaceJavaDir(ws)], slots: workspaceSlotsDir(engine.runsDir, ws) };
       }
       // private agent folders in the run folder, set by the server (the admin's are not inherited)
       const runDir = engine.summary.runDir;
@@ -145,7 +165,8 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           claudeBin: t.agent === "codex" ? engine.claudeBin : bin,
           codexBin: t.agent === "codex" ? bin : engine.codexBin,
           agentBin: bin,
-          userRead: engine.config.sandbox.user_read,
+          userRead: held ? undefined : engine.config.sandbox.user_read,
+          ...team,
           workspaceReadOnly: readOnly,
           requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
           pushLogDir: env.FACTORY_PUSH_LOG ? dirname(env.FACTORY_PUSH_LOG) : undefined,
@@ -156,6 +177,11 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     }
     return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, slotWaits, records, ...gate });
   } finally {
+    if (egress) {
+      const refusedHosts = egress.refused();
+      await egress.close();
+      if (refusedHosts.length) engine.log(`    · hosts refused: ${refusedHosts.join(", ")}`);
+    }
     removeGhConfigDir(ghDir);
   }
 }
@@ -483,7 +509,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     return { ok: false, output: iso.refused, error: iso.refused };
   }
   // A user's run is held by an OS sandbox profile (the same refusal and setting as a shell step).
-  const sb = sandboxedRun(engine.summary.owner, config);
+  const sb = runSandbox(engine.summary, config);
   if (typeof sb === "object") {
     engine.accessFailed = true;
     return { ok: false, output: sb.refused, error: sb.refused };
@@ -684,14 +710,14 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
  * The environment of the test gate of agent steps: tools/agent-bin first on the PATH and the machine's slots folder
  * (next to `runs/`, where the test steps of a flow take theirs). The gate sends test commands through tools/test-slot.
  */
-export function testGateEnv(path: string | undefined, runDir: string, javaHome?: string): Record<string, string> {
+export function testGateEnv(path: string | undefined, runDir: string, javaHome?: string, standInDir?: string): Record<string, string> {
   const bin = join(TOOLS_DIR, "agent-bin");
   const rest = (path ?? "").split(delimiter).filter((p) => p && p !== bin);
   const env: Record<string, string> = { PATH: [bin, ...rest].join(delimiter), FACTORY_TEST_SLOTS_DIR: join(runDir, "..", "..", "test-slots") };
   // A wrapper started by its path (./gradlew, ./mvnw) ends in $JAVA_HOME/bin/java: JAVA_HOME becomes a stand-in JDK whose
   // java goes through the gate (the JDK the wrapper would find itself, when JAVA_HOME is not set). Without one: the PATH only.
   const home = javaHome || discoverJavaHome(path);
-  const stand = home ? javaStandIn(home, join(runDir, "..", "..", "agent-java")) : undefined;
+  const stand = home ? javaStandIn(home, standInDir ?? join(runDir, "..", "..", "agent-java")) : undefined;
   if (stand) {
     env.JAVA_HOME = stand.home;
     env.FACTORY_REAL_JAVA_HOME = stand.real;

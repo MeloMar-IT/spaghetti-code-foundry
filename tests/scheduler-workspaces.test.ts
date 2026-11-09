@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,14 @@ import { Scheduler, type Job, type SchedulerOptions } from "../src/queue/schedul
 import { disposeWorkspaces, supplyWorkspaces } from "../src/workspaces/list.js";
 import { nextStep } from "../src/next-step.js";
 import { statusHelp, statusName } from "../src/words.js";
-import { waitForFile } from "./helpers/gate-wait.js";
+import { lockRoot } from "../src/engine/running.js";
+
+// A team's step is held by the OS sandbox (#785): it cannot see the test's temp folder, but it can read its own workspace's lock folder.
+// So a step waits for `<dir>/<run id>` (a default run) or `$SCF_LOCK_DIR/gates/<run id>` (a team's run); the test opens both.
+const basic = process.platform === "darwin" && spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"], { stdio: "ignore" }).status === 0;
+const TEAMS = ["team-a", "team-b"];
+const waitForFile = (dir: string, file: string): string =>
+  `i=0; while [ ! -e "${dir}/${file}" ] && [ ! -e "$SCF_LOCK_DIR/gates/${file}" ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done`;
 
 /** A flow that works until the test creates the file `<dir>/<run id>`. */
 const gateFlow = (dir: string) => parseFlow(`name: slow
@@ -20,7 +28,7 @@ steps:
 
 type Lim = { max_concurrent?: number; test_slots?: number; monthly_budget_usd?: number };
 
-describe("scheduler workspace limits (#819)", () => {
+describe.skipIf(!basic)("scheduler workspace limits (#819)", () => {
   let tmp: string;
   let concurrency = 0;
   let costLimits = true;
@@ -29,7 +37,7 @@ describe("scheduler workspace limits (#819)", () => {
   let s: Scheduler | undefined;
   let GATE = gateFlow("");
   let installCap: number | undefined;
-  const cfg = (): Config => ({ ...ConfigSchema.parse({ limits: installCap === undefined ? {} : { monthly_budget_usd: installCap } }), concurrency, cost_limits: costLimits });
+  const cfg = (): Config => ({ ...ConfigSchema.parse({ bot: { name: "Bot", email: "bot@example.com" }, limits: installCap === undefined ? {} : { monthly_budget_usd: installCap } }), concurrency, cost_limits: costLimits });
   const mk = (extra: Partial<SchedulerOptions> = {}) =>
     (s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, workspaceLimits: (w) => limits[w] ?? {}, spentThisMonthByWorkspace: (w) => spend[w] ?? 0, ...extra }));
   const job = (flow = GATE): Job => ({ kind: "run", flow, task: "t", repo: tmp, vars: {} });
@@ -41,7 +49,13 @@ describe("scheduler workspace limits (#819)", () => {
     for (let i = 0; i < 100 && !fn(); i++) await new Promise((r) => setTimeout(r, 50));
     expect(fn()).toBe(true);
   };
-  const open = (runId: string) => writeFileSync(join(tmp, "gates", runId), "");
+  const open = (runId: string) => {
+    writeFileSync(join(tmp, "gates", runId), "");
+    for (const w of TEAMS) {
+      mkdirSync(join(lockRoot(w), "gates"), { recursive: true });
+      writeFileSync(join(lockRoot(w), "gates", runId), "");
+    }
+  };
   const finish = async (source: string) => {
     const a = s!.queue().active.find((x) => x.source === source)!;
     open(a.runId);
@@ -316,7 +330,8 @@ describe("scheduler workspace limits (#819)", () => {
 
   it("reads the limits from the workspace list and gives a shell step the workspace and its test slots", async () => {
     concurrency = 3;
-    const out = join(tmp, "env.txt");
+    mkdirSync(lockRoot("team-a"), { recursive: true });
+    const out = join(lockRoot("team-a"), "env.txt");
     disposeWorkspaces("base");
     supplyWorkspaces({
       owner: "t", plugin: "t", report: () => undefined,
@@ -324,10 +339,11 @@ describe("scheduler workspace limits (#819)", () => {
     });
     try {
       s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg });
+      // (the env.txt is written in the workspace's lock folder, which the held step can write)
       const envFlow = parseFlow(`name: env
 workspace: empty
 steps:
-  - {id: a, type: shell, run: 'echo "$FACTORY_WORKSPACE $FACTORY_WORKSPACE_TEST_SLOTS" > "${out}"; ${waitForFile(join(tmp, "gates"), "$FACTORY_RUN_ID")}'}
+  - {id: a, type: shell, run: 'echo "$FACTORY_WORKSPACE $FACTORY_WORKSPACE_TEST_SLOTS" > "$SCF_LOCK_DIR/env.txt";${waitForFile(join(tmp, "gates"), "$FACTORY_RUN_ID")}'}
 `);
       s.submit(job(envFlow), { source: "a1", workspace: "team-a" });
       s.submit(job(), { source: "a2", workspace: "team-a" });

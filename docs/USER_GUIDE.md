@@ -7480,8 +7480,17 @@ workspaces:
       max_concurrent: 2
       test_slots: 1
       monthly_budget_usd: 150
+    hosts:                       # optional: extra hosts a team's shell steps may reach
+      - "api.example.com"
 ```
 
+- **Team runs are held.** A run of any workspace but `default` is held apart from the rest of the machine:
+  - its steps always run in the operating-system sandbox; `sandbox.user_runs` and `sandbox.user_read` do not apply to it. If the computer cannot sandbox a step, the run is refused before any step starts;
+  - its agents reach only their model host; its shell steps reach GitHub, the package registries and the `hosts` below. A host that is not allowed is refused, and the step log names it;
+  - it never uses the machine's GitHub login, and it needs a commit identity;
+  - `inplace` and `worktree` flows are refused, because they work in the server's own folder.
+  - Known gap: a team's agent does not yet get a key from its workspace, so set its agent key in the usual way for now.
+- **`hosts`.** Each entry is a host name (`api.example.com`), a host name with a port (`api.example.com:8443`) or `*.example.com` for subdomains. Up to 100 entries. IP addresses are refused. Port 443 is used when no port is given.
 - **Limits.** Each limit holds for the workspace only:
   - `max_concurrent`: no new job of the workspace starts while it has that many running. The account limits still apply on top.
   - `monthly_budget_usd`: no new run of the workspace starts once the cost of its runs this calendar month (UTC) reaches the limit. The run waits with "waiting — the workspace's monthly budget" and starts again in the next month. This limit is not checked when `cost_limits` is off.
