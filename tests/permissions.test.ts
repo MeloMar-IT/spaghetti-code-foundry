@@ -276,6 +276,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET changes": { path: "changes", user: 400, admin: 400 },
   "POST changes": { path: "changes", body: {}, user: 400, admin: 400 },
   "GET changes/:id": { path: `changes/${UNKNOWN}`, user: 404, admin: 404 },
+  "GET changes/:id/pictures/:n": { path: `changes/${UNKNOWN}/pictures/1`, user: 404, admin: 404 },
   "POST changes/:id/answers": { path: `changes/${UNKNOWN}/answers`, body: {}, user: 404, admin: 404 },
   "PUT changes/:id/cards/:did": { path: `changes/${UNKNOWN}/cards/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "POST changes/:id/build": { path: `changes/${UNKNOWN}/build`, body: {}, user: 404, admin: 404 },
@@ -394,6 +395,7 @@ describe("the table", () => {
     expect(findRule("GET", ["refinement", "backlog"])?.path).toBe("refinement/backlog");
     expect(findRule("GET", ["changes"])?.path).toBe("changes");
     expect(findRule("GET", ["changes", "a"])?.path).toBe("changes/:id");
+    expect(findRule("GET", ["changes", "a", "pictures", "1"])?.path).toBe("changes/:id/pictures/:n");
     expect(findRule("POST", ["changes", "a", "answers"])?.path).toBe("changes/:id/answers");
     expect(findRule("PUT", ["changes", "a", "cards", "b"])?.path).toBe("changes/:id/cards/:did");
     expect(findRule("POST", ["changes", "a", "build"])?.path).toBe("changes/:id/build");

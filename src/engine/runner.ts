@@ -44,7 +44,7 @@ import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
-import { prepareWorkspace } from "./workspace.js";
+import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
@@ -107,6 +107,8 @@ export interface RunOptions extends CommonOptions {
   vars?: Record<string, string>;
   /** `vars` is the final set: the folder's own settings are not read (they were applied when the run was queued). */
   frozenVars?: boolean;
+  /** Files copied into the workspace right after it is made (only server code sets this; a failure ends the run with INPUT_FILES_MISSING). */
+  files?: RunInputFile[];
   /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
   workspace?: string;
   /** Tests only: called after the run folder is reserved, before the id is looked for in the other runs folders. */
@@ -280,6 +282,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     } catch {
       // not a git checkout yet (e.g. empty workspace)
     }
+    if (opts.files?.length) copyInputFiles(ws.workdir, opts.files);
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: null, lastOutput: "" });
   }

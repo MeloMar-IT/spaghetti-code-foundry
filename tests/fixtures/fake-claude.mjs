@@ -71,6 +71,13 @@ let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
 const args = process.argv.slice(2);
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+// FAKE_PICTURES_SEEN (a file path): one line per run, the first prompt line and the sorted entries of ./pictures as name:size:first4hex, or "none".
+if (process.env.FAKE_PICTURES_SEEN) {
+  const seen = existsSync("pictures")
+    ? readdirSync("pictures").sort().map((n) => `${n}:${statSync(`pictures/${n}`).size}:${readFileSync(`pictures/${n}`).subarray(0, 4).toString("hex")}`)
+    : [];
+  appendFileSync(process.env.FAKE_PICTURES_SEEN, `${prompt.split("\n", 1)[0]} | ${seen.length ? seen.join(" ") : "none"}\n`);
+}
 if (authFile) {
   if (process.env.FAKE_CLAUDE_ARGS_FILE) appendFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, `${JSON.stringify(args)}\n`);
   if (!existsSync(authFile)) {

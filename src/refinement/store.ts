@@ -9,6 +9,7 @@ import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } fro
 import { rememberSplit } from "../engine/split-links.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
+import { PICTURES_MAX, PICTURE_MAX_BYTES, PICTURE_TYPES, removePictures, sweepOrphanPictures, writePictures, type PictureFile } from "./pictures.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
 import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
 import { applyUnderstood } from "./understand-text.js";
@@ -106,6 +107,8 @@ const SourceSchema = z
   .strict();
 export type IssueSource = z.infer<typeof SourceSchema>;
 
+const PictureSchema = z.object({ type: z.enum(PICTURE_TYPES), size: z.number().int().min(1).max(PICTURE_MAX_BYTES) }).strict();
+
 const SessionSchema = z
   .object({
     id: z.uuid(),
@@ -126,6 +129,8 @@ const SessionSchema = z
     talk: TalkSchema.optional(),
     /** Set on a change request of the Simple view (#812): the architect chains by itself. `built` lists the drafts whose story has the build label; `build` is set when all have it. */
     changeRequest: z.object({ built: z.array(z.uuid()).max(100).optional(), build: z.literal(true).optional() }).strict().optional(),
+    /** The pictures of a change request (#835): the files are in `change-pictures/<id>/<n>.<ext>`; only the kind and size are kept here. */
+    pictures: z.array(PictureSchema).min(1).max(PICTURES_MAX).optional(),
     log: z.array(LogEntry).min(1).max(LOG_LIMIT),
     created: z.iso.datetime(),
     updated: z.iso.datetime(),
@@ -142,6 +147,7 @@ const SessionSchema = z
     }
     // A criterion or a suggestion is tied to a rule or an example that is in the map.
     if (!tiesOk(s.drafts, s.talk)) issue("drafts");
+    if (s.pictures && !s.changeRequest) issue("pictures");
   });
 
 const FileSchema = z
@@ -228,6 +234,8 @@ export interface NewSession {
   fromHelp?: string;
   /** The session is a change request of the Simple view. */
   changeRequest?: true;
+  /** Checked pictures of a change request; the files are written under the lock, with the session. */
+  pictures?: PictureFile[];
 }
 
 // ---- reading ---------------------------------------------------------------------------------------
@@ -258,6 +266,8 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
   const idea = checkIdea(input.idea);
   const title = input.title === undefined || input.title === null || (typeof input.title === "string" && !input.title.trim()) ? undefined : checkTitle(input.title);
   if (typeof input.repo !== "string" || !validSessionRepo(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name, or one of your local projects");
+  const pictures = input.pictures?.length ? input.pictures : undefined;
+  if (pictures && !input.changeRequest) throw new RefinementError("bad-state", "only a change request can have pictures");
   return insertSession(owner, input.repo, opts, (repo, at) => ({
     id: randomUUID(),
     owner,
@@ -266,16 +276,17 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
     idea,
     ...(input.fromHelp ? { fromHelp: input.fromHelp } : {}),
     ...(input.changeRequest ? { changeRequest: {} } : {}),
+    ...(pictures ? { pictures: pictures.map((p) => ({ type: p.type, size: p.data.length })) } : {}),
     state: "exploring",
     drafts: [],
     log: [{ at, by: owner, what: "created" }],
     created: at,
     updated: at,
-  }));
+  }), pictures ? (s) => writePictures(s.id, pictures) : undefined);
 }
 
 /** Checks the owner and the repository and the session limit under the lock, then saves the session `make` builds. */
-function insertSession(owner: string, given: string, opts: CreateOptions, make: (repo: string, at: string, kept: Session[]) => Session): Session {
+function insertSession(owner: string, given: string, opts: CreateOptions, make: (repo: string, at: string, kept: Session[]) => Session, beforeSave?: (s: Session) => void): Session {
   return withAuthLock(() => {
     if (!(opts.ownerOk ?? defaultOwnerOk)(owner)) throw new RefinementError("no-owner", "no such account");
     const repo = (opts.repoName ?? defaultRepoName)(owner, given);
@@ -287,7 +298,13 @@ function insertSession(owner: string, given: string, opts: CreateOptions, make: 
       throw new RefinementError("limit", `at most ${SESSION_LIMIT} sessions; dropped sessions count until they are removed after 30 days`);
     }
     const session = make(repo, now.toISOString(), kept);
-    save([...kept, session]);
+    try {
+      beforeSave?.(session); // the files are written first; if the write or the save fails, nothing is left behind
+      save([...kept, session]);
+    } catch (e) {
+      if (beforeSave) removePictures(session.id);
+      throw e;
+    }
     return copy(session);
   });
 }
@@ -434,11 +451,14 @@ export function clearSourceBuildLabel(actor: Actor, id: string, opts: StoreOptio
 }
 
 export function dropSession(actor: Actor, id: string, opts: StoreOptions = {}): Session {
-  return change(actor, id, opts, true, (s, at) => {
+  const dropped = change(actor, id, opts, true, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "that session is dropped already");
     room(s, LOG_LIMIT, false); // dropping must always work; it cancels the run
-    return { ...s, state: "dropped", stateBefore: s.state, droppedAt: at, updated: at, log: [...s.log, { at, by: actor.id, what: "dropped" }] };
+    const { pictures: _pictures, ...rest } = s;
+    return { ...rest, state: "dropped", stateBefore: s.state, droppedAt: at, updated: at, log: [...s.log, { at, by: actor.id, what: "dropped" }] };
   });
+  removePictures(id); // only after the save: a failed save keeps the files together with the metadata
+  return dropped;
 }
 
 export function restoreSession(actor: Actor, id: string, opts: StoreOptions = {}): Session {
@@ -464,8 +484,9 @@ export function purgeDropped(opts: StoreOptions = {}): number {
     const now = clock(opts);
     const file = read();
     const kept = file.sessions.filter((s) => !expired(s, now));
-    if (kept.length === file.sessions.length) return 0;
-    save(kept);
+    if (kept.length !== file.sessions.length) save(kept);
+    // Folders of sessions that are gone (or never saved) go too; one that could not be removed before is tried again here.
+    sweepOrphanPictures(new Set(kept.filter((s) => s.pictures).map((s) => s.id)));
     return file.sessions.length - kept.length;
   });
 }
@@ -477,6 +498,7 @@ export function removeRefinementsLocked(owner: string): number {
   const mine = file.sessions.filter((s) => s.owner === owner);
   if (!mine.length) return 0;
   save(file.sessions.filter((s) => s.owner !== owner));
+  for (const s of mine) if (s.pictures) removePictures(s.id);
   return mine.length;
 }
 

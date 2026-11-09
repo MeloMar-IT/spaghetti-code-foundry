@@ -7,6 +7,7 @@ import type { ApprovalDecision } from "../engine/execute.js";
 import { workspaceRefused } from "../engine/isolation.js";
 import { knownWorkspace, limitsOf as workspaceLimitsOf, workspaceForJob } from "../workspaces/index.js";
 import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../workspaces/list.js";
+import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
 import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
@@ -36,7 +37,7 @@ const MAX_LOG_LINES = 5000;
 const CAP_RECHECK_MS = 30_000;
 
 export type Job =
-  | { kind: "run"; flow: Flow; task: string; repo: string; vars: Record<string, string>; /** `vars` is final: the folder's settings were applied when it was queued. */ frozenVars?: boolean }
+  | { kind: "run"; flow: Flow; task: string; repo: string; vars: Record<string, string>; /** `vars` is final: the folder's settings were applied when it was queued. */ frozenVars?: boolean; /** Files copied into the workspace (server code only). */ files?: RunInputFile[] }
   | { kind: "resume"; runId: string; from?: string; decision?: ApprovalDecision };
 
 export interface QueuedJob {
@@ -1196,6 +1197,7 @@ export class Scheduler {
             repo: j.repo,
             vars: j.vars,
             frozenVars: j.frozenVars,
+            ...(j.files ? { files: j.files } : {}),
             workspace: queuedWorkspace(q),
             source: q.source,
             owner: q.owner,
