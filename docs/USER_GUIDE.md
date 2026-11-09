@@ -330,7 +330,9 @@ Publishing again does not copy the pictures or write their text a second time.
 
 **Check a result.** When a change waits for your check, the card shows one paragraph of what was made, then **This is good** and **Something is not right**. **Try it** is there too when the page is on the Foundry's computer (see **Try it on the project page** below). **This is good** accepts the change. **Something is not right** opens a box with the question "What is not right?"; write what is wrong (an empty answer is not sent) and press **Send**. The Foundry then tries again with your words. The page says "Thank you. The Foundry goes on by itself." once it is sent.
 
-**Got stuck.** When a change got stuck, the card says "This got stuck: the Foundry could not finish it by itself." **Try again** starts the change once more, when it can be started from this page. **Ask for help** opens Ask SCF on a new conversation (see **Ask SCF in the Simple view**). The page never shows the reason, the step or an error text.
+**Got stuck.** When a change got stuck, the card says "This got stuck: the Foundry could not finish it by itself." **Try again** starts the change once more, when it can be started from this page. **Ask for help** opens Ask SCF on a new conversation (see **Ask SCF in the Simple view**). **Not now** puts the card aside; it stays hidden after a restart and comes back only when the change fails again. The page never shows the reason, the step or an error text.
+
+Only work that is still stuck is listed under "See what got stuck". A change whose issue is closed on GitHub is not listed, and a split whose parts all exist is shown as done, not as stuck. Such a split has no **Try again**, because a second run would create the parts again. A split that made some of its parts but not all stays stuck, without **Try again**.
 
 **Try it on the project page.** Press **Try it** to start your project's app. The page says "Starting…" and reads the state again every few seconds. When the app is ready, a big **Open it** link opens your project in a new tab, and **Stop** ends the preview. If the app does not start, the page says "It could not start. The Foundry will look into it." and **Try it** is shown again. Simple never shows the app's output or the reason; Advanced and Admin show them on the repository page. A new start replaces the running preview of the project, and the preview also stops on its own after 30 minutes without use (see **Try it: preview** below).
 
@@ -5397,6 +5399,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs/:id/issue-limit` | yes | no | the spending limit of the run's issue: what the issue, its split parts and retries cost, the default, the override and the limit in effect |
 | `PUT /api/runs/:id/issue-limit` | yes | no | set (`limitUsd` above 0) or clear (`null`) the spending limit of the run's issue and its split parts; writes an audit line |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
+| `POST /api/runs/:id/not-now` | yes | own runs | put aside a run that failed ("Not now" in the Simple view) until it fails again; 409 when it did not fail; kept in the same store as Your turn dismissals |
 | `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
 | `POST /api/runs/:id/unarchive` | yes | own runs | take a run out of the archive again |
 | `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |

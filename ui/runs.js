@@ -413,7 +413,8 @@ export const retiredLine = (s) => (s?.next?.retired ? h("p", { class: "muted flo
 export function actions(s, run = () => {}) {
   const b = [];
   // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
-  const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
+  // A split that already made new issues: a retry would make them twice.
+  const closed = s.next?.kind === "issue_closed" || s.next?.retired === true || !!s.next?.splitMade;
   if (s.status === "waiting" && !closed) {
     b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, "✔ Approve"));
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => run("reject") }, "✘ Reject"));

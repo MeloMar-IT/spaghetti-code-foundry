@@ -7,7 +7,7 @@ import { WatcherSchema } from "../src/config.js";
 import { STOPPED_CANCEL_REASON, USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { statusName } from "../src/words.js";
 import type { RunNextOptions } from "../src/next-step.js";
-import { briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
+import { briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, splitMade, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
 import { needsUser } from "../src/your-turn.js";
 
 const run = (over: Partial<RunSummary> = {}) =>
@@ -754,6 +754,23 @@ describe("runNextStep", () => {
       const own = run({ status: "failed", history: [{ id: "push_main", ok: true, output: "PUSHED: main abc" }] as never });
       expect(runNextStep(own, closed).kind).toBe("failed");
     });
+    it("a failed step that did not close the issue gives issue_closed (the issue was closed by hand)", () => {
+      const failed = run({ status: "failed", state: { next: "create_split", steps: {}, visits: {} } });
+      expect(runNextStep(failed, closed).kind).toBe("issue_closed");
+      const open = runNextStep(failed, { issueClosed: false });
+      expect(open.kind).toBe("failed");
+      expect(open.issueClosed).toBeUndefined();
+    });
+    it("a failed run that closed its issue itself keeps a failed record with the flag", () => {
+      const own = run({ status: "failed", history: [{ id: "push_main", ok: true, output: "PUSHED: main abc" }] as never });
+      expect(runNextStep(own, closed).issueClosed).toBe(true);
+      expect(runNextStep(own).issueClosed).toBeUndefined();
+    });
+    it("runClosedIssue counts the step about to run unless only finished steps count", () => {
+      const r = run({ state: { next: "create_split", steps: {}, visits: {} } });
+      expect(runClosedIssue(r)).toBe(true);
+      expect(runClosedIssue(r, true)).toBe(false);
+    });
     it("changes nothing when the issue is open or unknown", () => {
       expect(runNextStep(run({ status: "failed" }), { issueClosed: false }).kind).toBe("failed");
       expect(runNextStep(run({ status: "failed" })).kind).toBe("failed");
@@ -1129,5 +1146,40 @@ describe("developWait", () => {
     expect(developWait(r("merge_develop"))).toEqual({ runId: "r2", areas: "@develop" });
     write({ ...file, issue: 0 });
     expect(developWait(r("merge_develop"))?.issue).toBeUndefined();
+  });
+});
+
+describe("splitMade", () => {
+  const failedSplit = (...outs: { ok: boolean; output: string }[]) =>
+    run({ status: "failed", state: { next: "create_split", steps: {}, visits: {} }, history: outs.map((o) => ({ id: "create_split", ...o })) as never });
+  it("is some when a new issue was made, all after the SPLIT_PARTS line", () => {
+    expect(splitMade(failedSplit({ ok: false, output: "#826 Part A\n#827 Part B" }))).toBe("some");
+    expect(splitMade(failedSplit({ ok: false, output: "#826 Part A\n#827 Part B\nSPLIT_PARTS: #826 #827" }))).toBe("all");
+  });
+  it("is nothing when the step did not fail, made nothing, or the run did not fail", () => {
+    expect(splitMade(failedSplit({ ok: true, output: "#826 Part A" }))).toBeUndefined();
+    expect(splitMade(failedSplit({ ok: false, output: "create-split: expected at least 2 parts, found 1" }))).toBeUndefined();
+    expect(splitMade({ ...failedSplit({ ok: false, output: "#826 Part A" }), status: "stopped" } as RunSummary)).toBeUndefined();
+  });
+  it("keeps what an earlier attempt made when a later one failed before making anything", () => {
+    expect(splitMade(failedSplit({ ok: false, output: "#826 Part A" }, { ok: false, output: "create-split: could not load the story store" }))).toBe("some");
+    expect(splitMade(failedSplit({ ok: false, output: "SPLIT_PARTS: #826 #827" }, { ok: false, output: "" }))).toBe("all");
+  });
+  it("reads a run from before the marker: all when every planned part was made, even with the parent open", () => {
+    const plan = { id: "plan", ok: true, output: "## Split\n### ISSUE 1: Part A\nDo A.\n### ISSUE 2: Part B\nDo B." };
+    const made = { id: "create_split", ok: false, output: "#826 Part A\n#827 Part B" };
+    const old = run({ status: "failed", state: { next: "create_split", steps: {}, visits: {} }, history: [plan, made] as never });
+    expect(splitMade(old)).toBe("all");
+    expect(runNextStep(old, { issueClosed: false })).toMatchObject({ kind: "failed", splitMade: "all" });
+  });
+  it("reads a run from before the marker: some when only part of the plan was made", () => {
+    const plan = { id: "plan", ok: true, output: "### ISSUE 1: Part A\nDo A.\n### ISSUE 2: Part B\nDo B.\n### ISSUE 3: Part C\nDo C." };
+    const made = { id: "create_split", ok: false, output: "#826 Part A\n#827 Part B" };
+    expect(splitMade(run({ status: "failed", state: { next: "create_split", steps: {}, visits: {} }, history: [plan, made] as never }))).toBe("some");
+  });
+  it("is on the failed record only", () => {
+    expect(runNextStep(failedSplit({ ok: false, output: "#826 Part A" }))).toMatchObject({ kind: "failed", splitMade: "some" });
+    expect(runNextStep(run({ status: "failed" })).splitMade).toBeUndefined();
+    expect(runNextStep(run({ status: "running", history: failedSplit({ ok: false, output: "#1 x" }).history })).splitMade).toBeUndefined();
   });
 });

@@ -299,6 +299,8 @@ export const STUCK = {
   sending: "Starting again…",
   sent: "The Foundry tries again.",
   failed: "That did not work. Try again, or ask for help.",
+  notNow: "Not now",
+  asideFailed: "That did not work. Try again in a moment.",
 };
 
 const NEEDS_YOU = { todo: "Take a look", line: "It needs you." };

@@ -51,6 +51,10 @@ const finishedMs = (e) => Date.parse(e.run?.finishedAt ?? e.run?.startedAt ?? ""
 export function groupOf(entry) {
   const n = recordOf(entry);
   if (!n || HIDDEN.has(n.kind)) return null;
+  // Stuck work nobody needs to look at: its change is closed, or the person put it aside with "Not now".
+  if (n.kind === "failed" && (n.issueClosed || n.notNow)) return null;
+  // A split that made all its parts is finished, though its last step failed.
+  if (n.kind === "failed" && n.splitMade === "all") return "done";
   if (needsUser(n)) return "check";
   if (n.kind === "done" || n.kind === "release") return "done";
   if (n.kind === "running" || (entry.run?.history?.length ?? 0) > 0) return "building";
@@ -63,7 +67,8 @@ export function cardOf(entry) {
   const { run, job } = entry;
   const task = String(run?.task ?? job?.task ?? "");
   const group = groupOf(entry);
-  const words = kindWords(n.kind, n.who);
+  // A split that made all its parts reads as done, not as stuck.
+  const words = kindWords(n.kind === "failed" && n.splitMade === "all" ? "done" : n.kind, n.who);
   const card = {
     id: idOf(entry),
     title: safeText(n.title || task.split(/\r?\n/)[0], WORDS.untitled),
@@ -93,7 +98,7 @@ export function cardOf(entry) {
       card.stuck = idOf(entry);
       card.stuckAt = String(run?.finishedAt ?? "");
       // the server refuses resume of a refinement run (409): such a run gets Ask for help only
-      if (run && !n.watched && !run.refinement && run.state?.next != null && !n.retired) card.resume = true;
+      if (run && !n.watched && !run.refinement && run.state?.next != null && !n.retired && !n.splitMade) card.resume = true;
     }
     // "Make this version final": the card decides by itself (the run page is not a Simple page); the stories in plain words.
     if (n.final && idOf(entry)) {

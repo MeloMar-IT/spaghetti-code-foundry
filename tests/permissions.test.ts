@@ -189,6 +189,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET runs/:id/issue-limit": no("runs/nope/issue-limit", 404),
   "PUT runs/:id/issue-limit": no("runs/nope/issue-limit", 404, { limitUsd: 1 }),
   "POST runs/:id/cancel": { path: "runs/nope/cancel", body: {}, user: 404, admin: 200 },
+  "POST runs/:id/not-now": { path: "runs/nope/not-now", body: {}, user: 404, admin: 404 },
   "POST runs/:id/archive": { path: "runs/nope/archive", body: {}, user: 404, admin: 404 },
   "POST runs/:id/unarchive": { path: "runs/nope/unarchive", body: {}, user: 404, admin: 404 },
   "POST runs/:id/resume": { path: "runs/nope/resume", body: {}, user: 404, admin: 404 },
@@ -570,6 +571,7 @@ describe("own runs", () => {
   const OWN: Record<string, number> = {
     "GET runs/:id": 200,
     "POST runs/:id/cancel": 200,
+    "POST runs/:id/not-now": 409,
     "POST runs/:id/archive": 409,
     "POST runs/:id/unarchive": 409,
     "POST runs/:id/resume": 202,
