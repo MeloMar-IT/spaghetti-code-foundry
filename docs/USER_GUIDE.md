@@ -116,7 +116,7 @@ admin for a new one.
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
 | **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit, Autonomy) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** One sidebar on the left is always shown on wide screens. It starts with the project switcher, then the five main places: **Today** (`#/home`), **Changes** (`#/runs`), **Ideas** (`#/refinement`), **Releases** (`#/epics`) and **Help**. Below a divider it has the extra pages of your view; for an admin these are **Board**, **Repositories**, **Flows** and **Administration**. The sidebar does not collapse. **+ New change** is the one primary button of the top bar, not a place. The top bar also has the name of the page, **Search**, **Ask Foundry** (when it is on), the health chip and your account menu. The account menu has the **View** box (once; there is no second one), the switch **Pause the Foundry while I work** (Off, 1 h or 2 h; admins only), **Change password** and **Sign out**. While the pause is on, a **Paused** flag shows in the top bar. Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Today** and on the menu button. On a narrow screen (below 768 px wide) the sidebar is a menu over the page, opened from the menu button: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit, Autonomy) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
@@ -281,7 +281,7 @@ The answer is 201 with `repo` and `connection`. If any step fails, the folder is
 
 ### Simple, Advanced and Admin view
 
-The top bar has a **View** box with three views. The view changes only what your display shows. It never changes what you may do: the server still checks every call by your role.
+The account menu has a **View** box with three views. The view changes only what your display shows. It never changes what you may do: the server still checks every call by your role.
 
 | View | Display | What it shows |
 |---|---|---|
@@ -291,7 +291,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 **Who may choose which.** A user chooses Simple or Advanced. An admin chooses Simple, Advanced or Admin. With no choice made, a user has Advanced and an admin has Admin.
 
-**Where the switch is.** The **View** box is in the top bar. Below 768 px (phones) it is in the menu, at the bottom of the sidebar. The choice is kept on the server with your account, so every device and browser shows the same view after you sign in. Opening `/` in Simple or Advanced sends you to `/user/`; opening `/user/` in Admin sends you to `/`.
+**Where the switch is.** The **View** box is in the account menu, the only one on the page. It is the same on wide screens and on phones. The choice is kept on the server with your account, so every device and browser shows the same view after you sign in. Opening `/` in Simple or Advanced sends you to `/user/`; opening `/user/` in Admin sends you to `/`.
 
 **Pages of another view.** A page that the current view does not have shows a card: "This page is not in the Advanced view." with **Open this in the Advanced view**. The button switches your view. The address stays when the new view has that page.
 
@@ -307,7 +307,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 ### Simple: My projects and the project page
 
-Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home** and **Help**. The Help link is shown only in Simple.
+Simple shows your work per project, in plain words. Home is **My projects**. The sidebar has only the five main places, **Today**, **Changes**, **Ideas**, **Releases** and **Help**, and **+ New change** in the top bar; the divider and the extra pages are not shown in Simple.
 
 **My projects** (`#/home`) has one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
 
@@ -365,7 +365,7 @@ The guide starts by itself the first time you open **My projects** when you have
 
 ### Simple: the Help page
 
-The **Help** link in the top bar, next to Home, opens `#/help`. It is written in plain words and has three parts:
+The **Help** link in the sidebar opens `#/help`. It is written in plain words and has three parts:
 
 1. **The words**: the Foundry's words for Simple, each with its plain meaning (the same list the rest of Simple uses).
 2. **How do I …**: short how-tos, for example "How do I change the colours?" and "How do I make it public?".
@@ -1042,7 +1042,7 @@ Only an owner of the repository and an admin can use the preview routes. `GET` a
 
 ### Repository context
 
-The switcher sits at the start of the top bar, on both displays. It shows your current repository
+The switcher sits at the top of the sidebar, on both displays. It shows your current repository
 so that you do not filter each page yourself.
 
 - **No repository:** the switcher shows a short text. **One repository:** a plain label. **Two or
@@ -4624,7 +4624,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Cores kept free (load governor)** — `governor.reserve_cores` is how many cores the load governor leaves free for your other programs when it works out how many runs fit (see "The load governor" under Helper processes). The default is 2. A higher number means fewer runs next to your other programs. A configuration without the setting works as before, with 2.
 
-**Runs while you use the machine (load governor)** — `governor.busy_runs` is the most runs at once while busy mode is on, from 0 up. The default is 2. `0` stops new runs while you use the machine. Busy mode is the switch **I'm using this machine** in the top bar, which admins see on the admin display. Choose **No**, **Until I switch it off**, or **For 1 hour**, **For 2 hours** or **For 4 hours**. While it is on the top bar says "Until HH:MM" or, when a listed program runs, "On: <program> running". The cap holds even when the load governor is not installed, and while busy mode is on every new run process starts at background priority. Processes that are already running keep their priority. The switch set by hand survives a restart of the server.
+**Runs while you use the machine (load governor)** — `governor.busy_runs` is the most runs at once while busy mode is on, from 0 up. The default is 2. `0` stops new runs while you use the machine. Busy mode is the switch **Pause the Foundry while I work** in the account menu, which admins see on the admin display. Choose **Off**, **1 h** or **2 h**. While it is on, the **Paused** flag in the top bar says "Paused by you" (or, when a listed program runs, "Paused: <program> running"), and its tooltip gives the end time. A state set elsewhere, such as until a time or for 4 hours, is still shown with its end time, but the switch offers only Off, 1 h and 2 h. The cap holds even when the load governor is not installed, and while busy mode is on every new run process starts at background priority. Processes that are already running keep their priority. The switch set by hand survives a restart of the server.
 
 **Programs that mean you use the machine (load governor)** — `governor.busy_apps` is a list of program names, as Activity Monitor shows them (default: none). While one of them runs, busy mode is on by itself, and it goes off when the last one ends. The check needs the load governor (`scf governor install`). A switch you set by hand is not turned off by a program ending. A configuration without these two settings works as before, with 2 runs and no programs.
 

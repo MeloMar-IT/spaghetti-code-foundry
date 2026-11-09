@@ -52,6 +52,7 @@ export function switcherView(model, handlers) {
       const onKey = (e) => {
         if (e.key !== "Escape") return;
         if (document.getElementById("modal-root")?.children?.length) return;
+        e.stopImmediatePropagation?.(); // inside the drawer, this Escape closes the switcher only, not the drawer too
         handlers.onClose({ focus: true });
       };
       const onDown = (e) => {

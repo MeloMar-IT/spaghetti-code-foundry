@@ -158,8 +158,6 @@ readOnly = view.readOnly;
 shownView = readOnly ? "advanced" : viewOf(me);
 ownAdmin = isAdmin(me) && !readOnly;
 if (!readOnly) showViewNav(shownView);
-// Simple has no repository switcher: its labels ("All repositories") are Advanced words.
-if (shownView === "simple" && !readOnly) document.getElementById("context")?.setAttribute("hidden", "");
 stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });

@@ -11,7 +11,7 @@ How to read it:
 
 ## Admin display
 
-The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4 detail forms).
+The page at `/`. 25 route rows (21 sections in `route()` at `ui/app.js:75` and 4 detail forms).
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
@@ -28,6 +28,7 @@ The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4
 | `#/library` | Library | `ui/library.js` | `renderLibrary` | `api-flows.ts` (blocks) | admin display only | Browse, save and delete reusable step blocks | Insert from library / Save step as block | A third entry point to flow editing (F8); 2 native confirms |
 | `#/start` | Start work | `ui/user/start.js` | `renderStart` with `admin: true` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | both displays | Start a run of a published flow on a repository | Start | The user page drawn for the admin (`app.js:410-417`); needs a published flow (`NO_FLOWS_ADMIN`) |
 | `#/setup` | Setup check | `ui/setup-check.js` | `renderSetupCheck` | `api-admin.ts` (`setup-check`) | both displays (admin only sees the result) | See whether git, Claude Code, Codex and their sign-ins are ready on this computer | Check again | No input fields; a user or a preview gets a plain card |
+| `#/help` | Help | `ui/simple.js` | `renderSimpleHelp` | `api-auth.ts` (`me/view`) | both displays | Read what the Foundry's words mean and who to ask | none | No input fields; the sidebar link of every view |
 | `#/agents` | Claude and Codex | `ui/onboarding-agents.js`, `ui/onboarding-agents-model.js` | `renderOnboardingAgents` | `api-onboarding.ts` (`onboarding/agents`, `sign-in`, `test-call`), `api-admin.ts` (`setup-check`) | both displays (admin only sees the questions) | Answer questions about Claude Code and Codex, sign in and test them, and save the settings they give | Pick an answer / Sign in / Test / Change | No input fields; a user or a preview gets a plain card; replacing hand-set settings asks with `confirmDialog` |
 | `#/runs` | Runs | `ui/runs.js` | `renderRunsList` | `api-runs.ts`, `api-users.ts` (owner filter) | both displays | Find a run | Open a run (link) | Named "My runs" on the user display for the same hash; own list implementation (F3) |
 | `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and Reject use `decisionDialog`; Cancel and Re-run use `confirmDialog` (`ui/run-dialogs.js`) |
@@ -143,6 +144,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
 | `#/setup` | none (a plain card for a user or a preview) | skeleton, then `errorState` with Retry | none (Check again buttons) |
 | `/user/#/setup` | none (a plain card for a user) | same as `#/setup` | none |
+| `#/help` | none | the page draws without the contact line when it cannot be read | none |
 | `#/agents` | none (a plain card for a user or a preview) | skeleton, then `errorState` with Retry | none (the buttons start each call) |
 | `/user/#/agents` | none (a plain card for a user) | same as `#/agents` | none |
 | `/user/#/start-guide` | none (Welcome is the first step) | skeleton, then `errorState` with Retry | none (the buttons save the step) |
@@ -176,6 +178,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/library` | Cards | Probably fits |
 | `#/start` | Form, max 640 px | Fits |
 | `#/setup` | Cards, max 640 px | Fits |
+| `#/help` | One column of text | Fits |
 | `#/agents` | Cards, max 640 px | Fits |
 | `#/runs` | `.table-box` scrolls | Same |
 | `#/runs/:id` | `.run-grid` one column (R1) | Step graph above the log; long page |

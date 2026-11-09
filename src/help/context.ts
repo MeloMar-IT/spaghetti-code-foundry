@@ -182,7 +182,7 @@ export const HELP_PAGES: readonly HelpPage[] = [
   { id: "setup", path: "#/setup", title: "Setup check", roles: AU },
   { id: "agents", path: "#/agents", title: "Claude and Codex", roles: AU },
   { id: "start-guide", path: "#/start-guide", title: "Get started", roles: U },
-  { id: "help", path: "#/help", title: "Help", roles: U },
+  { id: "help", path: "#/help", title: "Help", roles: AU },
   { id: "change", path: "#/change/:id", title: "Ask for a change", roles: U },
   { id: "board", path: "#/board", title: "Board", roles: A },
   { id: "board-repo", path: "#/board/:id", title: "Board of one repository", roles: A },

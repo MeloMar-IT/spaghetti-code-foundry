@@ -96,6 +96,17 @@
   --radius-pill: 999px;
   --radius-round: 50%;
 
+  /* components: the status pill, card, button, table and focus ring */
+  --pill-pad-y: var(--space-2xs);
+  --pill-pad-x: var(--space-md);
+  --pill-gap: 5px;
+  --pill-radius: var(--radius-pill);
+  --card-radius: var(--radius-lg);
+  --button-radius: var(--radius-md);
+  --table-radius: var(--radius-md);
+  --focus-width: 2px;
+  --focus-offset: 2px;
+
   /* elevation */
   --shadow-sm: 0 1px 2px rgb(0 0 0 / .06);
   --shadow-md: 0 4px 12px rgb(0 0 0 / .12);

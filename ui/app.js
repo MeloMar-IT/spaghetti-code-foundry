@@ -31,6 +31,7 @@ import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { needsOf, renderSetupCheck } from "./setup-check.js";
 import { renderOnboardingAgents } from "./onboarding-agents.js";
+import { renderSimpleHelp } from "./simple.js";
 import { renderAudit } from "./audit.js";
 import { renderAutonomy } from "./autonomy.js";
 import { renderBoard } from "./board.js";
@@ -247,6 +248,7 @@ async function route() {
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
+    else if (section === "help") await renderInBox(renderSimpleHelp);
     else if (section === "audit") S.cleanup = await renderAudit(main);
     else if (section === "autonomy") await renderInBox((box) => renderAutonomy(box, { readOnly }));
     else if (section === "setup") {

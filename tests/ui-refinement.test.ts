@@ -1006,11 +1006,11 @@ describe("the session page", () => {
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
   it("links the page", () => {
-    expect(read("index.html")).toContain('href="#/refinement" data-nav="refinement">Refinement<');
+    expect(read("index.html")).toContain('href="#/refinement" data-nav="refinement">Ideas<');
     const app = read("app.js");
     expect(app).toContain('from "./refinement.js"');
     expect(app).toContain('section === "refinement"');
-    expect(read("user/index.html")).toContain('href="#/refinement" data-nav="refinement">Refinement<');
+    expect(read("user/index.html")).toContain('href="#/refinement" data-nav="refinement">Ideas<');
     expect(read("user/app.js")).toContain('from "/refinement.js"');
   });
   it("uses the right routes", async () => {

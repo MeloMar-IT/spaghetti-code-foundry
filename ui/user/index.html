@@ -12,23 +12,22 @@
 <body class="user-display signed-out">
   <button type="button" id="skip" class="skip">Skip to content</button>
   <header class="top" id="top">
-    <button type="button" id="menu-btn" class="menu-btn" aria-controls="side" aria-expanded="true" aria-label="Menu"><span aria-hidden="true">☰</span><span id="menu-count" class="badge" hidden></span></button>
+    <button type="button" id="menu-btn" class="menu-btn" aria-controls="side" aria-expanded="false" aria-label="Menu"><span aria-hidden="true">☰</span><span id="menu-count" class="badge" hidden></span></button>
     <a class="brand" href="#/home"><span class="logo" aria-hidden="true">◆</span> <span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span></a>
     <span id="page-title" class="page-title"></span>
     <span class="spacer"></span>
     <span id="top-actions" class="top-actions">
-      <span id="context" class="context"></span>
-      <a href="#/start" data-nav="start">Start work</a>
-      <a href="#/help" data-nav="help" hidden>Help</a>
+      <span id="busy-flag" class="pill sem-warning busy-flag" hidden>Paused</span>
       <button type="button" id="search-btn" class="search-btn" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K">Search</button>
-      <span id="busy-switch" class="busy-switch" hidden></span>
-      <span id="view-switch" class="view-switch" hidden></span>
       <span id="ask-scf" class="ask-scf" hidden></span>
+      <a href="#/start" data-nav="start" class="btn primary">+ New change</a>
     </span>
     <details id="account" class="account">
       <summary id="account-summary" aria-label="Account"><span id="account-name" class="account-name">Account</span></summary>
       <div class="account-menu">
         <span id="user" class="user" hidden></span>
+        <span id="view-switch" class="view-switch" hidden></span>
+        <span id="busy-switch" class="busy-switch" hidden></span>
         <a href="/accessibility.html">Accessibility</a>
       </div>
     </details>
@@ -37,12 +36,14 @@
   <div class="shell">
     <nav id="side" class="side" aria-label="Pages">
       <button type="button" id="side-close" class="side-close">Close menu</button>
-      <a href="#/home" data-nav="home">Home</a>
-      <a href="#/epics" data-nav="epics">Epics</a>
-      <a href="#/runs" data-nav="runs">My runs</a>
-      <a href="#/repos" data-nav="repos">My repositories</a>
-      <a href="#/refinement" data-nav="refinement">Refinement</a>
-      <div id="view-switch-menu" class="view-switch-menu" hidden></div>
+      <span id="context" class="context"></span>
+      <a href="#/home" data-nav="home">Today</a>
+      <a href="#/runs" data-nav="runs">Changes</a>
+      <a href="#/refinement" data-nav="refinement">Ideas</a>
+      <a href="#/epics" data-nav="epics">Releases</a>
+      <a href="#/help" data-nav="help">Help</a>
+      <div class="side-divider" role="separator" data-extra></div>
+      <a href="#/repos" data-nav="repos" data-extra>My repositories</a>
     </nav>
     <div id="content" class="content">
       <nav id="crumbs" class="crumbs" aria-label="Breadcrumb" hidden></nav>

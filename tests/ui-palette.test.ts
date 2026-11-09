@@ -266,6 +266,7 @@ describe("the options", () => {
     press("ArrowDown");
     press("ArrowDown");
     press("ArrowDown");
+    press("ArrowDown"); // Help sits before Board now: both roles have it
     press("Enter");
     expect(g.location.hash).toBe("#/board");
     expect(root().children).toHaveLength(0);
@@ -279,6 +280,7 @@ describe("the options", () => {
     page();
     const s = start();
     press("/");
+    press("ArrowDown");
     press("ArrowDown");
     press("ArrowDown");
     press("ArrowDown");

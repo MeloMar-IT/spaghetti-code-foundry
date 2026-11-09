@@ -183,14 +183,15 @@ describe("the inventory matches the code", () => {
     }
   });
 
-  it("has a data-nav link in each HTML file for every primary destination and action", async () => {
-    const { primaryFor, actionsFor } = (await import("../ui/ia.js" as string)) as {
-      primaryFor: (r: string) => { id: string; label: string }[];
-      actionsFor: (r: string) => { id: string; label: string }[];
+  it("has a data-nav link in each HTML file for the new-change action and every link of the sidebar", async () => {
+    const { sidebarFor, NEW_CHANGE } = (await import("../ui/ia.js" as string)) as {
+      sidebarFor: (v: string) => { main: { id: string }[]; extra: { id: string }[] };
+      NEW_CHANGE: { id: string };
     };
-    for (const [file, role] of [["ui/index.html", "admin"], ["ui/user/index.html", "user"]] as const) {
+    for (const [file, view] of [["ui/index.html", "admin"], ["ui/user/index.html", "advanced"]] as const) {
       const links = navLinks(read(file)).map((l) => ({ id: l.name, label: l.text }));
-      const want = [...actionsFor(role), ...primaryFor(role)].map((l) => l.id);
+      const { main, extra } = sidebarFor(view);
+      const want = [NEW_CHANGE, ...main, ...extra].map((l) => l.id);
       expect(links.map((l) => l.id).sort(), file).toEqual(want.sort());
     }
   });

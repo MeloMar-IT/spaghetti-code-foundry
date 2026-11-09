@@ -36,8 +36,13 @@ beforeEach(() => {
 const active = () => nav.filter((a) => a.classList.contains("active")).map((a) => a.attrs["data-nav"]);
 
 describe("ui/index.html", () => {
-  it("has the empty place for the repository switcher first in the top actions", () => {
-    expect(readFileSync("ui/index.html", "utf8")).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
+  it("has the place for the repository switcher first in the sidebar, in both pages", () => {
+    for (const file of ["ui/index.html", "ui/user/index.html"]) {
+      const html = readFileSync(file, "utf8");
+      expect(html, file).toMatch(/<button type="button" id="side-close" class="side-close">Close menu<\/button>\s*<span id="context" class="context"><\/span>\s*<a /);
+      expect(html.indexOf('id="context"'), file).toBeGreaterThan(html.indexOf('<nav id="side"'));
+      expect(html.slice(html.indexOf('<header class="top"'), html.indexOf("</header>")), file).not.toContain('id="context"');
+    }
   });
 });
 
@@ -198,38 +203,29 @@ beforeEach(() => {
 });
 
 describe("sideState", () => {
-  it("follows the collapsed flag when wide and the drawer when narrow", () => {
-    expect(shell.sideState({ narrow: false, collapsed: false, drawer: false })).toEqual({ open: true, modal: false });
-    expect(shell.sideState({ narrow: false, collapsed: true, drawer: false })).toEqual({ open: false, modal: false });
-    expect(shell.sideState({ narrow: true, collapsed: false, drawer: false })).toEqual({ open: false, modal: false });
-    expect(shell.sideState({ narrow: true, collapsed: false, drawer: true })).toEqual({ open: true, modal: true });
+  it("is always open when wide and follows the drawer when narrow", () => {
+    expect(shell.sideState({ narrow: false, drawer: false })).toEqual({ open: true, modal: false });
+    expect(shell.sideState({ narrow: false, collapsed: true, drawer: false })).toEqual({ open: true, modal: false });
+    expect(shell.sideState({ narrow: false, drawer: true })).toEqual({ open: true, modal: false });
+    expect(shell.sideState({ narrow: true, drawer: false })).toEqual({ open: false, modal: false });
+    expect(shell.sideState({ narrow: true, drawer: true })).toEqual({ open: true, modal: true });
   });
 });
 
 describe("initShell, wide", () => {
-  it("collapses and opens with the menu button and remembers it", () => {
-    const store = mkStore("open");
+  it("always shows the sidebar: the menu button changes nothing and nothing is stored", () => {
+    const store = mkStore("closed"); // an old "closed" value is ignored
     stop = shell.initShell("admin", { store, media: mkMedia(false), user: { name: "Ann" } });
     expect(byId("account-name").textContent).toBe("Ann");
     expect(byId("account-summary").attrs["aria-label"]).toBe("Account for Ann");
-    byId("menu-btn").click();
-    expect(doc().body.classList.contains("side-closed")).toBe(true);
-    expect(byId("menu-btn").attrs["aria-expanded"]).toBe("false");
-    expect(store.saved["scf-side"]).toBe("closed");
-    byId("menu-btn").click();
     expect(doc().body.classList.contains("side-closed")).toBe(false);
     expect(byId("menu-btn").attrs["aria-expanded"]).toBe("true");
-    expect(store.saved["scf-side"]).toBe("open");
-  });
-
-  it("starts collapsed when the store says so, and survives a store that throws", () => {
-    stop = shell.initShell("admin", { store: mkStore("closed"), media: mkMedia(false) });
-    expect(doc().body.classList.contains("side-closed")).toBe(true);
-    stop!();
-    const broken = { getItem: () => { throw new Error("off"); }, setItem: () => { throw new Error("off"); } };
-    stop = shell.initShell("admin", { store: broken, media: mkMedia(false) });
+    byId("menu-btn").click();
     expect(doc().body.classList.contains("side-closed")).toBe(false);
-    expect(() => byId("menu-btn").click()).not.toThrow();
+    expect(doc().body.classList.contains("drawer-open")).toBe(false);
+    expect(byId("menu-btn").attrs["aria-expanded"]).toBe("true");
+    expect(byId("scrim").hidden).toBe(true);
+    expect(store.saved).toEqual({});
   });
 
   it("asks for the compact layout from ui/viewport.js by default", () => {
@@ -269,7 +265,7 @@ describe("initShell, wide", () => {
     expect((doc().listeners.keydown ?? []).length).toBe(0);
     stop = shell.initShell("admin", { store: mkStore("closed"), media: mkMedia(false) });
     expect(byId("menu-btn").listeners.click).toHaveLength(1);
-    expect(doc().body.classList.contains("side-closed")).toBe(true);
+    expect(doc().body.classList.contains("side-closed")).toBe(false);
   });
 });
 
@@ -352,18 +348,40 @@ describe("initShell, narrow", () => {
     expect(doc().body.classList.contains("drawer-open")).toBe(false);
   });
 
-  it("Tab reaches the view switch at the end of the drawer, and Shift+Tab goes back to it", () => {
-    const select = new FakeElement("select");
-    side.append(select);
+  it("Tab reaches the project switcher at the top of the drawer, its search box too, and Shift+Tab goes back to it", () => {
+    const button = new FakeElement("button");
+    const search = new FakeElement("input");
+    const result = new FakeElement("button");
+    side.replaceChildren(button, search, result, ...links);
     start();
     byId("menu-btn").click();
-    links[2]!.focus();
+    // the search box is a stop: Tab moves on to the results, not out of the drawer
+    search.focus();
     expect(press("Tab")).toBe(false);
-    select.focus();
+    result.focus();
+    expect(press("Tab", { shiftKey: true })).toBe(false);
+    // the ends of the drawer wrap
+    links[2]!.focus();
     expect(press("Tab")).toBe(true);
-    expect(doc().activeElement).toBe(links[0]);
+    expect(doc().activeElement).toBe(button);
     expect(press("Tab", { shiftKey: true })).toBe(true);
-    expect(doc().activeElement).toBe(select);
+    expect(doc().activeElement).toBe(links[2]);
+  });
+
+  it("Escape with the project switcher open closes the switcher first, not the drawer", () => {
+    const context = byId("context");
+    const toggle = new FakeElement("button");
+    toggle.setAttribute("aria-haspopup", "true");
+    toggle.setAttribute("aria-expanded", "true");
+    context.replaceChildren(toggle);
+    start();
+    byId("menu-btn").click();
+    press("Escape");
+    expect(doc().body.classList.contains("drawer-open")).toBe(true);
+    toggle.setAttribute("aria-expanded", "false");
+    press("Escape");
+    expect(doc().body.classList.contains("drawer-open")).toBe(false);
+    context.replaceChildren();
   });
 
   it("a change to a wide screen clears the drawer", () => {
@@ -372,7 +390,8 @@ describe("initShell, narrow", () => {
     media.fire("change", { matches: false });
     expect(doc().body.classList.contains("drawer-open")).toBe(false);
     byId("menu-btn").click();
-    expect(doc().body.classList.contains("side-closed")).toBe(true);
+    expect(doc().body.classList.contains("side-closed")).toBe(false);
+    expect(doc().body.classList.contains("drawer-open")).toBe(false);
   });
 });
 
@@ -481,6 +500,18 @@ describe("helpers for the command palette", () => {
     links[2]!.focus();
     expect(press("Tab")).toBe(false);
     expect(doc().activeElement).toBe(links[2]);
+  });
+
+  it("the CSS shows the menu button only below 768 px, and has no collapsed sidebar", () => {
+    const css = readFileSync("ui/css/pages/shell.css", "utf8");
+    const narrowAt = css.indexOf("@media (max-width: 767px) {\n  .side { display: none; position: fixed;");
+    expect(narrowAt).toBeGreaterThan(-1);
+    expect(css.slice(0, narrowAt)).toContain(".menu-btn { display: none;");
+    expect(css.slice(narrowAt, css.indexOf("\n}", narrowAt))).toContain(".menu-btn { display: inline-flex; }");
+    expect(css).not.toContain("side-closed");
+    // the project switcher in the sidebar is drawn in the flow: the scrolling sidebar would clip an absolute panel
+    expect(css).toMatch(/\.side \.context-panel \{ position: static;/);
+    expect(css).toMatch(/\.side a:focus-visible \{ outline-offset: calc\(var\(--focus-width\) \* -1\); \}/);
   });
 
   it("safeStore survives a missing or throwing localStorage", () => {
