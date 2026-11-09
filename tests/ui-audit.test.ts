@@ -159,8 +159,8 @@ describe("the list", () => {
     expect(cells[0]![1]!.attrs.title).toBe("u1");
     expect(cells[1]![1]!.attrs.title).toBeUndefined();
     expect(cells[3]![3]!.attrs.title).toBe("u9");
-    expect(cells[0]![4]!.all("span")[0]!.attrs.class).toBe("pill ok");
-    expect(cells[2]![4]!.all("span")[0]!.attrs.class).toBe("pill fail");
+    expect(cells[0]![4]!.all("span")[0]!.attrs.class).toBe("pill sem-success");
+    expect(cells[2]![4]!.all("span")[0]!.attrs.class).toBe("pill sem-danger");
     expect(gets).toEqual(["/api/users", "/api/audit"]);
   });
 });

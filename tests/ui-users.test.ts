@@ -140,12 +140,14 @@ describe("pure functions", () => {
     expect(ui.isLocked(user({ lockedUntil: PAST }))).toBe(false);
   });
   it("pillClass", () => {
-    expect(ui.pillClass(user())).toBe("pill ok");
-    expect(ui.pillClass(user({ status: "blocked" }))).toBe("pill fail");
-    expect(ui.pillClass(user({ hasPassword: false }))).toBe("pill");
-    expect(ui.pillClass(user({ lockedUntil: FUTURE }))).toBe("pill locked");
-    expect(ui.pillClass(user({ lockedUntil: FUTURE, status: "blocked" }))).toBe("pill fail");
-    expect(ui.pillClass(user({ lockedUntil: PAST }))).toBe("pill ok");
+    expect(ui.pillClass(user())).toBe("pill sem-success");
+    expect(ui.pillClass(user({ status: "blocked" }))).toBe("pill sem-danger");
+    expect(ui.pillClass(user({ hasPassword: false }))).toBe("pill sem-neutral");
+    expect(ui.pillClass(user({ lockedUntil: FUTURE }))).toBe("pill sem-warning");
+    expect(ui.pillClass(user({ lockedUntil: FUTURE, status: "blocked" }))).toBe("pill sem-danger");
+    expect(ui.pillClass(user({ lockedUntil: PAST }))).toBe("pill sem-success");
+    expect(ui.userSemantic(user({ lockedUntil: FUTURE, status: "blocked" }))).toBe("danger");
+    expect(ui.userSemantic(user({ lockedUntil: PAST }))).toBe("success");
   });
   it("a provider account: account system, no edit, link or reset; block and delete stay", () => {
     const p = (o: object = {}) => user({ provider: true, hasPassword: false, ...o });
@@ -153,8 +155,8 @@ describe("pure functions", () => {
     expect(ui.isProvider(user())).toBe(false);
     expect(ui.statusText(p())).toBe("account system");
     expect(ui.statusText(p({ status: "blocked" }))).toBe("blocked");
-    expect(ui.pillClass(p())).toBe("pill ok");
-    expect(ui.pillClass(p({ status: "blocked" }))).toBe("pill fail");
+    expect(ui.pillClass(p())).toBe("pill sem-success");
+    expect(ui.pillClass(p({ status: "blocked" }))).toBe("pill sem-danger");
     expect(ui.actionsFor(p({ role: "admin" }))).toEqual(["limits", "app", "block", "delete"]);
     expect(ui.actionsFor(p({ role: "user", status: "blocked" }))).toEqual(["limits", "app", "unblock", "view", "delete"]);
   });

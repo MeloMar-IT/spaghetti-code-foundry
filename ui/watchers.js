@@ -1,10 +1,11 @@
 import { api, configVersion } from "./api.js";
-import { confirmDialog, h, mount, tableBox, timeAgo, toast } from "./dom.js";
+import { confirmDialog, h, mount, table, timeAgo, toast } from "./dom.js";
+import { pageHeader } from "./kit/product.js";
 import { confirmUnreadable, monitorLists } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 import { ownerText, sortRepos } from "./admin-repos.js";
 import { repoHref } from "./repos.js";
-import { watcherSemanticOf } from "./icons.js";
+import { statusPill, watcherSemanticOf } from "./icons.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
 import { optionNotes } from "./watcher-options.js";
 import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
@@ -122,7 +123,7 @@ async function loadWatchers() {
 /** `readOnly`: no controls that change things (a small screen). */
 export async function renderWatchers(main, { data, readOnly = false } = {}) {
   if (!data) {
-    mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Watchers")), loadingState("Loading watchers…", { rows: 4, shape: "cards" }));
+    mount(main, pageHeader({ layout: "toolbar", title: "Watchers" }), loadingState("Loading watchers…", { rows: 4, shape: "cards" }));
     data = await loadWatchers(); // a failure goes to the router, which draws the error with Retry
   }
   const { watchers, flows, repos } = data;
@@ -159,23 +160,21 @@ export async function renderWatchers(main, { data, readOnly = false } = {}) {
   };
   const section = (title, list, kind, sub, href) => (list.length
     ? h("div", {}, h("h3", {}, href ? h("a", { href }, title) : title), sub ?? null,
-      tableBox(h("table", { class: "table compact", "aria-label": title },
-        h("thead", {}, h("tr", {}, ["Watcher", "State", "What it does", "Last successful check"].map((c) => h("th", { scope: "col" }, c)))),
-        h("tbody", {}, list.map((w) => row(w, kind))))))
+      table(["Watcher", "State", "What it does", "Last successful check"], list.map((w) => row(w, kind)), { label: title, class: "compact" }))
     : null);
   const addWatcher = async () => (await repoWatcherDialog({ repos, flows, existing: null })) && reload();
 
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Watchers"),
-      h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
-      h("span", { class: "spacer" }),
-      h("button", { onClick: reload, "aria-label": "Reload" }, "↻"),
-      monitor.length || readOnly ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor)) && reload() }, "+ Add the monitor"),
-      readOnly ? null : h("button", { class: "primary", onClick: addWatcher }, "+ Add watcher")),
+    pageHeader({ layout: "toolbar", title: "Watchers",
+      meta: h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
+      actions: [h("span", { class: "spacer" }),
+        h("button", { onClick: reload, "aria-label": "Reload" }, "↻"),
+        monitor.length || readOnly ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor)) && reload() }, "+ Add the monitor"),
+        readOnly ? null : h("button", { class: "primary", onClick: addWatcher }, "+ Add watcher")] }),
     note,
     watchers.length ? [
       ...groups.map(({ repo, watchers: list }) => section(repo.url, list, "repo",
-        h("p", { class: "muted flush mb-6" }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null), repoHref(repo))),
+        h("p", { class: "muted flush mb-6" }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", statusPill("danger", "blocked")] : null), repoHref(repo))),
       section("Repository not connected any more", gone, "gone"),
       section("The Foundry itself", monitor, "monitor"),
       section("From config.yaml", file, "file", h("p", { class: "muted flush mb-6" }, FILE_NOTE)),
@@ -192,13 +191,13 @@ let detailReloads = 0;
 export async function renderWatcherDetail(main, id, { data, readOnly = false } = {}) {
   const back = { href: "#/watchers", label: "Back to Watchers" };
   if (!data) {
-    mount(main, h("h1", {}, "Watcher"), loadingState("Loading the watcher…", { rows: 4, shape: "detail" }));
+    mount(main, pageHeader({ layout: "toolbar", title: "Watcher" }), loadingState("Loading the watcher…", { rows: 4, shape: "detail" }));
     data = await loadWatchers(); // a failure goes to the router, which draws the error with Retry
   }
   const { watchers, flows, repos } = data;
   const w = watchers.find((x) => x.id === id);
   if (!w) {
-    mount(main, h("h1", {}, "Watcher"), errorState(explainError({ status: 404 }, { what: `There is no watcher "${id}".` }), { back }));
+    mount(main, pageHeader({ layout: "toolbar", title: "Watcher" }), errorState(explainError({ status: 404 }, { what: `There is no watcher "${id}".` }), { back }));
     return;
   }
   let mon = data.mon;
@@ -294,13 +293,11 @@ export async function renderWatcherDetail(main, id, { data, readOnly = false } =
   const hasActions = actions.some(Boolean);
 
   mount(main,
-    h("div", { class: "toolbar" },
-      h("h1", { class: "mono" }, w.id),
-      watcherStateMark(w),
-      kind === "file" && w.github_repo ? h("span", { class: "mono" }, w.github_repo) : null,
-      h("span", { class: "muted" }, describeWatcher(w)),
-      h("span", { class: "spacer" }),
-      h("button", { onClick: reload, "aria-label": "Reload" }, "↻")),
+    pageHeader({ layout: "toolbar", title: w.id,
+      meta: [watcherStateMark(w),
+        kind === "file" && w.github_repo ? h("span", { class: "mono" }, w.github_repo) : null,
+        h("span", { class: "muted" }, describeWatcher(w))],
+      actions: [h("span", { class: "spacer" }), h("button", { onClick: reload, "aria-label": "Reload" }, "↻")] }),
     note,
     w.problem ? h("p", { class: "status bad mt-4 mb-4" }, w.problem) : null,
     kind === "file" ? h("div", { class: "muted text-sm" }, FILE_NOTE) : null,

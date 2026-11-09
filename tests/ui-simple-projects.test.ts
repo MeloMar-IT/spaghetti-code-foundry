@@ -125,7 +125,7 @@ describe("the Users page", () => {
   it("marks Simple accounts and makes no project calls without the filter", async () => {
     await show();
     expect(names()).toEqual(["Root", "Ann", "Bob", "Cy"]);
-    expect(tableRows()[1]!.all("span").some((s) => s.textContent === "Simple" && s.attrs.class === "pill")).toBe(true);
+    expect(tableRows()[1]!.all("span").some((s) => s.textContent === "Simple" && s.attrs.class === "pill sem-accent")).toBe(true);
     expect(tableRows()[2]!.textContent).toContain("Advanced");
     expect(calls.some((c) => c.includes("/api/admin/repos"))).toBe(false);
   });
