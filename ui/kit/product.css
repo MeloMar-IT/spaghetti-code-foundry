@@ -1,5 +1,5 @@
-/* ui/kit/product.css — page header, status summary, next action, filters, entity link and destructive confirmation of the component kit.
-   Belongs here: .scf-page-header, .scf-status-summary, .scf-next-action, .scf-filters, .scf-entity-link and .scf-confirm layout rules, with token variables only.
+/* ui/kit/product.css — page header, status summary, next action, filters, entity link, phase strip and destructive confirmation of the component kit.
+   Belongs here: .scf-page-header, .scf-status-summary, .scf-next-action, .scf-filters, .scf-entity-link, .scf-phase-strip and .scf-confirm layout rules, with token variables only.
    Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules, new visual primitives (those go in the primitive files). */
 
 .scf-page-header { display: flex; flex-wrap: wrap; gap: var(--space-lg); align-items: flex-start; justify-content: space-between; min-width: 0; }
@@ -32,6 +32,11 @@
 .scf-entity-link--plain { color: var(--color-text); }
 .scf-entity-link__kind { color: var(--color-text-muted); }
 .scf-entity-link__id { font-family: var(--font-mono); font-size: var(--text-code); }
+
+.scf-phase-strip { display: flex; flex-wrap: wrap; gap: var(--space-md); margin: 0; padding: 0; list-style: none; min-width: 0; }
+.scf-phase-strip__item { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); min-width: 0; }
+.scf-phase-strip__item--current { color: var(--color-text); font-weight: var(--weight-bold); }
+.scf-phase-strip__word { overflow-wrap: anywhere; }
 
 .scf-confirm { display: grid; gap: var(--space-lg); min-width: 0; }
 .scf-confirm__text { margin: 0; overflow-wrap: anywhere; }

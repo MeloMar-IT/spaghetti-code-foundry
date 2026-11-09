@@ -13,11 +13,12 @@ import { badge, banner, card, emptyState, list, skeleton, table } from "../kit/d
 import { checkbox, field, select, settingControl, textArea, textInput } from "../kit/forms.js";
 import { dialog, drawer, menu, tabs, toast, tooltip } from "../kit/overlays.js";
 import { diffView, evidence, logView, timeline, timelineEntry } from "../kit/records.js";
-import { confirmDestructive, entityLink, filters, nextAction, pageHeader, statusSummary } from "../kit/product.js";
+import { confirmDestructive, entityLink, filters, nextAction, pageHeader, phaseStrip, statusSummary } from "../kit/product.js";
 
 export const LONG = "This made-up sentence is much longer than any real label should be, so that it has to wrap or be cut inside a narrow box, and it ends with Supercalifragilisticexpialidocious_Unbroken_Word_Without_Any_Spaces_At_All.";
 
 const TONES = ["neutral", "ok", "fail", "run", "warn", "accent"];
+const FIVE = ["Understand", "Plan", "Build", "Check", "Deliver"];
 const COLS = [{ key: "name", label: "Name" }, { key: "role", label: "Role" }, { key: "count", label: "Count", align: "end" }];
 const people = (n) => Array.from({ length: n }, (_, i) => ({ n: i + 1, name: `Person ${i + 1}`, role: ["Maker", "Tester", "Reviewer"][i % 3], count: i * 7 }));
 const WIDE_COLS = Array.from({ length: 12 }, (_, i) => ({ key: `c${i}`, label: `Column ${i + 1}`, cell: (r) => `Value ${r.n}.${i + 1}` }));
@@ -402,6 +403,17 @@ export const sections = [
       { name: "Long content", build: () => entityLink({ kind: "flow", id: LONG, label: LONG, href: "#button" }) },
       { name: "Error", build: () => entityLink({ kind: "repo", label: "A repository you may not open", showKind: true }) },
       { name: "Notes", build: () => notes("a link is in tab order and says its kind; without a link it is plain text.", "a long id and label wrap.", "it wraps inside its line.") },
+    ],
+  },
+  {
+    id: "phaseStrip", title: "Phase strip", component: "phaseStrip",
+    examples: [
+      { name: "Current phase", build: () => phaseStrip({ label: "Progress", phases: FIVE, current: 2 }) },
+      { name: "First and last", build: () => h("div", {}, phaseStrip({ label: "At the start", phases: FIVE, current: 0 }), phaseStrip({ label: "At the end", phases: FIVE, current: 4 })) },
+      { name: "Not started", build: () => phaseStrip({ label: "Not started", phases: FIVE, current: null }) },
+      { name: "Long content", build: () => phaseStrip({ label: "Long word", phases: ["Short", LONG], current: 1 }) },
+      { name: "Error", build: () => h("div", {}, phaseStrip({ label: "Stuck in Check", phases: FIVE, current: 3 }), h("p", {}, "The tests found a problem; the work stays in Check.")) },
+      { name: "Notes", build: () => notes("the strip has no tab stops; the current phase is read out as \"Now\".", "a long word wraps.", "the phases wrap onto new lines.") },
     ],
   },
   {
