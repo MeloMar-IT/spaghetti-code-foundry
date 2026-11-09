@@ -114,6 +114,7 @@ const GROUPS: Record<string, string[]> = {
   spacing: ["2xs", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"].map((n) => `--space-${n}`),
   sizing: ["--size-icon", "--size-icon-sm", "--size-sidebar", "--size-form", "--size-bar", "--size-touch", "--size-touch-min"],
   borders: ["--border-width", "--radius-none", "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-pill", "--radius-round"],
+  components: ["--pill-pad-y", "--pill-pad-x", "--pill-gap", "--pill-radius", "--card-radius", "--button-radius", "--table-radius", "--focus-width", "--focus-offset"],
   elevation: ["--shadow-sm", "--shadow-md", "--shadow-lg"],
   motion: ["--motion-fast", "--motion-base", "--motion-slow"],
   density: ["--control-pad-y", "--control-pad-x", "--cell-pad-y", "--cell-pad-x", "--card-pad", "--stack-gap", "--page-pad-y", "--page-pad-x"],
@@ -264,6 +265,62 @@ describe("ui/style.css", () => {
   it("draws the focus indicators with --color-focus", () => {
     expect(rule(style, "input:focus-visible, select:focus-visible, textarea:focus-visible")).toMatch(/outline: 2px solid var\(--color-focus\)[^;]*;\s*border-color: var\(--color-focus\)/);
     expect(rule(style, "a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible")).toContain("var(--color-focus)");
+  });
+});
+
+describe("the component tokens", () => {
+  const kit = (f: string) => read(`ui/kit/${f}.css`);
+
+  it("are used by the pill, card, button, table and focus rules, and by the kit", () => {
+    const expectIn = (body: string, ...parts: string[]) => { for (const p of parts) expect(body, p).toContain(p); };
+    expectIn(rule(style, ".pill"), "var(--pill-pad-y) var(--pill-pad-x)", "var(--pill-gap)", "var(--pill-radius)");
+    expectIn(rule(style, ".card"), "var(--card-radius)");
+    expectIn(rule(style, "button, .btn"), "var(--button-radius)");
+    expectIn(rule(style, ".table"), "var(--table-radius)");
+    expectIn(rule(style, "a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible"), "var(--focus-width)", "var(--focus-offset)");
+    expectIn(rule(kit("display"), ".scf-card"), "var(--card-radius)");
+    expectIn(rule(kit("display"), ".scf-badge"), "var(--pill-pad-y) var(--pill-pad-x)", "var(--pill-radius)", "var(--pill-gap)");
+    expectIn(rule(kit("display"), ".scf-table-box"), "var(--table-radius)");
+    expectIn(rule(kit("actions"), ".scf-btn"), "var(--button-radius)");
+  });
+
+  it("draw the focus ring of the kit with the width and offset tokens", () => {
+    for (const f of ["actions", "display", "forms"]) {
+      const lines = kit(f).split("\n").filter((l) => l.includes(":focus-visible") && l.includes("outline:"));
+      expect(lines.length, f).toBeGreaterThan(0);
+      for (const l of lines) expect(l, `${f}: ${l}`).toContain("var(--focus-width)");
+    }
+  });
+});
+
+describe("status pills show a glyph, not colour alone", () => {
+  const glyphRules = [...style.matchAll(/^\.pill:is\(([^)]*)\):not\(:has\(> \.ico\)\)::before \{ content: "(.)"; content: "\2" \/ ""; \}$/gm)];
+  const classesWithGlyph = new Map(glyphRules.flatMap((m) => m[1]!.split(",").map((c) => [c.trim().slice(1), m[2]!] as const)));
+
+  it("has a glyph rule with empty alt text that skips a pill with an icon", () => {
+    expect(glyphRules.length).toBeGreaterThanOrEqual(7);
+    expect(style).toContain(":not(:has(> .ico))::before");
+  });
+
+  it("covers every status class a pill is drawn with", () => {
+    // the semantic tones (statusMark and kit helpers), the fixed status classes of the CSS and the refinement states
+    const want = ["sem-success", "sem-danger", "sem-warning", "sem-running", "sem-waiting", "sem-info", "sem-disabled",
+      "ok", "fail", "locked", "approval", "kind-done", "kind-running", "state-active", "state-error", "state-ready", "state-published",
+      "ready-met", "ready-not-met", "who-you", "who-something-is-wrong", "who-a-time-limit", "state-exploring", "state-drafting", "state-dropped"];
+    for (const c of want) expect(classesWithGlyph.has(c), c).toBe(true);
+    // a status without a glyph is only a neutral or accent label
+    for (const c of ["sem-neutral", "sem-accent"]) expect(classesWithGlyph.has(c), c).toBe(false);
+  });
+
+  it("uses the same glyph for the same meaning", () => {
+    expect(classesWithGlyph.get("sem-success")).toBe(classesWithGlyph.get("ok"));
+    expect(classesWithGlyph.get("sem-danger")).toBe(classesWithGlyph.get("fail"));
+    expect(classesWithGlyph.get("sem-warning")).toBe(classesWithGlyph.get("locked"));
+  });
+
+  it("gives the kit badge tones a glyph with empty alt text", () => {
+    const css = read("ui/kit/display.css");
+    for (const tone of ["ok", "fail", "warn", "run", "neutral"]) expect(css, tone).toMatch(new RegExp(`\\.scf-badge--${tone}::before \\{ content: "(.)"; content: "\\1" / ""; \\}`));
   });
 });
 

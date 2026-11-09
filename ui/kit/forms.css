@@ -28,7 +28,7 @@
 .scf-checkbox { display: inline-flex; align-items: center; gap: var(--space-sm); max-width: 100%; }
 .scf-checkbox__label { min-width: 0; overflow-wrap: anywhere; }
 .scf-checkbox__input { width: auto; padding: 0; margin: 0; accent-color: var(--color-accent); }
-.scf-checkbox__input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-checkbox__input:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
 .scf-rows > .scf-btn { justify-self: start; }
 .scf-rows__row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
 .scf-rows__row > .scf-input { flex: 1 1 0; min-width: 0; }

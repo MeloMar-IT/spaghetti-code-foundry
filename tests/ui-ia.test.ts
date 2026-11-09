@@ -87,18 +87,44 @@ describe("the navigation lists", () => {
     expect(groups).toEqual([...groups].sort((a: string, b: string) => (a === b ? 0 : a === "work" ? -1 : 1)));
   });
 
-  it("matches the data-nav links of both HTML files", () => {
-    for (const [file, role] of [["ui/index.html", "admin"], ["ui/user/index.html", "user"]] as const) {
-      const want = [...ia.actionsFor(role), ...ia.primaryFor(role)];
-      const all = navLinks(read(file));
-      // a link with the hidden attribute is one only the Simple view shows: Help, right after Home
-      const links = all.filter((l) => !/\bhidden\b/.test(l.attrs));
-      const hidden = all.filter((l) => /\bhidden\b/.test(l.attrs));
-      expect(hidden.map((l) => [l.id, l.label, l.href]), file).toEqual(role === "user" ? [["help", "Help", "#/help"]] : []);
-      if (role === "user") expect(all.findIndex((l) => l.id === "help")).toBe(all.findIndex((l) => l.id === "start") + 1);
-      expect(links.map((l) => [l.id, l.label, l.href]), file).toEqual(want.map((w: any) => [w.id, w.label, w.href]));
-      if (role === "admin") for (const l of links) expect(l.attrs.includes('class="setup"'), l.id).toBe(want.find((w: any) => w.id === l.id).group === "setup");
+  it("matches sidebarFor in both HTML files: the links in order, the extras with data-extra", () => {
+    for (const [file, view] of [["ui/index.html", "admin"], ["ui/user/index.html", "advanced"]] as const) {
+      const html = read(file);
+      const from = html.indexOf('<nav id="side"');
+      const side = navLinks(html.slice(from, html.indexOf("</nav>", from)));
+      const { main, extra } = ia.sidebarFor(view);
+      expect(side.map((l) => [l.id, l.label, l.href]), file).toEqual([...main, ...extra].map((e: any) => [e.id, e.label, e.href]));
+      for (const l of side) expect(/\bdata-extra\b/.test(l.attrs), `${file} ${l.id}`).toBe(extra.some((e: any) => e.id === l.id));
     }
+  });
+
+  it("sidebarFor: the same five places in every view, the extra pages below the divider", () => {
+    const main = ["Today", "Changes", "Ideas", "Releases", "Help"];
+    const hrefs = ["#/home", "#/runs", "#/refinement", "#/epics", "#/help"];
+    for (const view of ["simple", "advanced", "admin"]) {
+      expect(ia.sidebarFor(view).main.map((e: any) => e.label)).toEqual(main);
+      expect(ia.sidebarFor(view).main.map((e: any) => e.href)).toEqual(hrefs);
+    }
+    expect(ia.sidebarFor("simple").extra).toEqual([]);
+    expect(ia.sidebarFor("advanced").extra.map((e: any) => e.label)).toEqual(["My repositories"]);
+    expect(ia.sidebarFor("admin").extra.map((e: any) => e.label)).toEqual(["Board", "Repositories", "Flows", "Administration"]);
+    expect(ia.sidebarFor("nonsense")).toEqual(ia.sidebarFor("advanced"));
+    expect(ia.sidebarFor("__proto__")).toEqual(ia.sidebarFor("advanced"));
+    // a copy: changing it changes nothing
+    ia.sidebarFor("admin").main[0].label = "x";
+    expect(ia.sidebarFor("admin").main[0].label).toBe("Today");
+  });
+
+  it("every sidebar link resolves without a redirect for its display, and marks itself active", () => {
+    for (const [view, role] of [["simple", "user"], ["advanced", "user"], ["admin", "admin"]] as const) {
+      const { main, extra } = ia.sidebarFor(view);
+      for (const e of [...main, ...extra]) {
+        const to = ia.resolve(role, e.href);
+        expect(to.redirected, `${view} ${e.href}`).toBe(false);
+        expect(to.dest ?? to.page.id, `${view} ${e.href}`).toBe(e.id);
+      }
+    }
+    expect(ia.resolve("admin", "#/help").redirected).toBe(false);
   });
 
   it("lists the secondary pages of a destination", () => {
@@ -293,24 +319,26 @@ describe("the grouped shell", () => {
     for (const d of ia.DESTINATIONS) expect(ids, d.id).toContain(d.group);
   });
 
-  it("the admin sidebar headings are the groups its destinations use, in order", () => {
-    const html = read("ui/index.html");
-    const heads = [...html.matchAll(/<span class="side-head">([^<]+)</g)].map((m) => m[1]);
-    const used = new Set(ia.primaryFor("admin").map((d: any) => d.group));
-    expect(heads).toEqual(ia.GROUPS.filter((g: any) => used.has(g.id)).map((g: any) => g.label));
-    expect(read("ui/user/index.html")).not.toContain("side-head");
+  it("the sidebar has one divider and no group headings", () => {
+    for (const file of ["ui/index.html", "ui/user/index.html"]) {
+      const html = read(file);
+      expect(html.match(/class="side-divider"/g)?.length, file).toBe(1);
+      expect(html, file).not.toContain("side-head");
+    }
   });
 
-  it("every page link but Start work and Help is in the sidebar; the top bar has Start work and, for the user display, Help", () => {
+  it("the top bar has exactly one navigation link: + New change, the primary button", () => {
     for (const file of ["ui/index.html", "ui/user/index.html"]) {
       const html = read(file);
       const top = html.slice(html.indexOf('<header class="top"'), html.indexOf("</header>"));
-      const want = file === "ui/user/index.html" ? ["start", "help"] : ["start"];
-      expect([...top.matchAll(/data-nav="([\w-]+)"/g)].map((m) => m[1]), file).toEqual(want);
-      const from = html.indexOf('<nav id="side"');
-      const side = html.slice(from, html.indexOf("</nav>", from));
-      const all = [...html.matchAll(/data-nav="([\w-]+)"/g)].length;
-      expect([...side.matchAll(/data-nav="([\w-]+)"/g)].length + want.length, file).toBe(all);
+      expect([...top.matchAll(/<a [^>]*data-nav="([\w-]+)"[^>]*>([^<]*)</g)].map((m) => [m[1], m[2]]), file).toEqual([["start", ia.NEW_CHANGE.label]]);
+      expect(top, file).toContain(`<a href="${ia.NEW_CHANGE.href}" data-nav="start" class="btn primary">`);
+      // the Paused flag, Search and Ask come before the button
+      expect(top.indexOf('id="busy-flag"'), file).toBeLessThan(top.indexOf('id="search-btn"'));
+      expect(top.indexOf('id="search-btn"'), file).toBeLessThan(top.indexOf('id="ask-scf"'));
+      expect(top.indexOf('id="ask-scf"'), file).toBeLessThan(top.indexOf('data-nav="start"'));
+      // the switches are in the account menu, not in the top bar
+      expect(top.slice(0, top.indexOf('<details id="account"')), file).not.toMatch(/id="(view|busy)-switch"/);
     }
   });
 });
@@ -360,7 +388,7 @@ describe("commandsFor", () => {
     expect(auth.isUserHash("#/setup")).toBe(true);
     expect(auth.isUserHash("#/help")).toBe(true);
     expect(ia.resolve("user", "#/help")).toMatchObject({ page: { id: "help" }, title: "Help", crumbs: [], redirected: false });
-    expect(ia.resolve("admin", "#/help")).toMatchObject({ hash: "#/home", redirected: true });
+    expect(ia.resolve("admin", "#/help")).toMatchObject({ page: { id: "help" }, title: "Help", hash: "#/help", redirected: false });
     expect(auth.isUserHash("#/setup?need=node")).toBe(true);
   });
 

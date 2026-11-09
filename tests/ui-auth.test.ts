@@ -700,7 +700,7 @@ describe("roles in the page", () => {
 
   it("the admin display has the Start work page", () => {
     const html = readFileSync("ui/index.html", "utf8");
-    const link = html.indexOf('<a href="#/start" data-nav="start">Start work</a>');
+    const link = html.indexOf('<a href="#/start" data-nav="start" class="btn primary">+ New change</a>');
     expect(link).toBeGreaterThan(-1);
     expect(link).toBeLessThan(html.indexOf('data-nav="runs"'));
     const app = readFileSync("ui/app.js", "utf8");

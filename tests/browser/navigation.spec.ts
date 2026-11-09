@@ -15,6 +15,8 @@ const READY: Record<Role, Record<string, string | RegExp>> = {
     repos: /No repositories yet/,
     flows: "Welcome to Spaghetti Code Foundry",
     administration: "ann@example.com",
+    epics: /Epics/,
+    help: "Help",
     start: "gate",
   },
   user: {
@@ -22,6 +24,8 @@ const READY: Record<Role, Record<string, string | RegExp>> = {
     runs: "Seeded succeeded run",
     repos: "acme/app",
     refinement: "Show the build status",
+    epics: /Epics/,
+    help: "Help",
     start: "gate",
   },
 };

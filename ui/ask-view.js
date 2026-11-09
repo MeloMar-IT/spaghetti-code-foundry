@@ -6,7 +6,7 @@ import { glyph, h, modal, mount, timeAgo } from "./dom.js";
 
 /** The button in the top bar that opens the drawer. */
 export function askButton(onClick) {
-  return h("button", { type: "button", id: "ask-btn", class: "ask-btn", "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "ask-drawer", onClick }, "Ask SCF");
+  return h("button", { type: "button", id: "ask-btn", class: "ask-btn", "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "ask-drawer", onClick }, "Ask Foundry");
 }
 
 /**

@@ -423,8 +423,9 @@ export async function startedId(res: { json(): Promise<unknown> }): Promise<stri
   return typeof id === "string" ? id : undefined;
 }
 
-/** The primary links and actions of a role, from ui/ia.js. */
+/** The sidebar links (the five places, then the extra pages) and the + New change action of a display, from ui/ia.js. */
 export async function navFor(role: Role): Promise<{ primary: NavItem[]; actions: NavItem[] }> {
   const ia = await import("../../ui/ia.js" as string);
-  return { primary: ia.primaryFor(role), actions: ia.actionsFor(role) };
+  const { main, extra } = ia.sidebarFor(role === "admin" ? "admin" : "advanced");
+  return { primary: [...main, ...extra], actions: [ia.NEW_CHANGE] };
 }

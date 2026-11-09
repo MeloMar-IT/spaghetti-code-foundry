@@ -11,27 +11,25 @@ describe("ui/user/index.html", () => {
   const html = read("user/index.html");
   it("has the places the sign-in and the pages need", () => {
     for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "context", "account"]) expect(html).toContain(`id="${id}"`);
-    expect(html).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
+    expect(html).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="busy-flag"/);
     expect(html).not.toContain("health-btn");
   });
   it("has exactly seven links with the user pages", () => {
-    const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)"( hidden)?>([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[4]]);
+    const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
     expect(links).toEqual([
-      ["#/start", "start", "Start work"], // the top action comes first in the document
-      ["#/help", "help", "Help"], // top bar, next to Start work; hidden until the Simple view shows it
-      ["#/home", "home", "Home"], // the first link of the sidebar
-      ["#/epics", "epics", "Epics"],
-      ["#/runs", "runs", "My runs"],
-      ["#/repos", "repos", "My repositories"],
-      ["#/refinement", "refinement", "Refinement"],
+      ["#/start", "start", "+ New change"], // the top action comes first in the document
+      ["#/home", "home", "Today"], // the sidebar of the Advanced view
+      ["#/runs", "runs", "Changes"],
+      ["#/refinement", "refinement", "Ideas"],
+      ["#/epics", "epics", "Releases"],
+      ["#/help", "help", "Help"],
+      ["#/repos", "repos", "My repositories"], // below the divider; Simple hides it
     ]);
     expect(html.split("data-nav=").length - 1).toBe(7);
-    expect(html).toContain('<a href="#/help" data-nav="help" hidden>Help</a>');
-    // in the top bar, not the sidebar: it stays reachable when the menu is closed
+    // the project switcher is the first thing in the sidebar, after the close button
     const side = html.slice(html.indexOf('<nav id="side"'), html.indexOf("</nav>", html.indexOf('<nav id="side"')));
-    expect(side).not.toContain('data-nav="help"');
-    expect(html.indexOf('data-nav="help"')).toBeGreaterThan(html.indexOf('id="top-actions"'));
-    expect(html.indexOf('data-nav="help"')).toBeLessThan(html.indexOf('id="search-btn"'));
+    expect(side.indexOf('id="context"')).toBeGreaterThan(side.indexOf('id="side-close"'));
+    expect(side.indexOf('id="context"')).toBeLessThan(side.indexOf("data-nav="));
     expect(html).toContain('<a class="brand" href="#/home">');
   });
   it("has nothing of the admin page", () => {

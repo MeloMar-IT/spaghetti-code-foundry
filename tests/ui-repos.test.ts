@@ -1236,13 +1236,13 @@ describe("the SSH deploy key", () => {
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
   it("links the page for every account", async () => {
-    expect(read("index.html")).toContain('href="#/repos" data-nav="repos">Repositories<');
+    expect(read("index.html")).toContain('href="#/repos" data-nav="repos" data-extra>Repositories<');
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
     expect(ia.subnavFor("admin", "repos")).toEqual([]);
     const app = read("app.js");
     expect(app).toContain('from "./repos.js"');
     expect(app).toContain('section === "repos"');
-    expect(read("user/index.html")).toContain('href="#/repos" data-nav="repos">My repositories<');
+    expect(read("user/index.html")).toContain('href="#/repos" data-nav="repos" data-extra>My repositories<');
     expect(read("user/app.js")).toContain('from "/repos.js"');
   });
 

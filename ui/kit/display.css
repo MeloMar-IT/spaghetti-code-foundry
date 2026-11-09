@@ -10,7 +10,7 @@
 .scf-card {
   background: var(--color-surface);
   border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--card-radius);
   padding: var(--card-pad);
   display: grid;
   gap: var(--stack-gap);
@@ -34,9 +34,9 @@
   overflow-x: auto;
   max-width: 100%;
   border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--table-radius);
 }
-.scf-table-box:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-table-box:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
 .scf-table {
   width: 100%;
   border-collapse: collapse;
@@ -63,17 +63,17 @@
   background: transparent; border-color: transparent; padding: 0; font: inherit;
   color: var(--color-accent); text-decoration: underline; text-align: start; cursor: pointer;
 }
-.scf-table__open:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-table__open:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
 .scf-table__empty { margin: 0; padding: var(--space-xl); color: var(--color-text-muted); }
 
 .scf-list { margin: 0; padding-left: var(--space-2xl); display: grid; gap: var(--space-xs); }
 .scf-list__item { overflow-wrap: anywhere; min-width: 0; }
 
 .scf-badge {
-  display: inline-flex; align-items: center; max-width: 100%;
+  display: inline-flex; align-items: center; gap: var(--pill-gap); max-width: 100%;
   font-size: var(--text-meta); font-weight: var(--weight-medium);
-  padding: var(--space-2xs) var(--space-md);
-  border-radius: var(--radius-pill);
+  padding: var(--pill-pad-y) var(--pill-pad-x);
+  border-radius: var(--pill-radius);
   overflow-wrap: anywhere;
 }
 .scf-badge--neutral { background: var(--color-surface-2); color: var(--color-text-muted); }
@@ -82,6 +82,12 @@
 .scf-badge--run { background: var(--color-running-soft); color: var(--color-running); }
 .scf-badge--warn { background: var(--color-warning-soft); color: var(--color-warning); }
 .scf-badge--accent { background: var(--color-accent-soft); color: var(--color-accent); }
+/* Not by colour alone: a glyph before the word. The second line has empty alt text. */
+.scf-badge--ok::before { content: "✓"; content: "✓" / ""; }
+.scf-badge--fail::before { content: "✕"; content: "✕" / ""; }
+.scf-badge--warn::before { content: "!"; content: "!" / ""; }
+.scf-badge--run::before { content: "↻"; content: "↻" / ""; }
+.scf-badge--neutral::before { content: "–"; content: "–" / ""; }
 
 .scf-banner {
   display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: flex-start;

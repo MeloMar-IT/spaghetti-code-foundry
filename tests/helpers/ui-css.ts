@@ -185,8 +185,8 @@ const COLOR_NAMES = new Set(("aliceblue antiquewhite aqua aquamarine azure beige
   "tomato turquoise violet wheat white whitesmoke yellow yellowgreen").split(" "));
 const COLOR_FN = /(?:^|[^\w-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(/i;
 const TOKEN_PREFIXES = ["--color-", "--font-", "--text-", "--leading-", "--weight-", "--space-", "--size-", "--border-", "--radius-", "--shadow-",
-  "--motion-", "--control-", "--cell-", "--card-", "--stack-", "--page-", "--layer-"];
-const COMPOUND = /^(\.scf-[a-z0-9_-]+)+(\[[a-z-]+(="[^"]*")?\]|:[a-z-]+)*$/;
+  "--motion-", "--control-", "--cell-", "--card-", "--stack-", "--page-", "--layer-", "--pill-", "--button-", "--table-", "--focus-"];
+const COMPOUND = /^(\.scf-[a-z0-9_-]+)+(\[[a-z-]+(="[^"]*")?\]|::?[a-z-]+)*$/;
 
 /** Problems in kit CSS: an id selector, a bare tag, a class not starting with scf-, a colour literal (hex, function or
  *  any CSS colour keyword), a var() not in `tokens` or without a token prefix. `tokens` = names defined in ui/tokens.css. */
