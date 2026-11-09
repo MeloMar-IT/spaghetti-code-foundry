@@ -1,10 +1,27 @@
 import type { IncomingMessage } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { auditPath, prepareAuditLocked, scanAudit } from "../src/auth/audit.js";
+import { startProviderSession } from "../src/auth/provider-users.js";
+import { readSessions } from "../src/auth/sessions.js";
+import { withAuthLock } from "../src/auth/store.js";
+import {
+  UserError, changePassword, createUser, createUserWithLink, getUser, isBreakGlass, newPasswordLink, readUsersFile, resetPassword, setBreakGlass, setPassword, startSession, updateUser,
+  usersPath, writeUsersFileLocked, type User,
+} from "../src/auth/users.js";
 import {
   REASON_BAD, REASON_BUSY, REASON_THREW, REASON_TIMEOUT, disposeIdentity, hasIdentityProvider, readIdentityAnswer, resolveIdentity, supplyIdentity,
   type IdentityProvider, type IdentityRequest,
 } from "../src/auth/identity.js";
 import { identityRequest } from "../src/server/identity-session.js";
+
+// passes everything through; the break-glass tests make one append fail
+vi.mock("../src/auth/audit.js", async (orig) => {
+  const m = await orig<typeof import("../src/auth/audit.js")>();
+  return { ...m, prepareAuditLocked: vi.fn(m.prepareAuditLocked) };
+});
 
 const ID = "3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b";
 const req: IdentityRequest = { method: "GET", url: "/api/session", headers: { host: "x" }, remoteAddress: "127.0.0.1" };

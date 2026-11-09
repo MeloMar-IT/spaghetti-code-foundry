@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { checkEmail, checkName, checkPassword, createUser, deleteUser, findUserByEmail, hasAdmin, listUsers, setPassword, setStatus, updateUser, type User } from "./users.js";
+import { checkEmail, checkName, checkPassword, createUser, deleteUser, findUserByEmail, hasAdmin, listUsers, setBreakGlass, setPassword, setStatus, updateUser, type User } from "./users.js";
 
 /** Everything the commands need from the terminal; tests pass a fake. */
 export interface UserIo {
@@ -19,12 +19,13 @@ export const USER_USAGE = `usage: scf user create [--admin] [--name n] [--email 
        scf user list                                      List accounts
        scf user password <e-mail>                         Set a new password
        scf user role <e-mail> admin|user                  Change the role of an account
+       scf user break-glass <e-mail> on|off               Mark the one local admin that may sign in with a password while an identity provider is active
        scf user block <e-mail> [--stop-work] | scf user unblock <e-mail>
                                                           --stop-work also cancels its running runs and runs that wait for approval
        scf user delete <e-mail>                           Delete an account and wipe its stored credentials
 The password is asked twice on a terminal, or read from the first line of stdin.`;
 
-const ALLOWED: Record<string, string[]> = { create: ["admin", "name", "email"], list: [], password: [], role: [], block: ["stop-work"], unblock: [], delete: [] };
+const ALLOWED: Record<string, string[]> = { create: ["admin", "name", "email"], list: [], password: [], role: [], "break-glass": [], block: ["stop-work"], unblock: [], delete: [] };
 
 export function terminalIo(stdin: NodeJS.ReadStream = process.stdin, stderr: NodeJS.WriteStream = process.stderr): UserIo {
   const cancelled = () => new Error("cancelled");
@@ -148,11 +149,13 @@ export async function userCommand(args: { positionals: string[]; values: Record<
   for (const [k, v] of Object.entries(args.values)) {
     if (v !== undefined && !allowed.includes(k)) throw syntax(`scf user ${sub}: unexpected option --${k}`);
   }
-  const need = sub === "create" || sub === "list" ? 0 : sub === "role" ? 2 : 1;
+  const need = sub === "create" || sub === "list" ? 0 : sub === "role" || sub === "break-glass" ? 2 : 1;
   if (operands.length !== need) {
-    throw syntax(`scf user ${sub}: ${need === 2 ? "expects an e-mail address and a role (admin or user)" : need ? "expects one e-mail address" : "takes no operands"}`);
+    const two = sub === "role" ? "an e-mail address and a role (admin or user)" : "an e-mail address and on or off";
+    throw syntax(`scf user ${sub}: ${need === 2 ? `expects ${two}` : need ? "expects one e-mail address" : "takes no operands"}`);
   }
   if (sub === "role" && operands[1] !== "admin" && operands[1] !== "user") throw syntax("scf user role: the role must be admin or user");
+  if (sub === "break-glass" && operands[1] !== "on" && operands[1] !== "off") throw syntax("scf user break-glass: the second operand must be on or off");
 
   switch (sub) {
     case "create": {
@@ -174,7 +177,7 @@ export async function userCommand(args: { positionals: string[]; values: Record<
     case "list": {
       const users = listUsers();
       if (!users.length) io.out("no accounts");
-      for (const u of users) io.out(`${u.email}  ${u.name}  ${u.role}  ${u.status}  last sign-in: ${u.lastSignIn ?? "never"}${u.passwordHash === undefined ? "  no password yet" : ""}`);
+      for (const u of users) io.out(`${u.email}  ${u.name}  ${u.role}  ${u.status}  last sign-in: ${u.lastSignIn ?? "never"}${u.source === "provider" ? "  provider" : u.passwordHash === undefined ? "  no password yet" : ""}${u.breakGlass ? "  break-glass" : ""}`);
       return 0;
     }
     case "password": {
@@ -188,6 +191,17 @@ export async function userCommand(args: { positionals: string[]; values: Record<
       const u = accountByEmail(operands[0]!);
       const now = await updateUser(u.id, { role: operands[1] as "admin" | "user" }, BY);
       io.out(`${now.email} is now ${now.role}`);
+      return 0;
+    }
+    case "break-glass": {
+      const u = accountByEmail(operands[0]!);
+      const r = setBreakGlass(u.id, operands[1] === "on", BY);
+      if (!r.changed) {
+        io.out(`${u.email}: nothing changed`);
+        return 0;
+      }
+      io.out(`break-glass ${operands[1]} for ${u.email}`);
+      for (const o of r.cleared) io.out(`break-glass off for ${o.email}`);
       return 0;
     }
     case "block":

@@ -244,6 +244,29 @@ Whoever can add a plugin can therefore make anyone an admin, as with any plugin 
 - Only one provider is allowed, and the Foundry does not say which one is in use beyond the plugin's name in `GET /api/plugins`.
 - A provider-only install with no account may listen on a non-local address; the provider is then the only way in.
 
+**Break-glass account (#834).** While a provider is active, one local admin can still sign in with a
+password. This is a deliberate second way in, so it is a standing credential.
+
+*Protected by.*
+- The mark is set only on the machine (`scf user break-glass`); no API route or UI sets it. There is one
+  mark, and a file with a mark on a provider record or two marks cannot be read.
+- Only an active local admin with a password can be marked. A mark is removed by `off`, a reset
+  password, a new set-password link, a change to `user`, and a block. A local session counts under a
+  provider only while its account is marked (`isBreakGlass`, checked again under the lock).
+- Each break-glass sign-in writes its `sign-in` audit line (`target:"break-glass"`) before the session is
+  written. If that line cannot be written, the sign-in fails with 500 and no cookie is set.
+- Every other local account gets "wrong e-mail or password" while a provider is active, and such failures are audited.
+
+*Limits.*
+- The break-glass password works whenever the Foundry is reachable, provider up or not. Anyone who knows it
+  can use it while the provider is up too.
+- A break-glass session is not rechecked with the provider and lasts up to 7 days; a block or a clearing
+  of the mark ends it at once.
+- Changing the mark is logged as an account `edit` line, not as a separate action.
+- A failed session write after the audit line leaves an `ok` line without a session. The audit is kept
+  as the safer side: every attempt that could have succeeded is in the log.
+- A broken audit log shuts the break-glass admin out until the log is fixed. The log line says why.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

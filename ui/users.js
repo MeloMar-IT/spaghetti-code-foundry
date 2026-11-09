@@ -23,31 +23,38 @@ export const VIEW_TEXT = { simple: "Simple", advanced: "Advanced", admin: "Admin
 /** True while the account is locked after too many wrong tries (`lockedUntil` is a time in the future). */
 export const isLocked = (u, now = Date.now()) => !!u.lockedUntil && Date.parse(u.lockedUntil) > now;
 
-/** The account's status in words: blocked wins over "no password yet", and that wins over "locked". */
+/** True for a mirror account of the identity provider (it has no password here). */
+export const isProvider = (u) => u?.provider === true;
+
+/** The account's status in words: blocked wins over "account system", then "no password yet", then "locked". */
 export const statusText = (u, now = Date.now()) =>
-  u.status === "blocked" ? "blocked" : !u.hasPassword ? "no password yet" : isLocked(u, now) ? "locked" : "active";
+  u.status === "blocked" ? "blocked" : isProvider(u) ? "account system" : !u.hasPassword ? "no password yet" : isLocked(u, now) ? "locked" : "active";
 
 /** The classes of the status pill. */
 export const pillClass = (u, now = Date.now()) =>
-  `pill${u.status === "blocked" ? " fail" : !u.hasPassword ? "" : isLocked(u, now) ? " locked" : " ok"}`;
+  `pill${u.status === "blocked" ? " fail" : isProvider(u) ? " ok" : !u.hasPassword ? "" : isLocked(u, now) ? " locked" : " ok"}`;
 
 /** When the account last signed in, or "never". */
 export const lastSignInText = (u) => (u.lastSignIn ? timeAgo(u.lastSignIn) : "never");
 
 /**
  * The buttons of a row, in order. A link is offered exactly when the account has no password, a reset exactly when it
- * has one. Unlock is offered for a locked account that has a password (also when it is blocked).
+ * has one. Unlock is offered for a locked account that has a password (also when it is blocked). A provider account
+ * has no edit, link or reset: its name, e-mail and password live in the account system.
  */
-export const actionsFor = (u, now = Date.now()) => [
-  "edit",
-  "limits",
-  "app",
-  u.hasPassword ? "reset" : "link",
-  ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
-  u.status === "blocked" ? "unblock" : "block",
-  ...(u.role === "user" ? ["view"] : []),
-  "delete",
-];
+export const actionsFor = (u, now = Date.now()) =>
+  isProvider(u)
+    ? ["limits", "app", u.status === "blocked" ? "unblock" : "block", ...(u.role === "user" ? ["view"] : []), "delete"]
+    : [
+        "edit",
+        "limits",
+        "app",
+        u.hasPassword ? "reset" : "link",
+        ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
+        u.status === "blocked" ? "unblock" : "block",
+        ...(u.role === "user" ? ["view"] : []),
+        "delete",
+      ];
 
 /** For a blocked account: why its link does not work yet. Empty for any other account. */
 export const blockedLinkText = (u) => (u?.status === "blocked" ? `${u.name} is blocked, so the link works only after you unblock the account.` : "");

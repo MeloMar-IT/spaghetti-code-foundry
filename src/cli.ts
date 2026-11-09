@@ -95,6 +95,7 @@ Usage:
   scf user list                                  List accounts
   scf user password <e-mail>                     Set a new password
   scf user role <e-mail> admin|user              Change the role of an account
+  scf user break-glass <e-mail> on|off           Mark the emergency local admin
   scf user block <e-mail> [--stop-work] | unblock <e-mail>   Block or unblock an account
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain

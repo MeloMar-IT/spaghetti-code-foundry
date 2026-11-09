@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { disposeIdentity, supplyIdentity, type IdentityRequest } from "../src/auth/identity.js";
-import { createUser, deleteUser, getUser, setStatus, usersPath } from "../src/auth/users.js";
+import { createUser, deleteUser, getUser, setBreakGlass, setStatus, usersPath, type User } from "../src/auth/users.js";
 import { userWorkspaces } from "../src/server/workspace-scope.js";
 import { startTestServer } from "./helpers/port.js";
 import { TEST_PASSWORD, signInAs } from "./helpers/session.js";
@@ -265,5 +265,117 @@ describe("workspaces", () => {
     await enter("a");
     writeFileSync(usersPath(), "not json");
     expect([...userWorkspaces(USER.id)]).toEqual([]);
+  });
+});
+
+describe("break-glass", () => {
+  const EMAIL_A = "glass@example.com";
+  const EMAIL_B = "plain@example.com";
+  let a: User;
+  let b: User;
+  beforeEach(async () => {
+    await boot();
+    answers.set("ada", ADMIN);
+    answers.set("uli", USER);
+    a = await createUser({ name: "Glass", email: EMAIL_A, password: TEST_PASSWORD, role: "admin" });
+    b = await createUser({ name: "Plain", email: EMAIL_B, password: TEST_PASSWORD, role: "admin" });
+    setBreakGlass(a.id, true, { by: "cli" });
+  });
+  const login = (email: string, password = TEST_PASSWORD, cookie?: string) =>
+    fetch(`${srv.base}/api/session`, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ email, password }) });
+  const auditLines = () => readFileSync(join(home, "audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  const cookieOf = (r: Response) => r.headers.getSetCookie()[0]!.split(";")[0]!;
+  const setPw = (token: string, password: string) =>
+    fetch(`${srv.base}/api/set-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, password }) });
+
+  it("the marked admin signs in with a password; each sign-in is audited and logged without the e-mail", async () => {
+    const r = await login(EMAIL_A);
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { user: { id: string } }).user.id).toBe(a.id);
+    expect(auditLines().filter((l) => l.action === "sign-in")).toEqual([expect.objectContaining({ by: a.id, result: "ok", target: "break-glass" })]);
+    expect(logs.filter((l) => l.includes("break-glass"))).toHaveLength(1);
+    expect(logs.join("\n")).not.toContain(EMAIL_A);
+    expect((await login(EMAIL_A)).status).toBe(200);
+    expect(auditLines().filter((l) => l.target === "break-glass")).toHaveLength(2);
+  });
+
+  it("an unmarked local admin with the right password gets the plain 401 and a failed audit line", async () => {
+    const r = await login(EMAIL_B);
+    expect(r.status).toBe(401);
+    expect(((await r.json()) as { error: string }).error).toBe("wrong e-mail or password");
+    expect(r.headers.getSetCookie()).toEqual([]);
+    expect(auditLines().filter((l) => l.action === "sign-in")).toEqual([expect.objectContaining({ by: "anonymous", result: "failed", userId: b.id })]);
+    expect((await login(EMAIL_B, "test-wrong-password-1")).status).toBe(401);
+  });
+
+  it("a break-glass session works while the provider fails", async () => {
+    const cookie = cookieOf(await login(EMAIL_A));
+    answers.set("x", "throw");
+    const s = await call("GET", "/api/session", "x", cookie);
+    expect(s.status).toBe(200);
+    expect(s.json.user.id).toBe(a.id);
+    expect(s.json.identityError).toBeUndefined();
+    expect((await call("GET", "/api/runs", "x", cookie)).status).toBe(200);
+    // a sign-in that carries a cookie while the provider fails still works
+    expect((await login(EMAIL_A, TEST_PASSWORD, cookie)).status).toBe(200);
+  });
+
+  it("changes nothing when the audit log cannot be written", async () => {
+    const first = cookieOf(await login(EMAIL_A));
+    const before = readFileSync(join(home, "sessions.json"), "utf8");
+    rmSync(join(home, "audit.jsonl"), { force: true });
+    mkdirSync(join(home, "audit.jsonl"));
+    const r = await login(EMAIL_A, TEST_PASSWORD, first);
+    expect(r.status).toBe(500);
+    expect(r.headers.getSetCookie()).toEqual([]);
+    expect(readFileSync(join(home, "sessions.json"), "utf8")).toBe(before);
+    expect((await call("GET", "/api/runs", "", first)).status).toBe(200);
+  });
+
+  it("stops at once when the mark is switched off", async () => {
+    const cookie = cookieOf(await login(EMAIL_A));
+    expect((await call("GET", "/api/runs", "", cookie)).status).toBe(200);
+    setBreakGlass(a.id, false);
+    expect((await call("GET", "/api/runs", "", cookie)).status).toBe(401);
+    expect((await login(EMAIL_A)).status).toBe(401);
+  });
+
+  it("a local session that is not marked does not count", async () => {
+    disposeIdentity("test");
+    const old = await signInAs(srv.base, { email: EMAIL_B, create: false });
+    supply();
+    expect((await call("GET", "/api/runs", "", old.cookie)).status).toBe(401);
+  });
+
+  it("attack path: a provider admin cannot get a password sign-in or the mark", async () => {
+    const ada = await enter("ada");
+    const old = cookieOf(await login(EMAIL_A));
+    const as = (method: string, path: string, body?: unknown) => call(method, path, "ada", ada.cookie, method === "GET" ? undefined : ada.csrf, body);
+    const reset = await as("POST", `/api/users/${a.id}/reset`);
+    expect(reset.status).toBe(200);
+    expect((await setPw(reset.json.token, "test-new-password-2")).status).toBe(200);
+    expect((await login(EMAIL_A, "test-new-password-2")).status).toBe(401);
+    expect((await call("GET", "/api/runs", "", old)).status).toBe(401);
+    expect(getUser(a.id)?.breakGlass).toBeUndefined();
+    // a new local admin made through the API cannot sign in with a password
+    const made = await as("POST", "/api/users", { name: "New", email: "new@example.com", role: "admin" });
+    expect(made.status).toBe(201);
+    expect((await setPw(made.json.token, "test-new-password-3")).status).toBe(200);
+    expect((await login("new@example.com", "test-new-password-3")).status).toBe(401);
+    // the mark is never taken from a request body
+    const put = await as("PUT", `/api/users/${b.id}`, { name: "Plain 2", breakGlass: true });
+    expect(put.status).toBeLessThan(500);
+    expect(getUser(b.id)?.breakGlass).toBeUndefined();
+    expect(put.text).not.toContain("breakGlass");
+  });
+
+  it("gives provider: true for provider accounts only", async () => {
+    const ada = await enter("ada");
+    expect(ada.body.user.provider).toBe(true);
+    const list = await call("GET", "/api/users", "ada", ada.cookie);
+    const byId = new Map((list.json as { id: string; provider?: boolean }[]).map((u) => [u.id, u]));
+    expect(byId.get(ADMIN.id)?.provider).toBe(true);
+    expect(byId.get(a.id)).not.toHaveProperty("provider");
+    expect(list.text).not.toContain("breakGlass");
   });
 });
