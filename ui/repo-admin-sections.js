@@ -2,6 +2,7 @@
 // Only the admin router imports this file, so a user's page never loads it.
 import { api } from "./api.js";
 import { confirmDialog, h, toast } from "./dom.js";
+import { statusPill } from "./icons.js";
 import { statusSummary } from "./kit/product.js";
 import { reposChanged } from "./context.js";
 import { ownerText, readyDialog, settingsDialog, transferDialog } from "./admin-repos.js";
@@ -147,7 +148,7 @@ const transfer = (ctx) => {
   const { repo, readOnly } = ctx;
   if (readOnly) return null;
   return h("div", { class: "row" }, "Owner: ", ownerText(repo),
-    repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null,
+    repo.account?.status === "blocked" ? [" ", statusPill("danger", "blocked")] : null,
     h("button", { class: "danger", "data-action": "transfer", onClick: ctx.once("transfer", async () => {
       ctx.setRepo(await transferDialog(repo));
       void reposChanged();

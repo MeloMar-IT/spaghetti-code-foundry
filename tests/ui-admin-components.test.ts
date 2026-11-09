@@ -20,11 +20,11 @@ const bare = row({ owner: null, version: null, approvedVersion: null, lastReview
 
 describe("the text helpers", () => {
   it("names the four statuses and an unknown one", () => {
-    expect(ui.statusInfo("retired")).toEqual({ label: "Retired", tone: "neutral" });
-    expect(ui.statusInfo("unapproved")).toEqual({ label: "Not approved", tone: "warn" });
-    expect(ui.statusInfo("review-due")).toEqual({ label: "Review due", tone: "warn" });
-    expect(ui.statusInfo("ok")).toEqual({ label: "OK", tone: "ok" });
-    expect(ui.statusInfo("weird")).toEqual({ label: "Unknown", tone: "warn" });
+    expect(ui.statusInfo("retired")).toEqual({ label: "Retired", semantic: "disabled" });
+    expect(ui.statusInfo("unapproved")).toEqual({ label: "Not approved", semantic: "warning" });
+    expect(ui.statusInfo("review-due")).toEqual({ label: "Review due", semantic: "warning" });
+    expect(ui.statusInfo("ok")).toEqual({ label: "OK", semantic: "success" });
+    expect(ui.statusInfo("weird")).toEqual({ label: "Unknown", semantic: "warning" });
     expect(ui.statusInfo("toString").label).toBe("Unknown");
   });
 
@@ -77,6 +77,15 @@ describe("the Settings card", () => {
     expect(el.all("tbody")[0]!.all("tr")).toHaveLength(2);
     const t = el.textContent;
     for (const s of ["team", "2026-10-01", "timeout", "OK", "Review due"]) expect(t).toContain(s);
+  });
+
+  it("draws the status as a pill with an icon and the word", async () => {
+    answers.push({ body: { components: [row({ status: "review-due" })], problems: [] } });
+    const el = await card();
+    const pill = el.all("span").find((s) => s.classList.names.has("pill"))!;
+    expect(pill.classList.names.has("sem-warning")).toBe(true);
+    expect(pill.textContent).toBe("Review due");
+    expect(pill.all("svg").length).toBeGreaterThan(0);
   });
 
   it("shows No owner, Never reviewed, Not recorded and None for missing values, and marks a built-in", async () => {

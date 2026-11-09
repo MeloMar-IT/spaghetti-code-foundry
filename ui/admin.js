@@ -72,8 +72,10 @@ export function restartBox(view, { onRequest, onCancel, readOnly = false } = {})
       : h("p", { class: "muted flush" }, view.manual ?? "Stop the server and start it again to use the new values."));
 }
 
+const SETTINGS_LINE = "How this server runs: limits, notifications, GitHub and safety";
+
 export async function renderSettings(main, { readOnly = false } = {}) {
-  mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
+  mount(main, settingsPage({ title: "Settings", status: h("span", { class: "muted" }, SETTINGS_LINE), sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
   const [c, info, s, restart] = await Promise.all([api.config(), api.info(), api.settings(), api.restartState().catch(() => undefined)]);
   const described = Array.isArray(s?.settings) ? s.settings : [];
   const startup = Array.isArray(s?.startup) ? s.startup : [];
@@ -281,6 +283,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
 
   mount(main, settingsPage({
     title: "Settings",
+    status: h("span", { class: "muted" }, SETTINGS_LINE),
     actions: [h("span", { class: "muted mono" }, info.configPath), ...(readOnly ? [] : [h("span", { class: "spacer" }), saveNote, saveBtn])],
     notices: [err, restartSlot],
     sections: [

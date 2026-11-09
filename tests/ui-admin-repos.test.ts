@@ -834,7 +834,7 @@ describe("wiring", () => {
       heldGets.push(gate);
       const loading = show();
       await flush();
-      expect(main().textContent).toContain("Repositories");
+      expect(main().textContent).toContain("All repositories");
       expect(byClass(main(), "skeleton")).toHaveLength(1);
       expect(walk(main()).some((e) => e.attrs["aria-busy"] === "true")).toBe(true);
       expect(walk(main()).some((e) => e.tag === "button")).toBe(false);

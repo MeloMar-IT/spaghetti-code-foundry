@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { confirmDialog, h, mount, toast } from "./dom.js";
 import { check, input } from "./fields.js";
+import { pageHeader } from "./kit/product.js";
 
 /** The admin page for clean-up work: removes old run workspaces. */
 export async function renderMaintenance(main) {
@@ -21,7 +22,7 @@ export async function renderMaintenance(main) {
     }
   };
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Maintenance")),
+    pageHeader({ layout: "toolbar", title: "Maintenance", meta: h("span", { class: "muted" }, "Clean up old workspaces") }),
     h("div", { class: "card mb-14" },
       h("h3", {}, "Disk"),
       h("p", { class: "muted flush" }, "Each run keeps its workspace (worktree or clone) so you can inspect or resume it. Clean up old ones here or with ", h("code", {}, "scf clean"), "."),

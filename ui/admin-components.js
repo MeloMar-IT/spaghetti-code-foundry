@@ -1,19 +1,19 @@
 import { api } from "./api.js";
 import { h, mount, table } from "./dom.js";
-import { badge } from "./kit/display.js";
+import { statusPill } from "./icons.js";
 import { errorState, explainError } from "./states.js";
 
 // The "Components" card of Settings: owner and review status of each component. Pure text helpers first, then the card.
 
 const STATUS = {
-  retired: { label: "Retired", tone: "neutral" },
-  unapproved: { label: "Not approved", tone: "warn" },
-  "review-due": { label: "Review due", tone: "warn" },
-  ok: { label: "OK", tone: "ok" },
+  retired: { label: "Retired", semantic: "disabled" },
+  unapproved: { label: "Not approved", semantic: "warning" },
+  "review-due": { label: "Review due", semantic: "warning" },
+  ok: { label: "OK", semantic: "success" },
 };
 
-/** `{ label, tone }` of a status; an unknown one reads as a warning. */
-export const statusInfo = (status) => (Object.hasOwn(STATUS, status) ? STATUS[status] : { label: "Unknown", tone: "warn" });
+/** `{ label, semantic }` of a status; an unknown one reads as a warning. */
+export const statusInfo = (status) => (Object.hasOwn(STATUS, status) ? STATUS[status] : { label: "Unknown", semantic: "warning" });
 export const ownerText = (row) => row?.owner ?? "No owner";
 export const reviewText = (row) => row?.lastReview ?? "Never reviewed";
 
@@ -31,7 +31,7 @@ function rowOf(c) {
     h("td", {}, c.approvedVersion ?? "None"),
     h("td", {}, reviewText(c)),
     h("td", {}, c.evalSuite ?? "None"),
-    h("td", {}, badge({ tone: s.tone, label: s.label })));
+    h("td", {}, statusPill(s.semantic, s.label)));
 }
 
 /** The table in a box a keyboard can scroll: a named region that Tab stops at. */
