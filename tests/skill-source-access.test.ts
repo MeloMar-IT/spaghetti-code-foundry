@@ -60,6 +60,17 @@ describe("sourceCredential", () => {
     expect(seen[1]).toEqual({ contents: "read" });
   });
 
+  it("asks for the permissions it is given", async () => {
+    const seen: unknown[] = [];
+    await sourceCredential(source, {
+      repos: () => [rec()],
+      config: () => ({ github_app: undefined }) as never,
+      permissions: { issues: "write" },
+      token: async (...a) => (seen.push(a[3]), { ok: true, token: SECRET, expires: 1 }),
+    });
+    expect(seen).toEqual([{ issues: "write" }]);
+  });
+
   it("turns a token failure into the fixed sentence", async () => {
     const r = await sourceCredential(source, { repos: () => [rec()], config: () => ({}) as never, token: async () => ({ ok: false, reason: "the sentence" }) });
     expect(r).toEqual({ ok: false, problem: "the sentence" });

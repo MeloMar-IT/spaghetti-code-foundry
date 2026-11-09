@@ -19,12 +19,13 @@ import { stageSource } from "./cli.js";
 import { LsRemoteError } from "./ls-remote.js";
 import { NOTHING, resolverSentence, tickFor } from "./update-common.js";
 import { sourceCredential } from "./source-access.js";
+import { openFailureIssues } from "./update-issues.js";
 import type { GitCredential } from "./git-tree.js";
 import type { SkillUpdateOptions } from "./update-cli.js";
 
 // The automatic update of a first-party source with `update.auto: true` (#799). One chain per source, under a lock in the data folder:
 // find the commit, stage it, run the gates and the evaluation, publish a release, approve it, record the commit and the result.
-// Nothing here opens a pull request, calls gh or touches skill-sources.yaml. The lines, audit details and records hold checked ids,
+// Nothing here opens a pull request or touches skill-sources.yaml; the only gh calls open issues for the skills that failed (#800). The lines, audit details and records hold checked ids,
 // digests, commits and fixed sentences only; the upstream text is never copied.
 
 /** An enabled first-party source with `update.auto`: the only kind this path handles. */
@@ -162,14 +163,44 @@ export async function autoUpdate(
       ...(credential ? { credential } : {}),
     });
     await tick();
-    const failedRecord = (result: AutoUpdateEntry["result"], failed: AutoSkillFailure[], release?: AutoUpdateEntry["release"]) =>
+    /** One issue in the source's repository for each failed skill (#800). It never throws and never changes the outcome. */
+    const fileIssues = async (failed: readonly AutoSkillFailure[]): Promise<void> => {
+      let label: string;
+      try {
+        label = (opts.skills ?? loadConfig().skills).authoring.label;
+      } catch {
+        out("NOTE the skill settings could not be read; no issue was opened");
+        return;
+      }
+      await openFailureIssues({
+        source,
+        failed,
+        label,
+        env: opts.env ?? process.env,
+        cwd: resolve(opts.cwd ?? process.cwd()),
+        signal,
+        tick: async () => {
+          try {
+            await tick();
+          } catch {
+            // the caller checks the signal
+          }
+        },
+        access: opts.issueAccess ?? ((s) => sourceCredential(s, { permissions: { issues: "write" } })),
+        out,
+        audit: (ok, d) => step("issue", ok, d),
+      });
+    };
+    const failedRecord = async (result: AutoUpdateEntry["result"], failed: AutoSkillFailure[], release?: AutoUpdateEntry["release"]): Promise<void> => {
       save({ at, commit, result, ...(release ? { release } : {}), failed });
+      if (failed.length > 0) await fileIssues(failed);
+    };
     const blockedLines = (failed: readonly AutoSkillFailure[]) => failed.forEach((f) => out(`BLOCKED ${f.skill} ${f.gate}: ${f.message}`));
     if (staged.rejected) {
       // The import worked and refused every skill: not a fetch failure.
       const failed = rejectedFailures(id, staged.rejected.length);
       blockedLines(failed);
-      failedRecord("blocked", failed);
+      await failedRecord("blocked", failed);
       step("import", false, `${failed.length} skills refused`);
       return problem(`no skill of ${id}@${c12} passed the gates; ${NOT_RELEASED}`);
     }
@@ -217,13 +248,13 @@ export async function autoUpdate(
     }
     if (built.state === "blocked") {
       blockedLines(built.failed);
-      failedRecord("blocked", built.failed);
+      await failedRecord("blocked", built.failed);
       step("gates", false, `no skill passed; ${built.failed.length} failed`);
       return problem(`no skill of ${id}@${c12} passed the gates; ${NOT_RELEASED}`);
     }
     blockedLines(built.failed);
     if (built.state === "unchanged") {
-      failedRecord("unchanged", built.failed, undefined);
+      await failedRecord("unchanged", built.failed, undefined);
       step("gates", true, `no skill changed since ${built.base.catalogue}@${built.base.version}`);
       out(`UNCHANGED ${id}@${c12}: no skill changed since ${built.base.catalogue}@${built.base.version}; nothing to release`);
       return "UNCHANGED";
@@ -246,7 +277,7 @@ export async function autoUpdate(
 
     const approved = approveAutoRelease({ sourceId: id, catalogue: rel.catalogue, version: rel.version }, { releases: skills.releases, sources: deps.sources, by, log: (l) => out(`NOTE ${l}`) });
     if (approved.state === "refused") {
-      failedRecord("failed", built.failed, relRecord);
+      await failedRecord("failed", built.failed, relRecord);
       return problem(`${label} was published but not approved: ${approved.reason}`);
     }
 
@@ -258,11 +289,11 @@ export async function autoUpdate(
       note("skill-approvals.json");
     }
     if (ref === "stale") {
-      failedRecord("failed", built.failed, relRecord);
+      await failedRecord("failed", built.failed, relRecord);
       return fail("ref", `the approved commit of ${id} changed while the update ran; ${label} was approved, but ${c12} was not recorded`);
     }
     if (ref !== undefined) step("ref", true, c12);
-    failedRecord("released", built.failed, relRecord);
+    await failedRecord("released", built.failed, relRecord);
     out(`RELEASED ${label} ${release.digest} ${release.content.manifest.skills.length} skills from ${id}@${c12}; approved automatically`);
     return "OK";
   } finally {
