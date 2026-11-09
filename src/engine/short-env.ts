@@ -1,7 +1,7 @@
 import { KNOWN_KEY_VARS, providerKeyVars, type Agent } from "../agents/targets.js";
 import { STEP_ENV_NAME, STEP_ENV_REFUSED, type Config, type ProviderConfig } from "../config.js";
 import { inheritedEnv } from "../steps/process.js";
-import { userAccount } from "./isolation.js";
+import { heldWorkspace, userAccount } from "./isolation.js";
 
 /** What every step of a user's run inherits from the server: a short, fixed list of harmless names. */
 export const SHORT_ENV: readonly string[] = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "LANGUAGE", "LC_ALL", "TZ", "TERM"];
@@ -22,9 +22,9 @@ const OWN_KIND: Record<Agent, ProviderConfig["kind"]> = { claude: "anthropic", c
 
 export type AgentNeed = { agent: Agent; kind: ProviderConfig["kind"] };
 
-/** Does a run of this owner get the short environment? True for a user; fails closed like `userAccount`. */
-export function shortEnvRun(owner: string | undefined): boolean {
-  return userAccount(owner) !== undefined;
+/** Does a run of this owner get the short environment? True for a user and for a team's run; fails closed like `userAccount`. */
+export function shortEnvRun(owner: string | undefined, workspace?: string): boolean {
+  return heldWorkspace(workspace) || userAccount(owner) !== undefined;
 }
 
 /** Entries of SCF_STEP_ENV_PASS / FACTORY_STEP_ENV_PASS (comma separated) that pass the setting's rule; others are ignored. */

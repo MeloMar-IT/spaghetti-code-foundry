@@ -14,11 +14,12 @@ import { runShell } from "../steps/shell.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
-import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
+import { IDENTITY_VARS, heldWorkspace, isolationEnv, stepIsolation } from "./isolation.js";
+import { proxyEnv, shellHosts, sshProxyOption, startEgress, type Egress } from "./egress.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess, wantsRepoAccess } from "./repo-access.js";
 import { AUTONOMY_DENIED, AUTONOMY_POLICY, autonomyOfRun, autonomyRefusal, autonomyRefuses, type AutonomyAction } from "../governance/autonomy.js";
 import { lockRoot } from "./running.js";
-import { ownDir, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { ownDir, runSandbox, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, workspaceCacheEnv, workspaceSlotsDir, wrapsStep, type SandboxPaths } from "./os-sandbox.js";
 import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
 import { isTimedOut } from "../errors.js";
 import { stepContextUncited } from "./context-index.js";
@@ -398,8 +399,12 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         const stopped = autonomyStop(engine, stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1), "repo-access");
         if (stopped) return stopped;
       }
-      const image = shellImage(scope, engine);
-      if (step.sandbox && !image) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
+      // a team's run (#785) is always held by the OS sandbox: the Docker image is not used there
+      const held = heldWorkspace(engine.summary.workspace);
+      const configured = shellImage(scope, engine);
+      const image = held ? undefined : configured;
+      if (held && step.sandbox && configured) engine.log(`    · ${step.id}: a team's run does not use the Docker image; the step runs in the OS sandbox`);
+      else if (step.sandbox && !image && !held) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
       const env = stepEnv(scope, engine, step);
       // The stored token of the repository, looked up now, only for a step with repo_access (or the old grant by name).
       const access = stepRepoAccess(step, scope.depth, scope.flow.name, engine.summary, ctx.vars);
@@ -465,24 +470,35 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const grant = env.FACTORY_PUSH_ALLOW ? grantPush(env.FACTORY_PUSH_ALLOW) : undefined;
       if (grant) Object.assign(env, grant.env);
       // A step of a user's run gets only the short environment, not the server's (see short-env.ts).
-      const short = shortEnvRun(engine.summary.owner);
+      const short = shortEnvRun(engine.summary.owner, engine.summary.workspace);
       let r: Awaited<ReturnType<typeof runShell>> | undefined;
       let thrown: unknown;
       let gone = true;
       let noGh = false;
+      let egress: Egress | undefined;
       try {
-        // A shell step of a user's run is held in an OS sandbox (a step in a Docker image is held by the container).
-        const sb = sandboxedRun(engine.summary.owner, engine.config);
+        // A shell step of a user's or a team's run is held in an OS sandbox (a user's step in a Docker image is held by the container).
+        const sb = runSandbox(engine.summary, engine.config);
         if (typeof sb === "object") throw new Error(sb.refused);
-        const boxed = short && wrapsStep(sb, step.sandbox ? image : undefined);
+        const boxed = held || (short && wrapsStep(sb, step.sandbox ? image : undefined));
         const stepEnvVars = short ? shortEnv(env, engine.config) : env;
         let sandboxProfileText: string | undefined;
         if (boxed) {
           Object.assign(stepEnvVars, sandboxHomeEnv(runDir));
           // the learnings folder is made here: the step may write the file but not move or remove its folder
           if (env.FACTORY_LEARNINGS_FILE) mkdirSync(dirname(env.FACTORY_LEARNINGS_FILE), { recursive: true });
+          const team: Partial<Pick<SandboxPaths, "network" | "shared" | "slots">> = {};
+          if (held) {
+            // a team's step reaches the network only through its own proxy, and has its workspace's cache and test slots (#785)
+            const ws = engine.summary.workspace!;
+            const cache = workspaceCacheEnv(ws, stepEnvVars);
+            egress = await startEgress(shellHosts(ws));
+            Object.assign(stepEnvVars, proxyEnv(egress.port, stepEnvVars, []), cache.env);
+            if (keyAccess && stepEnvVars.GIT_SSH_COMMAND) stepEnvVars.GIT_SSH_COMMAND += ` -o ${sshProxyOption(egress.port)}`;
+            Object.assign(team, { network: { proxyPort: egress.port, localPorts: [] }, shared: [cache.dir], slots: workspaceSlotsDir(engine.runsDir, ws) });
+          }
           sandboxProfileText = sandboxProfile(
-            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read, runsDir: engine.runsDir, lockDir: lockRoot(engine.summary.workspace) }),
+            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: held ? undefined : engine.config.sandbox.user_read, runsDir: engine.runsDir, lockDir: lockRoot(engine.summary.workspace), ...team }),
           );
         }
         // the waits of test-slot are recorded for the time limit (a container does not see the folder)
@@ -511,6 +527,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       } catch (e) {
         thrown = e;
       } finally {
+        if (egress) {
+          const refusedHosts = egress.refused();
+          await egress.close();
+          if (refusedHosts.length) engine.log(`    · ${step.id}: hosts refused: ${refusedHosts.join(", ")}`);
+        }
         grant?.revoke();
         if (ghDir) removeGhConfigDir(ghDir);
         if (keyAccess) {

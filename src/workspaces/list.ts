@@ -17,6 +17,17 @@ export const WorkspaceLimitsSchema = z
   })
   .strict();
 
+/** A host a team's steps may reach (#785): a name, or `*.domain` for its subdomains, with an optional port (443 when absent). IP literals are refused. */
+export const HostEntry = z
+  .string()
+  .max(253)
+  .regex(/^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[1-9][0-9]{0,4})?$/)
+  .refine((v) => {
+    const m = /:(\d+)$/.exec(v);
+    return !m || Number(m[1]) <= 65535;
+  }, { message: "a port is 1 to 65535" })
+  .refine((v) => !/^\d+$/.test(v.replace(/:\d+$/, "").split(".").pop() ?? ""), { message: "an IP address is not a host name" });
+
 export const WorkspaceSchema = z
   .object({
     id: z
@@ -36,6 +47,7 @@ export const WorkspaceSchema = z
       .refine((l) => new Set(l).size === l.length, { message: "a member is listed twice" })
       .default([]),
     limits: WorkspaceLimitsSchema.prefault({}),
+    hosts: z.array(HostEntry).max(100).default([]),
   })
   .strict();
 

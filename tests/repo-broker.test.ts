@@ -875,3 +875,24 @@ describe("the autonomy level of the run", () => {
     });
   }
 });
+
+describe("a team's run (#785)", () => {
+  it("refuses every request with no-credential, and runs nothing, until the broker is confined", async () => {
+    tokenRepo(admin);
+    const f = fakeExec();
+    const r = rig({ exec: f.exec });
+    (r.engine.summary as { workspace?: string }).workspace = "team-a";
+    for (const op of ["status", "push"] as const) {
+      const res = await brokerRequest(r.ctx, op === "push" ? { op, branch: "x" } : { op }, grant());
+      expect(res, op).toMatchObject({ outcome: "refused", refusal: "no-credential" });
+    }
+    expect(f.calls).toEqual([]);
+  });
+
+  it("does not change a default run", async () => {
+    const f = fakeExec();
+    const r = rig({ exec: f.exec });
+    (r.engine.summary as { workspace?: string }).workspace = "default";
+    expect(await brokerRequest(r.ctx, { op: "status" }, grant({ credential: "none" }))).toMatchObject({ outcome: "done" });
+  });
+});

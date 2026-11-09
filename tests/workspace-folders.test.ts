@@ -7,7 +7,7 @@ import { createUser } from "../src/auth/users.js";
 import { cleanRuns } from "../src/clean.js";
 import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
-import { sandboxProfile, stepSandboxPaths } from "../src/engine/os-sandbox.js";
+import { resetSandboxCache, sandboxAvailable, sandboxProfile, stepSandboxPaths, TEAM_SANDBOX_REFUSED } from "../src/engine/os-sandbox.js";
 import { allLockRoots, lockRoot, markRunning, sweepRunning, sweepStaleRunning } from "../src/engine/running.js";
 import {
   allRunsDirs, claimRunDir, ensureWorkspaceTestSlots, listAllRunIds, listRunBriefs, loadRun, loadRunAsync, runDirOf, runIdTaken,
@@ -256,13 +256,28 @@ describe("runFlow", () => {
     expect(readFileSync(join(runs, "taken", "run.json"), "utf8")).toBe(before);
     expect(existsSync(join(teamRuns(), "taken"))).toBe(false);
   });
-  it("gives the steps of a team run its own lock folder", async () => {
+  // a team's step is held by the OS sandbox, so it runs only where the sandbox is available (#785); an inplace flow is refused for a team
+  const teamEnv = parseFlow(`name: w\nworkspace: empty\nsteps:\n  - {id: a, type: shell, run: ${JSON.stringify(`echo "$SCF_LOCK_DIR|$FACTORY_LOCK_DIR" > "$FACTORY_WORKDIR/env.txt"`)}}\n`);
+  const teamBot = ConfigSchema.parse({ protected_branches: [], bot: { name: "Bot", email: "bot@example.com" } });
+  it.skipIf(!sandboxAvailable())("gives the steps of a team run its own lock folder", async () => {
     config(TEAM_A);
-    const out = join(data, "env.txt");
-    const team = await runFlow(flow(`echo "$SCF_LOCK_DIR|$FACTORY_LOCK_DIR" > ${out}`), { task: "t", repo: repo(), runsDir: runs, config: cfg, workspace: "team-a" });
-    expect(team.status).toBe("succeeded");
+    resetSandboxCache();
+    const team = await runFlow(teamEnv, { task: "t", repo: repo(), runsDir: runs, config: teamBot, workspace: "team-a" });
+    expect(team.status, team.reason).toBe("succeeded");
     const l = join(data, "workspaces", "team-a", "locks");
-    expect(readFileSync(out, "utf8").trim()).toBe(`${l}|${l}`);
+    expect(readFileSync(join(team.workdir!, "env.txt"), "utf8").trim()).toBe(`${l}|${l}`);
+  });
+  it("refuses a team run before any step when the sandbox is not available", async () => {
+    config(TEAM_A);
+    resetSandboxCache(false);
+    try {
+      const team = await runFlow(teamEnv, { task: "t", repo: repo(), runsDir: runs, config: teamBot, workspace: "team-a" });
+      expect(team.status).toBe("failed");
+      expect(team.reason).toBe(TEAM_SANDBOX_REFUSED);
+      expect(team.history).toEqual([]);
+    } finally {
+      resetSandboxCache();
+    }
   });
 });
 

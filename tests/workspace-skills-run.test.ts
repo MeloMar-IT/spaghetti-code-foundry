@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,12 +21,15 @@ import { buildRepoProfile } from "../src/skills/repo-profile.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 const saved = process.env.FACTORY_HOME;
+const savedKey = process.env.ANTHROPIC_API_KEY;
 let data: string;
 let runsDir: string;
 let repo: string;
 let teamSkills: string;
 let defaultSkills: string;
-const cfg: Config = ConfigSchema.parse({ protected_branches: [], skills: { builtin: false, releases: { allow_unreleased: true }, roots: [] } });
+// A team's run is always held by the OS sandbox (#785), so the runs here need macOS; they also need a commit name and the server's key.
+const basic = process.platform === "darwin" && spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"], { stdio: "ignore" }).status === 0;
+const cfg: Config = ConfigSchema.parse({ protected_branches: [], bot: { name: "Bot", email: "bot@example.com" }, skills: { builtin: false, releases: { allow_unreleased: true }, roots: [] } });
 const TEAM_A = "workspaces:\n  - {id: team-a, name: Team A}\n";
 const ID = "team-only";
 const K = `${ID}@1.0.0`;
@@ -33,6 +37,7 @@ const K = `${ID}@1.0.0`;
 beforeEach(() => {
   data = realpathSync(mkdtempSync(join(tmpdir(), "ws-skills-run-")));
   process.env.FACTORY_HOME = data;
+  process.env.ANTHROPIC_API_KEY = "dummy-key-for-a-fake-claude";
   runsDir = join(data, "runs");
   repo = join(data, "repo");
   teamSkills = workspaceSkillsDir("team-a");
@@ -52,6 +57,8 @@ beforeEach(() => {
 afterEach(() => {
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
+  if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+  else process.env.ANTHROPIC_API_KEY = savedKey;
   clearSkillRegistryCache();
   rmSync(data, { recursive: true, force: true });
 });
@@ -73,7 +80,7 @@ const start = (ids: string[], workspace?: string): Promise<RunSummary> =>
 const marker = (r: RunSummary) => existsSync(join(r.workdir!, "marker.txt"));
 
 describe("a workspace-only skill", () => {
-  it("runs in its team, and the lock holds it", async () => {
+  it.skipIf(!basic)("runs in its team, and the lock holds it", async () => {
     const r = await start([ID], "team-a");
     expect(r.status).toBe("succeeded");
     expect(marker(r)).toBe(true);
@@ -88,7 +95,7 @@ describe("a workspace-only skill", () => {
     expect(marker(r)).toBe(false);
   });
 
-  it("stops a team run when the team skills folder is a link out of the data folder", async () => {
+  it.skipIf(!basic)("stops a team run when the team skills folder is a link out of the data folder", async () => {
     const outside = mkdtempSync(join(tmpdir(), "ws-outside-"));
     rmSync(teamSkills, { recursive: true, force: true });
     symlinkSync(outside, teamSkills);
@@ -102,7 +109,7 @@ describe("a workspace-only skill", () => {
     }
   });
 
-  it("the run page shows the skill as verified, with a lock that is ok", async () => {
+  it.skipIf(!basic)("the run page shows the skill as verified, with a lock that is ok", async () => {
     const r = await start([ID], "team-a");
     const run = loadRun(teamRunsDir(), r.runId)!;
     const view = runSkillView(run, {
@@ -123,7 +130,7 @@ describe("a workspace-only skill", () => {
     expect(view?.resolved.find((s) => s.id === ID)?.integrity).not.toBe("verified");
   });
 
-  it("a quarantined team skill is allowed for its run, through the team registry", async () => {
+  it.skipIf(!basic)("a quarantined team skill is allowed for its run, through the team registry", async () => {
     const r = await start([ID], "team-a");
     const q = recordLifecycleTransition({ key: K, to: "quarantined", reason: "found a bug", by: "cli", waitMs: 0 });
     expect(q.status).toBe("ok");
