@@ -21,7 +21,8 @@
 // under "## The draft to split" in $FACTORY_TASK (read here, never by the shell). Nothing is cut: a wrong form or a longer text fails.
 // For `understand` it prints { "drafts": [ { title, who, what, why, criteria, outOfScope, dependsOn, summary } ] }: 1 to 5 drafts, 1 to 10
 // criteria each, `dependsOn` holds numbers of earlier drafts, the summary is one sentence that starts with "This is what I understood: ".
-// Nothing is cut: a wrong form or a longer text fails.
+// Nothing is cut: a wrong form or a longer text fails. When $FACTORY_VAR_PICTURES is 1 to 5, the answer also holds "pictures": exactly that
+// many descriptions, each one plain sentence on one line (at most 300 characters, no link, image or HTML); the output then has "pictures" too.
 import { readFileSync } from "node:fs";
 
 const READY_ITEMS_MAX = 20, READY_REASON_MAX = 300, READY_RESULTS = ["met", "not-met", "unsure"];
@@ -392,8 +393,27 @@ function draftText(v, what, name, max, { oneLine = false, empty = false } = {}) 
 }
 
 // The drafts the architect wrote from the idea: 1 to 5, in build order. Nothing is cut.
-function checkUnderstand(obj) {
-  if (noExtra(obj, ["drafts"])) bad("the architect's answer has more than the drafts that were asked for");
+// With $FACTORY_VAR_PICTURES = N (1 to 5) the answer also holds `pictures`: N one-sentence plain-text descriptions, in file order.
+const PICTURE_ABOUT_MAX = 300, PICTURE_REFUSED = /\]\(|!\[|<|>|https?:\/\/|`/i;
+function checkUnderstand(obj, pictureCount = "") {
+  if (!/^[0-5]?$/.test(pictureCount ?? "")) bad("set the variable pictures to a number from 0 to 5");
+  const n = Number(pictureCount || 0);
+  let pictures;
+  if (n > 0) {
+    if (noExtra(obj, ["drafts", "pictures"])) bad("the architect's answer has more than the drafts and picture descriptions that were asked for");
+    if (!Array.isArray(obj.pictures)) bad("the answer has no picture descriptions");
+    if (obj.pictures.length !== n) bad(`the answer describes ${obj.pictures.length} pictures, but ${n} were added`);
+    pictures = obj.pictures.map((v, i) => {
+      const P = `picture ${i + 1}`;
+      const t = draftText(v, P, "description", PICTURE_ABOUT_MAX, { oneLine: true });
+      if (sentences(t) !== 1) bad(`${P} has a description of more than one sentence`);
+      if (PICTURE_REFUSED.test(t)) bad(`${P} has a description with a link or markup`);
+      return t;
+    });
+  } else {
+    if (noExtra(obj, ["drafts", "pictures"])) bad("the architect's answer has more than the drafts that were asked for");
+    if (obj.pictures !== undefined && (!Array.isArray(obj.pictures) || obj.pictures.length)) bad("the answer describes pictures, but none were added");
+  }
   if (!Array.isArray(obj.drafts) || !obj.drafts.length) bad("the answer has no drafts");
   if (obj.drafts.length > UNDERSTAND_DRAFTS_MAX) bad(`the answer has more than ${UNDERSTAND_DRAFTS_MAX} drafts`);
   const drafts = obj.drafts.map((d, i) => {
@@ -415,10 +435,10 @@ function checkUnderstand(obj) {
     if (sentences(summary) !== 1) bad(`${D} has a summary of more than one sentence`);
     return { title, who, what, why, criteria, outOfScope, dependsOn: [...dependsOn], summary };
   });
-  return { drafts };
+  return pictures ? { drafts, pictures } : { drafts };
 }
 
-function check(raw, ask, field, items, task) {
+function check(raw, ask, field, items, task, pictures) {
   const kind = ask || "round";
   if (!["round", "question", "suggest", "review", "impact", "ready", "split", "understand"].includes(kind)) bad("set the variable ask to round, question, suggest, review, impact, ready, split or understand");
   if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
@@ -434,7 +454,7 @@ function check(raw, ask, field, items, task) {
   if (kind === "review") return checkReview(obj);
   if (kind === "impact") return checkImpact(obj);
   if (kind === "split") return checkSplit(obj, task ?? "");
-  if (kind === "understand") return checkUnderstand(obj);
+  if (kind === "understand") return checkUnderstand(obj, pictures);
   if (kind === "ready") return checkReady(obj, (items ?? "").split(",").map((x) => x.trim()).filter(Boolean));
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
@@ -451,7 +471,7 @@ function check(raw, ask, field, items, task) {
 }
 
 try {
-  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD, process.env.FACTORY_VAR_ITEMS, process.env.FACTORY_TASK)));
+  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD, process.env.FACTORY_VAR_ITEMS, process.env.FACTORY_TASK, process.env.FACTORY_VAR_PICTURES)));
 } catch (e) {
   console.log(e instanceof Bad ? e.message : "the architect's answer could not be checked");
   process.exitCode = 1; // not process.exit(): let stdout drain

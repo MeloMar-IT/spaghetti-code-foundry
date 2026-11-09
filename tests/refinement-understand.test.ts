@@ -25,7 +25,8 @@ import {
 } from "../src/refinement/store.js";
 import { emptyTalk } from "../src/refinement/talk.js";
 import { TALK_FIRST_LINE, TALK_MAX_BYTES, byteLength } from "../src/refinement/talk-text.js";
-import { UNDERSTOOD_PREFIX, applyUnderstood, replacedByUnderstand, understandText, wordsOf } from "../src/refinement/understand-text.js";
+import { readPictures } from "../src/refinement/pictures.js";
+import { UNDERSTOOD_PREFIX, applyUnderstood, replacedByUnderstand, understandText, understoodPictures, wordsOf } from "../src/refinement/understand-text.js";
 
 const ANN = "11111111-1111-4111-8111-111111111111";
 const OK = { ownerOk: () => true, repoName: (_o: string, name: string) => name };
@@ -392,13 +393,109 @@ describe("askArchitect for understand", () => {
   });
 });
 
+// ---- the sentences about pictures (#836) -----------------------------------------------------------
+
+describe("understoodPictures", () => {
+  it("is undefined without pictures, and passes the right count", () => {
+    expect(understoodPictures({ drafts: [] }, 0)).toBeUndefined();
+    expect(understoodPictures({ pictures: ["A form.", "A chart."] }, 2)).toEqual(["A form.", "A chart."]);
+    expect(understoodPictures({ pictures: [] }, 0)).toEqual([]);
+  });
+  it("refuses an answer without descriptions when the request has pictures", () => {
+    expect(() => understoodPictures({ drafts: [] }, 2)).toThrow(expect.objectContaining({ code: "bad-draft" }));
+  });
+  it.each<[string, unknown, number]>([
+    ["a wrong count", ["A form."], 2],
+    ["pictures when none were added", ["A form."], 0],
+    ["two sentences", ["It is one. It is two."], 1],
+    ["a line break", ["A form.\nMore."], 1],
+    ["301 characters", [`${"a".repeat(300)}.`], 1],
+    ["an image", ["![x](http://e/x.png)"], 1],
+    ["a link", ["See [here](b)."], 1],
+    ["a tag", ["It is <img src=x>."], 1],
+    ["an address", ["See https://e.example/x."], 1],
+    ["not a list", "A form.", 1],
+  ])("throws bad-draft for %s", (_n, pictures, count) => {
+    expect(() => understoodPictures({ pictures }, count)).toThrow(expect.objectContaining({ code: "bad-draft" }));
+  });
+  it("lets applyUnderstood accept an answer that has pictures", () => {
+    expect(() => applyUnderstood(bare(), { drafts: [out()], pictures: ["A form."] })).not.toThrow();
+  });
+});
+
+describe("endArchitectRun with picture sentences", () => {
+  const withPictures = (n = 2) => {
+    const s = createSession(ANN, { repo: "acme/app", idea: "Add a thing", changeRequest: true, pictures: readPictures(Array.from({ length: n }, () => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64"))) }, OK);
+    setArchitectRun(ann, s.id, "b0");
+    endArchitectRun(s.id, "b0", { brief: { text: "The brief", at: "2026-01-01T00:00:00.000Z" } });
+    return s.id;
+  };
+  it("stores a sentence on each picture, and a later run replaces them", () => {
+    const id = withPictures();
+    understand(id, { drafts: [out()], pictures: ["A form.", "A chart."] });
+    expect(getSession(id)!.pictures!.map((p) => p.about)).toEqual(["A form.", "A chart."]);
+    understand(id, { drafts: [out()], pictures: ["A new form.", "A new chart."] });
+    expect(getSession(id)!.pictures!.map((p) => p.about)).toEqual(["A new form.", "A new chart."]);
+    expect(() => checkRefinements()).not.toThrow();
+  });
+  it("ends with the wrong form for a wrong count and keeps the old drafts", () => {
+    const id = withPictures();
+    understand(id, { drafts: [out()], pictures: ["A form.", "A chart."] });
+    const before = drafts(id);
+    const s = understand(id, { drafts: [out({ title: "Other" })], pictures: ["Only one."] });
+    expect(s.architect?.failed).toBe(END_BAD_FORM);
+    expect(drafts(id)).toEqual(before);
+    expect(getSession(id)!.pictures!.map((p) => p.about)).toEqual(["A form.", "A chart."]);
+  });
+  it("refuses an answer without descriptions for a request with pictures, and keeps the old drafts", () => {
+    const id = withPictures(1);
+    understand(id, { drafts: [out()], pictures: ["A form."] });
+    const before = drafts(id);
+    const s = understand(id, answer(out({ title: "Other" })));
+    expect(s.architect?.failed).toBe(END_BAD_FORM);
+    expect(drafts(id)).toEqual(before);
+    expect(getSession(id)!.pictures![0]!.about).toBe("A form.");
+  });
+});
+
 // ---- the check tool --------------------------------------------------------------------------------
 
 describe("tools/refine-round-check for understand", () => {
-  const check = (obj: unknown) => {
-    const r = spawnSync("node", ["tools/refine-round-check"], { env: { ...process.env, FACTORY_VAR_ASK: "understand", FACTORY_OUT_ROUND: typeof obj === "string" ? obj : JSON.stringify(obj) }, encoding: "utf8" });
+  const check = (obj: unknown, pictures?: string) => {
+    const r = spawnSync("node", ["tools/refine-round-check"], { env: { ...process.env, FACTORY_VAR_ASK: "understand", ...(pictures !== undefined ? { FACTORY_VAR_PICTURES: pictures } : {}), FACTORY_OUT_ROUND: typeof obj === "string" ? obj : JSON.stringify(obj) }, encoding: "utf8" });
     return { code: r.status, text: r.stdout.trim() };
   };
+
+  it("checks the picture sentences against the number of pictures", () => {
+    const ok = check({ drafts: [out()], pictures: ["A form.", "A chart."] }, "2");
+    expect(ok.code).toBe(0);
+    expect(JSON.parse(ok.text).pictures).toEqual(["A form.", "A chart."]);
+    expect(Object.keys(JSON.parse(ok.text))).toEqual(["drafts", "pictures"]);
+    const none = check({ drafts: [out()], pictures: [] }, "");
+    expect(none.code).toBe(0);
+    expect(Object.keys(JSON.parse(none.text))).toEqual(["drafts"]);
+    expect(check(answer(out()), "0").code).toBe(0);
+  });
+
+  it.each<[string, unknown, string]>([
+    ["one sentence for two pictures", { drafts: [out()], pictures: ["SECRET_TEXT one."] }, "2"],
+    ["a missing list", answer(out()), "2"],
+    ["two sentences in one entry", { drafts: [out()], pictures: ["SECRET_TEXT one. SECRET_TEXT two.", "B."] }, "2"],
+    ["301 characters", { drafts: [out()], pictures: [`${"S".repeat(300)}.`, "B."] }, "2"],
+    ["a line break", { drafts: [out()], pictures: ["SECRET_TEXT\nmore.", "B."] }, "2"],
+    ["a Markdown image", { drafts: [out()], pictures: ["![SECRET_TEXT](x.png)", "B."] }, "2"],
+    ["a Markdown link", { drafts: [out()], pictures: ["See [SECRET_TEXT](x).", "B."] }, "2"],
+    ["an HTML tag", { drafts: [out()], pictures: ["A <b>SECRET_TEXT</b> form.", "B."] }, "2"],
+    ["an address", { drafts: [out()], pictures: ["See http://SECRET_TEXT.example.", "B."] }, "2"],
+    ["a sentence that is not text", { drafts: [out()], pictures: [5, "B."] }, "2"],
+    ["sentences when no picture was added", { drafts: [out()], pictures: ["SECRET_TEXT."] }, ""],
+    ["a count of 9", { drafts: [out()], pictures: ["SECRET_TEXT."] }, "9"],
+  ])("fails for %s with a sentence that holds no answer text", (_name, obj, n) => {
+    const r = check(obj, n);
+    expect(r.code).toBe(1);
+    expect(r.text).not.toMatch(/SECRET/);
+    expect(r.text.split("\n")).toHaveLength(1);
+  });
 
   it("passes one good draft and three linked drafts", () => {
     const one = check(answer(out()));

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -68,8 +68,7 @@ const read = async (id: string) => (await call(ann, "GET", `/api/changes/${id}`)
 async function until(id: string, state: string): Promise<any> {
   for (let i = 0; i < 300; i++) {
     const v = await read(id);
-    if (v.state === state) return v;
-    await new Promise((r) => setTimeout(r, 100));
+    if (v.state === state) return v;    await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`never ${state}: ${JSON.stringify(await read(id))}`);
 }
@@ -102,6 +101,70 @@ describe("a change request on a local project", { timeout: 60_000 }, () => {
     expect(ghCalls()).toEqual([]);
     expect((await post(`/${id}/build`)).json().building).toBe(true);
     expect(storyFiles()).toHaveLength(1);
+    // no pictures: no Pictures part and no picture folder
+    expect(parsed(1).body).not.toContain("### Pictures");
+    expect(existsSync(join(stories(), "pictures"))).toBe(false);
+  });
+
+  describe("with pictures", () => {
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("one")]);
+    const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("two")]);
+    const SENTENCES = ["The screen shows a report table.", "The chart has three bars."];
+    const startWith = async () => {
+      process.env.FAKE_SIMPLE_ROUND = JSON.stringify({ questions: [], proposals: [], done: "All clear." });
+      process.env.FAKE_UNDERSTAND = JSON.stringify({ drafts: [card("First"), card("Second", [1])], pictures: SENTENCES });
+      const r = await post("", { repo: name, text: "Let me export a report as CSV", pictures: [PNG.toString("base64"), JPG.toString("base64")] });
+      expect(r.status, r.text).toBe(202);
+      const id = r.json().id as string;
+      await until(id, "cards");
+      return id;
+    };
+    const copyNames = () => git("ls-tree", "-r", "--name-only", "scf/stories").split("\n").filter((f) => f.includes("/pictures/")).sort();
+
+    it("keeps copies next to each story, in the same commit, and builds without a second copy", async () => {
+      const id = await startWith();
+      expect((await post(`/${id}/later`)).status).toBe(200);
+      expect(storyFiles()).toHaveLength(2);
+      for (const n of [1, 2]) {
+        const body: string = parsed(n).body;
+        expect(body.match(/### Pictures/g)).toHaveLength(1);
+        for (const s of SENTENCES) expect(body).toContain(s);
+        const links = [...body.matchAll(/\]\((pictures\/[0-9a-f]{16}\/(\d)\.(png|jpg))\)/g)];
+        expect(links.map((m) => m[3])).toEqual(["png", "jpg"]);
+        expect(readFileSync(join(stories(), links[0]![1]!)).equals(PNG)).toBe(true);
+        expect(readFileSync(join(stories(), links[1]![1]!)).equals(JPG)).toBe(true);
+        const files = git("log", "--format=", "--name-only", "--grep", `^scf: story #${n} created$`, "scf/stories").split("\n").filter(Boolean);
+        expect(files.filter((f) => f.includes("/pictures/"))).toHaveLength(2);
+        expect(files.some((f) => /\.scf\/stories\/\d+-.*\.md$/.test(f))).toBe(true);
+      }
+      const folders = readdirSync(join(stories(), "pictures"));
+      expect(folders).toHaveLength(2);
+      const tree = copyNames();
+      expect(tree).toHaveLength(4);
+      const head = git("rev-parse", "scf/stories");
+      const b = await post(`/${id}/build`);
+      expect(b.status, b.text).toBe(200);
+      expect(readdirSync(join(stories(), "pictures"))).toEqual(folders);
+      expect(copyNames()).toEqual(tree);
+      // the later commits (the go state) do not touch the pictures
+      expect(git("log", "--format=", "--name-only", `${head}..scf/stories`)).not.toContain("pictures/");
+      for (const n of [1, 2]) expect((parsed(n).body as string).match(/### Pictures/g)).toHaveLength(1);
+      expect(ghCalls()).toEqual([]);
+    });
+
+    it("commits the copies on a retry when the first commit failed, with one folder", async () => {
+      const id = await startWith();
+      mkdirSync(join(dir, ".git", "refs", "heads", "scf"), { recursive: true });
+      const lock = join(dir, ".git", "refs", "heads", "scf", "stories.lock");
+      writeFileSync(lock, "");
+      expect((await post(`/${id}/later`)).status).toBe(502);
+      rmSync(lock);
+      expect((await post(`/${id}/later`)).status).toBe(200);
+      expect(storyFiles()).toHaveLength(2);
+      expect(readdirSync(join(stories(), "pictures"))).toHaveLength(2);
+      expect(copyNames()).toHaveLength(4);
+      expect((parsed(1).body as string).match(/### Pictures/g)).toHaveLength(1);
+    });
   });
 
   it("keeps several cards for later, then builds them", async () => {

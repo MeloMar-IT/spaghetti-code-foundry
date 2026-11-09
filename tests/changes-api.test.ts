@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setRepoReady } from "../src/auth/repos.js";
 import { addRepoWatcher } from "../src/repos/watchers.js";
 import { STUCK_FAILED } from "../src/refinement/change-request.js";
+import { GitHubStore } from "../src/stories/github-store.js";
 import { openWorld, type World } from "./helpers/refinement-world.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -75,11 +76,41 @@ describe("one change from start to build, on GitHub", () => {
     plain(b.json());
     expect(w.gh.bugIssues()).toHaveLength(1);
     expect(w.gh.bugIssues()[0]!.labels.map((l) => l.name)).toEqual(["Factory_go"]);
+    expect(w.gh.bugIssues()[0]!.body).not.toContain("### Pictures");
     // A second call writes nothing.
     const before = w.gh.ghLog();
     expect((await post(`/${id}/build`)).json().state).toBe("planned");
     expect(w.gh.ghLog()).toBe(before);
     expect((await post(`/${id}/later`)).json().building).toBe(true);
+  });
+
+  it("describes a picture in words and uploads nothing", async () => {
+    watch();
+    process.env.FAKE_SIMPLE_ROUND = NO_QUESTIONS;
+    const sentence = "The screen shows a report table with a red total.";
+    process.env.FAKE_UNDERSTAND = JSON.stringify({ drafts: [card("First")], pictures: [sentence] });
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("a picture body that is long enough")]);
+    const r = await post("", { repo: "acme/app", text: "Let me export a report as CSV", pictures: [png.toString("base64")] });
+    expect(r.status).toBe(202);
+    const id = r.json().id as string;
+    await until(id, "cards");
+    expect((await post(`/${id}/build`)).status).toBe(200);
+    const body = w.gh.bugIssues()[0]!.body as string;
+    expect(body).toContain("### Pictures");
+    expect(body).toContain("added 1 picture");
+    expect(body).toContain(sentence);
+    expect(body).not.toContain("pictures/");
+    expect(body).not.toContain("](");
+    expect(body).not.toContain(png.toString("base64"));
+    const log = w.gh.ghLog();
+    expect(log).not.toContain(png.toString("base64"));
+    expect(log).not.toMatch(/gh (gist|release|upload)|upload/);
+  });
+
+  it("makes the GitHub store refuse files without calling gh", async () => {
+    const before = w.gh.ghLog();
+    await expect(new GitHubStore("acme/app").create({ title: "t", body: "b", labels: [], files: [{ name: "pictures/0123456789abcdef/1.png", from: "/x" }] })).rejects.toThrow("nothing was uploaded");
+    expect(w.gh.ghLog()).toBe(before);
   });
 
   it("goes straight to the cards when the round has no questions", async () => {

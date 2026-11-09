@@ -534,7 +534,7 @@ describe("refine-round definition", () => {
     expect(flow.one_per_repo).toBeUndefined();
     expect(flow.limits.max_cost_usd).toBe(3);
     expect(flow.defaults.timeout_sec).toBe(1800);
-    expect(flow.vars).toEqual({ github_repo: "owner/repo", ask: "round", field: "", items: "", words: "" });
+    expect(flow.vars).toEqual({ github_repo: "owner/repo", ask: "round", field: "", items: "", words: "", pictures: "" });
     for (const s of flow.steps) expect(s.description?.trim(), s.id).toBeTruthy();
   });
 

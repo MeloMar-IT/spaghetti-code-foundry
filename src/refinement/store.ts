@@ -9,10 +9,10 @@ import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } fro
 import { rememberSplit } from "../engine/split-links.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
-import { PICTURES_MAX, PICTURE_MAX_BYTES, PICTURE_TYPES, removePictures, sweepOrphanPictures, writePictures, type PictureFile } from "./pictures.js";
+import { PICTURES_MAX, PICTURE_ABOUT_MAX, PICTURE_MAX_BYTES, PICTURE_TYPES, removePictures, sweepOrphanPictures, writePictures, type PictureFile } from "./pictures.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
 import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
-import { applyUnderstood } from "./understand-text.js";
+import { applyUnderstood, understoodPictures } from "./understand-text.js";
 import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { CLOSED, ReplacedBySchema, ReplacingSchema, markOf, replaceStarted, replaceState, withDone, withJournal, withLabels, withReplaced, withWrite, type Closed, type Found, type WriteEvidence } from "./replace-journal.js";
@@ -107,7 +107,7 @@ const SourceSchema = z
   .strict();
 export type IssueSource = z.infer<typeof SourceSchema>;
 
-const PictureSchema = z.object({ type: z.enum(PICTURE_TYPES), size: z.number().int().min(1).max(PICTURE_MAX_BYTES) }).strict();
+const PictureSchema = z.object({ type: z.enum(PICTURE_TYPES), size: z.number().int().min(1).max(PICTURE_MAX_BYTES), about: z.string().min(1).max(PICTURE_ABOUT_MAX).refine((t) => !/[\u0000-\u001f\u007f-\u009f]/.test(t) && !t.includes(String.fromCharCode(0x2028)) && !t.includes(String.fromCharCode(0x2029))).optional() }).strict();
 
 const SessionSchema = z
   .object({
@@ -678,7 +678,9 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
         // A draft that is on GitHub stays as it is, also when the change reaches it through another draft.
         if (s.drafts.some((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d))) return fail(END_BAD_FORM);
         const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
-        return { ...rest, drafts, state, updated: at, log: logged(s, at, "architect-understood", c.line?.detail) };
+        const about = understoodPictures(end.understood, s.pictures?.length ?? 0);
+        const pictures = about && s.pictures ? { pictures: s.pictures.map((p, i) => ({ ...p, about: about[i] })) } : {};
+        return { ...rest, ...pictures, drafts, state, updated: at, log: logged(s, at, "architect-understood", c.line?.detail) };
       } catch (e) {
         if (!(e instanceof RefinementError)) throw e;
         return fail(e.code === "limit" ? END_NO_ROOM : END_BAD_FORM);

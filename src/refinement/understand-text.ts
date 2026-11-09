@@ -17,6 +17,7 @@ import {
   type DraftState,
 } from "./draft.js";
 import { RefinementError } from "./errors.js";
+import { ABOUT_REFUSED, PICTURES_MAX, PICTURE_ABOUT_MAX } from "./pictures.js";
 import { HAS_CONTROL, chars, type Talk } from "./talk.js";
 import { LIST_TITLE, TALK_FIRST_LINE, TALK_MAX_BYTES, byteLength, cutBytes, list, roundPart } from "./talk-text.js";
 
@@ -144,6 +145,9 @@ const str = (max: number, one = false, min = 1) =>
     .transform((t) => t.trim())
     .pipe(z.string().refine((t) => chars(t) >= min && chars(t) <= max && (one ? !LINE_BREAK.test(t) && !TITLE_CONTROL.test(t) : !HAS_CONTROL.test(t))));
 
+/** One sentence about a picture: one plain line, no link, image or HTML syntax. */
+const aboutSchema = str(PICTURE_ABOUT_MAX, true).refine((t) => strictSentenceCount(t) === 1 && !ABOUT_REFUSED.test(t));
+
 const AnswerSchema = z
   .object({
     drafts: z
@@ -163,6 +167,7 @@ const AnswerSchema = z
       )
       .min(1)
       .max(UNDERSTAND_MAX.drafts),
+    pictures: z.array(aboutSchema).max(PICTURES_MAX).optional(),
   })
   .strict()
   .superRefine((a, ctx) => {
@@ -170,6 +175,22 @@ const AnswerSchema = z
       if (new Set(d.dependsOn).size !== d.dependsOn.length || d.dependsOn.some((n) => n < 1 || n > i)) ctx.addIssue({ code: "custom", message: "depends on", path: ["drafts", i, "dependsOn"] });
     });
   });
+
+/**
+ * The descriptions of the pictures in an `understand` answer, one per picture. Undefined when the answer has none. A list of another
+ * length than `count`, or an entry of the wrong form, throws `bad-draft`.
+ */
+export function understoodPictures(output: unknown, count: number): string[] | undefined {
+  const raw = (output as { pictures?: unknown } | null | undefined)?.pictures;
+  if (raw === undefined) {
+    // A request with pictures needs a description of each one: an answer without them is refused, and the old drafts stay.
+    if (count > 0) throw bad("the architect's picture descriptions are missing");
+    return undefined;
+  }
+  const parsed = z.array(aboutSchema).max(PICTURES_MAX).safeParse(raw);
+  if (!parsed.success || parsed.data.length !== count) throw bad("the architect's picture descriptions have the wrong form");
+  return parsed.data;
+}
 
 /**
  * Stores the drafts the architect wrote from the idea. The drafts of an earlier run that are still replaceable are removed first (and
