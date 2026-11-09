@@ -19,7 +19,7 @@ export const TERM_MEANINGS = {
   project: "One thing the Foundry makes for you, such as an app or a website.",
   planned: "The work waits its turn and starts soon.",
   done: "The change is finished and part of your project.",
-  step: "One part of the work: planning, building, testing or finishing.",
+  step: "One part of the work: understanding, planning, building, checking or delivering.",
 };
 
 /** The text of the Help page. */
@@ -373,19 +373,6 @@ export function safeText(s, fallback = "") {
   const t = mapTerms(plainText(s)).trim();
   return t && forbiddenIn(t).length === 0 ? t : fallback;
 }
-
-export const PHASES =["planning", "building", "testing", "finishing"];
-
-/** The phase (0–3) of a step id of a flow. Steps before the work starts count as planning, whatever their name has in it. */
-export function phaseOf(stepId) {
-  const s = String(stepId ?? "");
-  if (/implement|guard|address_review/.test(s)) return 1;
-  if (/plan|ticket|branch|baseline|clone|split|size|risk|claim|wait_for|send_back|approve|fetch/.test(s)) return 0;
-  if (/test|review/.test(s)) return 2;
-  return s ? 3 : 0;
-}
-
-export const progressText = (i) => `Step ${i + 1} of 4: ${PHASES[i]}`;
 
 const things = (n) => `${n} ${n === 1 ? "thing" : "things"}`;
 

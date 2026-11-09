@@ -2,7 +2,8 @@ import { sameRepo } from "./filters.js";
 import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
 import { plannedCards } from "./simple-change-model.js";
-import { FINAL, WORDS, kindWords, phaseOf, progressText, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { FINAL, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { phaseText, stepPhase } from "./phases.js";
 
 // The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
 // Grouping uses the next-step record (`run.next` or `job.next`), never the run status, as Home does.
@@ -77,7 +78,11 @@ export function cardOf(entry) {
   };
   if (group === "building" && run) {
     const step = run.state?.next ?? run.history?.at(-1)?.id ?? "";
-    if (step) card.progress = progressText(phaseOf(step));
+    if (step) {
+      const steps = Array.isArray(run.flowDef?.steps) ? run.flowDef.steps : [];
+      const index = steps.findIndex((s) => s?.id === step);
+      card.progress = phaseText(stepPhase(step, index >= 0 ? { index, total: steps.length } : undefined));
+    }
   }
   if (group === "check") {
     card.todo = words.todo;

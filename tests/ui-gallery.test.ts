@@ -12,7 +12,7 @@ let LONG: string;
 let view: any;
 const kitExports: Record<string, string[]> = {};
 /** Components with no disabled state, and those whose Long content example opens something when clicked. */
-const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState", "tabs", "tooltip", "dialog", "drawer", "toast", "evidence", "timelineEntry", "timeline", "logView", "diffView", "pageHeader", "statusSummary", "nextAction", "filters", "entityLink", "confirmDestructive"];
+const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState", "tabs", "tooltip", "dialog", "drawer", "toast", "evidence", "timelineEntry", "timeline", "logView", "diffView", "pageHeader", "statusSummary", "nextAction", "filters", "entityLink", "phaseStrip", "confirmDestructive"];
 const OPENS = ["dialog", "drawer", "toast", "confirmDestructive"];
 
 beforeAll(async () => {
@@ -57,7 +57,7 @@ describe("the registry", () => {
 
   it("has a section for every function a kit module exports, and no other", () => {
     const names = Object.values(kitExports).flat();
-    expect(names.length).toBe(33);
+    expect(names.length).toBe(34);
     expect(new Set(names).size).toBe(names.length);
     expect(missing(names, sections)).toEqual([]);
     for (const s of sections) expect(names, s.id).toContain(s.component);
@@ -180,7 +180,7 @@ describe("the registry", () => {
   });
 
   it("each product section has Error and Notes", () => {
-    for (const id of ["pageHeader", "statusSummary", "nextAction", "filters", "entityLink", "confirmDestructive"]) {
+    for (const id of ["pageHeader", "statusSummary", "nextAction", "filters", "entityLink", "phaseStrip", "confirmDestructive"]) {
       expect(section(id).examples.map((e) => e.name), id).toEqual(expect.arrayContaining(["Error", "Notes"]));
       const text = example(id, "Notes").build().textContent;
       for (const word of ["Keyboard", "Long content", "Narrow layout"]) expect(text, `${id} ${word}`).toContain(word);

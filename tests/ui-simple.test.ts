@@ -56,7 +56,6 @@ describe("the word list", () => {
     const all = [
       ...Object.entries(words.WORDS).flatMap(([k, v]) => (typeof v === "string" ? [v] : typeof v === "function" ? [v(3)] : k === "actions" ? Object.values(v as object) : [])),
       ...Object.values<any>(words.KIND_WORDS).flatMap((w) => [w.line, w.todo ?? ""]),
-      ...words.PHASES.map((_: string, i: number) => words.progressText(i)),
       words.stateLine({ needsAnswer: true }), words.stateLine({ needs: 1 }), words.stateLine({ building: 2 }), words.stateLine({ planned: 1 }), words.stateLine({ done: 1 }), words.stateLine({}),
     ];
     for (const t of all) expect(words.forbiddenIn(t), t).toEqual([]);
@@ -82,14 +81,8 @@ describe("the word list", () => {
     expect(words.summaryOf("")).toBe("");
   });
 
-  it("names the phase of a step", () => {
-    const p = words.phaseOf;
-    expect([p("implement"), p("fix_tests_2"), p("review_1"), p("plan"), p("pull_ticket"), p("commit")]).toEqual([1, 2, 2, 0, 0, 3]);
-    // steps that come before the work starts, in the real issue flow
-    expect([p("plan_review"), p("baseline_tests"), p("fetch_main")]).toEqual([0, 0, 0]);
-    expect(p("x")).toBe(3);
-    expect(p("")).toBe(0);
-    expect(words.progressText(1)).toBe("Step 2 of 4: building");
+  it("no longer has the four-step phase words", () => {
+    expect([words.PHASES, words.phaseOf, words.progressText]).toEqual([undefined, undefined, undefined]);
   });
 
   it("gives every state line", () => {
@@ -122,7 +115,11 @@ describe("the model", () => {
     const c = model.cardOf({ run: run("a", "running", { state: { next: "implement" }, history: [{ id: "plan" }] }), job: null });
     expect(c.title).toBe("Show the weather");
     expect(c.sentence).toBe("Shows the weather for a city.");
-    expect(c.progress).toBe("Step 2 of 4: building");
+    expect(c.progress).toBe("Build: Making the change.");
+    // an unknown step id takes its phase from its place in the flow
+    const flowDef = { steps: Array.from({ length: 10 }, (_, i) => ({ id: i === 9 ? "zzz" : `s${i}` })) };
+    const late = model.cardOf({ run: run("b", "running", { state: { next: "zzz" }, flowDef }), job: null });
+    expect(late.progress).toBe("Deliver: Adding the change to your project.");
     const check = model.cardOf({ run: run("a", "approve_plan"), job: null });
     expect(check.todo).toBe("Check the plan");
     expect(Object.keys(check.link)).toEqual(["href", "external"]);
@@ -205,7 +202,7 @@ describe("the pages", () => {
   it("shows what to do, the four groups and progress", () => {
     const page = box(view.projectView(model.projectsModel(repos, forbiddenRuns, [])[0], {}));
     const t = page.textContent;
-    for (const s of ["What you need to do", "What is being made", "Planned", "Being built", "Ready for you to check", "Done", "Step 2 of 4: building"]) expect(t).toContain(s);
+    for (const s of ["What you need to do", "What is being made", "Planned", "Being built", "Ready for you to check", "Done", "Build: Making the change."]) expect(t).toContain(s);
     const calm = box(view.projectView(model.projectsModel(repos, [], [])[0], {}));
     expect(calm.textContent).toContain("Nothing — the Foundry is working.");
   });

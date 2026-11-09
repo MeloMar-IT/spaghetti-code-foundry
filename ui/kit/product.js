@@ -1,4 +1,4 @@
-// Product components: pageHeader, statusSummary, nextAction, filters, entityLink and confirmDestructive.
+// Product components: pageHeader, statusSummary, nextAction, filters, entityLink, phaseStrip and confirmDestructive.
 // Built only from the kit primitives. Styles are in product.css.
 import { h } from "../dom.js";
 import { button, link } from "./actions.js";
@@ -6,6 +6,7 @@ import { cx, nextId, oneOf, rest } from "./core.js";
 import { badge, banner, card } from "./display.js";
 import { checkbox, field, select, textInput } from "./forms.js";
 import { dialog } from "./overlays.js";
+import { icon } from "../icons.js";
 
 const TONES = ["neutral", "ok", "fail", "run", "warn", "accent"];
 const blank = (s) => typeof s !== "string" || s.trim() === "";
@@ -207,6 +208,26 @@ export function entityLink({ kind, id, label, href, showKind = false, class: cls
   const t = target(href);
   if (!t) return h("span", { ...more, class: cx("scf-entity-link", "scf-entity-link--plain", cls) }, parts);
   return link({ ...more, href: t.href, external: t.external, class: cx("scf-entity-link", cls) }, parts, t.external ? hiddenNote() : null);
+}
+
+// ---- phaseStrip ----
+
+/**
+ * `phaseStrip({ label, phases, current })`: an `ol` with one item per phase word. `current` is the index of the phase now
+ * (or null: not started). Earlier phases are marked "Done", the current one "Now" (aria-current="step"); later ones have no mark.
+ */
+export function phaseStrip({ label, phases, current = null, class: cls, ...more } = {}) {
+  if (!Array.isArray(phases) || phases.length === 0 || phases.some(blank)) throw new Error("a phase strip needs a non-empty array of words");
+  if (current !== null && !(Number.isInteger(current) && current >= 0 && current < phases.length)) throw new Error("current must be null or the index of a phase");
+  const items = phases.map((word, i) => {
+    const state = current === null || i > current ? "later" : i < current ? "done" : "current";
+    const mark = state === "done" ? icon("circle-check", { label: "Done", small: true })
+      : state === "current" ? icon("circle-dot", { label: "Now", small: true })
+      : icon("circle", { small: true });
+    return h("li", { class: cx("scf-phase-strip__item", state !== "later" && `scf-phase-strip__item--${state}`), "aria-current": state === "current" ? "step" : undefined },
+      mark, h("span", { class: "scf-phase-strip__word" }, word));
+  });
+  return h("ol", { ...rest(more), "aria-label": blank(label) ? undefined : label, class: cx("scf-phase-strip", cls) }, items);
 }
 
 // ---- confirmDestructive ----
