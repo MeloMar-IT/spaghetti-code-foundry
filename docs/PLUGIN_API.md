@@ -17,11 +17,11 @@ The package has one entry point, `@melomar-it/scf-core`. Nothing else is importa
 `exports` map in `package.json` lists only that entry. A deep import such as
 `@melomar-it/scf-core/dist/config.js` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
 
-The public names are (plugin API `0.3`):
+The public names are (plugin API `0.4`):
 
 | Name | Kind | What it is |
 |---|---|---|
-| `PLUGIN_API_VERSION` | string | The plugin API version of this release (`"0.3"`) |
+| `PLUGIN_API_VERSION` | string | The plugin API version of this release (`"0.4"`) |
 | `startServer(options)` | function | Starts the Foundry HTTP server; resolves to its URL, port, `close()` and context |
 | `ServerOptions` | type | Options of `startServer` |
 | `ConfigSchema` | object | The zod schema of the configuration |
@@ -45,7 +45,8 @@ The public names are (plugin API `0.3`):
 Plugin points are added to this list and this file when they ship, and the plugin API version rises
 with them. Version `0.2` added `api.onUsage` (see [Usage events](#usage-events)). Version `0.3` added
 `api.workspaces(store)` (see [Workspaces](#workspaces)) and `api.check(point, fn)` (see
-[Checks before a run or a step](#checks-before-a-run-or-a-step)).
+[Checks before a run or a step](#checks-before-a-run-or-a-step)). Version `0.4` added
+`api.identityProvider({ resolve })` (see [Identity provider](#identity-provider)).
 
 The arguments and results of these names are the types in the package's `.d.ts` files. The
 exported names and their kinds are kept in `tests/public-api.snapshot.json`; a test fails when
@@ -69,12 +70,12 @@ before the queue and the watchers start.
 ```js
 // plugin.mjs
 export function register(api) {
-  if (api.version !== "0.3") throw new Error("needs plugin API 0.3");
+  if (api.version !== "0.4") throw new Error("needs plugin API 0.3");
   console.log("audit plugin", api.options.level);
 }
 ```
 
-- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.3"` in this release). A
+- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.4"` in this release). A
   plugin that cannot work with it throws; the start stops with a message that names the plugin.
 - `api.options` is a frozen copy of the `options` map of the entry.
 - `api.ui(spec)` adds pages, menu items and a settings section to the web interface. See
@@ -82,6 +83,7 @@ export function register(api) {
 - `api.onUsage(handler)` gets the usage events of the runs. See [Usage events](#usage-events).
 - `api.workspaces(store)` supplies the list of workspaces. See [Workspaces](#workspaces).
 - `api.check(point, fn)` adds a check before a run or a step. See [Checks before a run or a step](#checks-before-a-run-or-a-step).
+- `api.identityProvider({ resolve })` supplies the identity provider: who signs in, with their role and workspace. See [Identity provider](#identity-provider).
 - A plugin fails the start when it cannot be found or imported, has no `register`, throws, or does
   not finish `register` within 30 seconds. The server then does not start at all.
 - Refused: a relative path, a URL, a built-in Node module, and a module inside a runs folder or a
@@ -141,7 +143,7 @@ the defaults filled in. The settings page shows one card per section; a save goe
 `PUT /api/config`, which checks each key against the fields of the loaded plugin.
 
 The public package names do not change with this point: `ui` is a member of the plugin `api` object, and
-its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` is `"0.3"` in this release.
+its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` is `"0.4"` in this release.
 
 ## Usage events
 
@@ -265,6 +267,55 @@ export function register(api) {
   run goes on. A check that still has three calls running is not asked again; the call is skipped, with the same log line.
 - The built-in limits (`limits.issue_cost_usd`, `limits.monthly_budget_usd`) are not plugin checks: they
   fail closed, see [the user guide](USER_GUIDE.md#8-costs-dashboard-and-evals).
+
+## Identity provider
+
+`api.identityProvider({ resolve })` makes your account system the source of sign-in, roles and
+workspaces (#833). It may be called once, and only while `register(api)` runs. With no provider,
+nothing changes: the Foundry's own accounts sign people in. Detect it with
+`typeof api.identityProvider === "function"`.
+
+```js
+export function register(api) {
+  api.identityProvider({
+    resolve(request, signal) {                       // sync or async; returns null or an answer
+      const id = myAccounts.fromCookies(request.headers.cookie);   // your own lookup
+      if (!id) return null;                          // nobody is signed in
+      return { id: id.uuid, name: id.displayName, roles: [id.isAdmin ? "admin" : "user"], workspace: id.workspace };
+    },
+  });
+}
+```
+
+- **`request`** is a frozen copy of the request: `method`, `url`, `headers` (lower-case names) and
+  `remoteAddress`. The Foundry session cookie is removed; other cookies stay.
+- **`signal`** is an `AbortSignal` that is aborted at the deadline. Stop your work when it fires.
+- **The answer** is `null` (nobody) or an object with exactly these keys: `id` (a UUID; it is lower-cased),
+  `name` (1 to 100 characters), `roles` (`"admin"` and/or `"user"`; any other role is refused), and
+  optional `workspace` (a workspace id; an unknown one becomes `default`). No other key is allowed.
+- **Limits.** `resolve` has 5 seconds. At most 8 calls can be waiting at once; a call beyond that is
+  refused without asking. A rejection after the deadline is handled, and nothing is logged twice.
+- **Failure.** A throw, a rejection, a timeout or an invalid answer signs nobody in. The problem is listed
+  once, in fixed words (`scf plugins`, `GET /api/plugins`). No text from your provider reaches logs,
+  problems or responses.
+- **Wrong use stops the start.** A second `identityProvider` call (in this plugin or another), a call after
+  `register(api)` has ended, or a provider without `resolve` gives a `PluginLoadError` that names the plugin.
+  A call after the whole start has finished is only listed as a problem.
+
+**What the Foundry does with an answer.** On `GET /api/session` the Foundry signs the person in, sets the
+session cookie and creates or updates a mirror record in `users.json` (`source: "provider"`, with the
+name, role and `workspace`). The record has no password. Every later API call asks `resolve` again:
+
+- a different id, or `null`, ends the session (401);
+- a provider error answers 503 and keeps the session;
+- a changed name, role or workspace applies on the next call;
+- a blocked or deleted account is refused, and a recheck never creates an account.
+
+While a provider is active, the Foundry's own password sign-in answers 401, `POST /api/setup` answers 409,
+and password and profile changes of provider accounts answer 409. Blocking and deleting still work. A
+provider user sees only its one workspace (or `default`) and cannot read `GET /api/info`; an admin can.
+Each sign-in is audited as `sign-in` with `target: "identity-provider"`, and later actions carry the
+account's id as `by`.
 
 ## Semantic versioning
 

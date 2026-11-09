@@ -5,6 +5,8 @@ import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { StoreError } from "../auth/store.js";
 import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../engine/guards.js";
 import { isStoppedCancel, isUserBudgetStop, saveRun, type RunSummary } from "../engine/state.js";
+import { INPUT_FILES_MISSING, removeRunPictureCopies } from "../engine/workspace.js";
+import { pictureFiles, picturesText } from "./pictures.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { z } from "zod";
 import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../flow/usage.js";
@@ -105,6 +107,7 @@ export function architectReason(run: Pick<RunSummary, "status" | "reason">): str
   if (step === "clone") return "The repository could not be cloned";
   if (step === "list_issues") return "The open issues could not be read";
   if (/^run budget of /.test(raw)) return "The read used up the limit for one read";
+  if (text === INPUT_FILES_MISSING || raw === INPUT_FILES_MISSING) return "The pictures of the request could not be found";
   return userError(raw);
 }
 
@@ -562,8 +565,15 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
     const rejected = s.log.flatMap((l) => (l.what === "entry-rejected" && l.detail && l.list ? [{ list: l.list, text: l.detail }] : []));
     task = talkText({ kind: kind as "round" | "question", idea: s.idea, brief: s.brief?.text, talk, rejected, question });
   }
+  // The pictures of a change request (#835): copied into the workspace by the engine, named in the task. A question keeps its text last.
+  const files = pictureFiles(s);
+  if (files.length) {
+    const section = picturesText(files.map((f) => f.name));
+    const at = kind === "question" ? task.lastIndexOf("\n\n## The question of the person (") : -1;
+    task = at >= 0 ? `${task.slice(0, at)}\n\n${section}${task.slice(at)}` : `${task}\n\n${section}`;
+  }
   const runId = deps.scheduler.submit(
-    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}), ...(words ? { words } : {}), ...(kind === "suggest" ? { field } : {}), ...(kind === "ready" ? { items: unsure.map((i) => i.id).join(",") } : {}) }, frozenVars: true },
+    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}), ...(words ? { words } : {}), ...(kind === "suggest" ? { field } : {}), ...(kind === "understand" && files.length ? { pictures: String(files.length) } : {}), ...(kind === "ready" ? { items: unsure.map((i) => i.id).join(",") } : {}) }, frozenVars: true, ...(files.length ? { files } : {}) },
     { source, owner: actor.id, queuedBy: actor.id, lockKey },
   );
   try {
@@ -608,6 +618,38 @@ export function stopArchitect(deps: ArchitectDeps, id: string): boolean {
   return true;
 }
 
+/**
+ * The workspaces of every run of these sessions that is over now: the runs the sessions record and every run the scheduler has
+ * for them (an understand run, an earlier attempt after a retry). A run still queued or going is left out: its copy is removed
+ * when it ends (see settleFinished, which removes it once the session has no pictures). Never throws.
+ */
+export function pictureWorkdirs(deps: ArchitectDeps, sessions: Pick<Session, "id" | "architect" | "brief" | "talk">[]): string[] {
+  const dirs: string[] = [];
+  try {
+    const ids = new Set<string>();
+    for (const s of sessions) for (const id of [s.architect?.runId, s.brief?.runId, ...(s.talk?.rounds.map((r) => r.runId) ?? []), ...(s.talk?.asked.map((a) => a.runId) ?? [])]) if (id) ids.add(id);
+    const sources = new Set(sessions.map((s) => sourceOf(s.id)));
+    for (const b of deps.scheduler.briefs()) if (b.source && sources.has(b.source)) ids.add(b.runId);
+    for (const id of ids) {
+      try {
+        if (deps.scheduler.isActive(id) || deps.scheduler.isQueued(id)) continue;
+        const wd = runOf(deps, id)?.workdir;
+        if (wd) dirs.push(wd);
+      } catch {
+        // not readable: its copy goes with its folder
+      }
+    }
+  } catch {
+    deps.log?.("refinement: the runs of the pictures could not be listed");
+  }
+  return dirs;
+}
+
+/** The workspaces of the runs of an account's sessions that have pictures (for account removal, taken before the sessions go). */
+export function pictureWorkdirsOf(deps: ArchitectDeps, owner: string): string[] {
+  return pictureWorkdirs(deps, listSessions(owner).filter((s) => s.pictures));
+}
+
 /** The runs of the architect that a session records (also those marked failed), for an account whose sessions go away. */
 export function architectRunsOf(owner: string): string[] {
   return listSessions(owner).flatMap((s) => (s.architect ? [s.architect.runId] : []));
@@ -632,6 +674,9 @@ export function settleFinished(deps: ArchitectDeps, run: RunSummary): void {
   try {
     const id = refinementSessionOf(run.source);
     if (!id) return;
+    // The picture copy of this run is needed while the session has its pictures (a resume reads them). Once the session is dropped
+    // or gone, the copy goes with the end of the run, also when the run was still going at the drop. Refinement flows use an empty workspace.
+    if (!getSession(id)?.pictures && run.workdir) removeRunPictureCopies([run.workdir]);
     const end = endOf(run);
     if (end === "paused") return;
     endArchitectRun(id, run.runId, end);

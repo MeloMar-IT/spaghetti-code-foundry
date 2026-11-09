@@ -2,6 +2,7 @@ import { hasStoredSignIn } from "../auth/repos.js";
 import { getUser } from "../auth/users.js";
 import type { Config } from "../config.js";
 import type { Engine } from "./execute.js";
+import { DEFAULT_WORKSPACE } from "../workspaces/list.js";
 import { NO_COMMIT_IDENTITY } from "./guards.js";
 
 export type CommitIdentity = { name: string; email: string };
@@ -14,8 +15,14 @@ export const ISOLATED_AGENT_ENV = /^(GH_.*|GITHUB_.*|GIT_.*|SSH_.*|XDG_.*|LC_ALL
 
 const TOKEN_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
 
-/** Does a run of this owner on this repository run without the machine's login? Fails closed. */
-export function stepIsolated(owner: string | undefined, githubRepo: string | undefined): boolean {
+/** Is this a team's run (#785)? Any workspace but the default one. An invalid id counts as held, so the check fails closed. */
+export function heldWorkspace(workspace: string | undefined): boolean {
+  return workspace !== undefined && workspace !== "" && workspace !== DEFAULT_WORKSPACE;
+}
+
+/** Does a run of this owner on this repository run without the machine's login? A team's run never has it. Fails closed. */
+export function stepIsolated(owner: string | undefined, githubRepo: string | undefined, workspace?: string): boolean {
+  if (heldWorkspace(workspace)) return true;
   if (!owner) return false;
   try {
     const user = getUser(owner);
@@ -43,8 +50,15 @@ export const INPLACE_REFUSED = "This flow works directly in the server's folder,
 /** Why a user's run in a branch of the server's folder stops before any step. */
 export const WORKTREE_REFUSED = "This flow works in a branch of the server's folder, so only an admin can run it.";
 
-/** The reason a user's run of this workspace mode is refused; undefined when it may run. Fails closed like `userAccount`. */
-export function workspaceRefused(workspace: string | undefined, owner: string | undefined): string | undefined {
+/** Why a team's run in the server's own folder stops before any step. */
+export const TEAM_INPLACE_REFUSED = "This flow works directly in the server's folder, so it cannot run in a team's workspace.";
+
+/** Why a team's run in a branch of the server's folder stops before any step. */
+export const TEAM_WORKTREE_REFUSED = "This flow works in a branch of the server's folder, so it cannot run in a team's workspace.";
+
+/** The reason a user's or a team's run of this workspace mode is refused; undefined when it may run. Fails closed like `userAccount`. `team` is the run's workspace. */
+export function workspaceRefused(workspace: string | undefined, owner: string | undefined, team?: string): string | undefined {
+  if (heldWorkspace(team) && (workspace === "inplace" || workspace === "worktree")) return workspace === "inplace" ? TEAM_INPLACE_REFUSED : TEAM_WORKTREE_REFUSED;
   if (workspace !== "inplace" && workspace !== "worktree") return undefined;
   if (!userAccount(owner)) return undefined;
   return workspace === "inplace" ? INPLACE_REFUSED : WORKTREE_REFUSED;
@@ -175,7 +189,7 @@ export function stepIsolation(
   holds = false,
 ): { who: CommitIdentity } | { refused: string } | undefined {
   const { owner } = engine.summary;
-  if (!holds && !stepIsolated(owner, vars.github_repo)) return undefined;
+  if (!holds && !stepIsolated(owner, vars.github_repo, engine.summary.workspace)) return undefined;
   const who = commitIdentity(engine.config, owner);
   return who ? { who } : { refused: NO_COMMIT_IDENTITY };
 }

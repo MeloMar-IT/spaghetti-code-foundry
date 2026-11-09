@@ -43,7 +43,7 @@ const noRepo = (id: string) => workspaceOfRepo(id);
 describe("config", () => {
   it("accepts a valid list and fills members and limits", () => {
     const c = parseConfigText(`workspaces:\n  - {id: team-a, name: " A "}\n`);
-    expect(c.workspaces).toEqual([{ id: "team-a", name: "A", members: [], limits: {} }]);
+    expect(c.workspaces).toEqual([{ id: "team-a", name: "A", members: [], limits: {}, hosts: [] }]);
     expect(parseConfigText("").workspaces).toEqual([]);
   });
   it("refuses bad entries", () => {

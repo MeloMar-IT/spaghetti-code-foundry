@@ -9,6 +9,17 @@ const PASSWORD_MIN = 12;
 /** The line under the sign-in form. */
 export const FORGOT_TEXT = "Forgot your password? Ask an admin for a new set-password link.";
 
+/** The sign-in form while an identity provider is in charge: only the emergency local admin uses it. */
+export const PROVIDER_NOTE = "Sign-in goes through your account system. This form is only for the emergency local admin.";
+export const EMERGENCY_HEADING = "Emergency sign-in (local admin)";
+export const IDENTITY_DOWN_TEXT = "The account system is not answering right now. Try again in a moment; the emergency local admin can sign in below.";
+
+/** The texts of the sign-in form for a session answer: { heading, note, alert, forgot }. */
+export function signInCopy(session) {
+  if (!session?.identityProvider) return { heading: "Sign in", note: "", alert: "", forgot: true };
+  return { heading: EMERGENCY_HEADING, note: PROVIDER_NOTE, alert: session.identityError ? IDENTITY_DOWN_TEXT : "", forgot: false };
+}
+
 const LINK_PREFIX = "#/set-password/";
 
 /** The token in a set-password link (`#/set-password/<token>`), or null for any other hash. */
@@ -71,11 +82,11 @@ export function errorText(e) {
 }
 
 /** Sends the form. Returns "" on success, else the text to show. Nothing is sent while the input has a problem. */
-export async function submitForm(a, kind, v) {
+export async function submitForm(a, kind, v, out = {}) {
   const problem = formProblem(kind, v);
   if (problem) return problem;
   try {
-    if (kind === "password") await a.setPassword(v.token, v.password);
+    if (kind === "password") out.reply = await a.setPassword(v.token, v.password);
     else if (kind === "change") await a.changePassword(v.current, v.password);
     else if (kind === "setup") await a.setup(v.name.trim(), v.email.trim(), v.password);
     else await a.signIn(v.email.trim(), v.password);
@@ -131,12 +142,14 @@ export async function signOut(a, reload) {
 const browserPage = {
   hash: () => (typeof location === "undefined" ? "" : location.hash),
   clearHash: () => history.replaceState(null, "", location.pathname + location.search),
+  setHash: (h) => history.replaceState(null, "", location.pathname + location.search + h),
   onHashChange: (fn) => typeof window !== "undefined" && window.addEventListener("hashchange", fn),
 };
 
 /** `state.kind` is the form shown now; `onPasswordSet` draws the sign-in form after a link was used. */
-function renderForm(a, kind, reload, { state, page, token, note } = {}) {
+function renderForm(a, kind, reload, { state, page, token, note, session } = {}) {
   const setup = kind === "setup";
+  const copy = kind === "signin" ? signInCopy(session) : null;
   const choose = kind === "password";
   const input = (name, label, type, autocomplete) => ({
     name,
@@ -157,11 +170,20 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
     e.preventDefault();
     button.disabled = true;
     const values = Object.fromEntries(fields.map((f) => [f.name, f.el.value]));
-    const problem = await submitForm(a, kind, choose ? { ...values, token } : values);
+    const out = {};
+    const problem = await submitForm(a, kind, choose ? { ...values, token } : values, out);
     if (!problem && choose) {
       state.kind = "signin";
+      // is an identity provider in charge now? An unknown answer shows the plain form
+      const s = await a.session().catch(() => ({}));
+      const own = !s?.identityProvider;
+      // an invited Simple account: signing in then opens the Get started guide
+      if (out.reply?.guide === true && page.setHash) {
+        page.setHash("#/start-guide");
+        return renderForm(a, "signin", reload, { state, page, session: s, note: own ? "Your password is set. Sign in with it to start the guide." : "" });
+      }
       page.clearHash();
-      return renderForm(a, "signin", reload, { state, page, note: "Your password is set. Sign in with it." });
+      return renderForm(a, "signin", reload, { state, page, session: s, note: own ? "Your password is set. Sign in with it." : "" });
     }
     if (!problem) return reload();
     showError(error, problem, { fields: fields.map((f) => f.el), field: fields.find((f) => f.name === errorField(kind, values, problem))?.el });
@@ -170,14 +192,16 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
   const form = h(
     "form",
     { class: "card auth-card", onSubmit },
-    h("h2", {}, choose ? "Choose your password" : setup ? "Create the admin account" : "Sign in"),
+    h("h2", {}, choose ? "Choose your password" : setup ? "Create the admin account" : copy.heading),
     setup ? h("p", { class: "muted" }, "There is no account yet. This one will be the admin.") : null,
     choose ? h("p", { class: "muted" }, "Type the password you want to use, twice.") : null,
+    copy?.note ? h("p", { class: "muted" }, copy.note) : null,
+    copy?.alert ? h("p", { class: "status bad", role: "alert" }, copy.alert) : null,
     note ? h("p", { class: "muted" }, note) : null,
     fields.map((f) => h("label", {}, f.label, f.el)),
     error,
     button,
-    kind === "signin" ? h("p", { class: "muted" }, FORGOT_TEXT) : null,
+    copy?.forgot ? h("p", { class: "muted" }, FORGOT_TEXT) : null,
   );
   mount(document.getElementById("main"), form);
 }
@@ -209,7 +233,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
   const kind = formKind(session);
   if (kind) {
     document.body.classList.add("signed-out");
-    renderForm(a, kind, reload, { state: { kind }, page });
+    renderForm(a, kind, reload, { state: { kind }, page, session });
     page.onHashChange(() => {
       if (linkToken(page.hash())) reload();
     });
@@ -231,7 +255,8 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
   );
   const box = document.getElementById("user");
   const change = h("button", { class: "small", type: "button", onClick: () => changePasswordDialog(a) }, "Change password");
-  mount(box, h("span", {}, session.user.name), appearanceButton(session.user), change, out);
+  // an account of the identity provider has no password here
+  mount(box, ...[h("span", {}, session.user.name), appearanceButton(session.user), session.user.provider === true ? null : change, out].filter(Boolean));
   box.hidden = false;
   return session.user;
 }
@@ -239,7 +264,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-const USER_HASH = /^#\/(home|setup|agents|help|start-guide|start|epics(\/[\w-]+)?|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?|plugins\/[a-z0-9-]+\/[a-z0-9-]+)$/;
+const USER_HASH = /^#\/(home|setup|agents|help|change\/[\w-]+|start-guide|start|epics(\/[\w-]+)?|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?|plugins\/[a-z0-9-]+\/[a-z0-9-]+)$/;
 // Only these pages take a query (filters, or the tools Setup check is asked about) in their address.
 const USER_QUERY = /^#\/(runs|refinement|repos|setup|epics(\/[\w-]+)?)$/;
 

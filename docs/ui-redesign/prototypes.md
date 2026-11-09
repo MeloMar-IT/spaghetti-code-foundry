@@ -106,6 +106,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `/user/#/agents` | user | Claude and Codex page | yes | Not prototyped |
 | `/user/#/start-guide` | user | Get started guide | yes | Not prototyped |
 | `/user/#/help` | user | Help page | yes | Not prototyped |
+| `/user/#/change/:id` | user | Ask for a change page | yes | Not prototyped |
 | `/user/#/runs` | user | Runs | yes | |
 | `/user/#/runs/:id` | user | Run | yes | |
 | `/user/#/repos` | user | Repositories | yes | |

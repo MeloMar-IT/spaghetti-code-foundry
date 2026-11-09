@@ -1,9 +1,9 @@
 import { findOwnedProject, findOwnedRepo, getRepo, type RepoRecord } from "../auth/repos.js";
-import type { User } from "../auth/users.js";
+import { getUser, type User } from "../auth/users.js";
 import type { RunBrief } from "../engine/state.js";
 import type { Session } from "../refinement/store.js";
 import { getSession } from "../refinement/store.js";
-import { DEFAULT_WORKSPACE, workspacesOf } from "../workspaces/index.js";
+import { DEFAULT_WORKSPACE, knownWorkspace, workspacesOf } from "../workspaces/index.js";
 import { validWorkspaceId } from "../workspaces/list.js";
 import { HttpError } from "./http.js";
 import type { RuleScope } from "./permissions.js";
@@ -17,8 +17,23 @@ import type { ApiContext } from "./server.js";
 type Who = Pick<User, "id" | "role">;
 type Set_ = ReadonlySet<string> | undefined;
 
-/** The workspaces of an account: exactly the ones that list it, else {default}. */
-export const userWorkspaces = (userId: string): ReadonlySet<string> => new Set(workspacesOf(userId));
+/**
+ * The workspaces of an account: exactly the ones that list it, else {default}. A provider account (#833) has its one workspace
+ * (or {default}) and ignores the member lists. If the account cannot be read, the set is empty (fail closed).
+ */
+export function userWorkspaces(userId: string): ReadonlySet<string> {
+  let u: User | undefined;
+  try {
+    u = getUser(userId);
+  } catch {
+    return new Set();
+  }
+  if (u?.source === "provider") {
+    const ws = u.workspace ?? DEFAULT_WORKSPACE;
+    return new Set([knownWorkspace(ws) ? ws : DEFAULT_WORKSPACE]);
+  }
+  return new Set(workspacesOf(userId));
+}
 
 /** undefined for an admin (no check). */
 export const callerWorkspaces = (user: Who): Set_ => (user.role === "admin" ? undefined : userWorkspaces(user.id));

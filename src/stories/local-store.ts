@@ -1,5 +1,5 @@
-import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { constants, copyFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { writeAtomic } from "../engine/policy-store.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
 import { isStatusComment, sameBody, STATUS_MARKER } from "../github.js";
@@ -8,7 +8,7 @@ import { checkFields, commentLines, foundryIds, jsonText, pickFields, plainText,
 import { type FileStory, type FileStoryState, formatStoryFile, GITHUB_REPO_RE, GO_STATE, highestCommentId, nextCommentId, storyFileName, withCommentIds } from "./story-file.js";
 import { commitStory, type StoryChange } from "./story-commit.js";
 import { pidAlive, type StoryLockOptions, withStoryLock, withStoryLockSync } from "./story-lock.js";
-import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
+import type { StoryFileCopy, ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
 import type { CheckRun } from "../delivery/handoff.js";
 
 export { STORIES_DIR, UNREADABLE_TITLE };
@@ -30,6 +30,12 @@ export interface LocalStoreOptions {
   /** Commit on this branch instead of the checked-out one, leaving the checkout alone (a connected repository uses `scf/stories`). */
   branch?: string;
 }
+
+/** A file kept next to a story (#836): `pictures/` + 16 hex characters + `/` + a digit 1 to 9 + an extension, in the stories folder; at most 5, each at most 5 MiB. */
+const COPY_NAME = /^pictures\/[0-9a-f]{16}\/[1-9]\.(png|jpg|webp)$/;
+const COPY_MAX = 5;
+const COPY_MAX_BYTES = 5 * 1024 * 1024;
+const COPY_BAD = "a file to keep with the story is not valid";
 
 const whole = (n: unknown, max = Number.MAX_SAFE_INTEGER): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= max;
 function num(n: unknown): number {
@@ -246,21 +252,84 @@ export class LocalStore implements StoryStore {
     return n;
   }
 
-  async create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number, guard?: () => void): Promise<RestIssue> {
+  /** Checks the files to keep with a story, without touching the disk. Throws one plain error. */
+  private checkCopies(files: readonly StoryFileCopy[] | undefined): readonly StoryFileCopy[] {
+    if (!files?.length) return [];
+    if (files.length > COPY_MAX) throw new Error(COPY_BAD);
+    for (const f of files) {
+      if (typeof f?.name !== "string" || !COPY_NAME.test(f.name) || typeof f.from !== "string" || !isAbsolute(f.from)) throw new Error(COPY_BAD);
+      if (f.name.split("/")[1] !== files[0]!.name.split("/")[1]) throw new Error(COPY_BAD);
+      let st;
+      try { st = lstatSync(f.from); } catch { throw new Error(COPY_BAD); }
+      if (!st.isFile() || st.size > COPY_MAX_BYTES) throw new Error(COPY_BAD);
+    }
+    return files;
+  }
+  private copyDirs(files: readonly StoryFileCopy[]): string[] {
+    return ["pictures", files[0]!.name.split("/").slice(0, 2).join("/")];
+  }
+  /**
+   * Under the lock, before anything is written: the folders for the copies are real folders (or missing), and each copy that exists is a
+   * plain file with the bytes of the original. Changes nothing. Returns the copies still to be made.
+   */
+  private planCopies(files: readonly StoryFileCopy[]): StoryFileCopy[] {
+    if (!files.length) return [];
+    for (const d of this.copyDirs(files)) {
+      try {
+        if (!lstatSync(join(this.folder, d)).isDirectory()) throw new Error(COPY_BAD);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(COPY_BAD);
+      }
+    }
+    const missing: StoryFileCopy[] = [];
+    for (const f of files) {
+      const dest = join(this.folder, f.name);
+      let st;
+      try { st = lstatSync(dest); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") { missing.push(f); continue; } throw new Error(COPY_BAD); }
+      if (!st.isFile() || !readFileSync(dest).equals(readFileSync(f.from))) throw new Error(COPY_BAD);
+    }
+    return missing;
+  }
+  /** Copies the missing files (a temporary file, then a rename). Returns the paths of all the files, relative to the repository. */
+  private writeCopies(files: readonly StoryFileCopy[], missing: readonly StoryFileCopy[]): string[] {
+    if (missing.length) {
+      for (const d of this.copyDirs(files)) {
+        try { mkdirSync(join(this.folder, d)); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+      }
+      for (const f of missing) {
+        const dest = join(this.folder, f.name);
+        const tmp = `${dest}.${process.pid}.tmp`;
+        try {
+          copyFileSync(f.from, tmp, constants.COPYFILE_EXCL);
+          renameSync(tmp, dest);
+        } catch (e) {
+          rmSync(tmp, { force: true });
+          throw e;
+        }
+      }
+    }
+    return files.map((f) => `${STORIES_DIR}/${f.name}`);
+  }
+
+  async create(o: { title: string; body: string; labels: string[]; files?: readonly StoryFileCopy[] }, timeoutMs?: number, guard?: () => void): Promise<RestIssue> {
     if (typeof o.title !== "string" || !o.title.trim()) throw new Error("the story title is empty");
+    const files = this.checkCopies(o.files);
     checkDirs(this.dir, true);
     const wait = Math.min(this.lockWaitMs, timeoutMs ?? Infinity);
-    return withStoryLock(this.folder, { ...this.lock, waitMs: wait }, (held) => this.makeStory(o, held, timeoutMs, guard));
+    return withStoryLock(this.folder, { ...this.lock, waitMs: wait }, (held) => this.makeStory(o, held, timeoutMs, guard, files));
   }
-  /** Commits a story saved by `create` whose commit failed, with the number file. Same checks as `create`; `guard` runs under the lock first. */
-  async commitCreated(issue: number, timeoutMs?: number, guard?: () => void): Promise<void> {
+  /** Commits a story saved by `create` whose commit failed, with the number file and `copies`. Same checks as `create`; `guard` runs under the lock first. */
+  async commitCreated(issue: number, timeoutMs?: number, guard?: () => void, copies?: readonly StoryFileCopy[]): Promise<void> {
     const n = num(issue);
+    const files = this.checkCopies(copies);
     if (!checkDirs(this.dir, false)) throw new Error(`${STORIES_DIR} does not exist`);
     await withStoryLock(this.folder, { ...this.lock, waitMs: Math.min(this.lockWaitMs, timeoutMs ?? Infinity) }, (held) => {
       if (!held()) throw new Error("the lock was lost; try again");
       guard?.();
       const counter = this.nextNumber() === undefined ? [] : [`${STORIES_DIR}/${NEXT_NUMBER_FILE}`];
-      this.commitFiles(n, [...counter, this.need(this.all(), n).rel], "created", timeoutMs);
+      const rel = this.need(this.all(), n).rel;
+      const kept = this.writeCopies(files, this.planCopies(files));
+      this.commitFiles(n, [...counter, ...kept, rel], "created", timeoutMs);
     });
   }
   private createNow(o: { title: string; body: string; labels: string[] }): RestIssue {
@@ -269,7 +338,7 @@ export class LocalStore implements StoryStore {
     return withStoryLockSync(this.folder, { ...this.lock, waitMs: this.lockWaitMs }, (held) => this.makeStory(o, held));
   }
   /** The body of `create`, under the lock. */
-  private makeStory(o: { title: string; body: string; labels: string[] }, held: () => boolean, timeoutMs?: number, guard?: () => void): RestIssue {
+  private makeStory(o: { title: string; body: string; labels: string[] }, held: () => boolean, timeoutMs?: number, guard?: () => void, files: readonly StoryFileCopy[] = []): RestIssue {
     const unique = o.labels.filter((l, i) => o.labels.findIndex((x) => same(x, l)) === i);
     const labels = unique.filter((l) => !same(l, GO_LABEL));
     const names = storyNames(this.folder);
@@ -280,18 +349,20 @@ export class LocalStore implements StoryStore {
     const file = storyFileName(n, o.title);
     if (!held()) throw new Error("the lock was lost; try again");
     guard?.();
-    // The number goes first: a crash leaves a gap, never a reused number.
+    // The copies are checked before anything is written. The number goes first: a crash leaves a gap, never a reused number.
+    const missing = this.planCopies(files);
     writeAtomic(join(this.folder, NEXT_NUMBER_FILE), `${n + 1}\n`);
+    const kept = this.writeCopies(files, missing);
     writeAtomic(join(this.folder, file), text);
-    this.commitFiles(n, [`${STORIES_DIR}/${NEXT_NUMBER_FILE}`, `${STORIES_DIR}/${file}`], "created", timeoutMs);
+    this.commitFiles(n, [`${STORIES_DIR}/${NEXT_NUMBER_FILE}`, ...kept, `${STORIES_DIR}/${file}`], "created", timeoutMs);
     return toRest({ ok: true, n, file, rel: `${STORIES_DIR}/${file}`, mtimeMs: Date.parse(now), story });
   }
   async edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
     const r = await this.write(issue, "edited", { timeoutMs }, (s) => ({ story: { ...s, title: o.title ?? s.title, body: o.body }, out: undefined }));
     return toRest(r.entry);
   }
-  async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void> {
-    await this.write(issue, "labels", { timeoutMs }, (s) => ({ story: withLabels(s, add, remove), out: undefined }));
+  async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number, guard?: () => void): Promise<void> {
+    await this.write(issue, "labels", { timeoutMs }, (s) => { guard?.(); return { story: withLabels(s, add, remove), out: undefined }; });
   }
   async comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
     const r = await this.write(issue, "comment", { timeoutMs }, (s, now) => this.addComment(s, now, body));

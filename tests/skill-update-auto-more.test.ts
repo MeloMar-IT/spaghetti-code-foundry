@@ -44,6 +44,27 @@ describe("the evaluation suite of the catalogue", () => {
     expect(readdirSync(join(home, "skill-evaluations", "ver"))).toHaveLength(1);
   });
 
+  it("opens one issue for the skill that failed, and none while it is open", async () => {
+    const w = world(yaml(), { FAKE_GH_CLI_ISSUES: "1" });
+    const up = upstream();
+    withSuite(w, up);
+    const r = await run(w, up, { skills: noBuiltin });
+    expect(r.rc).toBe(0);
+    expect(r.text).toContain("ver: RELEASED ver@1.0.1 ");
+    const file = `${w.log}.cli-issues.json`;
+    const issues = JSON.parse(readFileSync(file, "utf8")) as { repo: string; title: string; labels: { name: string }[]; state: string }[];
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ repo: "example/verified", title: `Skill ${B()} failed the evaluation gate`, state: "OPEN", labels: [{ name: "Factory_go" }] });
+    expect(auditLines().some((l) => l.action === "skill-auto-update" && l.result === "ok" && l.detail?.startsWith("issue: "))).toBe(true);
+
+    // a new commit that changes no skill: B fails again, and the open issue is enough
+    commit(up, (work) => write(work, "README.md", "changed\n"));
+    const again = await run(w, up, { skills: noBuiltin });
+    expect(again.text).toContain("is open already");
+    const titles = (JSON.parse(readFileSync(file, "utf8")) as { title: string }[]).map((i) => i.title);
+    expect(titles.filter((t) => t === `Skill ${B()} failed the evaluation gate`)).toHaveLength(1);
+  });
+
   it("is a PROBLEM when the suite file is not valid", async () => {
     const w = world(yaml());
     writeFileSync(join(w.clone, "skill-evaluation.yaml"), "schema: 7\n");

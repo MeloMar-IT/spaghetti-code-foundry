@@ -2,11 +2,12 @@ import { api, keepPage } from "./api.js";
 import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
+import { changeRepoOf, changesOf } from "./simple-change-model.js";
 import { projectsModel } from "./simple-model.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
 import { openAsk } from "./ask-handoff.js";
 import { askCard, checkCard, hasUnsentAnswers, stuckCard } from "./simple-turn.js";
-import { FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
+import { CHANGE, FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
 
@@ -31,24 +32,53 @@ export function projectsView(projects) {
   return [h("h1", {}, WORDS.myProjects), h("p", {}, h("a", { href: "#/start-guide", "data-focus": "simple-get-started" }, GUIDE.getStarted)), body];
 }
 
-function cardView(c) {
+/** "Yes, build this" of a Planned request, by request id: "sending" | "failed". Kept here because the page is drawn again after a build. */
+const builds = new Map();
+
+/** The Yes, build this button of a request kept for later, with its polite status line. `onBuild(id)` rejects when it did not work. */
+function buildButton(c, onBuild) {
+  const state = builds.get(c.build);
+  const status = h("p", { class: "muted", "aria-live": "polite" }, state === "failed" ? CHANGE.failed : state === "sending" ? CHANGE.sending : "");
+  const button = h("button", {
+    type: "button", class: "btn primary simple-big", "data-focus": `simple-build-${c.id}`, disabled: state === "sending" ? true : undefined,
+    onClick: async () => {
+      if (builds.get(c.build) === "sending") return;
+      builds.set(c.build, "sending");
+      button.disabled = true;
+      status.textContent = CHANGE.sending;
+      try {
+        await onBuild?.(c.build);
+        builds.delete(c.build);
+        status.textContent = "";
+      } catch {
+        builds.set(c.build, "failed");
+        status.textContent = CHANGE.failed;
+        button.disabled = false;
+      }
+    },
+  }, CHANGE.build);
+  return [button, status];
+}
+
+function cardView(c, onBuild) {
   return h("li", { class: "simple-card" },
     h("h4", {}, c.title),
     c.sentence ? h("p", {}, c.sentence) : null,
     c.line ? h("p", { class: "muted" }, c.line) : null,
-    c.progress ? h("p", { class: "simple-progress" }, c.progress) : null);
+    c.progress ? h("p", { class: "simple-progress" }, c.progress) : null,
+    c.build ? buildButton(c, onBuild) : null);
 }
 
-function groupView(key, title, cards, { doneOpen, onToggle }) {
+function groupView(key, title, cards, { doneOpen, onToggle, onBuild }) {
   const shown = key === "done" ? cards.slice(0, DONE_SHOWN) : cards;
   const rest = key === "done" ? cards.slice(DONE_SHOWN) : [];
   return h("section", { class: "simple-group" },
     h("h3", {}, title),
-    shown.length ? h("ul", { class: "simple-list" }, shown.map(cardView)) : h("p", { class: "muted" }, WORDS.nothingInGroup),
+    shown.length ? h("ul", { class: "simple-list" }, shown.map((c) => cardView(c, onBuild))) : h("p", { class: "muted" }, WORDS.nothingInGroup),
     rest.length
       ? h("details", { open: doneOpen, onToggle: (e) => onToggle?.(e?.target?.open ?? !doneOpen) },
         h("summary", { "data-focus": "simple-done-summary" }, WORDS.showAllDone(cards.length)),
-        h("ul", { class: "simple-list" }, rest.map(cardView)))
+        h("ul", { class: "simple-list" }, rest.map((c) => cardView(c, onBuild))))
       : null);
 }
 
@@ -239,7 +269,7 @@ function tryController({ id, a, local, every }) {
  * The project page. `actions`: the action row, [{ id: "change" | "tryIt" | "final", href?, onClick?, node? }] (`node`: drawn as it is); nothing is drawn
  * without actions. `doneOpen` and `onToggle` keep the "Show all done" box open across a refresh.
  */
-export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide, turns = [], answer } = {}) {
+export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide, onBuild, turns = [], answer } = {}) {
   return [
     h("a", { class: "simple-back", href: "#/home", "data-focus": "simple-back" }, WORDS.back),
     h("h1", {}, model.name),
@@ -254,7 +284,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
         : h("p", {}, WORDS.nothingTodo)),
     h("section", { class: "simple-making" },
       h("h2", {}, WORDS.making),
-      GROUPS.map(([key, title]) => groupView(key, title, model.groups[key], { doneOpen, onToggle }))),
+      GROUPS.map(([key, title]) => groupView(key, title, model.groups[key], { doneOpen, onToggle, onBuild }))),
     actions.length
       ? h("div", { class: "simple-actions" }, actions.filter((x) => WORDS.actions[x.id]).map((x) => x.node ? x.node : x.href
         ? h("a", { class: "btn simple-big", href: x.href, "data-focus": `simple-action-${x.id}` }, WORDS.actions[x.id])
@@ -264,7 +294,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
 }
 
 /** Loads the three lists and polls them; `draw(projects)` gets the projects. Returns a cleanup. */
-async function live(main, { a, draw, turns = false }) {
+async function live(main, { a, draw, turns = false, changesFor }) {
   const box = h("div", { class: "simple" });
   mount(main, box);
   let poll;
@@ -281,10 +311,15 @@ async function live(main, { a, draw, turns = false }) {
       // the items the person may answer; a failed or missing read gives none, so no card has an answer button
       const mine = turns ? Promise.resolve().then(() => a.myTurn()).then((v) => (Array.isArray(v?.items) ? v.items : []), () => []) : [];
       const [repos, runs, queue, mineItems] = await Promise.all([a.repos(), a.runs(), a.queue(), mine]);
-      return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending, mineItems };
+      // the project page also reads this project's change requests (those kept for later are listed under Planned); a failed read gives none
+      const changes = {};
+      const project = changesFor === undefined ? null : (Array.isArray(repos) ? repos : []).find((r) => String(r.id) === String(changesFor));
+      const name = project ? changeRepoOf(project) : null;
+      if (name && typeof a.changes === "function") changes[String(project.id)] = await Promise.resolve().then(() => a.changes(name)).then(changesOf, () => []);
+      return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending, mineItems, changes };
     },
-    draw: ({ repos, runs, pending, mineItems }) => {
-      const nodes = draw(projectsModel(repos, runs, pending), () => poll.refresh(), repos, mineItems);
+    draw: ({ repos, runs, pending, mineItems, changes }) => {
+      const nodes = draw(projectsModel(repos, runs, pending, changes), () => poll.refresh(), repos, mineItems);
       keepScroll(box, () => mount(box, ...nodes, states.alert, states.note));
     },
     every: REFRESH_MS,
@@ -363,6 +398,7 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
   const off = await live(main, {
     a,
     turns: true,
+    changesFor: id,
     draw: (projects, refresh, repos, turns) => {
       const p = projects.find((x) => String(x.id) === String(id));
       // The move removes the local record: while it runs and after it worked, its box stays even though the project is gone.
@@ -393,7 +429,12 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         refresh?.();
         return true;
       };
-      return projectView(p, { actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide, turns, answer });
+      // "Yes, build this" of a request kept for later; the page is read again after it worked
+      const onBuild = async (cid) => {
+        await a.buildChange(cid);
+        refresh?.();
+      };
+      return projectView(p, { onBuild, actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide, turns, answer });
     },
   });
   return () => { keepPage(null); off(); ctl.stop(); mv.stop(); };

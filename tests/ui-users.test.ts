@@ -147,6 +147,17 @@ describe("pure functions", () => {
     expect(ui.pillClass(user({ lockedUntil: FUTURE, status: "blocked" }))).toBe("pill fail");
     expect(ui.pillClass(user({ lockedUntil: PAST }))).toBe("pill ok");
   });
+  it("a provider account: account system, no edit, link or reset; block and delete stay", () => {
+    const p = (o: object = {}) => user({ provider: true, hasPassword: false, ...o });
+    expect(ui.isProvider(p())).toBe(true);
+    expect(ui.isProvider(user())).toBe(false);
+    expect(ui.statusText(p())).toBe("account system");
+    expect(ui.statusText(p({ status: "blocked" }))).toBe("blocked");
+    expect(ui.pillClass(p())).toBe("pill ok");
+    expect(ui.pillClass(p({ status: "blocked" }))).toBe("pill fail");
+    expect(ui.actionsFor(p({ role: "admin" }))).toEqual(["limits", "app", "block", "delete"]);
+    expect(ui.actionsFor(p({ role: "user", status: "blocked" }))).toEqual(["limits", "app", "unblock", "view", "delete"]);
+  });
   it("lastSignInText", () => {
     expect(ui.lastSignInText({ lastSignIn: null })).toBe("never");
     expect(ui.lastSignInText({ lastSignIn: new Date().toISOString() })).toBe("just now");
@@ -211,6 +222,10 @@ describe("pure functions", () => {
     expect(ui.userProblem({ name: "A", email: "a@b.c" })).toBe("");
     expect(ui.newUserBody({ name: " A ", email: " a@b.c ", role: "admin" })).toEqual({ name: "A", email: "a@b.c", role: "admin" });
     expect(ui.newUserBody({ name: "A", email: "a@b.c", role: "root" }).role).toBe("user");
+    expect("view" in ui.newUserBody({ name: "A", email: "a@b.c", role: "admin", simple: false })).toBe(false);
+  });
+  it("newUserBody with a Simple account", () => {
+    expect(ui.newUserBody({ name: "A", email: "a@example.com", role: "admin", simple: true })).toEqual({ name: "A", email: "a@example.com", role: "user", view: "simple" });
   });
   it("userChanges", () => {
     const u = user();

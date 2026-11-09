@@ -8,6 +8,7 @@ import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
 import { UPDATE_COMMENT_MAX, chosenLabels, endsWithMarker, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, parseSourceChoice, planOf, refinedHash, refinedHashIn, refinedMarker, sameVersion, updateComment, updateMarker, versionHash, withoutSplits, type ChangedOnGithub, type IssueVersion, type LabelRules, type SourceChoice } from "../refinement/publish.js";
 import { architectWorking, settleSession } from "../refinement/architect.js";
 import { RefinementError, beginPublishing, endPublishing, getSession, logRoom, clearPendingUpdate, markOf, recordPendingUpdate, recordPublished, refreshSource, type Session } from "../refinement/store.js";
+import { storyPictureCopies, storyPicturesOf, undescribedPictures } from "../refinement/pictures.js";
 import { findOwnComment, isBot, type RestIssue } from "../github.js";
 import { storeFor } from "../stories/store.js";
 import type { PullKind } from "../refinement/issue-building.js";
@@ -71,6 +72,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
       replaced: !!s.source?.replacedBy,
       by,
       date: new Date().toISOString().slice(0, 10),
+      pictures: (did) => storyPicturesOf(s, did, isLocalRepoName(s.repo)),
       ...(s.source ? { source: { issue: s.source.issue, ...(draft !== undefined ? { draft } : {}) } } : {}),
       ...(buildLabel ? { buildLabel } : {}),
       ...(reviewLabel ? { reviewLabel } : {}),
@@ -331,7 +333,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
  * Creates the issues of the ready drafts, in the order of the plan, and remembers each one as soon as it exists. The session is marked as
  * being published for the whole time, so nothing else changes it. An issue that carries the draft's marker is taken over, not made again.
  */
-async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input: unknown) {
+export async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input: unknown, opts: { everyCard?: boolean } = {}) {
   const { user, s: first, by } = ownedSession(ctx, req, id);
   // The end of a finished run is taken in before the mark: the mark refuses every change of the session, also that one.
   settleSession(architectDeps(ctx), id);
@@ -346,6 +348,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
     const s: Session = settled;
     if (s.state === "dropped") throw new HttpError(409, "a dropped session cannot be published; restore it first");
     if (architectWorking(architectDeps(ctx), s)) throw new HttpError(409, "the architect is working for this session; publish when it is done");
+    if (undescribedPictures(s) > 0) throw new HttpError(409, "the pictures of this request have no description yet; run the architect again (understand), then publish; nothing was written");
     const choices = parsePublishInput(input, s.drafts);
     const keep = parseSourceChoice(input);
 
@@ -360,12 +363,16 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
     const rules = { repo: s.repo, repoLabels: labelsOf.names, ...(buildLabel ? { buildLabel } : {}), ...(reviewLabel ? { reviewLabel } : {}) };
     const date = new Date().toISOString().slice(0, 10);
     const mark = markOf(s);
+    // Pictures (#836): a local project keeps copies next to the story; a GitHub project gets words only, nothing is uploaded.
+    const local = isLocalRepoName(s.repo);
     const planned = planOf(s, {
       list: labelsOf.list,
       onGithub: new Map(s.drafts.flatMap((d) => (d.published ? [[d.id, d.published.issue] as const] : []))),
       by,
       date,
       replaced: !!s.source?.replacedBy,
+      pictures: (did) => storyPicturesOf(s, did, local),
+      ...(opts.everyCard ? { everyCard: true } : {}),
       ...(s.source ? { source: { issue: s.source.issue, ...(mark !== undefined ? { draft: mark } : {}) } } : {}),
       ...rules,
     });
@@ -431,17 +438,20 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
         if (marked) {
           // A story saved by an earlier publish whose commit failed is committed now.
           try {
-            await storeFor(s.repo).commitCreated?.(marked.number, timeout, guard);
+            const copies = local ? storyPictureCopies(s, did) : [];
+            await storeFor(s.repo).commitCreated?.(marked.number, timeout, guard, copies.length ? copies : undefined);
           } catch (e) {
             if (e instanceof RefinementError) throw e;
             throw new HttpError(502, `could not save the story: ${whatHappened(e)}; ${ledger.text()}. Fix the problem and publish again, after a moment.`);
           }
           made = { draft: did, issue: marked.number, url: issueUrl(s.repo, marked.number, marked.html_url), found: true };
         } else {
-          const text = issueText(d, { ...s, drafts: live }, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf });
+          const pictures = storyPicturesOf(s, did, local);
+          const copies = local ? storyPictureCopies(s, did) : [];
+          const text = issueText(d, { ...s, drafts: live }, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf, ...(pictures ? { pictures } : {}) });
           let issue: RestIssue;
           try {
-            issue = await storeFor(s.repo).create({ title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout, guard);
+            issue = await storeFor(s.repo).create({ title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)!, ...(copies.length ? { files: copies } : {}) }, timeout, guard);
           } catch (e) {
             if (e instanceof RefinementError) throw e;
             throw new HttpError(502, `GitHub did not make the issue: ${whatHappened(e)}; ${ledger.text()}. Fix the problem and publish again, after a moment.`);

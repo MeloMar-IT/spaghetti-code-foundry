@@ -12,7 +12,7 @@ import { disposeWorkspaces, supplyWorkspaces } from "../src/workspaces/list.js";
 import { RULES, authorizePlugin, checkReleaseRef, findPluginRule, findRule, isReleaseBuildFlow, permissionTable, ruleKey } from "../src/server/permissions.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
-import { signInAs, type TestSession } from "./helpers/session.js";
+import { TEST_PASSWORD, signInAs, type TestSession } from "./helpers/session.js";
 
 let base: string;
 let tmp: string;
@@ -273,6 +273,15 @@ const EXAMPLES: Record<string, Example> = {
   "POST help/conversations/:id/archive": { path: `help/conversations/${UNKNOWN}/archive`, body: {}, user: 404, admin: 404 },
   "POST help/conversations/:id/restore": { path: `help/conversations/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
   "DELETE help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },
+  "GET changes": { path: "changes", user: 400, admin: 400 },
+  "POST changes": { path: "changes", body: {}, user: 400, admin: 400 },
+  "GET changes/:id": { path: `changes/${UNKNOWN}`, user: 404, admin: 404 },
+  "GET changes/:id/pictures/:n": { path: `changes/${UNKNOWN}/pictures/1`, user: 404, admin: 404 },
+  "POST changes/:id/answers": { path: `changes/${UNKNOWN}/answers`, body: {}, user: 404, admin: 404 },
+  "PUT changes/:id/cards/:did": { path: `changes/${UNKNOWN}/cards/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
+  "POST changes/:id/build": { path: `changes/${UNKNOWN}/build`, body: {}, user: 404, admin: 404 },
+  "POST changes/:id/later": { path: `changes/${UNKNOWN}/later`, body: {}, user: 404, admin: 404 },
+  "POST changes/:id/retry": { path: `changes/${UNKNOWN}/retry`, body: {}, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
   "GET refinement/backlog": { path: "refinement/backlog", user: 400, admin: 400 },
@@ -384,6 +393,14 @@ describe("the table", () => {
     expect(findRule("GET", ["audit", "export", "x"])).toBeUndefined();
     expect(findRule("POST", ["audit"])).toBeUndefined();
     expect(findRule("GET", ["refinement", "backlog"])?.path).toBe("refinement/backlog");
+    expect(findRule("GET", ["changes"])?.path).toBe("changes");
+    expect(findRule("GET", ["changes", "a"])?.path).toBe("changes/:id");
+    expect(findRule("GET", ["changes", "a", "pictures", "1"])?.path).toBe("changes/:id/pictures/:n");
+    expect(findRule("POST", ["changes", "a", "answers"])?.path).toBe("changes/:id/answers");
+    expect(findRule("PUT", ["changes", "a", "cards", "b"])?.path).toBe("changes/:id/cards/:did");
+    expect(findRule("POST", ["changes", "a", "build"])?.path).toBe("changes/:id/build");
+    expect(findRule("POST", ["changes", "a", "later"])?.path).toBe("changes/:id/later");
+    expect(findRule("POST", ["changes", "a", "retry"])?.path).toBe("changes/:id/retry");
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
     expect(findRule("POST", ["refinement", "a", "source", "remove-build-label"])?.path).toBe("refinement/:id/source/remove-build-label");
     expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
@@ -410,7 +427,7 @@ describe("the table", () => {
       expect(scopes, ruleKey(r)).toContain(r.scope);
       expect(r.user === "no", ruleKey(r)).toBe(r.scope === "admin");
       if (r.user === "own") expect(r.scope, ruleKey(r)).toBe("run");
-      if (r.path.startsWith("refinement/:id")) expect(r.scope, ruleKey(r)).toBe("session");
+      if (r.path.startsWith("refinement/:id") || r.path.startsWith("changes/:id")) expect(r.scope, ruleKey(r)).toBe("session");
       if (r.user === "yes" && r.path.startsWith("repos/:id")) expect(r.scope, ruleKey(r)).toBe("repo");
     }
   });
@@ -782,6 +799,32 @@ describe("a role change", () => {
     expect((await call(dana, "GET", "/api/runs")).status).toBe(200);
     expect(await userCommand({ positionals: ["role", "dana@example.com", "admin"], values: {} }, io)).toBe(0);
     expect((await call(dana, "GET", "/api/config")).status).toBe(200);
+  });
+});
+
+describe("an invited Simple account (#823)", () => {
+  it("is made by an admin, sets its password with the link, and asks its admin for a project", async () => {
+    const before = (await call(admin, "GET", "/api/users")).json().length;
+    for (const view of ["boss", "admin"]) {
+      expect((await call(admin, "POST", "/api/users", { name: "Ivy", email: "ivy@example.com", role: "user", view })).status).toBe(400);
+    }
+    expect((await call(admin, "GET", "/api/users")).json()).toHaveLength(before);
+    const made = await call(admin, "POST", "/api/users", { name: "Ivy", email: "ivy@example.com", role: "user", view: "simple" });
+    expect(made.status).toBe(201);
+    expect(made.json().user.view).toBe("simple");
+    const set = await fetch(`${base}/api/set-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: made.json().token, password: TEST_PASSWORD }),
+    });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ ok: true, guide: true });
+    const ivy = await signInAs(base, { email: "ivy@example.com", create: false });
+    expect((await call(ivy, "GET", "/api/starters")).status).toBe(403);
+    expect((await call(ivy, "POST", "/api/starters/website/project", { name: "Site" })).status).toBe(403);
+    const progress = await call(ivy, "GET", "/api/onboarding/progress");
+    expect(progress.status).toBe(200);
+    expect(progress.json().step).toBeNull();
   });
 });
 

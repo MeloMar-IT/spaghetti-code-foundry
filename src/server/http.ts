@@ -4,6 +4,11 @@ import { extname, join, normalize, sep } from "node:path";
 import { BLOCKED, CANNOT_READ, REDACTED, liveRedactor, redactedJson, type Redactor } from "../credentials/redact.js";
 
 const MAX_BODY = 1_000_000;
+/**
+ * `POST changes` can carry 5 pictures (#835) as base64 in JSON: 5 × 5 MiB = 26,214,400 bytes; base64 is 4/3 of that = 34,952,536 bytes;
+ * the text, escaped, is at most about 60 KB; the total is about 35.0 MB, below 36 MiB = 37,748,736.
+ */
+export const CHANGES_BODY_MAX = 36 * 1024 * 1024;
 export const NAME_RE = /^[\w-]+$/;
 
 const MIME: Record<string, string> = {
@@ -119,13 +124,13 @@ export async function sendCsv(res: ServerResponse, filename: string, header: str
   }
 }
 
-export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+export async function readJson(req: IncomingMessage, max = MAX_BODY): Promise<Record<string, unknown>> {
   if (!req.headers["content-type"]?.startsWith("application/json")) throw new HttpError(415, "expected application/json");
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const c of req) {
     size += (c as Buffer).length;
-    if (size > MAX_BODY) throw new HttpError(413, "body too large");
+    if (size > max) throw new HttpError(413, "body too large");
     chunks.push(c as Buffer);
   }
   try {

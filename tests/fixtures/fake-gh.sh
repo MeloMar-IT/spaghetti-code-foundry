@@ -49,6 +49,20 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # $FAKE_GH_FAIL_PR_READY=1:"pr ready" (also with --undo) fails.
 # $FAKE_GH_CI_FAILS=<n>: the first n "pr checks" calls fail with exit code $FAKE_GH_CI_EXIT (default 1); $FAKE_GH_CI_SIGNAL=<name> (TERM…): "pr checks" kills itself with that signal.
 if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
+# $FAKE_GH_CLI_ISSUES=1: "issue create --repo R --title T --body-file - [--label L]…" keeps {number (101, 102, …), repo, title, body, labels, state OPEN, url}
+# in $FAKE_GH_LOG.cli-issues.json and prints the url; "issue list --repo R --state open …" prints the OPEN issues of R from that file. A test closes an
+# issue by setting its "state" to "CLOSED" in the file (or plants issues there). Both come after $FAKE_GH_FAIL / $FAKE_GH_FAIL_ON.
+if [ -n "$FAKE_GH_CLI_ISSUES" ]; then
+  case "$1 $2" in
+    "issue create"|"issue list")
+      cat > "$FAKE_GH_LOG.cli-stdin"
+      node -e 'const fs=require("fs");const [mode,f,stdin,...a]=process.argv.slice(1);const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];
+let repo="",title="",state="",labels=[];for(let i=2;i<a.length;i++){if(a[i]==="--repo")repo=a[++i];else if(a[i]==="--title")title=a[++i];else if(a[i]==="--state")state=a[++i];else if(a[i]==="--label")labels.push(a[++i])}
+if(mode==="create"){const n=Math.max(100,...l.map(x=>x.number))+1;const url="https://github.com/"+repo+"/issues/"+n;l.push({number:n,repo,title,body:fs.readFileSync(stdin,"utf8"),labels:labels.map(name=>({name})),state:"OPEN",url});fs.writeFileSync(f,JSON.stringify(l));console.log(url)}
+else console.log(JSON.stringify(l.filter(x=>x.repo===repo&&(state!=="open"||x.state==="OPEN")).map(x=>({number:x.number,title:x.title}))))' "${2}" "$FAKE_GH_LOG.cli-issues.json" "$FAKE_GH_LOG.cli-stdin" "$@"
+      exit $? ;;
+  esac
+fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
 # $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" and "pr view <n> --json comments" answer with that entry.

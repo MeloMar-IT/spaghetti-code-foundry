@@ -23,31 +23,38 @@ export const VIEW_TEXT = { simple: "Simple", advanced: "Advanced", admin: "Admin
 /** True while the account is locked after too many wrong tries (`lockedUntil` is a time in the future). */
 export const isLocked = (u, now = Date.now()) => !!u.lockedUntil && Date.parse(u.lockedUntil) > now;
 
-/** The account's status in words: blocked wins over "no password yet", and that wins over "locked". */
+/** True for a mirror account of the identity provider (it has no password here). */
+export const isProvider = (u) => u?.provider === true;
+
+/** The account's status in words: blocked wins over "account system", then "no password yet", then "locked". */
 export const statusText = (u, now = Date.now()) =>
-  u.status === "blocked" ? "blocked" : !u.hasPassword ? "no password yet" : isLocked(u, now) ? "locked" : "active";
+  u.status === "blocked" ? "blocked" : isProvider(u) ? "account system" : !u.hasPassword ? "no password yet" : isLocked(u, now) ? "locked" : "active";
 
 /** The classes of the status pill. */
 export const pillClass = (u, now = Date.now()) =>
-  `pill${u.status === "blocked" ? " fail" : !u.hasPassword ? "" : isLocked(u, now) ? " locked" : " ok"}`;
+  `pill${u.status === "blocked" ? " fail" : isProvider(u) ? " ok" : !u.hasPassword ? "" : isLocked(u, now) ? " locked" : " ok"}`;
 
 /** When the account last signed in, or "never". */
 export const lastSignInText = (u) => (u.lastSignIn ? timeAgo(u.lastSignIn) : "never");
 
 /**
  * The buttons of a row, in order. A link is offered exactly when the account has no password, a reset exactly when it
- * has one. Unlock is offered for a locked account that has a password (also when it is blocked).
+ * has one. Unlock is offered for a locked account that has a password (also when it is blocked). A provider account
+ * has no edit, link or reset: its name, e-mail and password live in the account system.
  */
-export const actionsFor = (u, now = Date.now()) => [
-  "edit",
-  "limits",
-  "app",
-  u.hasPassword ? "reset" : "link",
-  ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
-  u.status === "blocked" ? "unblock" : "block",
-  ...(u.role === "user" ? ["view"] : []),
-  "delete",
-];
+export const actionsFor = (u, now = Date.now()) =>
+  isProvider(u)
+    ? ["limits", "app", u.status === "blocked" ? "unblock" : "block", ...(u.role === "user" ? ["view"] : []), "delete"]
+    : [
+        "edit",
+        "limits",
+        "app",
+        u.hasPassword ? "reset" : "link",
+        ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
+        u.status === "blocked" ? "unblock" : "block",
+        ...(u.role === "user" ? ["view"] : []),
+        "delete",
+      ];
 
 /** For a blocked account: why its link does not work yet. Empty for any other account. */
 export const blockedLinkText = (u) => (u?.status === "blocked" ? `${u.name} is blocked, so the link works only after you unblock the account.` : "");
@@ -63,7 +70,10 @@ export function userProblem({ name, email }) {
 }
 
 /** The body for a new account: trimmed; an unknown role becomes user. */
-export const newUserBody = ({ name, email, role }) => ({ name: text(name), email: text(email), role: role === "admin" ? "admin" : "user" });
+export const newUserBody = ({ name, email, role, simple }) =>
+  simple === true
+    ? { name: text(name), email: text(email), role: "user", view: "simple" }
+    : { name: text(name), email: text(email), role: role === "admin" ? "admin" : "user" };
 
 /** Only the fields that differ from the account; {} when nothing changed. An e-mail that differs only in case is not a change. */
 export function userChanges(u, { name, email, role }) {
@@ -183,13 +193,19 @@ const showLink = (user, page, lateText) => (answer, { close, closed, mountIn }) 
 
 const addDialog = (_u, { page }) => {
   const form = userForm();
+  const box = h("input", { type: "checkbox", name: "simple" });
+  box.addEventListener("change", () => {
+    if (box.checked) form.fields.role.value = "user";
+    form.fields.role.disabled = box.checked;
+  });
+  const read = () => ({ ...form.read(), simple: box.checked });
   return callDialog({
     title: "Add user",
-    body: form.nodes,
+    body: [...form.nodes, h("label", { class: "field" }, box, h("span", {}, "Simple account — for someone who is not an engineer: the Simple view, and the guide opens after the first password"))],
     fields: form.fields,
     fieldOf: form.fieldOf,
     label: "Add user",
-    prepare: () => userProblem(form.read()) || (() => api.addUser(newUserBody(form.read()))),
+    prepare: () => userProblem(read()) || (() => api.addUser(newUserBody(read()))),
     done: showLink(null, page, "The link was not shown. Use New link on the account to make one."),
   });
 };

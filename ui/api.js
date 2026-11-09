@@ -261,6 +261,15 @@ export const api = {
   // Without a key every dismissed item comes back; only a missing key means "all".
   restoreTurn: (key) => req("POST", "/api/your-turn/restore", key === undefined ? {} : { key }),
   myTurn: () => req("GET", "/api/your-turn/mine"),
+  // Change requests (#812). `changes` answers { changes: [...] }.
+  changes: (repo) => req("GET", `/api/changes?repo=${enc(repo)}`),
+  change: (id) => req("GET", `/api/changes/${enc(id)}`),
+  createChange: (body) => req("POST", "/api/changes", body, true),
+  answerChange: (id, body) => req("POST", `/api/changes/${enc(id)}/answers`, body, true),
+  saveChangeCard: (id, did, body) => req("PUT", `/api/changes/${enc(id)}/cards/${enc(did)}`, body, true),
+  buildChange: (id) => req("POST", `/api/changes/${enc(id)}/build`, {}),
+  laterChange: (id) => req("POST", `/api/changes/${enc(id)}/later`, {}),
+  retryChange: (id) => req("POST", `/api/changes/${enc(id)}/retry`, {}),
   turnDetail: (key) => req("GET", `/api/your-turn/detail?key=${enc(key)}`),
   actTurn: (body) => req("POST", "/api/your-turn/act", body),
   clarity: () => req("GET", "/api/clarity"),

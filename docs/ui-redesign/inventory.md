@@ -61,6 +61,7 @@ The page at `/user/`. 8 route rows. `USER_HASH` allows exactly these (`ui/auth.j
 | `/user/#/setup` | Setup check | `ui/setup-check.js` | `renderSetupCheck` | `api-admin.ts` (`setup-check`) | admin; a user gets a plain card | See whether git, Claude Code, Codex and their sign-ins are ready | Check again | No input fields |
 | `/user/#/start-guide` | Get started | `ui/onboarding-guide.js` | `renderOnboardingGuide` | `api-onboarding.ts` (`progress`), `api-admin.ts` (`setup-check`) | user display; an admin runs the checks, others get a note | Go through the first steps, one at a time | Continue / Back | No input fields |
 | `/user/#/help` | Help | `ui/simple.js` | `renderSimpleHelp` | `api-auth.ts` (`me/view`) | user display, Simple and Advanced | Read what the Foundry's words mean and who to ask | none | No input fields |
+| `/user/#/change/:id` | — | `ui/simple-change.js` | `renderSimpleChange` | `api-changes.ts` | user display, Simple and Advanced; a preview goes to the project page | Ask for a change in words: questions, cards, Yes, build this / Not now | Send / Send my answers / Change / Yes, build this / Not now / Try again | Text boxes: the request, a free answer per question, a card's title and points |
 | `/user/#/agents` | Claude and Codex | `ui/onboarding-agents.js` | `renderOnboardingAgents` | `api-onboarding.ts`, `api-admin.ts` (`setup-check`) | admin; a user gets a plain card | Answer questions about Claude Code and Codex | Pick an answer / Change | No input fields |
 | `/user/#/runs` | My runs | `ui/user/runs.js` | `renderMyRuns` | `api-runs.ts` | user; admin read-only preview | Find a run and its next step | Open a run (card link) | Polls every 30 s; Remove asks with `confirmDialog` |
 | `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3) |
@@ -146,6 +147,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `/user/#/agents` | none (a plain card for a user) | same as `#/agents` | none |
 | `/user/#/start-guide` | none (Welcome is the first step) | skeleton, then `errorState` with Retry | none (the buttons save the step) |
 | `/user/#/help` | none | the page draws without the contact line when it cannot be read | none |
+| `/user/#/change/:id` | the empty text box when no request is open | a plain sentence with Try again (first load); a failed action shows a plain note and keeps the typed text | reads again every 5 s while the Foundry is thinking |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
 | `/user/#/runs/:id` | `NOT_FOUND` with a link back, `NO_STEPS`, `NO_CHANGES` | skeleton, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; a diff failure gives an inline `errorState` with Retry | stream and poll 30 s |
 | `/user/#/repos` | "No repositories yet..." | errors box | none |
@@ -201,6 +203,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `/user/#/agents` | Cards, max 640 px | Fits |
 | `/user/#/start-guide` | One column, one step at a time | Fits |
 | `/user/#/help` | One column of text | Fits |
+| `/user/#/change/:id` | One column, big buttons | Fits |
 | `/user/#/runs` | Cards | Fits |
 | `/user/#/runs/:id` | `.run-grid` one column | Long page |
 | `/user/#/repos` | `.table-box` scrolls | Same |

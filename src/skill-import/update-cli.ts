@@ -38,7 +38,7 @@ import { stageSource, type SkillImportOptions } from "./cli.js";
 import { autoSource, autoUpdate } from "./update-auto.js";
 import { LsRemoteError, resolveHead, resolveTrack, type TrackResult } from "./ls-remote.js";
 import type { GitCredential } from "./git-tree.js";
-import { ACCESS_CHANGED, sameDestination, sourceCredential } from "./source-access.js";
+import { ACCESS_CHANGED, sameDestination, sourceCredential, type SourceAccess } from "./source-access.js";
 
 // `scf skills update <source-id>`: finds the upstream commit, stages it in the quarantine with the checks of `scf skills import`,
 // builds the review report and opens a pull request that changes only skill-sources.yaml. Nothing is approved until the pull
@@ -55,6 +55,8 @@ export interface SkillUpdateOptions extends Omit<SkillImportOptions, "cwd"> {
   skills?: Config["skills"];
   /** The audit actor of the automatic update: "cli" (default) or "monitor". */
   auditBy?: string;
+  /** Tests: the credential for opening issues in a private source's repository (default: an app token with issues: write). */
+  issueAccess?: (source: SkillLibrarySource) => Promise<SourceAccess>;
   /** Tests and the entry point: runs the agent scenarios of the evaluation suite (default: the sandboxed runner of `score --agent`). */
   agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions & { signal?: AbortSignal }) => Promise<number>;
 }

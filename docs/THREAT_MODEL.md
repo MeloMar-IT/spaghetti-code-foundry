@@ -211,6 +211,62 @@ it. The list is read once at start.
 - The check that the module is outside the runs folders compares real paths of the module file, not
   of its dependencies: a plugin may import code from anywhere.
 
+## Identity provider (#833)
+
+**Trust.** A plugin that calls `api.identityProvider` decides who is signed in, with which role and
+which workspace. Its answer is trusted as to identity: the Foundry checks only the form of the answer.
+Whoever can add a plugin can therefore make anyone an admin, as with any plugin ([Plugins from config](#plugins-from-config)).
+
+**Protected by.**
+- The provider gets a copy of the request without the Foundry session cookie, so it cannot read the
+  Foundry's session token from the request it is given. The copy is frozen.
+- The answer is checked strictly (UUID id, name of 1 to 100 characters, roles `admin` or `user` only,
+  a workspace id, no other keys). Anything else signs nobody in.
+- A throw, a timeout (5 s) or an invalid answer signs nobody in, and no provider text reaches logs,
+  problems or responses: only fixed sentences are shown.
+- At most 8 provider calls wait at once; further calls are refused without being made, so a slow
+  provider cannot pile up work.
+- Each API call of a provider session asks the provider again. A changed id or a null answer ends the
+  session at once; a provider error answers 503 and does not end it. A session cannot outlive the
+  provider's answer by more than one call.
+- A provider account is a mirror in `users.json` with no password. Password sign-in, password setting,
+  links, resets and edits of the account are refused (409), so a local password cannot be used for an
+  account the provider owns. A blocked account cannot sign in, and a recheck never creates an account.
+- A local account with the same id or e-mail is never taken over: the provider's sign-in is refused.
+- A provider user's workspace scope is its one workspace (or `default`), and an unreadable account gives
+  an empty scope (fail closed).
+
+**Limits.**
+- The provider's answer is not verified by the Foundry. A compromised or buggy provider is trusted.
+- A timed-out `resolve` cannot be cancelled; it keeps running in the provider, and the call still counts
+  against the 8 waiting calls until it settles.
+- A provider that is slow adds up to 5 s to each API call of a provider session.
+- Only one provider is allowed, and the Foundry does not say which one is in use beyond the plugin's name in `GET /api/plugins`.
+- A provider-only install with no account may listen on a non-local address; the provider is then the only way in.
+
+**Break-glass account (#834).** While a provider is active, one local admin can still sign in with a
+password. This is a deliberate second way in, so it is a standing credential.
+
+*Protected by.*
+- The mark is set only on the machine (`scf user break-glass`); no API route or UI sets it. There is one
+  mark, and a file with a mark on a provider record or two marks cannot be read.
+- Only an active local admin with a password can be marked. A mark is removed by `off`, a reset
+  password, a new set-password link, a change to `user`, and a block. A local session counts under a
+  provider only while its account is marked (`isBreakGlass`, checked again under the lock).
+- Each break-glass sign-in writes its `sign-in` audit line (`target:"break-glass"`) before the session is
+  written. If that line cannot be written, the sign-in fails with 500 and no cookie is set.
+- Every other local account gets "wrong e-mail or password" while a provider is active, and such failures are audited.
+
+*Limits.*
+- The break-glass password works whenever the Foundry is reachable, provider up or not. Anyone who knows it
+  can use it while the provider is up too.
+- A break-glass session is not rechecked with the provider and lasts up to 7 days; a block or a clearing
+  of the mark ends it at once.
+- Changing the mark is logged as an account `edit` line, not as a separate action.
+- A failed session write after the audit line leaves an `ok` line without a session. The audit is kept
+  as the safer side: every attempt that could have succeeded is in the log.
+- A broken audit log shuts the break-glass admin out until the log is fixed. The log line says why.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

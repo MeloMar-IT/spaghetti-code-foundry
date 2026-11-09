@@ -29,6 +29,7 @@ export const SETTING_EXCEPTIONS: Record<string, string> = {
   "workspaces.*.id": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.name": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.members": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
+  "workspaces.*.hosts": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.limits.max_concurrent": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.limits.test_slots": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.limits.monthly_budget_usd": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",

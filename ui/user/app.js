@@ -14,6 +14,7 @@ import { renderRepo } from "/repo-view.js";
 import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { renderHome } from "/home.js";
+import { renderSimpleChange } from "/simple-change.js";
 import { renderSimpleHelp, renderSimpleHome, renderSimpleProject } from "/simple.js";
 import { renderStart } from "/user/start.js";
 import { addPluginMenu, loadPluginUi, renderPluginPage } from "/plugins.js";
@@ -71,6 +72,8 @@ async function route() {
   let page = userPage(hash);
   // The address of a plugin page this account has not been given is never drawn: it goes to the Runs list.
   if (page.section === "plugins" && resolve("user", page.hash).redirected) page = userPage("#/runs");
+  // Ask for a change sends calls: a read-only preview shows the project page instead.
+  if (readOnly && page.section === "change") page = userPage(`#/repos/${page.id}`);
   // Simple has My projects (#/home) and the project page only; anything else, and the bare repository list, goes to My projects.
   const simple = shownView === "simple" && !readOnly;
   if (simple && (!SIMPLE_SECTIONS.includes(page.section) || (page.section === "repos" && !page.id))) page = userPage("#/home");
@@ -106,7 +109,12 @@ async function route() {
       guideOffered = true;
       done = await renderOnboardingGuide(box, { admin: ownAdmin, readOnly, simple, credentialsHref: "/#/credentials" });
     }
-    else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, admin: ownAdmin, onName: (n) => { if (mine === generation) namePage(n); } });
+    else if (simple && page.section === "repos") {
+      done = await renderSimpleProject(box, {
+        id: page.id, admin: ownAdmin, actions: [{ id: "change", href: `#/change/${encodeURIComponent(page.id)}` }],
+        onName: (n) => { if (mine === generation) namePage(n); },
+      });
+    } else if (page.section === "change") done = await renderSimpleChange(box, { id: page.id, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "help") done = await renderSimpleHelp(box);
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
     else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });

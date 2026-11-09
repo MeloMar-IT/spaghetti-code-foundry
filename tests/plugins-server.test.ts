@@ -43,7 +43,7 @@ describe("plugins at server start", () => {
       expect(r.status).toBe(200);
       const text = await r.text();
       expect(text).not.toContain("SECRET-OPT");
-      expect(JSON.parse(text)).toMatchObject({ apiVersion: "0.3", plugins: [{ label: "order-a.mjs", version: "1.0.0" }, { label: "order-b.mjs", version: "2.0.0" }], problems: [] });
+      expect(JSON.parse(text)).toMatchObject({ apiVersion: "0.4", plugins: [{ label: "order-a.mjs", version: "1.0.0" }, { label: "order-b.mjs", version: "2.0.0" }], problems: [] });
       const user = await signInAs(s.base, { email: "user@example.com", role: "user", name: "User" });
       expect((await call(s.base, user, "GET", "/api/plugins")).status).toBe(403);
       expect((await fetch(`${s.base}/api/plugins`)).status).toBe(401);
@@ -57,6 +57,25 @@ describe("plugins at server start", () => {
     await expect(start([fx("import-throws.mjs")])).rejects.toThrow(/plugin ".*import-throws\.mjs" could not be imported/);
     await expect(start([fx("no-register.mjs")])).rejects.toThrow(/does not export a function register/);
     await expect(start(["/nonexistent/plugin.mjs"])).rejects.toThrow(/plugin "\/nonexistent\/plugin\.mjs"/);
+  });
+
+  it("lists an identity provider, and lets a non-local address start with an empty user store", async () => {
+    const { hasIdentityProvider } = await import("../src/auth/identity.js");
+    rmSync(join(home, "users.json"), { force: true }); // earlier tests made accounts: the store must be empty here
+    const s = await start([fx("identity.mjs")]);
+    try {
+      expect(s.ctx.plugins!.plugins[0]!.registered).toEqual([{ point: "identity", name: "identityProvider" }]);
+      expect(hasIdentityProvider()).toBe(true);
+    } finally {
+      s.close();
+    }
+    expect(hasIdentityProvider()).toBe(false);
+    writeFileSync(configPath(), `server:\n  listen: 0.0.0.0\n${yamlOf([fx("identity.mjs")])}`);
+    const wide = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), watchers: false, claudeBin: resolve("tests/fixtures/fake-claude.mjs") });
+    wide.close();
+    // without the provider today's rule stands, and nothing is left registered
+    writeFileSync(configPath(), "server:\n  listen: 0.0.0.0\n");
+    await expect(startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), watchers: false, claudeBin: resolve("tests/fixtures/fake-claude.mjs") })).rejects.toThrow(/scf user create --admin/);
   });
 
   it("refuses a plugin inside the runs folder without importing it", async () => {

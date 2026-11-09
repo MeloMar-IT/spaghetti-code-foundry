@@ -42,6 +42,12 @@ function userRoutes(authSource: string): string[] {
   for (const alt of alts) {
     // pages that plugins add are not in the inventory: the server lists them at run time (#787)
     if (alt.startsWith("plugins\\/")) continue;
+    // a page that needs an id: `x\/[\w-]+` is one route, `#/x/:id`
+    const required = /^([\w-]+)\\\/\[\\w-\]\+$/.exec(alt);
+    if (required) {
+      out.push(`#/${required[1]}/:id`);
+      continue;
+    }
     const a =/^([\w-]+)(\(\\\/\[\\w-\]\+\)\?)?$/.exec(alt);
     if (!a) throw new Error(`USER_HASH alternative has a shape this test does not know: ${alt}`);
     out.push(`#/${a[1]}`);
@@ -124,6 +130,10 @@ describe("helpers (failure paths)", () => {
 
   it("userRoutes reads a known shape", () => {
     expect(userRoutes("const USER_HASH = /^#\\/(start|runs(\\/[\\w-]+)?|x)$/;")).toEqual(["#/start", "#/runs", "#/runs/:id", "#/x"]);
+  });
+
+  it("userRoutes reads a page with a required id as one route", () => {
+    expect(userRoutes("const USER_HASH = /^#\\/(a|change\\/[\\w-]+|b(\\/[\\w-]+)?)$/;")).toEqual(["#/a", "#/change/:id", "#/b", "#/b/:id"]);
   });
 
   it("userRoutes throws on an unknown shape", () => {

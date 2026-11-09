@@ -12,7 +12,7 @@ import { runProcess, type RunPriority } from "../steps/process.js";
 import { APP_FAILED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, NO_COMMIT_IDENTITY, TOKEN_REFUSED_RUN, tokenRefused } from "./guards.js";
 import type { AutonomyAction } from "../governance/autonomy.js";
 import { autonomyStop, refuseByPolicy, stepEnv, type Engine, type Scope } from "./execute.js";
-import { stepIsolated, stepIsolation, noMachineSignIn } from "./isolation.js";
+import { heldWorkspace, stepIsolated, stepIsolation, noMachineSignIn } from "./isolation.js";
 import { repositoryFact } from "./policy-hooks.js";
 import { appTokenAccess, ghConfigDir, removeGhConfigDir, repoNoCredentialEnv, repoTokenEnv } from "./repo-access.js";
 import { LOCAL_OPERATIONS, otherRepository, REPO_OPERATIONS, RepoRequestSchema, repoToolOf, tailBytes, unsafeGitSettings, type RepoEvidenceOperation, type RepoOperation, type RepoRefusal, type RepoRequest } from "./repo-request.js";
@@ -202,6 +202,12 @@ async function attempt(ctx: BrokerContext, req: RepoRequest, grant: RepoGrant | 
     const output = room <= 0 ? tailBytes(head, cap) : head + tailBytes(clean(text, st.token), room);
     return { outcome, output, ...(pullRequest ? { pullRequest } : {}) };
   };
+
+  // 1b. a team's run (#785): the broker runs git outside the sandbox, on a checkout the agent controls. It is refused until it is confined.
+  if (heldWorkspace(engine.summary.workspace)) {
+    engine.log(`    ! repository broker: a ${req.op} request was refused (repository operations are not available in a team's run yet)`);
+    return refuse("no-credential");
+  }
 
   // 2. the target
   const target = resolveTarget(vars);

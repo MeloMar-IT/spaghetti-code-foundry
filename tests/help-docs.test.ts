@@ -71,6 +71,13 @@ describe("the documentation index", () => {
     expect(wordsOf("How do I archive the runs?")).toEqual(["archive", "run"]);
   });
 
+  it("the non-developer chapter is for users too", () => {
+    expect(HELP_DOCS[0]!.userChapters).toContain(15);
+    const s = sectionsOf(HELP_DOCS[0]!, "# G\n\n## 15. Getting started without being a developer\n\n### Ask for a change in your own words\n\nWrite it in your own words.\n");
+    expect(s.length).toBeGreaterThan(0);
+    for (const x of s) expect(x.roles).toEqual(["admin", "user"]);
+  });
+
   it("names the version and every file, and only the approved documents are read", () => {
     write("docs/EVIL.md", "## Archive\n\nArchive archive archive.\n");
     write("README.md", "## Archive\n\nArchive.\n");

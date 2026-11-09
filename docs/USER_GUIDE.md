@@ -63,6 +63,26 @@ change or a block (`scf user password`, `scf user block`) signs that account out
 are blocked, you cannot sign in. If the session ends while a page is open, the next action
 brings you back to the sign-in form.
 
+**With an identity provider.** If an administrator installed a plugin that calls `api.identityProvider`
+(see [PLUGIN_API.md](PLUGIN_API.md#identity-provider)), the provider says who you are, and sign-in,
+role and workspace come from your own account system. You are signed in on your next visit to the page
+and need no password here. The Foundry's own password sign-in is switched off: an e-mail and password
+answer "wrong e-mail or password", and first-account setup is not offered. Your role and workspace are
+re-read on every action, so a change in the account system applies at once. A blocked or removed
+account cannot use the Foundry, and a provider that does not answer stops your session for that call (the page shows that sign-in is not working for now). Passwords,
+links and profile edits of such accounts are changed in the account system only.
+
+**Emergency sign-in.** One local admin can still sign in with a password while a provider is active,
+for when the account system is down. The sign-in page then says "Emergency sign-in (local admin)" and
+has no "Forgot password" text. An administrator marks that account on the machine with
+`scf user break-glass <e-mail> on` (it must be an active admin with a password, and only one account
+can be marked; marking another one moves the mark). `scf user break-glass <e-mail> off` removes it. The
+mark also goes when the password is reset, a new set-password link is made, the role is changed to
+user, or the account is blocked. Each emergency sign-in is written to the audit log before the session
+starts, and if that log cannot be written the sign-in fails. The session lasts 7 days and is not
+checked with the provider. Keep the password of this account safe: it works whenever the Foundry is
+reachable, provider or not.
+
 **Forgot password.** The sign-in form says so: ask an admin for a new set-password link (the admin
 uses **Reset password** on the Users page), or run `scf user password <e-mail>` on the machine.
 
@@ -294,8 +314,17 @@ Simple shows your work per project, in plain words. Home is **My projects**; the
 **The project page** (`#/repos/<id>`) has three parts, top to bottom:
 
 1. **What you need to do**: the questions to answer and the results to check, each with its button. With nothing waiting it says "Nothing — the Foundry is working."
-2. **What is being made**: four groups, **Planned**, **Being built**, **Ready for you to check** and **Done**. A card shows the title, one sentence about the work and, for **Being built**, the step, e.g. "Step 2 of 4: testing". **Done** shows five cards; **Show all done** shows the rest and stays open while the page refreshes.
-3. **Try it** starts your project so you can see it (see **Try it on the project page** below). The buttons **Ask for a change** and **Make this version final** come with later parts. The page does not show them yet.
+2. **What is being made**: four groups, **Planned**, **Being built**, **Ready for you to check** and **Done**. A card shows the title, one sentence about the work and, for **Being built**, the step, e.g. "Step 2 of 4: testing". **Done** shows five cards; **Show all done** shows the rest and stays open while the page refreshes. **Planned** also lists the changes kept with **Not now** (see **Ask for a change**), each with its own **Yes, build this**.
+3. **Try it** starts your project so you can see it (see **Try it on the project page** below). The button **Ask for a change** opens the page described under **Ask for a change** below. The button **Make this version final** comes with a later part; the page does not show it yet.
+
+**Ask for a change.** Press **Ask for a change** on the project page to open a page with the box "What should change?" and a **Send** button. Write the change in your own words. While the Foundry works, the page says "The Foundry is thinking about your change. This page updates by itself." and refreshes by itself. When the Foundry has questions, each comes with its choices (one is marked **Suggested**) and a box for your own answer. When it is done, the page shows one card per part of the change, each with "This is what I understood: …" and the points that say when it is done. A large change is a list of cards, never one big item. **Change** on a card opens its title and points for editing; **Save** keeps them and **Cancel** drops them. Two buttons end the page: **Yes, build this** starts building all the cards ("Your change is on its way. The Foundry builds it now."), and **Not now** keeps them ("Your change is kept for later. You find it under Planned on the project page."). A change that the Foundry could not finish says "The Foundry could not go on by itself." with **Try again**. After **Yes, build this** or **Not now**, **Ask for another change** starts a new request. The page keeps what you typed and did not send when it refreshes; if you switch view while it holds unsent text, the Foundry asks before it switches. The page is the same for GitHub and local projects.
+
+**Adding pictures.** A picture can show what you mean better than words. On the Ask for a change page, under the box, the field **Pictures (optional)** lets you choose up to 5 pictures: PNG, JPEG or WebP files, each at most 5 MB. Each picture is shown before you send, with a **Remove** button under it; press it to take the picture away. A picture that is not accepted (too many, too large, empty, or another type such as SVG or GIF) stays out and the page says why in plain words; your text is kept. The architect reads the pictures together with your words. The architect writes one short sentence about each picture, and the sentence is kept with your request. The pictures are kept with your request until it is published, and are removed when the request is dropped; nobody else can see them. When you press **Yes, build this** or **Not now**, the stories get a **Pictures** part, and what it holds depends on the project:
+
+- **Local project:** each picture is copied next to the stories, in `.scf/stories/pictures/`, and the story links to its copy. The copies are committed with the story.
+- **GitHub project:** nothing is uploaded. The story says how many pictures were added and describes each one in words.
+
+Publishing again does not copy the pictures or write their text a second time.
 
 **Answer the questions.** When the Foundry asks you something, the card **What you need to do** shows **Answer the questions**. Press it to see one card per question, with the question in plain words. When the Foundry has a suggestion, its button shows the suggestion; press it to take the suggestion. Below each question is a box for your own answer. **Send my answers** sends them. When every question took its suggestion, the Foundry takes the defaults; an empty answer is not sent, and the card says which question needs one. The page says "Thank you. The Foundry goes on by itself." when the answers are in. If a question has no words left once the Advanced words are removed, the card asks you to switch to the Advanced view to read it. What you typed stays on the page while it refreshes.
 
@@ -325,6 +354,8 @@ Simple never shows costs, tokens, models, agents, logs, transcripts, branch or c
 6. **Where to keep it** (step 5). **On this computer** makes the project here. **On GitHub** first connects GitHub, then makes the project on this computer; if you pick it and GitHub is not connected, the guide switches the account to the Advanced view and opens the repositories page; there a link brings you back to the guide at step 5. If you leave that page without using the link, the guide is still there the next time you open it. **Continue** makes the project. It is made once for your account: a second press, a return to an earlier step, or a reload, or a second tab, does not make another one. If a folder with the same name already exists, the page says so and asks you to rename the project in step 4. A project that is made is shown as made, and **Continue** goes on to step 6. If the answer does not come back in time, **Try again** asks once more; the server recognises the same request and does not make a second project. A missing starter sends you back to step 3. For a non-admin, the page says to ask an admin and no project is made.
 7. **Your plan** (step 6). The Foundry reads your project and writes a plan in plain words: an epic and its first stories, with no issue numbers or labels. You can change any part (**Change**, then **Save** or **Cancel**) or take it out (**Remove** asks first). **Yes, build this** checks every part. A part that still needs more words is marked, and **Check again** looks once more; change or remove it first. Then the plan is saved to your project with the build label, so the first story is set to go, and the Foundry adds or reuses a watcher for the project's stories. If a save fails, the page says so, nothing is built, and **Try again** asks once more. Pressing **Yes, build this** a second time creates nothing new. Coming back to step 6 reopens the same planning session. For a non-admin, the page says to ask an admin to do this step.
 8. **Watch it grow** (step 7). The guide goes to your project's page. The first result appears under **Ready for you to check**, and **Try it** opens it. **Open my project** on this step goes to the same page.
+
+A project made by the guide has these defaults, each checked by the tests: it has no push remote; its record is local, so a release waits for **Make this version final**; **Move to GitHub** and publishing to a remote are for admins only, and an admin must still confirm them (a refused call changes nothing); the autonomy level is `guarded-write`; work on it uses the limits of the account that acts on it; and it has the Simple daily cap as its own.
 
 Your place and your answers are saved for your account on the Foundry, not on the computer. Leave the page and come back, on any computer, and the guide opens at the step where you stopped. **Start again** clears the saved place, the answers and the planning session, and begins at the first step; it asks first. A project you made stays, and the guide does not make another one for the same account. The next time you reach step 6 after that, the Foundry starts a new planning session.
 
@@ -851,7 +882,7 @@ When the Foundry writes a story file in a local project, it also makes one git c
 
 - The message is `scf: story #<n> <what>`, where `<what>` is one of `created`, `edited`, `labels`, `comment`, `status`, `closed` or `reopened`. Examples: `scf: story #12 created`, `scf: story #12 comment`, `scf: story #12 closed`.
 - The commit goes on the branch `scf/stories`, which the Foundry creates on first use. Your checked-out branch, its staged and unstaged changes and its working files are not touched. A repository connected as Local (no GitHub) keeps its story history this way, so story commits never appear on your main line. To bring them into your branch, merge or cherry-pick `scf/stories` yourself. The branch name is shown in an error message.
-- The commit holds only the story files that the write changed. A new story also adds `.scf/stories/next-number`.
+- The commit holds only the story files that the write changed. A new story also adds `.scf/stories/next-number`, and a story made from a change request with pictures also adds the copies of those pictures in `.scf/stories/pictures/` (see "Ask for a change").
 - A write that changes nothing makes no commit.
 - The Foundry does not commit your hand edits. A story you edit by hand is still read the next time, and it is committed only when the Foundry writes that same story.
 - The file is saved before the commit. If the commit fails, the story keeps the change, and the Foundry reports the story number, the file, the branch (when known) and the reason. Typical reasons: the folder is not a git repository, git is not installed, or git took longer than the time limit.
@@ -1375,7 +1406,7 @@ For a code failure the *why* is one sentence written by a small model that read 
 failing output (see "The failure summary call" in Costs). The comment and the card then say so.
 If the model says the cause is the environment, the failure counts as a Foundry failure.
 
-**A daily cap per project.** Each repository can have its own daily cap in USD, set by an administrator (`PUT /api/admin/repos/:id/budget`, a number above 0, or null to clear it; every change writes an audit line). Without its own cap, a project whose owner uses the Simple view gets the default `simple_project_daily_budget_usd` (5 to start; 0 means no default). The runs that started today and belong to the project count: by GitHub repository for a GitHub project, by repository id for a local one. When the cap is reached, no new run or resume of the project starts, and a running run stops before its next step. The watcher continues it the next day. The cap holds only while `cost_limits` is on. An admin sees and changes these caps on the Users page (see "Simple accounts and their caps"). People see no amount: Simple reads "The Foundry has done enough for today; it continues tomorrow."
+**A daily cap per project.** Each repository can have its own daily cap in USD, set by an administrator (`PUT /api/admin/repos/:id/budget`, a number above 0, or null to clear it; every change writes an audit line). Without its own cap, a project whose owner uses the Simple view gets the default `simple_project_daily_budget_usd` (5 to start; 0 means no default). A project made by the Get started guide gets the default as its own cap when it is made, because its owner is an admin; a default above 1,000,000 is stored as 1,000,000, and a later change of the default does not change that project's cap. The admin can change or clear it on the repository. The runs that started today and belong to the project count: by GitHub repository for a GitHub project, by repository id for a local one. When the cap is reached, no new run or resume of the project starts, and a running run stops before its next step. The watcher continues it the next day. The cap holds only while `cost_limits` is on. An admin sees and changes these caps on the Users page (see "Simple accounts and their caps"). People see no amount: Simple reads "The Foundry has done enough for today; it continues tomorrow."
 
 A usage limit, the daily budget, a sign-out and an unreachable AI service do not fail a run: they
 pause it, and it continues by itself (a sign-out needs you to sign in again first).
@@ -4728,9 +4759,11 @@ as another admin. Change a role with
 ("never" when there is none).
 
 **The Users page.** Admins only: **Users** in the top bar (`#/users`). It lists name, e-mail, role,
-status, last sign-in and the number of runs. The status is **blocked**, **no password yet**,
-**locked** (too many wrong tries) or **active**; when more than one is true, the first in this list
-wins, so a blocked account reads "blocked" even if it is also locked. Your own account is
+status, last sign-in and the number of runs. The status is **blocked**, **account system** (an account
+of the identity provider), **no password yet**, **locked** (too many wrong tries) or **active**; when more
+than one is true, the first in this list wins, so a blocked account reads "blocked" even if it is also
+locked. An account of the identity provider has no **Edit**, **New link** or **Reset password**: its
+name, e-mail and password live in the account system. Your own account is
 marked "(you)". The list has no action buttons: press a name to open the account page
 (`#/users/<id>`). It shows the same facts and the actions in three groups: **Actions** (Edit,
 Limits, App repositories, New link, View as user), **Security** (Reset password, Unlock, Block or
@@ -4739,7 +4772,9 @@ that does not exist shows "This account does not exist." with a link back to Use
 
 **Simple accounts and their caps.** The Users page has a **View** column: an account that uses the Simple view shows a "Simple" mark. Tick **Only Simple accounts** to show only those accounts (the address becomes `#/users?view=simple`). Under the filtered list, each Simple account lists its projects, with today's spend, the daily cap in effect (its own cap, or the default `simple_project_daily_budget_usd` when it has none) and a field with a **Save** button. Type a number above 0 to set the cap, or leave the field empty and save to clear it and use the default. A value that is not a number above 0 is refused before anything is sent. If the server refuses a value, the message shows on that project's row. Read-only pages show the values without the field. The "Cost limits are off in Settings" note appears when `cost_limits` is off, because the caps are then not enforced.
 
-- **Add user** asks for name, e-mail and role. Then the dialog shows the set-password link once. The
+**Invite someone who is not an engineer.** In **Add user**, tick **Simple account**. It sets the role to user and the Simple view, and the role menu is then off. The dialog shows the set-password link as usual. The link works once, for 24 hours; send it to the person yourself, and an expired link is refused (use **New link**). When they set their password, the sign-in page says "Your password is set. Sign in with it to start the guide." After they sign in, the guide opens at step 1, **Welcome**. Only the first sign-in after the link does this; an account that has signed in before, or that was reset, is not sent to the guide. Starters are for admins only, so at steps 3 and 5 the guide tells the person to ask their admin. The admin then makes the project, and it belongs to that admin: work on it uses the admin's limits, and the daily cap is set on the project (see "A daily cap per project" in the cost chapter). An account made without **Simple account** is not changed by this.
+
+- **Add user** asks for name, e-mail and role, or **Simple account** (see above). Then the dialog shows the set-password link once. The
   link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
   localhost; otherwise select the link in the field and copy it. Close the dialog too early and
   the link is gone: use **New link**.
@@ -5329,8 +5364,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
 | `GET /api/onboarding/agents` | yes | no | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
 | `PUT /api/onboarding/agents` | yes | no | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |
-| `GET /api/starters` | yes | no | the starters you can make a project from (`id`, `title`, `description`, `needs`, `source`: `built-in` or `own`) and the broken own ones (`id`, `source`, `problem`); never a folder path; admins only |
-| `POST /api/starters/:id/project` | yes | no | make a new project from a starter (`name`, optional `parent`, an existing absolute folder outside the data folder): a git folder with `main` and `develop`, connected as a local repository with the starter's test command and tested; answers 201 with `repo` and `connection`; with `guide: true` one project is made per account and recorded in the guide answers once it is complete: a repeat answers 200 with `existing: true` and the same id, 409 when the guide was started again meanwhile, a progress file that cannot be used answers a fixed 500; 409 when the folder exists or the starter is broken, 404 for an unknown or hidden starter; any failure removes what it made; writes the audit line `repo-add`; admins only |
+| `GET /api/starters` | yes | no | the starters you can make a project from (`id`, `title`, `description`, `needs`, `source`: `built-in` or `own`) and the broken own ones (`id`, `source`, `problem`); never a folder path; admins only; an invited Simple account asks its admin (#823) |
+| `POST /api/starters/:id/project` | yes | no | make a new project from a starter (`name`, optional `parent`, an existing absolute folder outside the data folder): a git folder with `main` and `develop`, connected as a local repository with the starter's test command and tested; answers 201 with `repo` and `connection`; with `guide: true` one project is made per account and recorded in the guide answers once it is complete: a repeat answers 200 with `existing: true` and the same id, 409 when the guide was started again meanwhile, a progress file that cannot be used answers a fixed 500; 409 when the folder exists or the starter is broken, 404 for an unknown or hidden starter; any failure removes what it made; writes the audit line `repo-add`; with `guide: true` the project gets the Simple daily cap (`simple_project_daily_budget_usd`, at most 1,000,000) as its own; admins only; an invited Simple account asks its admin (#823) |
 | `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
 | `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |
@@ -5394,7 +5429,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/users` | yes | no | list the accounts |
 | `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (all three are enforced) |
 | `PUT /api/users/limits` | yes | no | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
-| `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token |
+| `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token; optional `view` (`simple`, `advanced`, `admin`, open to the role): a Simple account opens the Get started guide after its first password |
 | `PUT /api/users/:id` | yes | no | change the name, e-mail or role of an account |
 | `PUT /api/users/:id/limits` | yes | no | set or clear the limits of one account; a cleared one follows the default again |
 | `POST /api/users/:id/block` | yes | no | block an account, end its sessions and cancel its queued jobs |
@@ -5440,6 +5475,15 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
 | `GET /api/admin/components` | yes | no | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
+| `GET /api/changes` | yes | yes | your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; only your own |
+| `POST /api/changes` | yes | yes | ask for a change in plain words, `{ repo, text, pictures? }` (text at most 10,000 characters; `pictures` is a list of at most 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, found by its content, else 400; this route takes a body of up to 36 MiB, every other route 1 MB, else 413; 403 `not-yours` for a project that is not yours); the architect reads the pictures too; the architect then reads the code, asks its questions and writes the cards by itself (202, `thinking`) |
+| `GET /api/changes/:id` | yes | yes | one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words); only the owner (an admin who is not the owner: 403) |
+| `GET /api/changes/:id/pictures/:n` | yes | yes | one picture of a change request of yours (`n` from 1), as the raw image with its `image/*` type, `no-store` and `nosniff`; 404 for a number with no picture; only the owner (another account: 404, an admin who is not the owner: 403); no other route serves the pictures |
+| `POST /api/changes/:id/answers` | yes | yes | answer every open question of a change request at once, `{ answers: [{ question, option | text | unknown }] }`; the cards are then written (202); only the owner |
+| `PUT /api/changes/:id/cards/:did` | yes | yes | change the title and/or the criteria of a card of a change request; a card that is published is refused (409); only the owner |
+| `POST /api/changes/:id/build` | yes | yes | "Yes, build this": publishes every card and adds the build label (`Factory_go` on GitHub, state `go` locally); a repeat or a retry adds it once to each card; only the owner |
+| `POST /api/changes/:id/later` | yes | yes | "Not now": publishes every card without the build label; a later `build` adds it; only the owner |
+| `POST /api/changes/:id/retry` | yes | yes | starts the architect's step again after a change request is `stuck` (409 when it is not); only the owner |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use: your GitHub names, then your local projects (`local:<slug>-<id8>`) (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories or local projects, from an idea; from an open issue only on a GitHub repository (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it; 400 `bad-repo` for a local name with an issue; 403 `not-yours` for a local project that is not yours; 400 `bad-repo` for a malformed name); with `guide: true` (and nothing else) the session of the Get started guide on the guide's local project, made once from the saved answers (201, then 200 with the same session; 409 without a project of the guide or outside your workspaces) |
 | `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
@@ -5846,6 +5890,7 @@ sources:
   - **Nothing new.** When the commit is the one already approved, or the last run already released it, the run prints `UNCHANGED`, releases nothing and approves nothing.
   - **Signing.** When `skills.releases.keys` is set, the approval is signed with `skills.releases.auto_key`, as described above.
   - **Audit.** Each step writes a `skill-auto-update` line to the audit log, with the actor `monitor` when the server runs it.
+  - **Issues for failed skills.** Each skill that the update left out gets one issue in the source's own repository (`source.repository`), so the Foundry can fix it. The title is `Skill <id> failed the <gate> gate`. The body holds the gate, the Foundry's own sentence and the source id, and no upstream text. The issue has the label `skills.authoring.label`, the label that the `skill-write` flow picks up. A private source uses the access of its registered repository (`sourceCredential`). No duplicate is made: while an open issue with the same title exists, no new one is opened; after it is closed, a new one can be opened. At most 20 issues are opened per run. An unchanged commit opens none. Each attempt writes a `skill-auto-update` audit line. When an issue cannot be opened (gh fails, the access fails, the source is not on GitHub, or the open issues cannot be checked), a `NOTE` line says so and the update goes on.
   - **Limits.** The update runs only in the data folder, and one run per source is allowed at a time; a second one is refused at once. A private source uses its GitHub App token, as the rest of `update` does. The route and the Skills card that show the last automatic update come later (part 3 of #775).
 
   A source without `update.auto` still gets a review pull request, as before.
@@ -7457,8 +7502,17 @@ workspaces:
       max_concurrent: 2
       test_slots: 1
       monthly_budget_usd: 150
+    hosts:                       # optional: extra hosts a team's shell steps may reach
+      - "api.example.com"
 ```
 
+- **Team runs are held.** A run of any workspace but `default` is held apart from the rest of the machine:
+  - its steps always run in the operating-system sandbox; `sandbox.user_runs` and `sandbox.user_read` do not apply to it. If the computer cannot sandbox a step, the run is refused before any step starts;
+  - its agents reach only their model host; its shell steps reach GitHub, the package registries and the `hosts` below. A host that is not allowed is refused, and the step log names it;
+  - it never uses the machine's GitHub login, and it needs a commit identity;
+  - `inplace` and `worktree` flows are refused, because they work in the server's own folder.
+  - Known gap: a team's agent does not yet get a key from its workspace, so set its agent key in the usual way for now.
+- **`hosts`.** Each entry is a host name (`api.example.com`), a host name with a port (`api.example.com:8443`) or `*.example.com` for subdomains. Up to 100 entries. IP addresses are refused. Port 443 is used when no port is given.
 - **Limits.** Each limit holds for the workspace only:
   - `max_concurrent`: no new job of the workspace starts while it has that many running. The account limits still apply on top.
   - `monthly_budget_usd`: no new run of the workspace starts once the cost of its runs this calendar month (UTC) reaches the limit. The run waits with "waiting — the workspace's monthly budget" and starts again in the next month. This limit is not checked when `cost_limits` is off.
@@ -8111,8 +8165,9 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf eval help [--live]` | Check Ask SCF against its fixed scenarios; without `--live` no model is called |
 | `scf clean [--older-than 7] [--purge] [--dry-run] [--evidence-older-than days]` | Remove old run workspaces. With `--evidence-older-than` it also removes the evidence of the cleaned runs that ended at least that many days ago ([Evidence of a run](#evidence-of-a-run)). With `--purge` it also removes plan records (see below) older than the larger of 90 days and `--older-than` |
 | `scf user create [--admin] [--name n] [--email e]` | Create an account. The first one needs `--admin`. Name and e-mail are asked for on a terminal |
-| `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one (never shows passwords, hashes or links) |
-| `scf user role <e-mail> admin\|user` | Change the role of an account (not the last admin); counts from the next call |
+| `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one, `provider` for an account of the identity provider, `break-glass` for the emergency local admin (never shows passwords, hashes or links) |
+| `scf user role <e-mail> admin\|user` | Change the role of an account (not the last admin); counts from the next call. A change to `user` removes the break-glass mark |
+| `scf user break-glass <e-mail> on\|off` | Mark the one local admin that may sign in with a password while an identity provider is active, or remove the mark. Only an active admin with a password can be marked; marking another account moves the mark. Writes one audit line per changed account |
 | `scf user password <e-mail>` | Set a new password and sign the account out; also for an account without a password (its link ends) |
 | `scf user block <e-mail> [--stop-work]` / `scf user unblock <e-mail>` | Block (and sign out) or unblock an account (not the last admin). Queued jobs are cancelled; `--stop-work` also cancels running and waiting runs |
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |
@@ -8770,6 +8825,26 @@ When the task has the part "The person's own way", the first way works out that 
 - **Definition of Ready per repository.** Open the repository (Repositories → **All** → **Open**) and press **Edit Definition of Ready** in the section Run settings. Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
 - **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on the Models page for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
 - **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the Runs list (click the mark to open the session), in the dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
+
+### Ask for a change (API)
+
+One change request carries your words from the first question to the finished stories. Start it with `POST /api/changes` and `{ "repo": "owner/name", "text": "…" }` (text at most 10,000 characters). You may add `"pictures"`: up to 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, checked by their content. The architect reads them as files `pictures/1.png` and so on. The architect then runs by itself: it reads the project, asks a round of questions in plain words, and writes the cards. A round without questions goes straight to the cards.
+
+Read the request with `GET /api/changes/:id` (or `GET /api/changes?repo=…` for the list). The `state` tells you what to do next:
+
+- `thinking`: the architect is working. Ask again later.
+- `questions`: answer every question of the round at once with `POST /api/changes/:id/answers`. Each question has its options and a recommended one.
+- `cards`: the drafts, each with a title, the sentence "This is what I understood" and its criteria. Change a card with `PUT /api/changes/:id/cards/:did`.
+- `planned`: the cards are published. Nothing more to do here.
+- `stuck`: the architect could not finish. `POST /api/changes/:id/retry` starts the step again.
+
+Then choose once:
+
+- **Yes, build this** (`POST /api/changes/:id/build`) publishes every card with the build label: `Factory_go` on GitHub, state `go` on a local project.- **Not now** (`POST /api/changes/:id/later`) publishes every card without the build label. The request is then `planned`. A later call to `build` adds the label to its stories.
+
+Both choices publish every card that has a title and is not a split original. They do not check the Definition of Ready; the build's own plan step still checks each story. Only the owner of the request can act on it.
+
+With pictures, each story gets a `### Pictures` part. On a local project the copies are kept in `.scf/stories/pictures/<key>/<n>.<ext>` and linked from the story, in the same commit; on GitHub nothing is uploaded and the part describes each picture in words. A request whose pictures have no sentence yet (made before this change) answers 409 with nothing written; run `understand` again first. A request without pictures publishes as before.
 
 ---
 

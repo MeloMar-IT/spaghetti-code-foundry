@@ -1,14 +1,15 @@
 import { basename } from "node:path";
 import { AppReposError, getAppRepos, setAppRepos } from "../auth/app-repos.js";
 import { auditAction } from "../auth/audit.js";
-import { viewOf } from "../auth/views.js";
+import { isView, viewOf } from "../auth/views.js";
 import { checkLimitsPatch, getLimits, setDefaultLimits, setUserLimits, type LimitsChange } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import {
   UserError, checkEmail, checkName, createUserWithLink, deleteUser, listUsers, getUser, newPasswordLink, resetPassword, setStatus, updateUser, type PublicUser, type UserErrorCode,
 } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
-import { architectRunsOf, cancelReads } from "../refinement/architect.js";
+import { removeRunPictureCopies } from "../engine/workspace.js";
+import { architectRunsOf, cancelReads, pictureWorkdirsOf } from "../refinement/architect.js";
 import { cancelAccountNow } from "./account-work.js";
 import { throttlesOf } from "./api-auth.js";
 import { OLD_KEY_LEFT } from "./api-credentials.js";
@@ -18,7 +19,7 @@ import type { ApiContext, Route } from "./server.js";
 const INTERNAL = "the account list is not working; see the server log";
 const STATUS: Record<UserErrorCode, number> = {
   "bad-name": 400, "bad-email": 400, "bad-password": 400, "bad-role": 400, "email-taken": 409, "admin-exists": 409, "not-found": 404, "last-admin": 409, "has-password": 409,
-  "wrong-password": 403, "no-password": 409, "bad-limits": 400,
+  "wrong-password": 403, "no-password": 409, "bad-limits": 400, "provider-account": 409,
 };
 
 /** Turns an error into a 4xx for input problems; anything else is logged (file and kind, never a path or value) and answered with a plain 500. */
@@ -64,11 +65,11 @@ function runCounts(ctx: ApiContext): Map<string, number> {
   return counts;
 }
 
-/** The account as the API shows it: eleven fields picked one by one, never a hash or a token. */
+/** The account as the API shows it: eleven or twelve fields picked one by one (`provider` only for a provider account), never a hash or a token. */
 function view(ctx: ApiContext, u: PublicUser, runs: number, hasPassword: boolean) {
   const until = throttlesOf(ctx).accounts.lockedUntilOf(u.email);
   const lockedUntil = until === undefined ? null : new Date(until).toISOString();
-  return { id: u.id, name: u.name, email: u.email, role: u.role, view: viewOf(u), status: u.status, created: u.created, lastSignIn: u.lastSignIn, runs, hasPassword, lockedUntil };
+  return { id: u.id, name: u.name, email: u.email, role: u.role, view: viewOf(u), status: u.status, created: u.created, lastSignIn: u.lastSignIn, runs, hasPassword, lockedUntil, ...(u.source === "provider" ? { provider: true } : {}) };
 }
 
 /** Cancels the account's work at once; a queue.json that cannot be written is logged in fixed words only. */
@@ -102,7 +103,8 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       const name = checkName(body.name as string);
       const email = checkEmail(body.email as string);
       if (body.role !== "admin" && body.role !== "user") throw new UserError("bad-role", "the role must be admin or user");
-      return createUserWithLink({ name, email, role: body.role }, { by });
+      if (body.view !== undefined && !isView(body.view)) throw new UserError("bad-role", "view must be simple, advanced or admin");
+      return createUserWithLink({ name, email, role: body.role, ...(body.view !== undefined ? { view: body.view } : {}) }, { by });
     });
     return send(res, 201, { user: view(ctx, r.user, 0, false), token: r.token, expires: r.expires }), true;
   }
@@ -194,6 +196,8 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "DELETE") {
     // The architect's reads of the account's sessions: running and paused ones are cancelled once the account is gone.
     const reads = guardedUsers(ctx, () => architectRunsOf(id));
+    // the workspaces of the account's runs with pictures, listed before their sessions go
+    const copies = guardedUsers(ctx, () => pictureWorkdirsOf({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, id));
     let r;
     try {
       r = guardedUsers(ctx, () => deleteUser(id, { by }));
@@ -201,6 +205,7 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       ctx.watchers.sync(); // also after a half-finished delete: the repositories and their watchers may be gone
     }
     cancelReads({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, reads);
+    removeRunPictureCopies(copies); // runs still going remove their copy when they end (settleFinished)
     const cancelled = cancelNow(ctx, id, "deleted");
     if (r.oldKeysLeft) {
       log?.(`users: ${r.oldKeysLeft} old key(s) still in the Keychain; run scf credential rotate-key`);

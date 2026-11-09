@@ -9,7 +9,7 @@ import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
 import { FACTORY_HOME } from "../flow/load.js";
-import { claimRunStart } from "../home.js";
+import { claimRunStart, workspaceHome } from "../home.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { CANNOT_READ, hideKeyVars, redactText, requireRedaction } from "../credentials/redact.js";
 import { stepRepoOps, type Flow, type Step } from "../flow/schema.js";
@@ -34,8 +34,8 @@ import { codexLoginReturnLine } from "../agents/codex-home.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
-import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
-import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
+import { heldWorkspace, stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
+import { readPlainFile, runSandbox } from "./os-sandbox.js";
 import { localRepoEnv, removeSignInDir } from "./repo-access.js";
 import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
@@ -44,7 +44,7 @@ import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
-import { prepareWorkspace } from "./workspace.js";
+import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
@@ -107,6 +107,8 @@ export interface RunOptions extends CommonOptions {
   vars?: Record<string, string>;
   /** `vars` is the final set: the folder's own settings are not read (they were applied when the run was queued). */
   frozenVars?: boolean;
+  /** Files copied into the workspace right after it is made (only server code sets this; a failure ends the run with INPUT_FILES_MISSING). */
+  files?: RunInputFile[];
   /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
   workspace?: string;
   /** Tests only: called after the run folder is reserved, before the id is looked for in the other runs folders. */
@@ -165,11 +167,14 @@ export function decideTechnicalEnv(githubRepo: string | undefined, records: () =
 }
 
 /** The learnings file of a run. Without a usable `github_repo` the key is the folder name; a user's account then gets its own file. */
-export function learningsFile(vars: Record<string, string>, repo: string, account?: string): string {
+export function learningsFile(vars: Record<string, string>, repo: string, account?: string, workspace?: string): string {
   const named = vars.github_repo && vars.github_repo !== "owner/repo";
   const key = named ? vars.github_repo : basename(repo);
   const suffix = !named && account ? `__${account}` : "";
-  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "learnings", `${`${key}${suffix}`.replace(/[^\w.-]+/g, "__")}.md`);
+  const file = `${`${key}${suffix}`.replace(/[^\w.-]+/g, "__")}.md`;
+  // a team's notes lie in the team's folder, so two teams on the same repository do not share them (#785); throws for a bad id
+  if (heldWorkspace(workspace)) return join(workspaceHome(workspace!), "learnings", file);
+  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "learnings", file);
 }
 
 /** The variables of a run: the flow's defaults, then the folder's own settings (not for an empty workspace), then the given ones. */
@@ -197,14 +202,16 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
 
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
-  const refused = workspaceRefused(flow.workspace, owner) ?? skillWriteRefused(flow.name, owner);
+  const earlyRefused = workspaceRefused(flow.workspace, owner, opts.workspace) ?? skillWriteRefused(flow.name, owner);
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
-  const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
+  const vars = earlyRefused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
   // the flow's own `workspace` setting plays no part: "empty" only means "no checkout" (#816)
   const workspace = validWorkspaceId(opts.workspace) ? opts.workspace : workspaceForJob({ githubRepo: vars.github_repo, owner });
   // a workspace that is not in the list is read-only: nothing is written for a new run
   if (!knownWorkspace(workspace)) throw new Error(WORKSPACE_REMOVED);
+  // a team's run (also one whose workspace came from the repository) never works in the server's folder or a branch of it
+  const refused = earlyRefused ?? workspaceRefused(flow.workspace, owner, workspace);
   const runDir = join(workspaceRunsDir(opts.runsDir, workspace), runId);
   const summary: RunSummary = {
     runId,
@@ -280,6 +287,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     } catch {
       // not a git checkout yet (e.g. empty workspace)
     }
+    if (opts.files?.length) copyInputFiles(ws.workdir, opts.files);
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: null, lastOutput: "" });
   }
@@ -417,10 +425,10 @@ async function drive(
     if (pluginBefore) return finish(summary, opts, config, { outcome: "stopped", reason: pluginBefore, next: resume?.startAt ?? summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
-  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner) ?? skillWriteRefused(summary.flowDef?.name, summary.owner);
+  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner, summary.workspace) ?? skillWriteRefused(summary.flowDef?.name, summary.owner);
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
-  // a user's run that cannot be held in an OS sandbox never runs a step (also on resume), unless an admin allowed it
-  const sandbox = sandboxedRun(summary.owner, config);
+  // a user's run that cannot be held in an OS sandbox never runs a step (also on resume), unless an admin allowed it; a team's run always needs it
+  const sandbox = runSandbox(summary, config);
   if (typeof sandbox === "object") return finish(summary, opts, config, { outcome: "failed", reason: sandbox.refused, next: summary.state.next, lastOutput: "" });
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
@@ -437,7 +445,7 @@ async function drive(
     saveRun(summary);
     opts.onUpdate?.(summary);
   };
-  const lf = learningsFile(summary.vars, summary.repo, userAccount(summary.owner));
+  let lf: string;
 
   // The bot's name and token, asked once per run; only shell steps get the token (agent steps get the name only).
   let botOnce: Promise<Record<string, string>> | undefined;
@@ -445,6 +453,7 @@ async function drive(
   const task = taskWithAnswers(summary);
   let baseEnv: Record<string, string>;
   try {
+    lf = learningsFile(summary.vars, summary.repo, userAccount(summary.owner), summary.workspace);
     baseEnv = {
       FACTORY_TASK: task,
       FACTORY_RUN_ID: summary.runId,
@@ -468,7 +477,7 @@ async function drive(
     // fails before any step, as before, when the run starts with the machine's login and has a step that uses the token
     // (shell, or a sub-flow whose steps are not known yet) — unless a mandatory policy cannot be used: then every step
     // with that login is denied, and no token is fetched at all
-    if (!stepIsolated(summary.owner, summary.vars.github_repo) && !policy.mandatoryUnusable && flowUsesBot(summary.flowDef)) await botEnv();
+    if (!stepIsolated(summary.owner, summary.vars.github_repo, summary.workspace) && !policy.mandatoryUnusable && flowUsesBot(summary.flowDef)) await botEnv();
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: summary.state.next, lastOutput: "" });
   }
@@ -804,7 +813,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     if (costsMoney && (overRun || overDay || overUser) && !engine.budgetFallback) {
       // in a user's boxed run only a local model is free: Codex there is paid by key
-      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free && (sandboxedRun(summary.owner, config) !== "on" || freeWhenBoxed(t)))[0] : undefined;
+      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free && (runSandbox(summary, config) !== "on" || freeWhenBoxed(t)))[0] : undefined;
       if (free) {
         engine.budgetFallback = free;
         engine.log(`⚠ ${overRun ? "run" : overDay ? "daily" : "the owner's daily"} budget reached — agent steps continue on ${free.label}`);

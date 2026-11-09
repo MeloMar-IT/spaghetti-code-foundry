@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { removeCredentialsLocked } from "../credentials/store.js";
-import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent } from "./audit.js";
+import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent, type PreparedAudit } from "./audit.js";
 import { COMMON_PASSWORDS } from "./common-passwords.js";
 import { checkRefinements, removeRefinementsLocked } from "../refinement/store.js";
 import { checkHelp, removeHelpLocked } from "../help/store.js";
@@ -11,10 +11,11 @@ import { removeProgressLocked } from "../onboarding/progress-store.js";
 import { removeLimitsLocked } from "./limits.js";
 import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
 import { addSessionLocked, removeSessionsLocked, sessionId } from "./sessions.js";
+import { WORKSPACE_ID_RE } from "../workspaces/list.js";
 import { ViewSchema, viewsFor, type View } from "./views.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 
-export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits";
+export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits" | "provider-account";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class UserError extends Error {
@@ -26,6 +27,12 @@ export class UserError extends Error {
     this.name = "UserError";
   }
 }
+
+/** Why a password or profile action is refused on a mirror account of the identity provider. */
+export const PROVIDER_ACCOUNT = "this account signs in through the identity provider; change it there";
+const noProvider = (u: { source?: "provider" }) => {
+  if (u.source === "provider") throw new UserError("provider-account", PROVIDER_ACCOUNT);
+};
 
 export const usersPath = () => join(dataHome(), "users.json");
 
@@ -118,6 +125,12 @@ const UserSchema = z
     stopWork: z.uuid().optional(),
     /** The view the account chose; missing means the default of its role. */
     view: ViewSchema.optional(),
+    /** "provider": a mirror of an account of the identity provider (#833). It has no password. */
+    source: z.literal("provider").optional(),
+    /** The one workspace of a provider account. */
+    workspace: z.string().regex(WORKSPACE_ID_RE).optional(),
+    /** The one local admin that may sign in with a password while an identity provider is active; set only by `scf user break-glass`. */
+    breakGlass: z.literal(true).optional(),
   })
   .strict();
 
@@ -128,8 +141,13 @@ const FileSchema = z
     const ids = new Set<string>();
     const emails = new Set<string>();
     const links = new Set<string>();
+    let marks = 0;
     f.users.forEach((u, i) => {
+      if (u.breakGlass && u.source === "provider") ctx.addIssue({ code: "custom", message: "break-glass on provider", path: ["users", i, "breakGlass"] });
+      if (u.breakGlass && ++marks > 1) ctx.addIssue({ code: "custom", message: "second break-glass", path: ["users", i, "breakGlass"] });
       if (u.passwordHash !== undefined && u.passwordLink) ctx.addIssue({ code: "custom", message: "hash and link", path: ["users", i, "passwordLink"] });
+      if (u.source === "provider" && (u.passwordHash !== undefined || u.passwordLink)) ctx.addIssue({ code: "custom", message: "provider with password", path: ["users", i, "source"] });
+      if (u.workspace !== undefined && u.source !== "provider") ctx.addIssue({ code: "custom", message: "workspace without provider", path: ["users", i, "workspace"] });
       if (u.passwordLink) {
         if (links.has(u.passwordLink.id)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["users", i, "passwordLink", "id"] });
         links.add(u.passwordLink.id);
@@ -143,9 +161,14 @@ const FileSchema = z
 
 export type User = z.infer<typeof UserSchema>;
 export type PublicUser = Omit<User, "passwordHash" | "passwordLink">;
-type UsersFile = z.infer<typeof FileSchema>;
+export type UsersFile = z.infer<typeof FileSchema>;
 
 const read = (): UsersFile => readJsonFile(usersPath(), FileSchema, { version: 1, users: [] });
+export const readUsersFile = read;
+/** Writes users.json. Only inside withAuthLock. */
+export function writeUsersFileLocked(file: UsersFile): void {
+  writeJsonFile(usersPath(), file);
+}
 
 export function listUsers(): User[] {
   return read().users;
@@ -158,12 +181,16 @@ export const findUserByEmail = (email: string): User | undefined => {
   return listUsers().find((u) => u.email === e);
 };
 
-/** True when any admin exists, blocked or not. */
-export const hasAdmin = (): boolean => listUsers().some((u) => u.role === "admin");
+/** True when any local admin exists, blocked or not. Mirror accounts of an identity provider do not count. */
+export const hasAdmin = (): boolean => listUsers().some((u) => u.role === "admin" && u.source !== "provider");
 
 /** The admin account that was created first, blocked or not. Undefined when there is none. */
 export const firstAdmin = (): User | undefined =>
   listUsers().filter((u) => u.role === "admin").sort((a, b) => Date.parse(a.created) - Date.parse(b.created))[0];
+
+/** The one rule for the break-glass account: marked, local, an active admin with a password. Anything else does not count. */
+export const isBreakGlass = (u: User): boolean =>
+  u.breakGlass === true && u.source !== "provider" && u.role === "admin" && u.status === "active" && u.passwordHash !== undefined;
 
 export function publicUser(u: User): PublicUser {
   const { passwordHash: _hash, passwordLink: _link, ...rest } = u;
@@ -197,7 +224,7 @@ export async function createUser(input: NewUser, opts: { onlyIfNoAdmin?: boolean
   };
   return withAuthLock(() => {
     const file = read();
-    if (opts.onlyIfNoAdmin && file.users.some((u) => u.role === "admin")) throw new UserError("admin-exists", "an admin account exists already");
+    if (opts.onlyIfNoAdmin && file.users.some((u) => u.role === "admin" && u.source !== "provider")) throw new UserError("admin-exists", "an admin account exists already");
     if (file.users.some((u) => u.email === email)) throw new UserError("email-taken", "an account with that e-mail exists already");
     audited(opts.bySelf ? user.id : opts.by, { action: "create", userId: user.id }, () => writeJsonFile(usersPath(), { ...file, users: [...file.users, user] }));
     return user;
@@ -218,6 +245,7 @@ export interface UserChanges {
 const LAST_ADMIN = "this is the only admin that is not blocked; make another admin first";
 // An admin that has no password yet cannot sign in, so it does not count as another admin.
 const isLastAdmin = (users: User[], u: User) =>
+  u.source !== "provider" &&
   u.role === "admin" &&
   u.status === "active" &&
   !users.some((o) => o.id !== u.id && o.role === "admin" && o.status === "active" && o.passwordHash !== undefined);
@@ -272,6 +300,7 @@ export async function setPassword(id: string, password: string, opts: ChangeOpti
   return change(
     id,
     (u) => {
+      noProvider(u);
       const { passwordLink: _link, ...rest } = u;
       return { next: { ...rest, passwordHash }, event: { action: "password" } };
     },
@@ -287,6 +316,7 @@ export async function changePassword(id: string, current: string, password: stri
   checkPassword(password);
   const u = getUser(id);
   if (!u) throw new UserError("not-found", "no such account");
+  noProvider(u);
   const stored = u.passwordHash;
   const fits = typeof current === "string" && current.length <= PASSWORD_MAX;
   const ok = stored !== undefined && fits && (await verifyPassword(current, stored));
@@ -295,6 +325,7 @@ export async function changePassword(id: string, current: string, password: stri
   return change(
     id,
     (cur) => {
+      noProvider(cur);
       if (cur.passwordHash !== stored) throw new UserError("wrong-password", "the current password is wrong");
       const { passwordLink: _link, ...rest } = cur;
       return { next: { ...rest, passwordHash }, event: { action: "password" } };
@@ -322,13 +353,24 @@ function makeLink(now = Date.now()): { token: string; link: { id: string; expire
 }
 
 /** Creates an account without a password and a one-time link to set it. */
-export async function createUserWithLink(input: { name: string; email: string; role?: "admin" | "user" }, opts: ChangeOptions = {}): Promise<LinkResult> {
+export async function createUserWithLink(input: { name: string; email: string; role?: "admin" | "user"; view?: View }, opts: ChangeOptions = {}): Promise<LinkResult> {
   const name = checkName(input.name);
   const email = checkEmail(input.email);
   const role = input.role ?? "user";
   if (role !== "admin" && role !== "user") throw new UserError("bad-role", "the role must be admin or user");
+  if (input.view !== undefined && !viewsFor(role).includes(input.view)) throw new UserError("bad-role", "this view is not open to this role");
   const { token, link } = makeLink();
-  const user: User = { id: randomUUID(), name, email, role, status: "active", passwordLink: link, created: new Date().toISOString(), lastSignIn: null };
+  const user: User = {
+    id: randomUUID(),
+    name,
+    email,
+    role,
+    ...(input.view !== undefined ? { view: input.view } : {}),
+    status: "active",
+    passwordLink: link,
+    created: new Date().toISOString(),
+    lastSignIn: null,
+  };
   return withAuthLock(() => {
     const file = read();
     if (file.users.some((u) => u.email === email)) throw new UserError("email-taken", "an account with that e-mail exists already");
@@ -343,10 +385,12 @@ export async function newPasswordLink(id: string, opts: ChangeOptions = {}): Pro
   const user = change(
     id,
     (u) => {
+      noProvider(u);
       if (u.passwordHash !== undefined) throw new UserError("has-password", "this account has a password already");
-      return { next: { ...u, passwordLink: link }, event: { action: "link" } };
+      const { breakGlass: _bg, ...rest } = u;
+      return { next: { ...rest, passwordLink: link }, event: { action: "link" } };
     },
-    { by: opts.by },
+    { endSessions: true, by: opts.by },
   );
   return { user: publicUser(user), token, expires: link.expires };
 }
@@ -360,9 +404,10 @@ export async function resetPassword(id: string, opts: ChangeOptions = {}): Promi
   const user = change(
     id,
     (u, all) => {
+      noProvider(u);
       if (u.passwordHash === undefined) throw new UserError("no-password", "this account has no password; make a new link instead");
       if (isLastAdmin(all, u)) throw new UserError("last-admin", LAST_ADMIN);
-      const { passwordHash: _hash, ...rest } = u;
+      const { passwordHash: _hash, breakGlass: _bg, ...rest } = u;
       return { next: { ...rest, passwordLink: link }, event: { action: "reset" } };
     },
     { endSessions: true, by: opts.by },
@@ -440,16 +485,54 @@ export async function updateUser(id: string, changes: UserChanges, opts: ChangeO
   return change(
     id,
     (u, all) => {
+      noProvider(u);
       if (email !== undefined && all.some((o) => o.id !== id && o.email === email)) {
         throw new UserError("email-taken", "an account with that e-mail exists already");
       }
       if (role !== undefined && role !== "admin" && isLastAdmin(all, u)) throw new UserError("last-admin", LAST_ADMIN);
-      const next: User = { ...u, name: name ?? u.name, email: email ?? u.email, role: role ?? u.role };
+      const { breakGlass: _bg, ...plain } = u;
+      const kept = (role ?? u.role) === "user" ? plain : u; // a plain user cannot hold the break-glass mark
+      const next: User = { ...kept, name: name ?? u.name, email: email ?? u.email, role: role ?? u.role };
       if (next.name === u.name && next.email === u.email && next.role === u.role) return undefined;
       return { next, event: next.role !== u.role ? { action: "role", oldRole: u.role, newRole: next.role } : { action: "edit" } };
     },
     { by: opts.by },
   );
+}
+
+/**
+ * Marks (or unmarks) the break-glass account. Marking needs an active local admin with a password and clears the mark
+ * of every other account. Nothing is written when nothing changes. Each changed account is one `edit` line (with `by`).
+ */
+export function setBreakGlass(id: string, on: boolean, opts: ChangeOptions = {}): { user: User; cleared: User[]; changed: boolean } {
+  return withAuthLock(() => {
+    const file = read();
+    const u = file.users.find((o) => o.id === id);
+    if (!u) throw new UserError("not-found", "no such account");
+    if (on) {
+      noProvider(u);
+      if (u.role !== "admin") throw new UserError("bad-role", "only an admin can be the break-glass account");
+      if (u.status !== "active") throw new UserError("bad-role", "a blocked account cannot be the break-glass account; unblock it first");
+      if (u.passwordHash === undefined) throw new UserError("no-password", "this account has no password; set one first: scf user password <e-mail>");
+    }
+    const cleared = on ? file.users.filter((o) => o.id !== id && o.breakGlass) : [];
+    const flips = (u.breakGlass === true) !== on;
+    if (!flips && !cleared.length) return { user: u, cleared: [], changed: false };
+    const strip = ({ breakGlass: _bg, ...rest }: User): User => rest;
+    const users = file.users.map((o) => (o.id === id ? (on ? { ...o, breakGlass: true as const } : strip(o)) : on && o.breakGlass ? strip(o) : o));
+    // one `edit` line per changed account, all prepared before the file changes; without `by` there is no line
+    const by = opts.by;
+    const ids = [...(flips ? [id] : []), ...cleared.map((o) => o.id)];
+    const logs: PreparedAudit[] = [];
+    try {
+      if (by !== undefined) for (const userId of ids) logs.push(prepareAuditLocked(by, { action: "edit", userId }));
+      writeJsonFile(usersPath(), { ...file, users });
+      for (const log of logs) log.write();
+    } finally {
+      for (const log of logs) log.close();
+    }
+    return { user: users.find((o) => o.id === id)!, cleared: cleared.map(strip), changed: true };
+  });
 }
 
 // ---- sign-in ---------------------------------------------------------------------------------------
@@ -486,7 +569,7 @@ export function startSession(
   userId: string,
   verifiedHash: string | undefined,
   replaces?: string,
-  opts: { audit?: boolean } = {},
+  opts: { audit?: boolean; breakGlass?: boolean } = {},
 ): { user: User; token: string; auditFailed?: true } | undefined {
   return withAuthLock(() => {
     const file = read();
@@ -494,6 +577,18 @@ export function startSession(
     const current = file.users[i];
     if (!current || verifiedHash === undefined || current.passwordHash !== verifiedHash || current.status !== "active") return undefined;
     const user: User = { ...current, lastSignIn: new Date().toISOString() };
+    if (opts.breakGlass) {
+      if (!isBreakGlass(current)) return undefined;
+      // the audit line is required and comes first: if it cannot be written, nothing changes
+      const log = prepareAuditLocked(userId, { action: "sign-in", result: "ok", target: "break-glass" });
+      try {
+        log.write();
+        writeJsonFile(usersPath(), { ...file, users: file.users.map((u, j) => (j === i ? user : u)) });
+        return { user, token: addSessionLocked(userId, replaces) };
+      } finally {
+        log.close();
+      }
+    }
     writeJsonFile(usersPath(), { ...file, users: file.users.map((u, j) => (j === i ? user : u)) });
     const token = addSessionLocked(userId, replaces);
     if (!opts.audit) return { user, token };
