@@ -21,9 +21,9 @@ export interface HelpDoc {
 }
 
 const AU: readonly HelpRole[] = ["admin", "user"];
-/** The approved documents. A chapter about settings, models, costs, watchers, accounts or the monitor is not for a user. */
+/** The approved documents (chapter 15 is the guide for people who do not write code).A chapter about settings, models, costs, watchers, accounts or the monitor is not for a user. */
 export const HELP_DOCS: readonly HelpDoc[] = [
-  { path: "docs/USER_GUIDE.md", title: "User guide", roles: AU, userChapters: [1, 2, 3, 10, 12, 14] },
+  { path: "docs/USER_GUIDE.md", title: "User guide", roles: AU, userChapters: [1, 2, 3, 10, 12, 14, 15] },
   { path: "docs/FLOW_AUTHORING.md", title: "Flow authoring reference", roles: ["admin"] },
 ];
 

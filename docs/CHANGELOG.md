@@ -4,6 +4,9 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Getting started guide, part 1 (#610, part of #594). The Ask SCF help index lists chapter 15 of `docs/USER_GUIDE.md` ("Getting started without being a developer") for user accounts as well as admins: `userChapters` in `src/help/docs.ts` now includes 15, and `tests/help-docs.test.ts` checks it. The chapter itself, the website how-to pages, the home page section, the README link and the Simple-view screenshots are not written yet, so until chapter 15 exists Ask SCF has nothing to show for it.
+  - **Code.** `src/help/docs.ts`.
+  - **Tests.** `tests/help-docs.test.ts`.
 - Ask for a change, part 5b: pictures in the published stories (#836, part 2 of 2 of #814; epic #594). The architect's `understand` run writes one plain sentence for each picture of a request. `tools/refine-round-check` checks it: exactly one line and one sentence, at most 300 characters, no link, image, HTML or URL; a wrong count or form fails the run. The sentences are kept with the session (`pictures[].about`), and a later run replaces them. Publishing (**Yes, build this**, **Not now**, or the publish API) adds a `### Pictures` part to every story of the request:
   - **Local project.** Each picture is copied to `.scf/stories/pictures/<key>/<n>.<ext>` and the story links to its copy. The copies go in the same `scf/stories` commit as the story. Before anything is written, the store checks the folder and each existing copy (a real folder, a plain file with the same bytes); a bad name, a link or a changed copy is refused and nothing is written.
   - **GitHub project.** The story says how many pictures were added and gives each sentence as plain text. Nothing is uploaded to GitHub or to any other host; `GitHubStore.create` refuses `files` without calling `gh`.
