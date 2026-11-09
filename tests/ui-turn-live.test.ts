@@ -74,7 +74,7 @@ describe("renderYourTurn live states", () => {
     const q = ui.renderYourTurn(emb, { embedded: true });
     await flush();
     expect(emb.all("div").some((d) => d.attrs.class?.startsWith("skeleton"))).toBe(true);
-    expect(emb.all("h2")[0]!.textContent).toBe("Needs you");
+    expect(emb.all("h2")[0]!.textContent).toBe("Your turn");
     calls.shift()!.answer(data([]));
     cleanups.push(await q);
   });

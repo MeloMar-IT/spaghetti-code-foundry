@@ -396,6 +396,17 @@ a.btn.primary:hover { filter: brightness(1.06); }
 details.home-section > summary { cursor: pointer; font-weight: 600; }
 .home .since { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: var(--space-xl); }
 .home-ask { margin-bottom: var(--space-xl); }
+.today-summary { margin: 0 0 var(--space-lg); color: var(--muted); }
+.today-attention, .today-building, .today-finished, .today-list { margin-bottom: var(--space-xl); }
+.today-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-md); }
+.today-card { display: grid; gap: var(--space-sm); }
+.today-card h3 { margin: 0; }
+.today-cause > summary { cursor: pointer; color: var(--muted); }
+.today-counters ul { list-style: none; margin: 0 0 var(--space-xl); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.today-counter { display: flex; flex-direction: column; padding: var(--space-md); border: 1px solid var(--border); border-radius: var(--radius); text-decoration: none; }
+.today-count { font-size: var(--text-page); font-weight: 600; }
+.today-building ul, .today-finished ul, .today-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.today-building h3 { margin: 0; font-size: var(--text-body); }
 
 /* Status names with a "?" (ui/next.js) */
 .help { display: contents; }

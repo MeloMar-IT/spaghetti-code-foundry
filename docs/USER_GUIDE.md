@@ -147,7 +147,7 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 
 **Search.** The **Search** button in the top bar, Ctrl/⌘+K (also from a form field) or `/` opens a box with a list under it. With no text it shows **Recent**, **Go to** (pages) and **Actions**. With text it also shows what the server finds: runs, repositories, refinement sessions and flows, and for admins issues. A user sees only their own things and the flows they can start; an admin sees all accounts. A result shows its title and, when known, its status, repository, owner and last activity. Search only opens things: a page, a run, **Start work**, **New refinement session**. It changes nothing. A flow result on the user display opens Start work with that flow chosen (what you typed is kept); a repository result opens the list with that row selected. Recent items are kept in this browser, for each account, as ids only (no titles, 8 at most), and are shown only if the server still lets you see them. In a view-as preview there are no recent items and no "New refinement session". If search is not available, the box says so and pages still work. The single-key shortcuts never act inside form fields or while a dialog or the menu is open. A checkbox in Search switches them off for this browser; Ctrl/⌘+K always works.
 
-**Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive. The Board also keeps its scroll, up and down and sideways, when it redraws, and shows "Updated HH:MM". If a refresh fails, the cards stay and a message says "Could not refresh. Showing data from …" with a Retry button; the next good refresh removes it. A hidden browser tab makes no requests; when you come back, the Board refreshes once. On the admin Home, Needs you and Active refresh on their own, so one failing does not stop the other, and each has its own Retry. If only the health request fails, Problems keep the last answer and show "Problems could not be refreshed. Showing the last answer." until the next good answer.
+**Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive. The Board also keeps its scroll, up and down and sideways, when it redraws, and shows "Updated HH:MM". If a refresh fails, the cards stay and a message says "Could not refresh. Showing data from …" with a Retry button; the next good refresh removes it. A hidden browser tab makes no requests; when you come back, the Board refreshes once. On the admin Home, Your turn (Needs you) and Today refresh on their own, so one failing does not stop the other, and each has its own Retry. If only the health request fails, Problems keep the last answer and show "Problems could not be refreshed. Showing the last answer." until the next good answer.
 
 **Under the top bar of the admin page** (not on the user display) is the health line. It says "All good", or names what is wrong with the
 Foundry itself, and on the right when each repository was last checked.
@@ -628,15 +628,16 @@ scf run release-build --repo owner/repo --ref v2.4.0
 
 ### Home
 
-**Home** is the first page. The top shows the counts (for example "2 need you · 1 active") and one button, the best next step: the first thing that needs you, then a problem, then a run that is active, else **Start work**.
+**Home** is the first page, called **Today**. It has the same layout in Simple, Advanced and Admin. It starts with a greeting ("Good morning", "Good afternoon" or "Good evening") and one summary line, for example "1 thing needs you, 1 change is being built, 3 finished today". With nothing to say it reads "Nothing needs you".
 
-- **Needs you:** the same list as [Your turn](#your-turn).
-- **Active:** work that is running or queued. Each row says what happens next.
-- **Problems (admin):** problems of the Foundry that Needs you does not already show.
-- **Recently completed:** closed until you open it.
+- **Attention cards:** at most one card for each item that needs you. The card shows the change's own title (the issue title), one sentence on what happened and what it means, and one main button. **See what happened** opens the technical cause. Items that are closed on GitHub, put aside with **Not now**, or finished as a split are not shown as needing you.
+- **Four counters:** **Waiting**, **Building**, **Needs your check** and **Finished today**. Each one opens its filtered list.
+- **Building now:** the five-phase strip (**Understand**, **Plan**, **Build**, **Check**, **Deliver**) and one sentence on what is happening now.
+- **Finished recently:** plain titles, with **Show all** for the rest.
+- **Your turn:** the admin Home lists the same items as [Your turn](#your-turn), with their buttons.
+- **Problems (admin):** problems of the Foundry that Your turn does not already show. Admin keeps its extra panels below Today: **Since you last looked**, **Problems** and **Metrics**.
 - **Metrics (admin):** closed until you open it; a link goes to the Dashboard (Administration → Dashboard).
-- **Each row:** one main button and a **Details** link to the run. A section shows 5 rows and "+n more".
-- **Empty and all clear:** with nothing yet, Home offers **Start work**; when nothing needs you it says "Nothing needs you."
+- **Empty:** with nothing yet, Today offers **Start work**.
 - **Users** see only their own work: no cost, model, health or other accounts.
 
 Home asks again every 30 seconds.
