@@ -1,6 +1,7 @@
 import { listAllRepos, type RepoRecord } from "../auth/repos.js";
 import { tryParseRepoUrl } from "../auth/repo-url.js";
 import { loadConfig } from "../config.js";
+import type { AppPermissions } from "../github-app.js";
 import { appTokenAccess, type AppTokenResult } from "../engine/repo-access.js";
 import { ACCESS_NOT_APP, ACCESS_NOT_REGISTERED, accessProblem, accessRecord } from "../skills/source-access-rules.js";
 import type { SkillLibrarySource } from "../skills/sources.js";
@@ -17,10 +18,10 @@ export const ACCESS_CHANGED = "the source now names another repository or access
 
 type Token = typeof appTokenAccess;
 
-/** A source with no `access` gives `{ ok: true }` and reads nothing. Otherwise a new, repository-limited, read-only token. */
+/** A source with no `access` gives `{ ok: true }` and reads nothing. Otherwise a new, repository-limited token: read-only by default, or with the permissions asked for (`issues: write` opens issues). */
 export async function sourceCredential(
   source: Pick<SkillLibrarySource, "repositoryKey" | "access">,
-  o: { repos?: () => readonly RepoRecord[]; token?: Token; config?: () => ReturnType<typeof loadConfig> } = {},
+  o: { repos?: () => readonly RepoRecord[]; token?: Token; config?: () => ReturnType<typeof loadConfig>; permissions?: AppPermissions } = {},
 ): Promise<SourceAccess> {
   if (!source.access) return { ok: true };
   let found: ReturnType<typeof accessRecord>;
@@ -35,7 +36,7 @@ export async function sourceCredential(
   if (!github || !record.installationId) return { ok: false, problem: ACCESS_NOT_APP };
   let result: AppTokenResult;
   try {
-    result = await (o.token ?? appTokenAccess)({ kind: "app", installationId: record.installationId, url: record.url, github }, (o.config ?? loadConfig)(), undefined, { contents: "read" });
+    result = await (o.token ?? appTokenAccess)({ kind: "app", installationId: record.installationId, url: record.url, github }, (o.config ?? loadConfig)(), undefined, o.permissions ?? { contents: "read" });
   } catch {
     return { ok: false, problem: ACCESS_BAD_TOKEN };
   }

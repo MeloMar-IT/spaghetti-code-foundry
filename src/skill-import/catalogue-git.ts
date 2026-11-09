@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { repoFromUrl } from "../skills/source-update.js";
 import { storeFor, type SyncStories } from "../stories/store.js";
 
-// The local git and gh calls of `scf skills update`, all against the catalogue repository (the clone in the current folder and
-// its `origin`). Argument arrays only, never a shell. They are synchronous: the caller yields and checks for an interrupt after
+// The local git and gh calls of `scf skills update`, against the catalogue repository (the clone in the current folder and
+// its `origin`); gh also opens issues in a source's own repository (#800). Argument arrays only, never a shell. They are synchronous: the caller yields and checks for an interrupt after
 // each one. git runs with the user's own configuration (credentials and hooks are what a push needs); its text, and the text of
 // gh, never leaves this module: a failure is a fixed code.
 
@@ -296,7 +296,41 @@ export function createPullRequest(ctx: CatalogueContext, o: { repo: string; base
   return url;
 }
 
-const REVIEWER_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,99})?$/;
+/** The titles of the open issues of a repository. `cut` is true when the list may be longer than `limit` (gh does not page). */
+export function openIssueTitles(ctx: CatalogueContext, repo: string, limit = 1000): { titles: string[]; cut: boolean } {
+  const out = stories(ctx, repo, (s) => s.openList(limit, "number,title"));
+  let list: unknown;
+  try {
+    list = JSON.parse(out);
+  } catch {
+    throw new CatalogueError("gh-failed");
+  }
+  if (!Array.isArray(list)) throw new CatalogueError("gh-failed");
+  const titles = (list as { title?: unknown }[]).map((i) => i?.title).filter((t): t is string => typeof t === "string");
+  return { titles, cut: list.length >= limit };
+}
+
+/** Creates a label that is missing; an existing label keeps its colour. Every failure is ignored: a missing label fails the create. */
+export function ensureIssueLabel(ctx: CatalogueContext, repo: string, name: string, color: string, description: string): void {
+  try {
+    gh(ctx, ["label", "create", name, "--repo", repo, "--color", color, "--description", description]);
+  } catch {
+    // the label exists, or the create call reports it
+  }
+}
+
+const ISSUE_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/issues\/([0-9]{1,10})$/;
+
+/** Opens an issue; the body goes in on standard input. Returns its number and address. */
+export function createIssue(ctx: CatalogueContext, o: { repo: string; title: string; body: string; labels: string[] }): { number: number; url: string } {
+  const out = stories(ctx, o.repo, (s) => s.create(o));
+  const url = out.trim().split("\n").filter((l) => l.trim() !== "").at(-1)?.trim() ?? "";
+  const m = ISSUE_URL_RE.exec(url);
+  if (!m) throw new CatalogueError("gh-failed");
+  return { number: Number(m[1]), url };
+}
+
+const REVIEWER_RE =/^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,99})?$/;
 
 /** Asks a GitHub user or team (`@octocat`, `@acme/skills`) to review an open pull request. */
 export function requestReviewer(ctx: CatalogueContext, o: { repo: string; url: string; reviewer: string }): void {
