@@ -156,8 +156,9 @@ export class GitHubStore implements StoryStore {
   state(issue: number, o?: { timeoutMs?: number; env?: NodeJS.ProcessEnv }): Promise<StoryState> {
     return github.issueState(this.repo, issue, o?.timeoutMs, o?.env);
   }
-  create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<RestIssue> {
-    return github.createIssue(this.repo, o, timeoutMs);
+  create(o: { title: string; body: string; labels: string[]; files?: readonly unknown[] }, timeoutMs?: number): Promise<RestIssue> {
+    if (o.files?.length) return Promise.reject(new Error("a GitHub issue cannot carry files; nothing was uploaded"));
+    return github.createIssue(this.repo, { title: o.title, body: o.body, labels: o.labels }, timeoutMs);
   }
   edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
     return github.updateIssue(this.repo, issue, o, timeoutMs);

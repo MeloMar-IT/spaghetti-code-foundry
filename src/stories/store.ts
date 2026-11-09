@@ -59,6 +59,12 @@ export interface ChangeActivity {
  * Everything the Foundry does with the stories (issues) of one repository and with their change requests (pull requests).
  * A store is bound to one repository. It keeps no gh session: each call runs in the session of the caller (`withGhEnv`).
  */
+/** A file kept next to a story (a local project only): `name` is relative to the stories folder, `from` is the absolute file to copy. */
+export interface StoryFileCopy {
+  name: string;
+  from: string;
+}
+
 export interface StoryStore {
   readonly repo: string;
   // stories
@@ -79,9 +85,12 @@ export interface StoryStore {
   states(numbers: number[], o?: { timeoutMs?: number; before?: () => void; env?: NodeJS.ProcessEnv }): Promise<Map<number, StoryState>>;
   state(issue: number, o?: { timeoutMs?: number; env?: NodeJS.ProcessEnv }): Promise<StoryState>;
   /** `guard` (local stores only) runs under the lock before the first write; it throws to stop the write. */
-  create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number, guard?: () => void): Promise<RestIssue>;
-  /** Local stores only: commit a created story (and the number file) that was saved but whose commit failed. `guard` runs under the lock, before any write. */
-  commitCreated?(issue: number, timeoutMs?: number, guard?: () => void): Promise<void>;
+  create(o: { title: string; body: string; labels: string[]; files?: readonly StoryFileCopy[] }, timeoutMs?: number, guard?: () => void): Promise<RestIssue>;
+  /**
+   * Local stores only: commit a created story (and the number file, and `files`) that was saved but whose commit failed. `guard` runs
+   * under the lock, before any write. A GitHub store never gets files.
+   */
+  commitCreated?(issue: number, timeoutMs?: number, guard?: () => void, files?: readonly StoryFileCopy[]): Promise<void>;
   edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue>;
   /** `guard` (local stores only) runs under the story lock, right before the write; it throws to stop it. */
   setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number, guard?: () => void): Promise<void>;

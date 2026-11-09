@@ -16,6 +16,10 @@ import {
   picturesText,
   readPictures,
   removePictures,
+  storyPictureCopies,
+  storyPicturesOf,
+  undescribedPictures,
+  storyPicturesText,
   writePictures,
 } from "../src/refinement/pictures.js";
 import { createSession, dropSession, getSession, purgeDropped, refinementsPath, removeRefinementsLocked, restoreSession, setArchitectRun } from "../src/refinement/store.js";
@@ -291,5 +295,56 @@ describe("the architect", () => {
 
   it("explains a run that lost its files", () => {
     expect(architectReason({ status: "failed", reason: INPUT_FILES_MISSING })).toBe("The pictures of the request could not be found");
+  });
+});
+
+describe("pictures on a story (#836)", () => {
+  const sess = { id: "11111111-1111-4111-8111-111111111111", pictures: [{ type: "png" as const, size: 5, about: "A form." }, { type: "jpeg" as const, size: 6, about: "A chart." }] };
+
+  it("makes stable copy names: the same for a session and draft, another for another draft", () => {
+    const a = storyPictureCopies(sess, "d1");
+    expect(storyPictureCopies(sess, "d1")).toEqual(a);
+    expect(a.map((c) => c.name.replace(/^pictures\/[0-9a-f]{16}\//, ""))).toEqual(["1.png", "2.jpg"]);
+    expect(a[0]!.name).toMatch(/^pictures\/[0-9a-f]{16}\/1\.png$/);
+    expect(a[0]!.from).toBe(picturePath(sess.id, 1, "png"));
+    expect(a[1]!.from).toBe(picturePath(sess.id, 2, "jpeg"));
+    expect(storyPictureCopies(sess, "d2")[0]!.name.split("/")[1]).not.toBe(a[0]!.name.split("/")[1]);
+    expect(storyPictureCopies({ id: sess.id }, "d1")).toEqual([]);
+  });
+
+  it("gives links only for a local project, and nothing without pictures", () => {
+    expect(storyPicturesOf({ id: sess.id }, "d1", true)).toBeUndefined();
+    expect(storyPicturesOf(sess, "d1", false)).toEqual({ about: ["A form.", "A chart."] });
+    expect(storyPicturesOf(sess, "d1", true)!.links).toEqual(storyPictureCopies(sess, "d1").map((c) => c.name));
+  });
+
+  it("writes the local text with links and the GitHub text with words only", () => {
+    const local = storyPicturesText(storyPicturesOf(sess, "d1", true)!);
+    expect(local).toContain("### Pictures");
+    expect(local).toContain("added 2 pictures");
+    expect(local).toMatch(/- \[Picture 1\]\(pictures\/[0-9a-f]{16}\/1\.png\): A form\./);
+    const gh = storyPicturesText(storyPicturesOf(sess, "d1", false)!);
+    expect(gh).toContain("added 2 pictures");
+    expect(gh).toContain("- Picture 2: A chart.");
+    expect(gh).not.toContain("](");
+    expect(gh).not.toContain("pictures/");
+  });
+
+  it("counts the pictures that have no description", () => {
+    expect(undescribedPictures(sess)).toBe(0);
+    expect(undescribedPictures({ id: sess.id, pictures: [{ type: "png", size: 5 }, { type: "png", size: 5, about: "A form." }] })).toBe(1);
+    expect(undescribedPictures({ id: sess.id })).toBe(0);
+  });
+
+  it("says one picture in the singular and a missing sentence as not described", () => {
+    const t = storyPicturesText({ about: [undefined] });
+    expect(t).toContain("added 1 picture to");
+    expect(t).toContain("- Picture 1: (not described)");
+  });
+
+  it.each(["![x](http://e/x.png)", "[a](b)", "<img src=x>", "see https://evil.example/x"])("shows %s as literal text", (about) => {
+    const last = storyPicturesText({ about: [about] }).split("\n").slice(-1)[0]!;
+    // Every Markdown character is escaped, so nothing in the line is a link, an image or a tag.
+    expect(last.replace(/\\./g, "")).not.toMatch(/[[\]()<>!]|:\/\//);
   });
 });

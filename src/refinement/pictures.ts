@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataHome } from "../auth/store.js";
@@ -13,7 +14,13 @@ export const PICTURE_EXT: Record<PictureType, string> = { png: "png", jpeg: "jpg
 export interface Picture {
   type: PictureType;
   size: number;
+  /** One sentence by the architect about what the picture shows (#836). */
+  about?: string;
 }
+/** The longest description of a picture. */
+export const PICTURE_ABOUT_MAX = 300;
+/** A description may not hold link, image or HTML syntax, a URL or a backtick. */
+export const ABOUT_REFUSED = /\]\(|!\[|<|>|https?:\/\/|`/i;
 export interface PictureFile {
   type: PictureType;
   data: Buffer;
@@ -107,6 +114,64 @@ export function sweepOrphanPictures(keep: ReadonlySet<string>): void {
 /** The files of a session's pictures, for a run: the name in the workspace and the file to copy. */
 export function pictureFiles(s: { id: string; pictures?: readonly Picture[] }): { name: string; from: string }[] {
   return (s.pictures ?? []).map((p, i) => ({ name: `pictures/${i + 1}.${PICTURE_EXT[p.type]}`, from: picturePath(s.id, i + 1, p.type) }));
+}
+
+// ---- pictures on a story (#836) --------------------------------------------------------------------
+
+export interface StoryPictures {
+  about: (string | undefined)[];
+  /** Local projects only: where the copy of each picture is, relative to the story file. */
+  links?: string[];
+}
+
+/** The folder name of the copies of one story: known before the story has a number, and the same on every retry. */
+function copyKey(sessionId: string, draftId: string): string {
+  return createHash("sha256").update(`story-pictures\n${sessionId}\n${draftId}`).digest("hex").slice(0, 16);
+}
+
+/** The copies of a story's pictures: the name relative to `.scf/stories/` and the file to copy. */
+export function storyPictureCopies(s: { id: string; pictures?: readonly Picture[] }, draftId: string): { name: string; from: string }[] {
+  const key = copyKey(s.id, draftId);
+  return (s.pictures ?? []).map((p, i) => ({ name: `pictures/${key}/${i + 1}.${PICTURE_EXT[p.type]}`, from: picturePath(s.id, i + 1, p.type) }));
+}
+
+/** How many pictures of a session have no description yet (a session from before #836, or an answer without descriptions). */
+export function undescribedPictures(s: { pictures?: readonly Picture[] }): number {
+  return (s.pictures ?? []).filter((p) => p.about === undefined).length;
+}
+
+export function storyPicturesOf(s: { id: string; pictures?: readonly Picture[] }, draftId: string, local: boolean): StoryPictures | undefined {
+  if (!s.pictures?.length) return undefined;
+  return { about: s.pictures.map((p) => p.about), ...(local ? { links: storyPictureCopies(s, draftId).map((c) => c.name) } : {}) };
+}
+
+const MD_SPECIAL = /[\\`*_[\]()<>!#|&]/g;
+const plain = (t: string | undefined): string => {
+  const one = (t ?? "").replace(/\s+/g, " ").trim().replace(MD_SPECIAL, (c) => `\\${c}`)
+    // A bare address would be turned into a link by GitHub: break it.
+    .replace(/:\/\//g, ":\\/\\/")
+    .replace(/\bwww\./gi, (w) => `${w.slice(0, 3)}\\.`);
+  return one || "(not described)";
+};
+
+/** The `### Pictures` part of a story. A description is written as literal text. */
+export function storyPicturesText(p: StoryPictures): string {
+  const n = p.about.length;
+  const noun = n === 1 ? "picture" : "pictures";
+  if (p.links) {
+    return [
+      "### Pictures",
+      `The person added ${n} ${noun} to this request. Copies are kept next to this story.`,
+      "",
+      ...p.about.map((a, i) => `- [Picture ${i + 1}](${p.links![i]}): ${plain(a)}`),
+    ].join("\n");
+  }
+  return [
+    "### Pictures",
+    `The person added ${n} ${noun} to this request. They stay in the Foundry and are not put on GitHub. What each one shows:`,
+    "",
+    ...p.about.map((a, i) => `- Picture ${i + 1}: ${plain(a)}`),
+  ].join("\n");
 }
 
 /** The part of a task that names the pictures. */

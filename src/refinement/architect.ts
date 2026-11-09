@@ -573,7 +573,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
     task = at >= 0 ? `${task.slice(0, at)}\n\n${section}${task.slice(at)}` : `${task}\n\n${section}`;
   }
   const runId = deps.scheduler.submit(
-    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}), ...(words ? { words } : {}), ...(kind === "suggest" ? { field } : {}), ...(kind === "ready" ? { items: unsure.map((i) => i.id).join(",") } : {}) }, frozenVars: true, ...(files.length ? { files } : {}) },
+    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}), ...(words ? { words } : {}), ...(kind === "suggest" ? { field } : {}), ...(kind === "understand" && files.length ? { pictures: String(files.length) } : {}), ...(kind === "ready" ? { items: unsure.map((i) => i.id).join(",") } : {}) }, frozenVars: true, ...(files.length ? { files } : {}) },
     { source, owner: actor.id, queuedBy: actor.id, lockKey },
   );
   try {

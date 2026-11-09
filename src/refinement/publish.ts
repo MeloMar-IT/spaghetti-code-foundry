@@ -6,6 +6,7 @@ import { chars } from "./talk.js";
 import { partsOf } from "./replace-journal.js";
 import { acceptedLines, notReadyReason } from "./draft-ready.js";
 import type { ReadyItem } from "./ready-list.js";
+import { storyPicturesText, type StoryPictures } from "./pictures.js";
 
 /** What publishing would do with a draft: create it, not offer it, or leave it (it is on GitHub already). */
 export type PlanState = "ready" | "not-ready" | "on-github";
@@ -48,6 +49,8 @@ export interface PlanInput {
   replaced?: boolean;
   /** A change request's build or later: a draft with a title is ready (the person accepted it). */
   everyCard?: boolean;
+  /** The pictures of a change request for a draft (#836): shown as a `### Pictures` part of its text. */
+  pictures?: (draftId: string) => StoryPictures | undefined;
 }
 
 export type ReplacePart = { issue: number } | { item: number; title: string };
@@ -131,7 +134,7 @@ export function publishOrder(drafts: readonly Draft[]): Draft[] {
 export function issueText(
   d: Draft,
   s: Sess,
-  o: { accepted: { text: string; reason: string }[]; by: string; date: string; numberOf: (draftId: string) => DepNumber },
+  o: { accepted: { text: string; reason: string }[]; by: string; date: string; numberOf: (draftId: string) => DepNumber; pictures?: StoryPictures },
 ): { title: string; body: string } {
   const dep = (other: Draft): string => {
     const n = o.numberOf(other.id);
@@ -140,7 +143,8 @@ export function issueText(
     return `new issue ${n.item}: ${titleOf(other)}`;
   };
   const p = preview(d, s, o.accepted, dep);
-  return { title: p.title, body: `${p.body}\n\n---\nRefined in Spaghetti Code Foundry by ${o.by} on ${o.date}.` };
+  const pictures = o.pictures ? `\n\n${storyPicturesText(o.pictures)}` : "";
+  return { title: p.title, body: `${p.body}${pictures}\n\n---\nRefined in Spaghetti Code Foundry by ${o.by} on ${o.date}.` };
 }
 
 /** The drafts that reach themselves over their draft dependencies. */
@@ -236,7 +240,7 @@ export function planOf(
 
   const items = order.map((d, i): PlanItem => {
     const { state, reason } = stateOf(d);
-    const { title, body } = issueText(d, s, { accepted: acceptedLines(d, o.list), by: o.by, date: o.date, numberOf });
+    const { title, body } = issueText(d, s, { accepted: acceptedLines(d, o.list), by: o.by, date: o.date, numberOf, ...(o.pictures ? { pictures: o.pictures(d.id) } : {}) });
     const dependsOn = d.dependsOn.flatMap((x): PlanDep[] => {
       if (x.issue !== undefined) return [{ issue: x.issue }];
       const other = byId.get(x.draft!);

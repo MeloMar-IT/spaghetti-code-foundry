@@ -262,7 +262,7 @@ if (prompt.includes("You are Ask SCF, the help assistant")) {
     : prompt.includes("What is asked of you now: question")
     ? { answer: found }
     : prompt.includes("What is asked of you now: understand")
-    ? { drafts: [{ title: "Export a report", who: "A team lead", what: "Download the report as a file.", why: "To share it with the team.", criteria: ["The export downloads a CSV file."], outOfScope: "", dependsOn: [], summary: "This is what I understood: a team lead wants to download the report as a file." }] }
+    ? { drafts: [{ title: "Export a report", who: "A team lead", what: "Download the report as a file.", why: "To share it with the team.", criteria: ["The export downloads a CSV file."], outOfScope: "", dependsOn: [], summary: "This is what I understood: a team lead wants to download the report as a file." }], ...(existsSync("pictures") ? { pictures: readdirSync("pictures").sort().map((n, i) => `Picture ${i + 1} shows the report page.`) } : {}) }
     : /^The words: simple$/m.test(prompt)
     ? {
         questions: [
