@@ -108,6 +108,9 @@ describe("split", () => {
     const r = tool("create-split", { input: SPLIT, env: { FACTORY_VAR_ISSUE: "1" } });
     expect(r.err).toBe("");
     expect(r.out).toContain("SPLIT: #2 #3 — #1 closed");
+    // the line comes once every part exists, before the listing comment and the close
+    expect(r.out).toContain("SPLIT_PARTS: #2 #3");
+    expect(r.out.indexOf("#3 Part B")).toBeLessThan(r.out.indexOf("SPLIT_PARTS:"));
     const a = await store().get(2);
     const b = await store().get(3);
     expect(a?.body).toContain("**Epic:** Shop");

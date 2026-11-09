@@ -22,7 +22,8 @@ import { isVarName, type Flow } from "../flow/schema.js";
 import { guardedRepos } from "./api-repos.js";
 import { checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
-import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
+import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext, runSince } from "./next.js";
+import { asideCheck, putAside, withNotNow } from "./your-turn.js";
 import { adminRun, answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
 import { cachedSkillRegistryAt } from "../skills/registry.js";
@@ -174,13 +175,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       .flatMap((b) => readRun(scheduler, b.dirName, want) ?? []);
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
+    const aside = asideCheck();
     const names = admin ? ownerNames() : undefined;
     return send(res, 200, runs.map((r) => hide(shape({
       ...r,
       ...answerable(r),
       ...(replaced.has(r.runId) ? { superseded: true } : {}),
       ...(names && r.owner ? { ownerName: names.get(r.owner) ?? DELETED_OWNER } : {}),
-      next: view(next(r)),
+      next: view(withNotNow(next(r), runSince(r), aside)),
     })))), true;
   }
   if (!id && method === "POST") {
@@ -270,6 +272,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (result === "busy") throw new HttpError(409, "only a finished run can be archived; this run is running, waiting or queued");
     auditAction(ctx.diagLog, user.id, archived ? "run-archive" : "run-unarchive", id);
     return send(res, 200, { runId: id, archived }), true;
+  }
+  if (action === "not-now" && method === "POST") {
+    const s = scheduler.get(id);
+    if (!s) throw new HttpError(404, "run not found");
+    const rec = nextFor(ctx, undefined, !admin)(s);
+    if (rec.kind !== "failed") throw new HttpError(409, "only work that got stuck can be put aside");
+    putAside(rec, runSince(s));
+    return send(res, 200, { runId: id, notNow: true }), true;
   }
   if (action === "cancel" && method === "POST") {
     const cancelled = cancelRun(ctx, user, id);

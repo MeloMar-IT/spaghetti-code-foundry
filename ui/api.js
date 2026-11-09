@@ -111,6 +111,7 @@ export const api = {
   run: (id) => req("GET", `/api/runs/${enc(id)}`),
   startRun: (body) => req("POST", "/api/runs", body),
   cancelRun: (id) => req("POST", `/api/runs/${enc(id)}/cancel`, {}),
+  notNowRun: (id) => req("POST", `/api/runs/${enc(id)}/not-now`, {}),
   resumeRun: (id, from) => req("POST", `/api/runs/${enc(id)}/resume`, { from }),
   issueLimit: (id) => req("GET", `/api/runs/${enc(id)}/issue-limit`),
   setIssueLimit: (id, usd) => req("PUT", `/api/runs/${enc(id)}/issue-limit`, { limitUsd: usd }),

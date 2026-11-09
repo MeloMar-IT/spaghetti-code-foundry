@@ -202,7 +202,7 @@ describe("runs of other accounts", () => {
       const mine = await waitingRun(ann);
       const r = await ask(ann, rule, mine);
       // A waiting run cannot be archived (409); tests/run-archive.test.ts covers finished runs.
-      if (/\/(un)?archive$/.test(rule.path)) expect(r.status, ruleKey(rule)).toBe(409);
+      if (/\/((un)?archive|not-now)$/.test(rule.path)) expect(r.status, ruleKey(rule)).toBe(409);
       else expect(r.status, ruleKey(rule)).toBeLessThan(300);
       await s.ctx.scheduler.idle();
     }

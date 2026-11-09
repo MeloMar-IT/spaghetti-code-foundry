@@ -54,6 +54,9 @@ describe("pure helpers", () => {
     }
     expect(rh.runActions({ status: "stopped", refinement: "s1" })).toEqual([]);
     expect(rh.runActions({ status: "stopped", next: { kind: "issue_closed" } })).toEqual(["cancel"]);
+    // a split that already made new issues is not retried
+    expect(rh.runActions({ status: "failed", state: { next: "create_split" }, next: { kind: "failed", splitMade: "some" } })).toEqual([]);
+    expect(rh.runActions({ status: "failed", state: { next: "create_split" }, next: { kind: "failed" } })).toEqual(["retry"]);
   });
 
   it("retryText and the retries fact", () => {

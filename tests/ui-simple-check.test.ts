@@ -32,11 +32,12 @@ const run = (id: string, kind: any, over: any = {}, data: any = {}) => ({
 const item = (id: string, over: any = {}) => ({ key: `m-${id}`, kind: "approval", runId: id, acts: ["approve", "reject"], ...over });
 const detailOf = (over: any = {}) => ({ stamp: "s1", digest: "d1", proposal: { text: "## Goal\nShow the weather today.\n\n## Plan\nDo it." }, ...over });
 
-function page(r: any, { turns, detail = detailOf(), tryIt, actFn }: { turns?: any[]; detail?: any; tryIt?: any; actFn?: any } = {}) {
+function page(r: any, { turns, detail = detailOf(), tryIt, actFn, notNow }: { turns?: any[]; detail?: any; tryIt?: any; actFn?: any; notNow?: any } = {}) {
   const done = vi.fn();
   const answer: any = {
     detail: vi.fn(async (_k: string) => detail), act: actFn ?? vi.fn(async (_b: any) => ({})), done,
     approveRun: vi.fn(async () => ({})), rejectRun: vi.fn(async () => ({})), resumeRun: vi.fn(async () => ({})), tryIt, help: vi.fn(),
+    ...(notNow ? { notNow } : {}),
   };
   const m = model.projectModel(repo, [repo], [r], []);
   const draw = (t = turns ?? []) => box(view.projectView(m, { turns: t, answer }));
@@ -86,6 +87,38 @@ describe("the model", () => {
     const w = run("f4", "failed", { state: { next: "x" } });
     (w.next as any).watched = true;
     expect(model.cardOf({ run: w, job: null }).resume).toBeUndefined();
+  });
+
+  it("shows stuck work only while its change is open and it was not put aside", () => {
+    const failed = (id: string, data: any = {}, over: any = {}) => run(id, "failed", { status: "failed", state: { next: "implement" }, finishedAt: "t1", ...over }, data);
+    const m = (r: any) => model.projectModel(repo, [repo], [r], []);
+    const open = m(failed("o1"));
+    expect(open.todo).toHaveLength(1);
+    expect(open.todo[0].resume).toBe(true);
+    // a closed change: the record is issue_closed, or failed with the flag
+    const closed = run("o2", "issue_closed", { status: "failed", state: { next: "create_split" } });
+    expect(Object.values(m(closed).groups).flat()).toEqual([]);
+    const own = m(failed("o3", { issueClosed: true }));
+    expect(own.todo).toEqual([]);
+    expect(Object.values(own.groups).flat()).toEqual([]);
+    const aside = failed("o4");
+    (aside.next as any).notNow = true;
+    expect(Object.values(m(aside).groups).flat()).toEqual([]);
+  });
+
+  it("shows a split that made all its parts as done, in the words of done, and one that made some without Try again", () => {
+    const failed = (id: string, splitMade: string) => run(id, "failed", { status: "failed", state: { next: "create_split" }, finishedAt: "t1" }, { splitMade });
+    const all = model.projectModel(repo, [repo], [failed("p1", "all")], []);
+    expect(all.todo).toEqual([]);
+    expect(all.groups.done).toHaveLength(1);
+    expect(all.groups.done[0].line).toBe(words.KIND_WORDS.done.line);
+    expect(all.groups.done[0].line).not.toContain("stuck");
+    const some = model.projectModel(repo, [repo], [failed("p2", "some")], []);
+    expect(some.todo).toHaveLength(1);
+    expect(some.todo[0].stuck).toBe("p2");
+    expect(some.todo[0].resume).toBeUndefined();
+    const p = box(view.projectView(some, { turns: [], answer: { detail: vi.fn(), act: vi.fn(), done: vi.fn(), help: vi.fn() } }));
+    expect(btn(p, words.STUCK.again)).toBeUndefined();
   });
 });
 
@@ -279,6 +312,36 @@ describe("the stuck card", () => {
     expect(btn(first.draw(), words.STUCK.again)).toBeUndefined();
     const second = page(failed("s6", { finishedAt: "t2" }));
     expect(btn(second.draw(), words.STUCK.again)).toBeTruthy();
+  });
+});
+
+describe("the stuck card: Not now", () => {
+  const failed = (id: string) => run(id, "failed", { status: "failed", state: { next: "implement" }, finishedAt: "t1" });
+
+  it("puts the card aside and reads the page again", async () => {
+    const notNow = vi.fn(async (_id: string) => ({}));
+    const t = page(failed("n1"), { notNow });
+    const p = t.draw();
+    expect(forbidden(p)).toEqual([]);
+    btn(p, words.STUCK.notNow)!.click();
+    await tick();
+    expect(notNow).toHaveBeenCalledWith("n1");
+    expect(t.answer.done).toHaveBeenCalled();
+    expect(btn(p, words.STUCK.notNow)).toBeUndefined();
+  });
+
+  it("says the fixed sentence and frees the button when it did not work", async () => {
+    const notNow = vi.fn(async (_id: string) => { throw new Error("EPERM secret"); });
+    const p = page(failed("n2"), { notNow }).draw();
+    btn(p, words.STUCK.notNow)!.click();
+    await tick();
+    expect(p.textContent).toContain(words.STUCK.asideFailed);
+    expect(p.textContent).not.toContain("secret");
+    expect(btn(p, words.STUCK.notNow)!.attrs.disabled).toBeUndefined();
+  });
+
+  it("has no button when the page cannot put work aside", () => {
+    expect(btn(page(failed("n3")).draw(), words.STUCK.notNow)).toBeUndefined();
   });
 });
 

@@ -65,6 +65,12 @@ export interface NextStep {
   issueUnchecked?: true;
   /** The flow of the run is gone: it cannot be resumed. */
   retired?: true;
+  /** `failed`: the issue is closed, but the run closed it itself earlier (the failure is still real). */
+  issueClosed?: true;
+  /** `failed`: the split step created new issues ("all": every part exists; "some": at least one). Resuming would create them twice. */
+  splitMade?: "all" | "some";
+  /** `failed`: the person put it aside with "Not now" (set by GET /api/runs only). */
+  notNow?: true;
   /** An enabled watcher follows this run (it is answered on the issue). Set by the server's run records only. */
   watched?: true;
   /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
@@ -161,6 +167,8 @@ export interface NextData {
   canResume?: boolean;
   /** The flow of the run is retired: it cannot be resumed, only started again. */
   retired?: boolean;
+  /** `failed`: see NextStep.splitMade. */
+  splitMade?: "all" | "some";
   /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
   ended?: boolean;
   /** `watcher_stale`: ISO time of the last finished check. */
@@ -758,6 +766,8 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(kind === "dependency" ? { blockers: d.blockers ?? [] } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
+    ...(kind === "failed" && d.issueClosed ? { issueClosed: true as const } : {}),
+    ...(kind === "failed" && d.splitMade ? { splitMade: d.splitMade } : {}),
     ...(kind === "cancelled" && d.ended ? { ended: true as const } : {}),
     ...(kind === "approval" && d.final ? { final: true as const } : {}),
     ...(kind === "failed" && d.failure ? { failure: d.failure } : {}),
@@ -878,14 +888,14 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
   const base: NextBase = { repo: v.github_repo ?? run.repo, issue, title: o.title ?? (run.task ?? "").split("\n")[0] ?? "", runId: run.runId };
   const gh = v.github_repo && issue ? `https://github.com/${v.github_repo}/issues/${issue}` : undefined;
   // A closed issue wins over a retired flow: its record carries no flag.
-  const closed = !!o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !o.queued && !(o.superseded) && !runClosedIssue(run);
+  const closed = !!o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !o.queued && !(o.superseded) && !runClosedIssue(run, run.status === "failed");
   const d: NextData = { ...o, retired: o.retired && !closed ? true : undefined, issueUrl: o.issueUrl ?? (o.watched ? gh : undefined), reason: o.reason ?? run.reason, finishedAt: o.finishedAt ?? run.finishedAt ?? run.startedAt };
   const make = (k: NextKind, extra: NextData = {}) => nextStep(k, base, { ...d, ...extra });
   const reason = run.reason ?? "";
 
   if (o.queued) return o.queued.waitingFor ? make("one_at_a_time", { blockingRun: o.queued.waitingFor }) : o.queued.limit ? make("user_limit", { userLimit: o.queued.limit }) : make(o.queued.behindPriority ? "bug_first" : "queued");
   if (o.superseded && run.status !== "running" && run.status !== "succeeded") return make("superseded");
-  if (o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !runClosedIssue(run)) return make("issue_closed", { issueUrl: o.issueUrl ?? gh });
+  if (o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !runClosedIssue(run, run.status === "failed")) return make("issue_closed", { issueUrl: o.issueUrl ?? gh });
   switch (run.status) {
     case "succeeded": return o.releaseAt ? make("release") : make("done");
     case "running": {
@@ -922,9 +932,11 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
     default: {
       const f = classifyFailure(run);
       if (/interrupted/.test(reason)) return make("interrupted", { cause: f.cause });
-      const canResume = o.retired ? false : o.canResume ?? (run.state ? run.state.next != null : undefined);
+      // A split that already made new issues is not resumed: it would make them twice.
+      const made = splitMade(run);
+      const canResume = o.retired || made ? false : o.canResume ?? (run.state ? run.state.next != null : undefined);
       const failure = failureSummary(run, { watched: o.watched, failedLabel: o.failedLabel, canResume, forUser: o.forUser });
-      return make("failed", { ...f, canResume, failure });
+      return make("failed", { ...f, canResume, failure, splitMade: made });
     }
   }
 }
@@ -986,12 +998,34 @@ function storyBlockers(run: RunSummary): BlockerInfo[] {
 }
 
 /**
+ * A failed run whose `create_split` step made new issues. "all": tools/create-split printed `SPLIT_PARTS:` (every part exists);
+ * "some": it printed at least one `#N title` line. Evidence of earlier attempts counts too: a later attempt that failed before
+ * making anything does not remove the issues an earlier one made.
+ * Runs from before the marker have no `SPLIT_PARTS:` line: then "all" needs every part of the plan (the `### ISSUE n:` headings
+ * of a step's output) to be among the `#N title` lines made. This reads the run record only, so the parent's state does not matter.
+ */
+export function splitMade(run: RunSummary): "all" | "some" | undefined {
+  if (run.status !== "failed") return undefined;
+  const steps = (run.history ?? []).filter((x) => stepIs(x.id, ["create_split"]));
+  if (steps.at(-1)?.ok !== false) return undefined;
+  const failed = steps.filter((x) => !x.ok);
+  if (failed.some((x) => /^SPLIT_PARTS: #\d+/m.test(x.output ?? ""))) return "all";
+  const made = new Set<string>();
+  for (const x of failed) for (const m of (x.output ?? "").matchAll(/^#(\d+) \S/gm)) made.add(m[1]!);
+  if (!made.size) return undefined;
+  const planned = Math.max(0, ...(run.history ?? []).map((h) => (h.output ?? "").match(/^#{2,4}\s*ISSUE\s+\d+\s*:/gim)?.length ?? 0));
+  return planned >= 2 && made.size >= planned ? "all" : "some";
+}
+
+/**
  * The run closed its issue itself (gitflow report, split, merge): a finished `report`, `merge` or
  * `create_split` step, or one of them as the step that runs next.
+ * `finishedOnly`: a failed run's `state.next` is the step that failed, which did not close the issue: only finished steps count.
  */
-export function runClosedIssue(run: RunSummary | undefined): boolean {
+export function runClosedIssue(run: RunSummary | undefined, finishedOnly = false): boolean {
   if (!run) return false;
   if ((run.history ?? []).some((x) => x.ok && (stepIs(x.id, ["merge", "create_split"]) || (stepIs(x.id, ["report"]) && /closed #\d+/.test(x.output ?? "")) || (stepIs(x.id, ["push_main"]) && /^PUSHED:/m.test(x.output ?? ""))))) return true;
+  if (finishedOnly) return false;
   const next = run.state?.next;
   if (stepIs(next, ["merge", "create_split"])) return true;
   if (stepIs(next, ["report"])) {

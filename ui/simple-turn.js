@@ -380,6 +380,25 @@ async function retry(d, card, item) {
   d.answer.done?.();
 }
 
+/** "Not now": the card is hidden until the run fails again. */
+async function putAside(d, card) {
+  d.phase = "sending";
+  d.note = STUCK.sending;
+  d.paint?.();
+  try {
+    await Promise.resolve().then(() => d.answer.notNow(card.stuck));
+  } catch {
+    d.phase = "idle";
+    d.note = STUCK.asideFailed;
+    d.paint?.();
+    return;
+  }
+  d.phase = "aside";
+  d.note = "";
+  d.paint?.();
+  d.answer.done?.();
+}
+
 /**
  * The card of a failed run: one fixed sentence, Try again (when the run can be tried again from here) and Ask for help.
  * Never shows the reason, the step or an error text. A new failure of the same run (another `card.stuckAt`) starts a fresh draft.
@@ -396,11 +415,15 @@ export function stuckCard(card, turns, answer) {
   const body = () => {
     const off = d.phase === "sending" ? true : undefined;
     const parts = [h("strong", {}, card.title), h("p", {}, STUCK.line)];
-    if ((item || card.resume) && d.phase !== "sent") {
+    const open = d.phase !== "sent" && d.phase !== "aside";
+    if ((item || card.resume) && open) {
       parts.push(h("button", { type: "button", class: "btn primary simple-big", disabled: off, "data-focus": `simple-again-${card.id}`, onClick: () => retry(d, card, item) }, STUCK.again));
     }
-    parts.push(h("button", { type: "button", disabled: off, "data-focus": `simple-help-${card.id}`, onClick: () => d.answer.help?.() }, STUCK.help),
-      h("p", { class: "muted", "aria-live": "polite" }, d.note));
+    parts.push(h("button", { type: "button", disabled: off, "data-focus": `simple-help-${card.id}`, onClick: () => d.answer.help?.() }, STUCK.help));
+    if (d.answer.notNow && open) {
+      parts.push(h("button", { type: "button", disabled: off, "data-focus": `simple-notnow-${card.id}`, onClick: () => putAside(d, card) }, STUCK.notNow));
+    }
+    parts.push(h("p", { class: "muted", "aria-live": "polite" }, d.note));
     return parts;
   };
   d.paint = () => mount(li, ...body());

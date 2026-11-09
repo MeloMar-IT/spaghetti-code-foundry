@@ -119,6 +119,7 @@ export const RULES: Rule[] = [
   r("GET", "runs/:id/issue-limit", "no", "the spending limit of the run's issue: what the issue, its split parts and retries cost, the default, the override and the limit in effect"),
   r("PUT", "runs/:id/issue-limit", "no", "set (`limitUsd` above 0) or clear (`null`) the spending limit of the run's issue and its split parts; writes an audit line"),
   r("POST", "runs/:id/cancel", "own", "cancel a run that runs, is queued, waits or is stopped"),
+  r("POST", "runs/:id/not-now", "own", "put aside a run that failed (\"Not now\" in the Simple view) until it fails again; 409 when it did not fail; kept in the same store as Your turn dismissals"),
   r("POST", "runs/:id/archive", "own", "archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted"),
   r("POST", "runs/:id/unarchive", "own", "take a run out of the archive again"),
   r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see \"A run of a closed issue\" in chapter 3)"),

@@ -13,7 +13,7 @@ import { nextStep, type NextStep } from "../src/next-step.js";
 import type { Notice } from "../src/notify.js";
 import { TurnNotifier } from "../src/server/notifier.js";
 import { allNext, collectNext, knownRuns } from "../src/server/next.js";
-import { dismissTurn, restoreTurn, turnFor } from "../src/server/your-turn.js";
+import { asideCheck, dismissTurn, putAside, restoreTurn, turnFor, withNotNow } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
 
 // The Your turn rules against a stub context (no server, no GitHub).
@@ -431,6 +431,40 @@ describe("Your turn dismissals", () => {
     expect(items(ctx())).toEqual([]);
     r.waiting = { stepId: "gate2", message: "again?", since: ago(0.5) };
     expect(items(ctx())).toHaveLength(1);
+  });
+
+  describe("Not now (put aside)", () => {
+    const rec = (issue = 8, runId = "r1") => nextStep("failed", { repo: "acme/app", issue, title: "T", runId }, {});
+    it("is read again from the file (as after a restart), for this failure only", () => {
+      putAside(rec(), "t1", NOW);
+      const check = asideCheck(); // a fresh read of the store
+      expect(check(rec(), "t1")).toBe(true);
+      expect(check(rec(), "t2")).toBe(false); // the run failed again
+      expect(check(rec(9, "r2"), "t1")).toBe(false); // another run
+    });
+
+    it("survives the 30 day pruning of another dismissal, so the card stays hidden until a new failure", () => {
+      const c2 = cfg([issuesWatcher]);
+      const ctx = stub({ config: c2, tracked: [tracked(c2, 0, [hold(nextStep("failed", { repo: "acme/app", issue: 3, title: "T3" }, { watched: true, failedLabel: "factory:failed" }), { seen: ago(1) })], [{ issue: 3, title: "T3" }])] });
+      putAside(rec(), "t1", new Date(NOW.getTime() - 40 * 86_400_000));
+      dismissTurn(ctx, items(ctx)[0]!.key, NOW);
+      expect(asideCheck()(rec(), "t1")).toBe(true);
+      expect(asideCheck()(rec(), "t2")).toBe(false);
+    });
+
+    it("reads a broken file as nothing put aside", () => {
+      writeFileSync(join(home, "your-turn.json"), "{ nope");
+      expect(asideCheck()(rec(), "t1")).toBe(false);
+    });
+
+    it("marks only failed records", () => {
+      putAside(rec(), "t1", NOW);
+      const check = asideCheck();
+      expect(withNotNow(rec(), "t1", check).notNow).toBe(true);
+      expect(withNotNow(rec(), "t2", check).notNow).toBeUndefined();
+      const waiting = nextStep("approval", { repo: "acme/app", issue: 8, title: "T", runId: "r1" }, {});
+      expect(withNotNow(waiting, "t1", () => true).notNow).toBeUndefined();
+    });
   });
 
   it("does not list eval runs of an older version (no source) that an eval report names", () => {
