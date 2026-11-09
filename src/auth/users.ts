@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { removeCredentialsLocked } from "../credentials/store.js";
-import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent } from "./audit.js";
+import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent, type PreparedAudit } from "./audit.js";
 import { COMMON_PASSWORDS } from "./common-passwords.js";
 import { checkRefinements, removeRefinementsLocked } from "../refinement/store.js";
 import { checkHelp, removeHelpLocked } from "../help/store.js";
@@ -129,6 +129,8 @@ const UserSchema = z
     source: z.literal("provider").optional(),
     /** The one workspace of a provider account. */
     workspace: z.string().regex(WORKSPACE_ID_RE).optional(),
+    /** The one local admin that may sign in with a password while an identity provider is active; set only by `scf user break-glass`. */
+    breakGlass: z.literal(true).optional(),
   })
   .strict();
 
@@ -139,7 +141,10 @@ const FileSchema = z
     const ids = new Set<string>();
     const emails = new Set<string>();
     const links = new Set<string>();
+    let marks = 0;
     f.users.forEach((u, i) => {
+      if (u.breakGlass && u.source === "provider") ctx.addIssue({ code: "custom", message: "break-glass on provider", path: ["users", i, "breakGlass"] });
+      if (u.breakGlass && ++marks > 1) ctx.addIssue({ code: "custom", message: "second break-glass", path: ["users", i, "breakGlass"] });
       if (u.passwordHash !== undefined && u.passwordLink) ctx.addIssue({ code: "custom", message: "hash and link", path: ["users", i, "passwordLink"] });
       if (u.source === "provider" && (u.passwordHash !== undefined || u.passwordLink)) ctx.addIssue({ code: "custom", message: "provider with password", path: ["users", i, "source"] });
       if (u.workspace !== undefined && u.source !== "provider") ctx.addIssue({ code: "custom", message: "workspace without provider", path: ["users", i, "workspace"] });
@@ -182,6 +187,10 @@ export const hasAdmin = (): boolean => listUsers().some((u) => u.role === "admin
 /** The admin account that was created first, blocked or not. Undefined when there is none. */
 export const firstAdmin = (): User | undefined =>
   listUsers().filter((u) => u.role === "admin").sort((a, b) => Date.parse(a.created) - Date.parse(b.created))[0];
+
+/** The one rule for the break-glass account: marked, local, an active admin with a password. Anything else does not count. */
+export const isBreakGlass = (u: User): boolean =>
+  u.breakGlass === true && u.source !== "provider" && u.role === "admin" && u.status === "active" && u.passwordHash !== undefined;
 
 export function publicUser(u: User): PublicUser {
   const { passwordHash: _hash, passwordLink: _link, ...rest } = u;
@@ -378,9 +387,10 @@ export async function newPasswordLink(id: string, opts: ChangeOptions = {}): Pro
     (u) => {
       noProvider(u);
       if (u.passwordHash !== undefined) throw new UserError("has-password", "this account has a password already");
-      return { next: { ...u, passwordLink: link }, event: { action: "link" } };
+      const { breakGlass: _bg, ...rest } = u;
+      return { next: { ...rest, passwordLink: link }, event: { action: "link" } };
     },
-    { by: opts.by },
+    { endSessions: true, by: opts.by },
   );
   return { user: publicUser(user), token, expires: link.expires };
 }
@@ -397,7 +407,7 @@ export async function resetPassword(id: string, opts: ChangeOptions = {}): Promi
       noProvider(u);
       if (u.passwordHash === undefined) throw new UserError("no-password", "this account has no password; make a new link instead");
       if (isLastAdmin(all, u)) throw new UserError("last-admin", LAST_ADMIN);
-      const { passwordHash: _hash, ...rest } = u;
+      const { passwordHash: _hash, breakGlass: _bg, ...rest } = u;
       return { next: { ...rest, passwordLink: link }, event: { action: "reset" } };
     },
     { endSessions: true, by: opts.by },
@@ -480,12 +490,49 @@ export async function updateUser(id: string, changes: UserChanges, opts: ChangeO
         throw new UserError("email-taken", "an account with that e-mail exists already");
       }
       if (role !== undefined && role !== "admin" && isLastAdmin(all, u)) throw new UserError("last-admin", LAST_ADMIN);
-      const next: User = { ...u, name: name ?? u.name, email: email ?? u.email, role: role ?? u.role };
+      const { breakGlass: _bg, ...plain } = u;
+      const kept = (role ?? u.role) === "user" ? plain : u; // a plain user cannot hold the break-glass mark
+      const next: User = { ...kept, name: name ?? u.name, email: email ?? u.email, role: role ?? u.role };
       if (next.name === u.name && next.email === u.email && next.role === u.role) return undefined;
       return { next, event: next.role !== u.role ? { action: "role", oldRole: u.role, newRole: next.role } : { action: "edit" } };
     },
     { by: opts.by },
   );
+}
+
+/**
+ * Marks (or unmarks) the break-glass account. Marking needs an active local admin with a password and clears the mark
+ * of every other account. Nothing is written when nothing changes. Each changed account is one `edit` line (with `by`).
+ */
+export function setBreakGlass(id: string, on: boolean, opts: ChangeOptions = {}): { user: User; cleared: User[]; changed: boolean } {
+  return withAuthLock(() => {
+    const file = read();
+    const u = file.users.find((o) => o.id === id);
+    if (!u) throw new UserError("not-found", "no such account");
+    if (on) {
+      noProvider(u);
+      if (u.role !== "admin") throw new UserError("bad-role", "only an admin can be the break-glass account");
+      if (u.status !== "active") throw new UserError("bad-role", "a blocked account cannot be the break-glass account; unblock it first");
+      if (u.passwordHash === undefined) throw new UserError("no-password", "this account has no password; set one first: scf user password <e-mail>");
+    }
+    const cleared = on ? file.users.filter((o) => o.id !== id && o.breakGlass) : [];
+    const flips = (u.breakGlass === true) !== on;
+    if (!flips && !cleared.length) return { user: u, cleared: [], changed: false };
+    const strip = ({ breakGlass: _bg, ...rest }: User): User => rest;
+    const users = file.users.map((o) => (o.id === id ? (on ? { ...o, breakGlass: true as const } : strip(o)) : on && o.breakGlass ? strip(o) : o));
+    // one `edit` line per changed account, all prepared before the file changes; without `by` there is no line
+    const by = opts.by;
+    const ids = [...(flips ? [id] : []), ...cleared.map((o) => o.id)];
+    const logs: PreparedAudit[] = [];
+    try {
+      if (by !== undefined) for (const userId of ids) logs.push(prepareAuditLocked(by, { action: "edit", userId }));
+      writeJsonFile(usersPath(), { ...file, users });
+      for (const log of logs) log.write();
+    } finally {
+      for (const log of logs) log.close();
+    }
+    return { user: users.find((o) => o.id === id)!, cleared: cleared.map(strip), changed: true };
+  });
 }
 
 // ---- sign-in ---------------------------------------------------------------------------------------
@@ -522,7 +569,7 @@ export function startSession(
   userId: string,
   verifiedHash: string | undefined,
   replaces?: string,
-  opts: { audit?: boolean } = {},
+  opts: { audit?: boolean; breakGlass?: boolean } = {},
 ): { user: User; token: string; auditFailed?: true } | undefined {
   return withAuthLock(() => {
     const file = read();
@@ -530,6 +577,18 @@ export function startSession(
     const current = file.users[i];
     if (!current || verifiedHash === undefined || current.passwordHash !== verifiedHash || current.status !== "active") return undefined;
     const user: User = { ...current, lastSignIn: new Date().toISOString() };
+    if (opts.breakGlass) {
+      if (!isBreakGlass(current)) return undefined;
+      // the audit line is required and comes first: if it cannot be written, nothing changes
+      const log = prepareAuditLocked(userId, { action: "sign-in", result: "ok", target: "break-glass" });
+      try {
+        log.write();
+        writeJsonFile(usersPath(), { ...file, users: file.users.map((u, j) => (j === i ? user : u)) });
+        return { user, token: addSessionLocked(userId, replaces) };
+      } finally {
+        log.close();
+      }
+    }
     writeJsonFile(usersPath(), { ...file, users: file.users.map((u, j) => (j === i ? user : u)) });
     const token = addSessionLocked(userId, replaces);
     if (!opts.audit) return { user, token };

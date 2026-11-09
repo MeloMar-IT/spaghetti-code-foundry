@@ -72,6 +72,17 @@ re-read on every action, so a change in the account system applies at once. A bl
 account cannot use the Foundry, and a provider that does not answer stops your session for that call (the page shows that sign-in is not working for now). Passwords,
 links and profile edits of such accounts are changed in the account system only.
 
+**Emergency sign-in.** One local admin can still sign in with a password while a provider is active,
+for when the account system is down. The sign-in page then says "Emergency sign-in (local admin)" and
+has no "Forgot password" text. An administrator marks that account on the machine with
+`scf user break-glass <e-mail> on` (it must be an active admin with a password, and only one account
+can be marked; marking another one moves the mark). `scf user break-glass <e-mail> off` removes it. The
+mark also goes when the password is reset, a new set-password link is made, the role is changed to
+user, or the account is blocked. Each emergency sign-in is written to the audit log before the session
+starts, and if that log cannot be written the sign-in fails. The session lasts 7 days and is not
+checked with the provider. Keep the password of this account safe: it works whenever the Foundry is
+reachable, provider or not.
+
 **Forgot password.** The sign-in form says so: ask an admin for a new set-password link (the admin
 uses **Reset password** on the Users page), or run `scf user password <e-mail>` on the machine.
 
@@ -4741,9 +4752,11 @@ as another admin. Change a role with
 ("never" when there is none).
 
 **The Users page.** Admins only: **Users** in the top bar (`#/users`). It lists name, e-mail, role,
-status, last sign-in and the number of runs. The status is **blocked**, **no password yet**,
-**locked** (too many wrong tries) or **active**; when more than one is true, the first in this list
-wins, so a blocked account reads "blocked" even if it is also locked. Your own account is
+status, last sign-in and the number of runs. The status is **blocked**, **account system** (an account
+of the identity provider), **no password yet**, **locked** (too many wrong tries) or **active**; when more
+than one is true, the first in this list wins, so a blocked account reads "blocked" even if it is also
+locked. An account of the identity provider has no **Edit**, **New link** or **Reset password**: its
+name, e-mail and password live in the account system. Your own account is
 marked "(you)". The list has no action buttons: press a name to open the account page
 (`#/users/<id>`). It shows the same facts and the actions in three groups: **Actions** (Edit,
 Limits, App repositories, New link, View as user), **Security** (Reset password, Unlock, Block or
@@ -8134,8 +8147,9 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf eval help [--live]` | Check Ask SCF against its fixed scenarios; without `--live` no model is called |
 | `scf clean [--older-than 7] [--purge] [--dry-run] [--evidence-older-than days]` | Remove old run workspaces. With `--evidence-older-than` it also removes the evidence of the cleaned runs that ended at least that many days ago ([Evidence of a run](#evidence-of-a-run)). With `--purge` it also removes plan records (see below) older than the larger of 90 days and `--older-than` |
 | `scf user create [--admin] [--name n] [--email e]` | Create an account. The first one needs `--admin`. Name and e-mail are asked for on a terminal |
-| `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one (never shows passwords, hashes or links) |
-| `scf user role <e-mail> admin\|user` | Change the role of an account (not the last admin); counts from the next call |
+| `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one, `provider` for an account of the identity provider, `break-glass` for the emergency local admin (never shows passwords, hashes or links) |
+| `scf user role <e-mail> admin\|user` | Change the role of an account (not the last admin); counts from the next call. A change to `user` removes the break-glass mark |
+| `scf user break-glass <e-mail> on\|off` | Mark the one local admin that may sign in with a password while an identity provider is active, or remove the mark. Only an active admin with a password can be marked; marking another account moves the mark. Writes one audit line per changed account |
 | `scf user password <e-mail>` | Set a new password and sign the account out; also for an account without a password (its link ends) |
 | `scf user block <e-mail> [--stop-work]` / `scf user unblock <e-mail>` | Block (and sign out) or unblock an account (not the last admin). Queued jobs are cancelled; `--stop-work` also cancels running and waiting runs |
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |

@@ -5,7 +5,7 @@ import { adoptRuns } from "../auth/run-owner.js";
 import { writeAudit } from "../auth/audit.js";
 import { hasIdentityProvider } from "../auth/identity.js";
 import {
-  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
+  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, isBreakGlass, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
 } from "../auth/users.js";
 import { providerSignIn, recheckProviderSession } from "./identity-session.js";
 import { isView, viewOf, viewsFor } from "../auth/views.js";
@@ -103,15 +103,17 @@ function currentSession(ctx: ApiContext, req: IncomingMessage): Current | undefi
   const session = findSession(token);
   if (!token || !session) return undefined;
   const user = getUser(session.userId);
-  // With an identity provider only provider sessions count; without one, provider records have no sessions
-  return user && user.status === "active" && hasIdentityProvider() === (user.source === "provider") ? { token, user } : undefined;
+  if (!user || user.status !== "active") return undefined;
+  // With an identity provider only provider sessions and the break-glass admin's session count; without one, provider records have no sessions
+  const fits = hasIdentityProvider() ? user.source === "provider" || isBreakGlass(user) : user.source !== "provider";
+  return fits ? { token, user } : undefined;
 }
 
 const IDENTITY_DOWN = "sign-in is not working; try again in a moment";
 
 /** What the browser may know about the account: never the hash. */
 const viewFields = (u: Pick<User, "role" | "view">) => ({ view: viewOf(u), views: viewsFor(u.role) });
-const publicFields = (u: User) => ({ id: u.id, name: u.name, email: u.email, role: u.role, ...viewFields(u) });
+const publicFields = (u: User) => ({ id: u.id, name: u.name, email: u.email, role: u.role, ...viewFields(u), ...(u.source === "provider" ? { provider: true as const } : {}) });
 const sessionBody = (c: Current) => ({ user: publicFields(c.user), csrfToken: csrfToken(c.token) });
 
 const sameToken = (a: string, b: string) => {
@@ -135,7 +137,7 @@ export async function requireSession(ctx: ApiContext, req: IncomingMessage, meth
     const sent = req.headers["x-csrf-token"];
     if (typeof sent !== "string" || !sameToken(sent, csrfToken(cur.token))) throw new HttpError(403, "bad CSRF token");
   }
-  if (!hasIdentityProvider()) return cur.user;
+  if (!hasIdentityProvider() || cur.user.source !== "provider") return cur.user; // a break-glass session is not rechecked
   // a provider session asks the provider again on every call
   const check = await guarded(ctx, () => recheckProviderSession(req, cookieName(ctx), cur));
   if (check.kind === "error") throw new HttpError(503, IDENTITY_DOWN);
@@ -186,6 +188,7 @@ async function providerSessionView(ctx: ApiContext, req: IncomingMessage, res: S
   const flags = { identityProvider: true, setupNeeded: false };
   const cur = await guarded(ctx, () => currentSession(ctx, req));
   if (cur) {
+    if (cur.user.source !== "provider") return send(res, 200, { ...sessionBody(cur), ...flags }); // break-glass: no recheck
     const check = await guarded(ctx, () => recheckProviderSession(req, cookieName(ctx), cur));
     if (check.kind === "ok") return send(res, 200, { ...sessionBody({ token: cur.token, user: check.user }), ...flags });
     if (check.kind === "error") return send(res, 200, { user: null, identityError: true, ...flags });
@@ -207,7 +210,6 @@ async function providerSessionView(ctx: ApiContext, req: IncomingMessage, res: S
 
 async function signIn(ctx: ApiContext, req: IncomingMessage, res: ServerResponse) {
   notMoved();
-  if (hasIdentityProvider()) throw new HttpError(401, BAD_LOGIN); // the provider is in charge of sign-in
   const body = await readJson(req);
   const { accounts, clients } = throttlesOf(ctx);
   const email = str(body, "email").trim().toLowerCase();
@@ -238,6 +240,12 @@ async function signIn(ctx: ApiContext, req: IncomingMessage, res: ServerResponse
       auditFailedSignIn(ctx, findUserByEmail(email)?.id);
       throw new HttpError(401, BAD_LOGIN);
     }
+    // With an identity provider only the break-glass admin may use a password; any other account looks like a wrong password.
+    const glass = hasIdentityProvider();
+    if (glass && !isBreakGlass(user)) {
+      auditFailedSignIn(ctx, user.id);
+      throw new HttpError(401, BAD_LOGIN);
+    }
     if (user.status === "blocked") {
       accounts.clear(email);
       clientTry.giveBack();
@@ -245,11 +253,12 @@ async function signIn(ctx: ApiContext, req: IncomingMessage, res: ServerResponse
       throw new HttpError(403, "this account is blocked");
     }
     const old = cookieToken(ctx, req);
-    const started = startSession(user.id, user.passwordHash, old ? sessionId(old) : undefined, { audit: true });
+    const started = startSession(user.id, user.passwordHash, old ? sessionId(old) : undefined, { audit: !glass, breakGlass: glass });
     if (!started) {
       auditFailedSignIn(ctx, user.id);
       throw new HttpError(401, BAD_LOGIN);
     }
+    if (glass) ctx.opts.log?.(`! auth: break-glass sign-in by local admin ${user.id} while an identity provider is active`);
     if (started.auditFailed) auditLost(ctx);
     accounts.clear(email);
     clientTry.giveBack();

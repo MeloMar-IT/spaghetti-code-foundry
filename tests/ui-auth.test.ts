@@ -374,6 +374,35 @@ describe("ensureSignedIn on the fake DOM", () => {
     expect(form().textContent).not.toContain(auth.FORGOT_TEXT);
   });
 
+  it("signInCopy: plain while no provider, the emergency form with a provider, an alert when it fails", () => {
+    expect(auth.signInCopy({})).toEqual({ heading: "Sign in", note: "", alert: "", forgot: true });
+    expect(auth.signInCopy({ identityProvider: true })).toEqual({ heading: auth.EMERGENCY_HEADING, note: auth.PROVIDER_NOTE, alert: "", forgot: false });
+    expect(auth.signInCopy({ identityProvider: true, identityError: true }).alert).toBe(auth.IDENTITY_DOWN_TEXT);
+  });
+
+  it("provider mode: the emergency heading and note, no forgotten-password line", async () => {
+    void auth.ensureSignedIn(fakeApi({ user: null, identityProvider: true, setupNeeded: false }), reload);
+    await vi.waitFor(() => expect(form()).toBeDefined());
+    expect(form().all("h2")[0]!.textContent).toBe("Emergency sign-in (local admin)");
+    expect(form().textContent).toContain(auth.PROVIDER_NOTE);
+    expect(form().textContent).not.toContain(auth.FORGOT_TEXT);
+    expect(withClass(form(), "p", "bad").map((p) => p.textContent).filter(Boolean)).toEqual([]);
+    expect(inputs()).toHaveLength(2);
+  });
+
+  it("provider mode with an identity error: the alert and the form", async () => {
+    void auth.ensureSignedIn(fakeApi({ user: null, identityProvider: true, identityError: true, setupNeeded: false }), reload);
+    await vi.waitFor(() => expect(form()).toBeDefined());
+    expect(withClass(form(), "p", "bad").some((p) => p.textContent === auth.IDENTITY_DOWN_TEXT && p.attrs.role === "alert")).toBe(true);
+    expect(inputs()).toHaveLength(2);
+  });
+
+  it("a provider account has no Change password button; a local one keeps it", async () => {
+    const provider = { ...SESSION, user: { ...SESSION.user, provider: true }, identityProvider: true };
+    await auth.ensureSignedIn(fakeApi(provider), reload);
+    expect(el("user").all("button").map((b) => b.textContent)).toEqual(["Appearance", "Sign out"]);
+  });
+
   it("setup: asks for the admin account and checks the passwords first", async () => {
     const a = fakeApi({ user: null, setupNeeded: true });
     void auth.ensureSignedIn(a, reload);
@@ -446,6 +475,35 @@ describe("ensureSignedIn on the fake DOM", () => {
       submit();
       await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
       expect(a.signIn).toHaveBeenCalledExactlyOnceWith("ann@example.com", GOOD);
+    });
+
+    it("after the password is set, a provider in charge shows the emergency form without the set-password note", async () => {
+      const { a } = await open();
+      a.session.mockImplementation(async () => ({ user: null, identityProvider: true }));
+      fill([GOOD, GOOD]);
+      submit();
+      await vi.waitFor(() => expect(form().all("h2")[0]!.textContent).toBe(auth.EMERGENCY_HEADING));
+      expect(form().textContent).toContain(auth.PROVIDER_NOTE);
+      expect(form().textContent).not.toContain("Your password is set");
+    });
+
+    it("an identity error after the link shows the alert and the form", async () => {
+      const { a } = await open();
+      a.session.mockImplementation(async () => ({ user: null, identityProvider: true, identityError: true }));
+      fill([GOOD, GOOD]);
+      submit();
+      await vi.waitFor(() => expect(withClass(form(), "p", "bad").some((p) => p.textContent === auth.IDENTITY_DOWN_TEXT)).toBe(true));
+      expect(inputs()).toHaveLength(2);
+    });
+
+    it("when the session call fails after the link, the plain form shows with the note", async () => {
+      const { a } = await open();
+      a.session.mockImplementation(async () => { throw new Error("down"); });
+      fill([GOOD, GOOD]);
+      submit();
+      await vi.waitFor(() => expect(form().all("h2")[0]!.textContent).toBe("Sign in"));
+      expect(form().textContent).toContain("Your password is set");
+      expect(form().textContent).toContain(auth.FORGOT_TEXT);
     });
 
     it("after an answer with guide: true writes #/start-guide instead of clearing the address", async () => {

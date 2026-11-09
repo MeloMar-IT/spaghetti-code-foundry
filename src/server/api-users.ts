@@ -64,11 +64,11 @@ function runCounts(ctx: ApiContext): Map<string, number> {
   return counts;
 }
 
-/** The account as the API shows it: eleven fields picked one by one, never a hash or a token. */
+/** The account as the API shows it: eleven or twelve fields picked one by one (`provider` only for a provider account), never a hash or a token. */
 function view(ctx: ApiContext, u: PublicUser, runs: number, hasPassword: boolean) {
   const until = throttlesOf(ctx).accounts.lockedUntilOf(u.email);
   const lockedUntil = until === undefined ? null : new Date(until).toISOString();
-  return { id: u.id, name: u.name, email: u.email, role: u.role, view: viewOf(u), status: u.status, created: u.created, lastSignIn: u.lastSignIn, runs, hasPassword, lockedUntil };
+  return { id: u.id, name: u.name, email: u.email, role: u.role, view: viewOf(u), status: u.status, created: u.created, lastSignIn: u.lastSignIn, runs, hasPassword, lockedUntil, ...(u.source === "provider" ? { provider: true } : {}) };
 }
 
 /** Cancels the account's work at once; a queue.json that cannot be written is logged in fixed words only. */

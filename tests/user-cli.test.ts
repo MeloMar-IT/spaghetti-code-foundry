@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 import { adminHint, terminalIo, userCommand, type UserIo } from "../src/auth/cli.js";
+import { startProviderSession } from "../src/auth/provider-users.js";
 import { readSessions } from "../src/auth/sessions.js";
 import { createUserWithLink, listUsers, startSession, verifyPassword } from "../src/auth/users.js";
 import { freePort } from "./helpers/port.js";
@@ -433,6 +434,60 @@ describe("userCommand with a fake terminal", () => {
     }
     expect(f.calls).toEqual([]);
     expect(existsSync(join(tmp, "h", "users.json"))).toBe(false);
+  });
+
+  describe("break-glass", () => {
+    const make = async (name: string, admin = true) => {
+      const f = fake([], [PW, PW]);
+      await userCommand({ positionals: ["create"], values: { name, email: `${name}@example.com`, ...(admin ? { admin: true } : {}) } }, f.io);
+    };
+    const run = async (...positionals: string[]) => {
+      const f = fake([], []);
+      const code = await userCommand({ positionals, values: {} }, f.io);
+      return { code, lines: f.lines, calls: f.calls };
+    };
+
+    it("marks an admin, moves the mark, switches it off, and says when nothing changed", async () => {
+      await make("a");
+      await make("b");
+      expect((await run("break-glass", "a@example.com", "on")).lines).toEqual(["break-glass on for a@example.com"]);
+      expect((await run("break-glass", "b@example.com", "on")).lines).toEqual(["break-glass on for b@example.com", "break-glass off for a@example.com"]);
+      expect(listUsers().filter((u) => u.breakGlass).map((u) => u.email)).toEqual(["b@example.com"]);
+      expect((await run("break-glass", "b@example.com", "on")).lines).toEqual(["b@example.com: nothing changed"]);
+      expect((await run("break-glass", "b@example.com", "off")).lines).toEqual(["break-glass off for b@example.com"]);
+      expect((await run("break-glass", "b@example.com", "off")).lines).toEqual(["b@example.com: nothing changed"]);
+      expect(listUsers().some((u) => u.breakGlass)).toBe(false);
+    });
+
+    it("refuses bad operands before anything is read", async () => {
+      const f = fake([], []);
+      for (const positionals of [["break-glass", "a@example.com"], ["break-glass", "a@example.com", "maybe"], ["break-glass"]]) {
+        await expect(userCommand({ positionals, values: {} }, f.io)).rejects.toThrow("usage");
+      }
+      await expect(userCommand({ positionals: ["break-glass", "a@example.com", "on"], values: { admin: true } }, f.io)).rejects.toThrow("unexpected option");
+      expect(f.calls).toEqual([]);
+      expect(f.lines).toEqual([]);
+    });
+
+    it("refuses a user, an unknown e-mail and an account without a password", async () => {
+      await make("a");
+      await make("u", false);
+      await createUserWithLink({ name: "N", email: "n@example.com", role: "admin" });
+      await expect(run("break-glass", "u@example.com", "on")).rejects.toThrow("only an admin");
+      await expect(run("break-glass", "nobody@example.com", "on")).rejects.toThrow("no account");
+      await expect(run("break-glass", "n@example.com", "on")).rejects.toThrow("no password");
+    });
+
+    it("list shows break-glass and provider", async () => {
+      await make("a");
+      await run("break-glass", "a@example.com", "on");
+      startProviderSession({ id: "3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b", name: "P", role: "user", workspace: "team-a" });
+      const out = (await run("list")).lines;
+      expect(out.find((l) => l.startsWith("a@example.com"))).toMatch(/ {2}break-glass$/);
+      const prov = out.find((l) => l.includes("provider"))!;
+      expect(prov).toMatch(/ {2}provider$/);
+      expect(prov).not.toContain("no password yet");
+    });
   });
 
   it("calls no io method on a syntax error", async () => {
