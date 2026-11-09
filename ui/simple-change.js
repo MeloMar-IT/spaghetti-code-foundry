@@ -1,8 +1,8 @@
 import { api, keepPage } from "./api.js";
 import { h, mount } from "./dom.js";
 import {
-  TEXT_MAX, answersBody, cardBody, cardEdit, cardItems, changeDraft, changeRepoOf, changesOf, clearChangeDraft, hasUnsentChange,
-  openChangeOf, phaseOf, questionItems,
+  PICTURE_ACCEPT, TEXT_MAX, answersBody, cardBody, cardEdit, cardItems, changeDraft, changeRepoOf, changesOf, clearChangeDraft, hasUnsentChange,
+  openChangeOf, phaseOf, pictureProblem, questionItems, readAsBase64,
 } from "./simple-change-model.js";
 import { projectName } from "./simple-model.js";
 import { ANSWER, CHANGE, WORDS } from "./simple-words.js";
@@ -17,7 +17,7 @@ const chars = (s) => [...String(s ?? "")].length;
  * The page for project `id`. Never rejects; returns a cleanup that stops the reads.
  * `a` = the API (repos, changes, change, createChange, answerChange, saveChangeCard, buildChange, laterChange, retryChange).
  */
-export async function renderSimpleChange(main, { id, a = api, onName, every = 5000 } = {}) {
+export async function renderSimpleChange(main, { id, a = api, onName, every = 5000, readFile = readAsBase64 } = {}) {
   const box = h("div", { class: "simple" });
   mount(main, box);
   const projectHref = `#/repos/${encodeURIComponent(id)}`;
@@ -31,6 +31,8 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
   let message = "";
   let buildRetry = false; // the cards were published but the build did not start: the page offers Yes, build this again
   let readFailed = false;
+  let pictures = []; // { name, type, data (base64) }; in memory only
+  let pending = 0; // slots taken by files that are still being read
   keepPage(hasUnsentChange);
 
   const back = (href, label) => h("a", { class: "simple-back", href, "data-focus": "simple-back" }, label);
@@ -115,7 +117,7 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
    * One action at a time. The boxes are off while it runs. `done` runs when it worked: it clears only the part of the draft that
    * was sent, and only when the person has not changed it since. `intent` is "build" for Yes, build this.
    */
-  async function act(fn, done, intent) {
+  async function act(fn, done, intent, onError) {
     if (busy || stopped) return;
     busy = true;
     message = "";
@@ -125,8 +127,10 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
     let v;
     try {
       v = await Promise.resolve().then(fn);
-    } catch {
+    } catch (e) {
       busy = false;
+      // the server refused the request itself: nothing was made, so nothing is read again and the drafts stay
+      if (onError?.(e)) { if (!stopped) draw(); return; }
       return reconcile(intent);
     }
     busy = false;
@@ -137,6 +141,57 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
 
   // ---- drawing ----------------------------------------------------------------------------------------------------
 
+  /**
+   * Takes the chosen files in. The slots are reserved before anything is read, so two choices that overlap never go over the limit,
+   * and a file that fails to read gives its slot back.
+   */
+  async function pick(input) {
+    const files = [...(input.files ?? [])];
+    input.value = "";
+    const notes = [];
+    const accepted = [];
+    for (const f of files) {
+      const problem = pictureProblem(f, pictures.length + pending);
+      const name = String(f?.name ?? "");
+      if (problem) notes.push({ many: CHANGE.pictureTooMany, empty: CHANGE.pictureEmpty, big: CHANGE.pictureTooBig, type: CHANGE.pictureWrongType }[problem](name));
+      else { pending += 1; accepted.push(f); }
+    }
+    message = notes.join(" ");
+    draw();
+    if (!accepted.length) return;
+    const got = await Promise.all(accepted.map(async (f) => {
+      try {
+        return { f, data: await readFile(f) };
+      } catch {
+        return { f, data: null };
+      }
+    }));
+    if (stopped) return;
+    const failed = [];
+    for (const { f, data } of got) {
+      pending -= 1;
+      if (typeof data === "string" && data) pictures.push({ name: String(f.name ?? ""), type: f.type, data });
+      else failed.push(CHANGE.pictureReadFailed(String(f.name ?? "")));
+    }
+    message = [...notes, ...failed].join(" ");
+    draw();
+  }
+
+  function picturesBlock() {
+    const off = busy ? true : undefined;
+    return [
+      h("label", { for: "change-pictures" }, CHANGE.picturesLabel),
+      h("p", { class: "muted" }, CHANGE.picturesHint),
+      h("input", { type: "file", id: "change-pictures", accept: PICTURE_ACCEPT, multiple: true, disabled: off, "data-focus": "change-pictures", onChange: (e) => { void pick(e?.target ?? e?.currentTarget ?? {}); } }),
+      pictures.length ? h("ul", { class: "simple-list" }, pictures.map((p, i) => h("li", { class: "simple-card" },
+        h("img", { class: "simple-picture", src: `data:${p.type};base64,${p.data}`, alt: CHANGE.pictureAlt(i + 1, p.name) }),
+        h("button", {
+          type: "button", class: "btn", disabled: off, "aria-label": CHANGE.pictureRemove(i + 1), "data-focus": `change-picture-remove-${i + 1}`,
+          onClick: () => { pictures.splice(i, 1); message = ""; draw(); },
+        }, CHANGE.remove)))) : null,
+    ];
+  }
+
   function writeView() {
     const text = h("textarea", { id: "change-text", rows: 8, "data-focus": "change-text", value: draft.text, disabled: busy ? true : undefined, onInput: () => { draft.text = String(text.value ?? ""); } });
     draft.text = String(text.value ?? draft.text);
@@ -145,14 +200,26 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
       draft.text = String(text.value ?? "");
       if (!t) { message = CHANGE.needsText; return draw(); }
       if (chars(t) > TEXT_MAX) { message = CHANGE.tooLongText(chars(t)); return draw(); }
+      if (pending > 0) return;
       const sent = draft.text;
-      return act(() => a.createChange({ repo, text: t }), () => { if (draft.text === sent) clearChangeDraft(id, "text"); });
+      const withPictures = pictures.length > 0;
+      const body = withPictures ? { repo, text: t, pictures: pictures.map((p) => p.data) } : { repo, text: t };
+      return act(
+        () => a.createChange(body),
+        () => { if (draft.text === sent) clearChangeDraft(id, "text"); pictures = []; },
+        undefined,
+        (e) => {
+          if (!withPictures || e?.status !== 400) return false;
+          message = CHANGE.picturesRefused;
+          return true;
+        });
     };
     return [
       h("label", { for: "change-text" }, CHANGE.what), text,
       h("p", { class: "muted" }, CHANGE.hint),
+      picturesBlock(),
       status(),
-      h("p", {}, h("button", { type: "button", class: "btn primary simple-big", disabled: busy ? true : undefined, "data-focus": "change-send", onClick: send }, busy ? CHANGE.sending : CHANGE.send)),
+      h("p", {}, h("button", { type: "button", class: "btn primary simple-big", disabled: busy || pending > 0 ? true : undefined, "data-focus": "change-send", onClick: send }, busy ? CHANGE.sending : CHANGE.send)),
     ];
   }
 

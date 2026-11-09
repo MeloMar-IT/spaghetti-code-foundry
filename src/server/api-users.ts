@@ -8,7 +8,8 @@ import {
   UserError, checkEmail, checkName, createUserWithLink, deleteUser, listUsers, getUser, newPasswordLink, resetPassword, setStatus, updateUser, type PublicUser, type UserErrorCode,
 } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
-import { architectRunsOf, cancelReads } from "../refinement/architect.js";
+import { removeRunPictureCopies } from "../engine/workspace.js";
+import { architectRunsOf, cancelReads, pictureWorkdirsOf } from "../refinement/architect.js";
 import { cancelAccountNow } from "./account-work.js";
 import { throttlesOf } from "./api-auth.js";
 import { OLD_KEY_LEFT } from "./api-credentials.js";
@@ -195,6 +196,8 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "DELETE") {
     // The architect's reads of the account's sessions: running and paused ones are cancelled once the account is gone.
     const reads = guardedUsers(ctx, () => architectRunsOf(id));
+    // the workspaces of the account's runs with pictures, listed before their sessions go
+    const copies = guardedUsers(ctx, () => pictureWorkdirsOf({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, id));
     let r;
     try {
       r = guardedUsers(ctx, () => deleteUser(id, { by }));
@@ -202,6 +205,7 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       ctx.watchers.sync(); // also after a half-finished delete: the repositories and their watchers may be gone
     }
     cancelReads({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, reads);
+    removeRunPictureCopies(copies); // runs still going remove their copy when they end (settleFinished)
     const cancelled = cancelNow(ctx, id, "deleted");
     if (r.oldKeysLeft) {
       log?.(`users: ${r.oldKeysLeft} old key(s) still in the Keychain; run scf credential rotate-key`);

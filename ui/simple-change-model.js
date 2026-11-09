@@ -6,6 +6,28 @@ import { ANSWER, CHANGE, WORDS, forbiddenIn, mapTerms, plainText, plainWords, sa
 export const OPEN_STATES = ["thinking", "questions", "cards", "stuck"];
 export const TEXT_MAX = 10_000;
 export const ANSWER_MAX = 2000;
+// Pictures (#835): the limits of the server. The type here is only the browser's hint; the server checks the content.
+export const PICTURES_MAX = 5;
+export const PICTURE_MAX_BYTES = 5 * 1024 * 1024;
+export const PICTURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+export const PICTURE_ACCEPT = PICTURE_TYPES.join(",");
+
+/** Why a file cannot be added as picture number `count + 1`: "many" | "empty" | "big" | "type"; null when it can. */
+export function pictureProblem(file, count) {
+  if (count >= PICTURES_MAX) return "many";
+  if (!file || !PICTURE_TYPES.includes(file.type)) return "type";
+  if (!file.size) return "empty";
+  if (file.size > PICTURE_MAX_BYTES) return "big";
+  return null;
+}
+
+/** The file as one base64 string. The bytes become one binary string and `btoa` runs once, so no padding appears inside the text. */
+export async function readAsBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const parts = [];
+  for (let i = 0; i < bytes.length; i += 0x8000) parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)));
+  return btoa(parts.join(""));
+}
 export const TITLE_MAX = 120;
 export const CRITERION_MAX = 500;
 export const CRITERIA_MAX = 50;

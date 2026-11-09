@@ -7,7 +7,8 @@ import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
-import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
+import { removeRunPictureCopies } from "../engine/workspace.js";
+import { architectView, askArchitect, pictureWorkdirs, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { replaceState } from "../refinement/replace-journal.js";
 import { impactView } from "../refinement/draft-impact.js";
@@ -365,9 +366,12 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
       const id = find(seg[1]!).id;
       // A session that is being published is not dropped: refused before the run is cancelled, so a paused run stays paused.
       if (isPublishing(id)) throw new RefinementError("busy", "this session is being published; try again in a moment");
-      const runId = getSession(id)?.architect?.runId;
+      const before = getSession(id);
+      const runId = before?.architect?.runId;
       if (stopArchitect(deps(ctx), id) && runId) auditAction(ctx.diagLog, user.id, "run-cancel", runId);
       dropSession(actor, id);
+      // After the drop is saved: a run that ends from now on sees the session without pictures and removes its own copy.
+      if (before?.pictures) removeRunPictureCopies(pictureWorkdirs(deps(ctx), [before])); // best effort
       return view(ctx, settled(id), user);
     })), true;
   }

@@ -23,6 +23,7 @@ export const API_ONLY: Record<string, string> = {
   "GET changes": "the change requests of the Simple view (#812); the cards of the Simple view call it, the command line has no command for it yet",
   "POST changes": "starts a change request in plain words (#812); the Simple view calls it, the command line has no command for it yet",
   "GET changes/:id": "one change request in its plain state (#812); the Simple view calls it, the command line has no command for it yet",
+  "GET changes/:id/pictures/:n": "one picture of a change request as raw image bytes (#835); the Simple view's API serves it, the command line has no command for it",
   "POST changes/:id/answers": "the answers of a change request's questions (#812); the Simple view calls it, the command line has no command for it yet",
   "PUT changes/:id/cards/:did": "edits a card of a change request (#812); the Simple view calls it, the command line has no command for it yet",
   "POST changes/:id/build": "\"Yes, build this\" for a change request (#812); the Simple view calls it, the command line has no command for it yet",

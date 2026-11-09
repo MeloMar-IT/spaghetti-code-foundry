@@ -24,7 +24,9 @@ import { architectDeps, guardedAsync } from "./api-refinement.js";
 import { GH_TIMEOUT_MS, whatHappened } from "./api-refinement-import.js";
 import { auditLines, newLedger } from "./api-refinement-replace.js";
 import { publish } from "./api-refinement-publish.js";
-import { HttpError, readJson, send } from "./http.js";
+import { readFileSync } from "node:fs";
+import { PICTURE_EXT, PICTURE_MIME, PictureError, picturePath, readPictures, type PictureFile } from "../refinement/pictures.js";
+import { CHANGES_BODY_MAX, HttpError, readJson, send } from "./http.js";
 import { asOwnedProject, stillOwnsProject } from "./repo-sign-in.js";
 import { findScopedProject, sessionInScope } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
@@ -141,12 +143,21 @@ export const changeRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, body), true;
   }
   if (seg.length === 1 && method === "POST") {
-    const body = await readJson(req);
-    const stray = Object.keys(body).find((k) => k !== "repo" && k !== "text");
-    if (stray) throw new HttpError(400, `${stray} is not allowed; send repo and text`);
+    const body = await readJson(req, CHANGES_BODY_MAX);
+    const stray = Object.keys(body).find((k) => k !== "repo" && k !== "text" && k !== "pictures");
+    if (stray) throw new HttpError(400, `${stray} is not allowed; send repo, text and pictures`);
     if (typeof body.repo !== "string" || !body.repo) throw new HttpError(400, "give the repository");
     if (typeof body.text !== "string" || !body.text.trim()) throw new HttpError(400, "describe the change you want");
     if ([...body.text.trim()].length > TEXT_MAX) throw new HttpError(400, `the text can have at most ${TEXT_MAX} characters`);
+    let pictures: PictureFile[] = [];
+    if (body.pictures !== undefined) {
+      try {
+        pictures = readPictures(body.pictures);
+      } catch (e) {
+        if (e instanceof PictureError) throw new HttpError(400, e.message);
+        throw e;
+      }
+    }
     const repo = body.repo;
     const answer = await guardedAsync(ctx, async () => {
       // A project of the account that is outside its workspaces is refused like one that is not theirs (#817).
@@ -159,7 +170,7 @@ export const changeRoutes: Route = async (ctx, req, res, seg, method, user) => {
         }
         if (outside) throw new RefinementError("not-yours", "that is not one of your projects");
       }
-      const s = createSession(user.id, { repo, idea: body.text, changeRequest: true });
+      const s = createSession(user.id, { repo, idea: body.text, changeRequest: true, ...(pictures.length ? { pictures } : {}) });
       // If the architect cannot be asked, the request stays and shows `stuck`; a retry asks again.
       try {
         ask(ctx, s, { kind: "brief" });
@@ -173,6 +184,28 @@ export const changeRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const id = seg[1]!;
   if (seg.length === 2 && method === "GET") {
     return send(res, 200, await guardedAsync(ctx, async () => viewOf(ctx, settled(ctx, ownedChange(user, id))))), true;
+  }
+  if (seg.length === 4 && seg[2] === "pictures" && method === "GET") {
+    const s = ownedChange(user, id);
+    const n = /^[1-5]$/.test(seg[3]!) ? Number(seg[3]) : 0;
+    const p = s.pictures?.[n - 1];
+    if (!p) throw new HttpError(404, "no such picture");
+    let data: Buffer;
+    try {
+      data = readFileSync(picturePath(s.id, n, p.type));
+    } catch {
+      throw new HttpError(404, "no such picture");
+    }
+    // Raw bytes, not JSON: for the owner only, never cached or sniffed.
+    res.writeHead(200, {
+      "content-type": PICTURE_MIME[p.type],
+      "content-length": String(data.length),
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "content-disposition": `inline; filename="picture-${n}.${PICTURE_EXT[p.type]}"`,
+    });
+    res.end(data);
+    return true;
   }
   if (seg.length === 3 && seg[2] === "answers" && method === "POST") {
     const body = await readJson(req);
