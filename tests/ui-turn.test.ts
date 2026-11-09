@@ -85,6 +85,44 @@ describe("turnView unchecked issue", () => {
   });
 });
 
+describe("turnView embedded and keep", () => {
+  const embedded = (d: unknown, opts: Record<string, unknown> = {}) => {
+    const root = new FakeElement("div");
+    root.append(...(ui.turnView(d, handlers(), { embedded: true, ...opts }) as unknown[]).filter(Boolean) as FakeElement[]);
+    return root;
+  };
+  const two = () => data([item({ key: "k5" }), item({ key: "k6", what: "Six" }, nextStep("approval", { repo: "o/a", issue: 6 }))]);
+
+  it("the heading says Your turn with the count", () => {
+    expect(embedded(two()).all("h2")[0]!.textContent).toBe("Your turn (2)");
+    expect(view(two()).all("h1")[0]!.textContent).toBe("Your turn"); // the page itself is unchanged
+  });
+
+  it("keep leaves out items, lowers the count and drops a group left empty", () => {
+    const d = { ...two(), groups: [{ repo: "o/a", items: two().groups[0]!.items }, { repo: "o/b", items: [item({ key: "k7", what: "Seven" })] }] };
+    const root = embedded(d, { keep: (i: any) => i.key !== "k7" && i.key !== "k5" });
+    expect(root.all("h2")[0]!.textContent).toBe("Your turn (1)");
+    expect(root.all("h3").map((e) => e.textContent)).toEqual(["o/a"]);
+    expect(root.textContent).not.toContain("Seven");
+    const none = embedded(d, { keep: () => false });
+    expect(none.all("h2")[0]!.textContent).toBe("Your turn");
+    expect(none.all("h3")).toHaveLength(0);
+    expect(none.textContent).toContain("Nothing needs you.");
+  });
+
+  it("a failed item shows the plain sentence, and the cause behind See what happened", () => {
+    const failed = { ...nextStep("failed", { repo: "o/a", issue: 8 }), action: "Fix it, then remove the `ready` label to start over", why: "The tests did not pass." };
+    const root = embedded(data([item({ key: "k8" }, failed)]));
+    expect(root.textContent).not.toContain("remove the");
+    expect(root.textContent).toContain("This got stuck");
+    const d = root.all("details")[0]!;
+    expect(d.all("summary")[0]!.textContent).toBe("See what happened");
+    expect(d.textContent).toContain("The tests did not pass.");
+    // the page itself still shows the record's own text
+    expect(view(data([item({ key: "k8" }, failed)])).textContent).toContain("remove the");
+  });
+});
+
 describe("turnView", () => {
   it("shows the repository, what, action, why, what waits for it and since", () => {
     const root = view(data([item({ unblocks: 3 }), item({ key: "k6", unblocks: 1, what: "Six" }, nextStep("approval", { repo: "o/a", issue: 6 }))]));
@@ -350,15 +388,37 @@ describe("renderYourTurn", () => {
     calls.shift()!.answer(data([item()]));
     const cleanup = await p;
     expect(main.all("h1")).toHaveLength(0);
-    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Needs you (1)"]);
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Your turn (1)"]);
     expect(onData).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(data([]));
     await flush();
-    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Needs you"]);
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Your turn"]);
     expect(main.all("div").some((e) => e.attrs.class === "home-clear")).toBe(true);
     expect(onData).toHaveBeenCalledTimes(2);
     cleanup();
+  });
+
+  it("embedded: redraw() draws the last answer again with the current keep, and not after cleanup", async () => {
+    const main = new FakeElement("main");
+    let hidden = false;
+    const hook: { redraw?: () => void } = {};
+    const p = ui.renderYourTurn(main, { embedded: true, keep: () => !hidden, hook });
+    await flush();
+    calls.shift()!.answer(data([item()]));
+    const cleanup = await p;
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Your turn (1)"]);
+    hidden = true;
+    hook.redraw!();
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Your turn"]);
+    expect(main.textContent).toContain("Nothing needs you.");
+    hidden = false;
+    hook.redraw!();
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Your turn (1)"]);
+    cleanup();
+    hidden = true;
+    hook.redraw!();
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Your turn (1)"]);
   });
 
   it("an old cleanup does not take the page hook from a newer page", async () => {

@@ -20,6 +20,8 @@ import { archivedSections, readDensity, renderSections, runSections, sectionOf, 
 import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "./runs-bar.js";
 // This module and ./user/runs.js import each other: neither uses the other at the top level, only inside functions.
 import { confirmDialog } from "./user/runs.js";
+// Home counts the same groups with the same predicate (./today.js): the list a counter opens holds exactly what it counted.
+import { inGroup } from "./today.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, filterQuery, isActive, isServerActive, jobMatches, serverKey } from "./runs-filter.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
@@ -259,6 +261,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
       if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
       if (admin && !e.run && !jobMatches(e.job, f, { ownerName, now })) return false;
       if (f.needs && sectionOf(e) !== "needs") return false;
+      if (f.group && !inGroup(f.group, e, now)) return false;
       if (arch) return true;
       return !f.view || sectionOf(e) === f.view;
     };

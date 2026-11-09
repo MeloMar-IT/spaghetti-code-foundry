@@ -13,10 +13,10 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const FULL = "#/runs?q=boom&repo=acme%2Fapp&flow=build&status=failed&time=7d&owner=u1&needs=1&view=failed";
-const full = { q: "boom", repo: "acme/app", flow: "build", status: "failed", time: "7d", owner: "u1", needs: true, view: "failed" };
+const full = { q: "boom", repo: "acme/app", flow: "build", status: "failed", time: "7d", owner: "u1", needs: true, view: "failed", group: "" };
 
 describe("parseFilter", () => {
-  it("reads all eight keys", () => {
+  it("reads all eight keys (and gives the empty group)", () => {
     expect(rf.parseFilter(FULL)).toEqual(full);
   });
   it("gives the empty filter for no query, odd input and unknown keys", () => {
