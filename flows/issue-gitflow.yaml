@@ -811,7 +811,7 @@ steps:
         case "$FACTORY_VAR_GITHUB_REPO" in
         local:*) ok="the owner of this machine"; checked="a local repository" ;;
         *)
-        who=$(node "$FACTORY_TOOLS/story" authors 2>/dev/null)
+        who=$(node "$FACTORY_TOOLS/story" authors 2>/dev/null) || who=""
         for l in $who; do case "$l" in *[!A-Za-z0-9-]*) continue ;; esac
           p=$(gh api "repos/$FACTORY_VAR_GITHUB_REPO/collaborators/$l/permission" --jq .permission 2>/dev/null)
           checked="${checked:+$checked, }$l (${p:-could not check})"

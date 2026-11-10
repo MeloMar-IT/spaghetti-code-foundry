@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Hotfix: "Build this as one change." was always refused on GitHub. The size gate asked GitHub for a field that does not exist (`lastEditedBy`, the right one is `editor`), and then checked the words of the error message as if they were user names. The gate now asks for the right field, and a failed lookup checks nobody ("could not check").
 - Getting started guide, part 1 (#610, part of #594). The Ask SCF help index lists chapter 15 of `docs/USER_GUIDE.md` ("Getting started without being a developer") for user accounts as well as admins: `userChapters` in `src/help/docs.ts` now includes 15, and `tests/help-docs.test.ts` checks it. The chapter itself, the website how-to pages, the home page section, the README link and the Simple-view screenshots are not written yet, so until chapter 15 exists Ask SCF has nothing to show for it.
   - **Code.** `src/help/docs.ts`.
   - **Tests.** `tests/help-docs.test.ts`.
