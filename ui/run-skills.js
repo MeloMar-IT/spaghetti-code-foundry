@@ -172,7 +172,7 @@ export function selectionSection(sel, admin = false) {
 }
 
 /** The Skills card of a run page, or null when the run has no skill information. */
-export function skillsCard(view, { admin = false, repo = "" } = {}) {
+export function skillsCard(view, { admin = false, repo = "", heading = true } = {}) {
   if (!view || typeof view !== "object") return null;
   const requested = Array.isArray(view.requested) ? view.requested : [];
   const resolved = Array.isArray(view.resolved) ? view.resolved : [];
@@ -181,7 +181,7 @@ export function skillsCard(view, { admin = false, repo = "" } = {}) {
   const checked = typeof view.checkedAt === "string" ? `Integrity checked ${view.checkedAt}.` : null;
   const heads = ["Skill", "Category", "Why", "Context estimate", "Integrity", "In the session", ...(admin ? ["Source", "Digest"] : [])];
   return h("section", { class: "card mb-16", "aria-label": "Skills" },
-    h("h2", {}, "Skills"),
+    heading ? h("h2", {}, "Skills") : null,
     note ? h("p", { class: "muted" }, note) : null,
     recordNote ? h("p", { class: "muted" }, recordNote) : null,
     typeof view.estimatedTokens === "number" && resolved.length ? h("p", { class: "muted" }, `About ${view.estimatedTokens} tokens of skill context.`) : null,

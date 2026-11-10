@@ -130,8 +130,13 @@ describe("showPage", () => {
     expect(crumbs.hidden).toBe(false);
     expect(crumbs.all("a").map((a) => a.attrs.href)).toEqual(["#/runs"]);
     const last = crumbs.children.at(-1) as FakeElement;
-    expect(last.textContent).toBe("Run r1");
+    expect(last.textContent).toBe("Change");
     expect(last.attrs["aria-current"]).toBe("page");
+    // The run ID is not in the page name; the run page names the page after the change.
+    expect((doc().getElementById("page-title") as FakeElement).textContent).toBe("Change");
+    expect((doc().getElementById("main") as FakeElement).attrs["aria-label"]).toBe("Change");
+    shell.namePage("Fix login");
+    expect((doc().getElementById("page-title") as FakeElement).textContent).toBe("Fix login");
     shell.showPage("admin", ia.resolve("admin", "#/runs"));
     expect(crumbs.hidden).toBe(true);
   });

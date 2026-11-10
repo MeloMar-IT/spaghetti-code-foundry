@@ -215,7 +215,7 @@ const JOURNEYS: Journey[] = [
         await flush();
       }
       esHandlers.log!({ data: JSON.stringify({ line: "▶ first" }) });
-      s.main.all("button").find((b) => b.attrs["data-tab"] === "log")!.click();
+      s.main.all("button").find((b) => b.attrs["data-tab"] === "details")!.click();
       gate(s, "▶ first");
     },
   },

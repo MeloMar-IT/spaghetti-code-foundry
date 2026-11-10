@@ -312,13 +312,13 @@ describe("renderers with readOnly", () => {
       const waiting = { ...base, status: "waiting", questions: "Q?", canAnswer: true };
       const on = make(waiting, true);
       await flush();
-      expect(texts(on.main).filter((t) => ["Approve", "Reject", "Cancel"].includes(t))).toEqual([]);
+      expect(texts(on.main).filter((t) => ["Approve", "Reject", "Cancel", "Stop this change…"].includes(t))).toEqual([]);
       // the answer form is built once but stays hidden, so Send answer is never shown
       expect(find(on.main, "form", { class: "run-answer" })[0]!.hidden).toBe(true);
       on.cleanup();
       const off = make(waiting, false);
       await flush();
-      expect(texts(off.main)).toEqual(expect.arrayContaining(["Approve", "Reject", "Cancel"]));
+      expect(texts(off.main)).toEqual(expect.arrayContaining(["Approve", "Reject", "Stop this change…"]));
       off.cleanup();
     });
 

@@ -126,7 +126,7 @@ async function route() {
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go });
     else if (page.section === "repos" && page.id) done = await renderRepo(box, { id: page.id, admin: false, readOnly, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query, go });
-    else if (page.id) done = renderMyRun(box, page.id, { readOnly });
+    else if (page.id) done = renderMyRun(box, page.id, { readOnly, onName: (n) => { if (mine === generation) namePage(n); } });
     else done = await renderMyRuns(box, { readOnly, query: to.query, go, filter: parseFilter(to.hash), alive: () => mine === generation && !stopped });
   } catch (e) {
     if (mine === generation && !stopped) mount(box, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));

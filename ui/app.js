@@ -282,7 +282,7 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true });
+    else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true, onName: (n) => { if (mine === routeGen) namePage(n); } });
     else if (section === "runs") {
       // The list draws into its own box, so a slow answer that comes after a hash change cannot touch the next page.
       const box = h("div", {});

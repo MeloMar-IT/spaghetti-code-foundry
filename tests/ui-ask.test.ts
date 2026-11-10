@@ -230,7 +230,7 @@ describe("the question", () => {
   it("shows what is attached before Send, follows the checkbox and the page behind", () => {
     const { d, setHash } = make({ hash: "#/runs/r-1?repo=a%2Fb" });
     d.open();
-    expect(d.ui.context.textContent).toBe("Sent with your question: the page you are on (Run r-1, #/runs/r-1). Nothing else of the page is sent.");
+    expect(d.ui.context.textContent).toBe("Sent with your question: the page you are on (Change, #/runs/r-1). Nothing else of the page is sent.");
     d.ui.attach.fire("change", { target: { checked: false } });
     expect(d.ui.context.textContent).toBe("Nothing about this page is sent with your question.");
     d.ui.attach.fire("change", { target: { checked: true } });
