@@ -110,15 +110,15 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   const failBox = h("div", {});
   const draftBox = h("div", {}, from && !readOnly ? h("p", { class: "start-note", role: "status" }, DRAFT_LINE) : null);
   const points = simple ? null : startPoints({ kind: state.kind, onChange: (k) => { if (busy) return; keep(); state.kind = k; dirty = true; persist(); mount(failBox); unmark(); drawTop(); drawLine(); } });
-  const pointsHolder = h("div", {});
-  const textHolder = h("div", {});
-  const convHolder = h("div", {});
-  const lineHolder = h("div", { class: "start-repo-line" });
+  const pointsSlot = h("div", {});
+  const textSlot = h("div", {});
+  const convSlot = h("div", {});
+  const lineSlot = h("div", { class: "start-repo-line" });
   const submitBtn = h("button", { class: "primary", type: "submit", "data-focus": "make-plan" }, COMPOSER.plan);
   const clearBtn = h("button", { type: "button", onClick: () => clear() }, "Clear");
-  const rowHolder = h("div", {});
-  const flowHolder = h("div", {});
-  const planRepoHolder = h("div", {});
+  const rowSlot = h("div", {});
+  const flowSlot = h("div", {});
+  const planRepoSlot = h("div", {});
   const rest = h("div", { class: "start-rest" });
   const repoBox = h("div", {});
   const noteBox = h("div", {});
@@ -144,14 +144,14 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   function drawTop() {
     const flow = state.flow;
     const conversation = !flow && state.kind === "conversation";
-    mount(pointsHolder, points && !flow ? points.node : null);
+    mount(pointsSlot, points && !flow ? points.node : null);
     const issue = !flow && state.kind === "issue";
     composer.labelEl.textContent = issue ? ISSUE_LABEL : COMPOSER.what;
     if (composer.hintEl) composer.hintEl.textContent = flow ? "" : issue ? ISSUE_HINT : IDEA_HINT;
     taskBox.rows = issue ? 2 : 5;
-    mount(textHolder, conversation || (flow && flow.usesTask === false) ? null : composer.field);
-    mount(convHolder, conversation ? conversationList({ a, isGone: () => gone || !onPage() }) : null);
-    mount(rowHolder, readOnly ? null : h("div", { class: "row" }, conversation ? null : submitBtn, clearBtn));
+    mount(textSlot, conversation || (flow && flow.usesTask === false) ? null : composer.field);
+    mount(convSlot, conversation ? conversationList({ a, isGone: () => gone || !onPage() }) : null);
+    mount(rowSlot, readOnly ? null : h("div", { class: "row" }, conversation ? null : submitBtn, clearBtn));
   }
 
   function planSelect(label) {
@@ -165,27 +165,27 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   const retryRepos = () => { keep(); loadRepos(true); syncStart(); drawAll(); };
   function drawLine() {
     const conversation = !state.flow && state.kind === "conversation";
-    if (state.flow || conversation) return mount(lineHolder);
-    if (repoData.pending) return mount(lineHolder, h("p", { class: "muted" }, simple ? "Loading your projects…" : "Loading your repositories…"));
+    if (state.flow || conversation) return mount(lineSlot);
+    if (repoData.pending) return mount(lineSlot, h("p", { class: "muted" }, simple ? "Loading your projects…" : "Loading your repositories…"));
     if (repoData.error && !repoData.all) {
-      return mount(lineHolder, errorState(simple ? SIMPLE_PROJECTS_FAILED : explainError(repoData.error, { what: REPOS_FAILED, safe: REPOS_FAILED_SAFE }), { onRetry: retryRepos, focus: "retry-repos" }));
+      return mount(lineSlot, errorState(simple ? SIMPLE_PROJECTS_FAILED : explainError(repoData.error, { what: REPOS_FAILED, safe: REPOS_FAILED_SAFE }), { onRetry: retryRepos, focus: "retry-repos" }));
     }
     const list = plans();
     const now = current();
-    if (!now) return mount(lineHolder);
+    if (!now) return mount(lineSlot);
     if (simple) {
       const all = repoData.all;
       const record = all.find((r) => r.id === now.id);
-      return mount(lineHolder, list.length > 1 ? planSelect("Project") : h("p", {}, inRepo(projectName(record, all))));
+      return mount(lineSlot, list.length > 1 ? planSelect("Project") : h("p", {}, inRepo(projectName(record, all))));
     }
-    mount(lineHolder, h("p", {}, inRepo(now.name), " ",
+    mount(lineSlot, h("p", {}, inRepo(now.name), " ",
       h("button", { type: "button", class: "small", "data-focus": "change-repo", onClick: () => { openAdvanced(); (planSelectEl() ?? adv).focus(); } }, "Change")));
   }
-  const planSelectEl = () => (planRepoHolder.querySelectorAll ? planRepoHolder.querySelectorAll("select")[0] : null);
+  const planSelectEl = () => (planRepoSlot.querySelectorAll ? planRepoSlot.querySelectorAll("select")[0] : null);
 
   function drawPlanRepo() {
-    if (state.flow || !plans().length) return mount(planRepoHolder);
-    mount(planRepoHolder, planSelect("Where does the change go?"));
+    if (state.flow || !plans().length) return mount(planRepoSlot);
+    mount(planRepoSlot, planSelect("Where does the change go?"));
   }
 
   // ---- the repositories ---------------------------------------------------------------------------------------
@@ -307,18 +307,18 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
 
   function drawFlowArea() {
     flowRadios = [];
-    if (flowData.state === "loading") return mount(flowHolder, loadingState("Loading the flows…", { rows: 2 }));
-    if (flowData.state === "denied") return mount(flowHolder, h("p", { class: "muted" }, FLOWS_DENIED));
-    if (flowData.state === "failed") return mount(flowHolder, errorState(explainError(flowData.error, { what: FLOWS_FAILED }), { onRetry: loadFlows }));
-    if (flowData.state === "empty") return mount(flowHolder, h("p", { class: "muted" }, NO_FLOWS_NOTE, admin ? [" ", h("a", { href: "#/flows" }, "Open the flow editor")] : null));
-    if (flowData.state !== "list") return mount(flowHolder);
+    if (flowData.state === "loading") return mount(flowSlot, loadingState("Loading the flows…", { rows: 2 }));
+    if (flowData.state === "denied") return mount(flowSlot, h("p", { class: "muted" }, FLOWS_DENIED));
+    if (flowData.state === "failed") return mount(flowSlot, errorState(explainError(flowData.error, { what: FLOWS_FAILED }), { onRetry: loadFlows }));
+    if (flowData.state === "empty") return mount(flowSlot, h("p", { class: "muted" }, NO_FLOWS_NOTE, admin ? [" ", h("a", { href: "#/flows" }, "Open the flow editor")] : null));
+    if (flowData.state !== "list") return mount(flowSlot);
     const option = (flow, title, description) => {
       const radio = h("input", { type: "radio", name: "flow", value: flow ? flow.name : "", checked: flow === state.flow });
       radio.addEventListener("change", () => choose(flow));
       flowRadios.push({ flow, radio });
       return h("label", { class: "choice" }, radio, h("b", {}, title), description ? h("span", { class: "muted" }, description) : null);
     };
-    mount(flowHolder, h("fieldset", {}, h("legend", {}, PICK_FLOW),
+    mount(flowSlot, h("fieldset", {}, h("legend", {}, PICK_FLOW),
       option(null, FLOW_NONE), flowData.flows.map((f) => option(f, f.title, f.description))));
   }
 
@@ -570,14 +570,14 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   }
 
   // ---- draw at once -------------------------------------------------------------------------------------------
-  const adv = simple ? null : advancedBox(h("div", { class: "start-advanced" }, planRepoHolder, flowHolder, rest));
+  const adv = simple ? null : advancedBox(h("div", { class: "start-advanced" }, planRepoSlot, flowSlot, rest));
   function openAdvanced() {
     if (!adv) return;
     adv.setAttribute("open", "");
     adv.open = true;
   }
   const form = h("form", { class: "start-form", novalidate: true, onSubmit: (e) => { e?.preventDefault?.(); submit(); } },
-    draftBox, pointsHolder, textHolder, convHolder, lineHolder, failBox, err, rowHolder, adv);
+    draftBox, pointsSlot, textSlot, convSlot, lineSlot, failBox, err, rowSlot, adv);
   /** The palette chose a flow: Advanced opens, the radios follow; typed text is kept. */
   const pick = (name) => {
     if (!name || simple) return;
