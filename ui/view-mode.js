@@ -6,8 +6,8 @@ import { confirmDialog, h, mount, toast } from "./dom.js";
 import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
-/** The pages of the Simple view (the first part of the hash path): My projects, the project page and the setup check. Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help", "change"];
+/** The pages of the Simple view (the first part of the hash path): My projects, the project page, the setup check, and + New change (the start composer). Later parts of the Easy epic may change this. */
+export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help", "change", "start"];
 /** The navigation links Simple keeps (`data-nav` names): the five shared places and + New change. Simple hides the divider and the extra pages (`data-extra`). */
 export const SIMPLE_NAV = ["start", "home", "runs", "refinement", "epics", "help"];
 

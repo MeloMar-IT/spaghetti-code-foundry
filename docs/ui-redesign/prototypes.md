@@ -79,6 +79,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/new` | admin | Flows, new flow | yes | Not prototyped |
 | `#/library` | admin | Flows (library as part of Flows) | yes | Not prototyped |
 | `#/start` | both | Start work panel, any page | yes | A panel, not a page |
+| `#/change/:id` | both | Ask for a change page | yes | Not prototyped; the page the start composer opens |
 | `#/setup` | both | Setup check page | yes | |
 | `#/agents` | both | Claude and Codex page | yes | Not prototyped |
 | `#/runs` | both | Runs (`runs.html`) | yes | |

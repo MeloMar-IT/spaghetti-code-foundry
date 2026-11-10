@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { nextStep } from "../src/next-step.js";
 import { audit, auditHtml, parseHtml, type Violation } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { chooseFlow } from "./helpers/start-flow.js";
 import { click as flowClick, dropBrowser, edit as flowEdit, flowJson, launchApp, main as flowMain } from "./helpers/flow-app.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -184,6 +185,8 @@ const JOURNEYS: Journey[] = [
     title: "Start work", roles: BOTH, hash: { admin: "#/start", user: "#/start" },
     async run(role, s) {
       await m.start.renderStart(s.main, { a: startApi, admin: role === "admin", go: () => {} });
+      gate(s, "What would you like to change?");
+      await chooseFlow(s.main); // the flow and its fields are under Advanced
       gate(s, "branch");
       s.main.all("form")[0]!.fire("submit", { preventDefault() {} });
       await flush();

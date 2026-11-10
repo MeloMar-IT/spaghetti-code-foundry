@@ -298,6 +298,13 @@ describe("the data", () => {
     }
   });
 
+  it("opens the Ask for a change page (#/change/<id>) on the admin display too, so a plan made at #/start can open", () => {
+    const to = ia.resolve("admin", "#/change/x");
+    expect(to.reason).toBeNull();
+    expect(to.page.id).toBe("change");
+    expect(ia.resolve("user", "#/change/x").page.id).toBe("change");
+  });
+
   it("resolves every page address the server writes", () => {
     const found = new Set<string>();
     for (const f of files("src")) for (const m of read(f).matchAll(/#\/[a-z][a-z-]*/g)) found.add(m[0]);

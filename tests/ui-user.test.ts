@@ -102,7 +102,7 @@ describe("ui/user/app.js", () => {
 
   it("routes Home and Start work, and the empty address opens Home", () => {
     expect(app).toContain('if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });');
-    expect(app).toContain('else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });');
+    expect(app).toContain('else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin, simple, contextRepo: () => context?.current().repo ?? "" });');
     expect(app).toContain('if (isNoHash(hash)) hash = "#/home";');
     expect(app).not.toContain("homeHash");
     expect(app.match(/\+\+generation/g)).toHaveLength(1);

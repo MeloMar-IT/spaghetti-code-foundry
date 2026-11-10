@@ -119,7 +119,7 @@ async function route() {
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
     else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });
     else if (page.section === "agents") done = await renderOnboardingAgents(box, { admin: ownAdmin, readOnly, simple, credentialsHref: "/#/credentials" });
-    else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });
+    else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin, simple, contextRepo: () => context?.current().repo ?? "" });
     else if (page.section === "epics" && page.id) done = await renderEpic(box, { id: page.id, admin: false, me, query: to.query, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "epics") done = await renderEpics(box, { admin: false, me, readOnly, query: to.query, go });
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go });

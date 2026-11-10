@@ -2,6 +2,7 @@
 // account) and the review step shown before a run starts. Pure parts first. Must not import start.js.
 import { h } from "../dom.js";
 import { connectionStatus } from "../repos.js";
+import { isKind } from "./start-entry.js";
 
 export const REPO_FIELD = "github_repo";
 export const DRAFT_LINE = "Your draft from before";
@@ -13,13 +14,16 @@ export const LIKE_USER_TEXT = "Like a normal user (published flows and your own 
 export const NOTE_REPO_FAILED = "The last connection test of this repository failed.";
 export const NOTE_REPO_UNTESTED = "The connection to this repository is not tested yet.";
 export const NOTE_TASK_EMPTY = "The task is empty.";
-export const NOTE_SERVER = "The work runs on the server against this repository. You can cancel it from the run page.";
+export const NO_FLOWS_NOTE = "No published flows yet. Make a plan works without one.";
+export const FLOW_NONE = "No flow: make a plan first";
+export const MORE_OPTIONS = "More options";
+export const NOTE_SERVER ="The work runs on the server against this repository. You can cancel it from the run page.";
 export const NOTE_SERVER_NO_REPO = "The work runs on the server. You can cancel it from the run page.";
 
 let kept = null;
 let revision = 0;
 
-const copy = (d) => ({ flow: d.flow, task: d.task, values: Object.fromEntries(Object.entries(d.values ?? {}).map(([k, v]) => [k, { ...v }])) });
+const copy = (d) => ({ flow: d.flow, task: d.task, kind: d.kind, repo: d.repo, values: Object.fromEntries(Object.entries(d.values ?? {}).map(([k, v]) => [k, { ...v }])) });
 
 /** The kept draft, or null. A copy, so a caller cannot change the kept one. */
 export function readDraft() {
@@ -53,7 +57,9 @@ export function restoreDraft(flows, draft) {
     for (const name of Object.keys(values[f.name])) if (typeof mine[name] === "string") values[f.name][name] = mine[name];
   }
   return {
-    flow: flows.find((f) => f.name === draft?.flow) ?? flows[0],
+    flow: flows.find((f) => f.name === draft?.flow) ?? null, // null: no flow, make a plan
+    kind: isKind(draft?.kind) ? draft.kind : "idea",
+    repo: String(draft?.repo ?? ""),
     task: String(draft?.task ?? ""),
     values,
     restored: Boolean(draft),
@@ -114,4 +120,65 @@ export function reviewView({ flow, body, repos, onStart, onBack }) {
   const notes = h("ul", { class: "start-notes" }, safetyNotes(flow, body, repos).map((n) => h("li", {}, n)));
   const node = h("div", { class: "start-form start-review" }, heading, list, notes, h("div", { class: "row" }, startBtn, backBtn));
   return { node, heading, startBtn, backBtn };
+}
+
+// ---- pure helpers of the start page (start.js re-exports them) ----
+
+/** The records that are GitHub repositories (they have a name as "owner/name"). */
+export const githubRepos = (repos) => (Array.isArray(repos) ? repos : []).filter((r) => typeof r?.github === "string" && r.github !== "");
+
+/** `wanted` (any case) when it is listed, else the first one, else "". */
+export function pickRepo(repos, wanted) {
+  const list = githubRepos(repos);
+  const hit = list.find((r) => r.github.toLowerCase() === String(wanted ?? "").toLowerCase());
+  return (hit ?? list[0])?.github ?? "";
+}
+
+/** The `github` name of the record the dialog made, when the new list holds it; else "". */
+export function addedRepo(created, after) {
+  if (!created || typeof created.github !== "string" || !created.github) return "";
+  return githubRepos(after).some((r) => r.id === created.id) ? created.github : "";
+}
+
+/** The first required input that is empty, in the order the page shows them: { field, text }, or null. */
+export function startProblem(flow, values) {
+  // the page shows the repository first, then the other fields
+  const shown = [...flow.fields.filter((f) => f.name === REPO_FIELD), ...flow.fields.filter((f) => f.name !== REPO_FIELD)];
+  for (const f of shown) {
+    if (f.mode !== "input" || !f.required) continue;
+    if (String(values[f.name] ?? "").trim() !== "") continue;
+    return { field: f.name, text: f.name === REPO_FIELD ? "Choose a repository." : `Fill in "${f.label}".` };
+  }
+  return null;
+}
+
+/** The body of POST /api/runs: only inputs. No repository chosen means no `github_repo`, so the server decides. */
+export function startBody(flow, task, values) {
+  const vars = {};
+  for (const f of flow.fields) {
+    if (f.mode !== "input" || values[f.name] === undefined) continue;
+    if (f.name === REPO_FIELD && values[f.name] === "") continue;
+    vars[f.name] = values[f.name];
+  }
+  return { flow: flow.name, task: flow.usesTask === false ? "" : task, vars };
+}
+
+/** The fields of a flow in the three groups the page draws. `required`: the github_repo input first (also when it is
+ *  optional), then inputs with required: true in flow order. `optional`: the other inputs. `fixed`: mode "fixed". */
+export function splitFields(flow) {
+  const fields = Array.isArray(flow?.fields) ? flow.fields : [];
+  const inputs = fields.filter((f) => f.mode === "input");
+  return {
+    required: [...inputs.filter((f) => f.name === REPO_FIELD), ...inputs.filter((f) => f.name !== REPO_FIELD && f.required)],
+    optional: inputs.filter((f) => f.name !== REPO_FIELD && !f.required),
+    fixed: fields.filter((f) => f.mode !== "input"),
+  };
+}
+
+/** The summary of the disclosure: "More options: 2 optional fields, 1 fixed value". Parts with 0 are left out. */
+export function moreSummary(optional, fixed) {
+  const parts = [];
+  if (optional) parts.push(`${optional} optional field${optional === 1 ? "" : "s"}`);
+  if (fixed) parts.push(`${fixed} fixed value${fixed === 1 ? "" : "s"}`);
+  return parts.length ? `${MORE_OPTIONS}: ${parts.join(", ")}` : MORE_OPTIONS;
 }

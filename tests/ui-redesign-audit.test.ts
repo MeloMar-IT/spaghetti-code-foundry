@@ -56,6 +56,8 @@ function userRoutes(authSource: string): string[] {
   return out;
 }
 
+const ID_ONLY = ["change"];
+
 /** Admin routes from route() in ui/app.js: `#/x`, and `#/x/:` for sections whose line uses `arg`. */
 function adminRoutes(appSource: string): { sections: string[]; detail: string[] } {
   const sections = new Set<string>();
@@ -63,6 +65,11 @@ function adminRoutes(appSource: string): { sections: string[]; detail: string[] 
   for (const line of appSource.split("\n")) {
     const m = /^\s*(?:else )?if \(section === "([\w-]+)"/.exec(line);
     if (!m) continue;
+    // a page that only exists with an id (#/change/<project id>) has no bare address
+    if (ID_ONLY.includes(m[1]!)) {
+      detail.add(`#/${m[1]}/:`);
+      continue;
+    }
     sections.add(`#/${m[1]}`);
     if (/\barg\b/.test(line)) detail.add(`#/${m[1]}/:`);
   }

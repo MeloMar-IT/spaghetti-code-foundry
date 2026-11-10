@@ -474,8 +474,15 @@ button.icon { justify-content: center; }
 .start-form .start-note { margin: 0; color: var(--muted); font-size: var(--text-small); }
 .start-form .start-more { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; min-width: 0; }
 .start-form .start-more-body { display: grid; gap: 12px; }
-.start-entry { display: grid; gap: 8px; max-width: var(--size-form); margin-bottom: 16px; }
-.start-entry .start-label { font-weight: 600; margin: 0; }
+.composer { display: grid; gap: 6px; }
+.composer textarea { width: 100%; box-sizing: border-box; }
+.composer-advanced { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; min-width: 0; }
+.composer-advanced > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.composer-advanced > div { display: grid; gap: 16px; margin-top: 12px; }
+.start-form .start-points { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.start-form .start-points .choice { display: flex; align-items: center; }
+.start-repo-line p { margin: 0; }
+.start-conversations { display: grid; gap: 8px; }
 .start-review dl { margin: 0; }
 .start-review dt { font-weight: 600; }
 .start-review dd { margin: 0 0 8px; overflow-wrap: anywhere; }

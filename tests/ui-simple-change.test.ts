@@ -77,18 +77,28 @@ async function open(a: any, id = "r1", extra: any = {}) {
 }
 
 describe("the Ask for a change page: write", () => {
-  it("shows the box and Send, refuses an empty text, and sends the repo and the text", async () => {
+  it("sends with Ctrl+Enter in the box, as the start page does", async () => {
+    const a = fake();
+    const { main, off } = await open(a);
+    type(box(main), "By key");
+    box(main).fire("keydown", { key: "Enter", ctrlKey: true, preventDefault() {} });
+    await until(() => main.textContent.includes(CHANGE.thinking));
+    expect(a.createChange).toHaveBeenCalledWith({ repo: "o/app", text: "By key" });
+    off();
+  });
+
+  it("shows the box and Make a plan, refuses an empty text, and sends the repo and the text", async () => {
     const a = fake();
     const { main, off, names } = await open(a);
     expect(names).toEqual(["app"]);
-    expect(main.textContent).toContain("What should change?");
+    expect(main.textContent).toContain("What would you like to change?");
     expect(main.all("a").some((l) => l.attrs.href === "#/repos/r1")).toBe(true);
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await tick();
     expect(a.createChange).not.toHaveBeenCalled();
     expect(main.textContent).toContain(CHANGE.needsText);
     type(box(main), "  Show the weather  ");
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await until(() => main.textContent.includes(CHANGE.thinking));
     expect(a.createChange).toHaveBeenCalledWith({ repo: "o/app", text: "Show the weather" });
     expect(cm.hasUnsentChange()).toBe(false);
@@ -99,7 +109,7 @@ describe("the Ask for a change page: write", () => {
     const a = fake();
     const { main, off } = await open(a);
     type(box(main), "x".repeat(10_001));
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await tick();
     expect(a.createChange).not.toHaveBeenCalled();
     expect(main.textContent).toContain(CHANGE.tooLongText(10_001));
@@ -112,7 +122,7 @@ describe("the Ask for a change page: write", () => {
     const { main, off } = await open(a, "r2");
     expect(a.changes).toHaveBeenCalledWith("local:demo-0123abcd");
     type(box(main), "Do it");
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await until(() => a.createChange.mock.calls.length === 1);
     expect(a.createChange).toHaveBeenCalledWith({ repo: "local:demo-0123abcd", text: "Do it" });
     off();
@@ -123,7 +133,7 @@ describe("the Ask for a change page: write", () => {
     const { main, off } = await open(a);
     type(box(main), "Keep me");
     expect(cm.hasUnsentChange()).toBe(true);
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await until(() => main.textContent.includes(CHANGE.failed));
     expect(box(main).value).toBe("Keep me");
     expect(main.textContent).not.toContain("boom");
@@ -135,7 +145,7 @@ describe("the Ask for a change page: write", () => {
     const { main, off } = await open(a);
     a.changes.mockResolvedValue({ changes: [view("thinking", { text: "Lost answer" })] });
     type(box(main), "Lost answer");
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await until(() => main.textContent.includes(CHANGE.thinking));
     expect(cm.hasUnsentChange()).toBe(false);
     off();
@@ -161,7 +171,7 @@ describe("the Ask for a change page: write", () => {
     expect(main.textContent).toBe(`${CHANGE.loadFailed}${CHANGE.retry}`);
     fail = false;
     btn(main, CHANGE.retry).click();
-    await until(() => main.textContent.includes("What should change?"));
+    await until(() => main.textContent.includes("What would you like to change?"));
     off();
   });
 });
@@ -335,7 +345,7 @@ describe("the Ask for a change page: cards", () => {
     expect(a.buildChange).toHaveBeenCalledWith("c1");
     expect(labels(main)).toEqual([CHANGE.another]);
     btn(main, CHANGE.another).click();
-    expect(main.textContent).toContain("What should change?");
+    expect(main.textContent).toContain("What would you like to change?");
     off();
     const b = fake({}, [cards()]);
     const later = await open(b);
