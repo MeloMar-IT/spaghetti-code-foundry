@@ -1,12 +1,13 @@
 // The words of the Ask for a change page (#/change/<id>) and of its Planned entries. Fixed text: a test keeps it free of forbidden terms.
 // simple-words.js re-exports CHANGE.
+import { COMPOSER } from "./composer.js";
 
 export const CHANGE = {
   title: "Ask for a change",
   back: "Back to the project",
-  what: "What should change?",
+  what: COMPOSER.what,
   hint: "Write it in your own words. The Foundry reads it, may ask a few questions, and then shows what it understood.",
-  send: "Send",
+  send: COMPOSER.plan,
   picturesLabel: "Pictures (optional)",
   picturesHint: "Add up to 5 pictures that show what you mean. They can be PNG, JPEG or WebP files, up to 5 MB each.",
   pictureTooMany: (name) => `${name} was not added. You can add at most 5 pictures.`,

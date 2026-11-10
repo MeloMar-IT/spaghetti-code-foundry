@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 import { audit } from "./helpers/a11y.js";
+import { chooseFlow } from "./helpers/start-flow.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -288,6 +289,31 @@ describe("run form", () => {
     expect(audit(make().root)).toEqual([]);
   });
 
+  it("uses the composer words and keeps the repository and the variables in a closed Advanced", () => {
+    const { root } = make();
+    expect(one(root, "label", { class: "field composer" }).textContent).toContain("What would you like to change?");
+    const adv = one(root, "details", { class: "composer-advanced" });
+    expect(adv.attrs.open).toBeUndefined();
+    expect(one(adv, "summary").textContent).toBe("Advanced");
+    expect(find(adv, "input")).toHaveLength(2); // the repository and the variable x
+    expect(find(root, "input").every((i) => adv.contains(i))).toBe(true);
+    for (const el of [...find(root, "input"), ...find(root, "textarea")]) {
+      let p = el.parent;
+      while (p && p.tag !== "label") p = p.parent;
+      expect(p, `${el.tag}`).toBeDefined();
+    }
+    expect(startBtn(root).textContent).toBe("▶ Start run");
+    expect(root.textContent).toContain("Runs in a fresh git worktree");
+  });
+
+  it("names the box Extra instructions for an empty workspace, which has no repository to ask for", () => {
+    const root = runForm.runForm({
+      flow: { name: "f", workspace: "empty", vars: {} }, yaml: "x", cur: { yaml: "x", dirty: false, name: "f" }, repo: "", close: () => {}, a: { startRun: vi.fn() },
+    }) as FakeElement;
+    expect(one(root, "label", { class: "field composer" }).textContent).toContain("Extra instructions (optional)");
+    expect(find(root, "details")).toHaveLength(0);
+  });
+
   it("sends the flow name, or the yaml when it has unsaved edits", async () => {
     const a = make();
     one(a.root, "textarea").value = "do it";
@@ -357,6 +383,7 @@ describe("Start work", () => {
   it("marks the first empty required field, links the alert and focuses it", async () => {
     const main = el("div");
     await start.renderStart(main, { a: api(repos), go: () => {} });
+    await chooseFlow(main as FakeElement);
     one(main, "form").fire("submit", { preventDefault() {} });
     await flush();
     const input = one(main, "input", { name: "branch" });
@@ -371,9 +398,10 @@ describe("Start work", () => {
   it("marks the repository group when there is no repository", async () => {
     const main = el("div");
     await start.renderStart(main, { a: api([]), go: () => {} });
+    await chooseFlow(main as FakeElement);
     one(main, "form").fire("submit", { preventDefault() {} });
     await flush();
-    const group = one(main, "div", { role: "group", "aria-label": "Repository" });
+    const group =one(main, "div", { role: "group", "aria-label": "Repository" });
     expect(group.attrs["aria-invalid"]).toBe("true");
     expect((document as any).activeElement).toBe(group);
     expect(audit(main)).toEqual([]);
@@ -389,6 +417,11 @@ describe("ui/flow-page.js and ui/app.js (source)", () => {
   });
   it("keeps Ctrl/Cmd+S: modifier, preventDefault and save()", () => {
     expect(app).toMatch(/\(e\.metaKey \|\| e\.ctrlKey\) && e\.key === "s"[^\n]*\{\n\s+e\.preventDefault\(\);\n\s+flowPage\.save\(\);/);
+  });
+  it("routes #/change/<id> to the Ask for a change page on the admin display", () => {
+    expect(app).toContain('section === "change"');
+    expect(app).toContain("renderSimpleChange(box");
+    expect(app).toContain('from "./simple-change.js"');
   });
   it("opens the Run dialog with the run form", () => {
     expect(src).toContain("runForm({");

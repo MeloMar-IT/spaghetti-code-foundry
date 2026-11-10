@@ -63,6 +63,11 @@ describe("the rules", () => {
     expect(vm.inView("simple", "#/change")).toBe(false);
   });
 
+  it("has the start composer (+ New change) in Simple and in Advanced", () => {
+    expect(vm.inView("simple", "#/start")).toBe(true);
+    expect(vm.inView("advanced", "#/start")).toBe(true);
+  });
+
   it("has the Help page in Simple and in Advanced", () => {
     expect(vm.inView("simple", "#/help")).toBe(true);
     expect(vm.inView("advanced", "#/help")).toBe(true);
@@ -88,7 +93,7 @@ describe("the rules", () => {
     expect(o("simple", "user", "#/refinement/backlog")).toBe("advanced");
     expect(o("simple", "user", "#/runs?repo=a/b")).toBe("advanced");
     expect(o("simple", "user", "#/runs/abc")).toBe("advanced");
-    expect(o("simple", "user", "#/start")).toBe("advanced");
+    expect(o("simple", "user", "#/start")).toBeNull(); // + New change opens the composer in Simple
     expect(o("simple", "user", "#/repos/x")).toBeNull();
     expect(o("simple", "user", "#/home")).toBeNull();
     expect(o("simple", "user", "#/help")).toBeNull();

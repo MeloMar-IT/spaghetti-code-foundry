@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { chooseFlow, flowRadios } from "./helpers/start-flow.js";
 import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -54,7 +55,11 @@ const fakeApi = () => ({
 
 async function open(opts: object = {}) {
   main = document.createElement("div") as unknown as FakeElement;
-  return (await ui.renderStart(main, { a: fakeApi(), dialog: async () => undefined, go, ...opts })) as () => void;
+  const had = d.readDraft() !== null;
+  const cleanup = (await ui.renderStart(main, { a: fakeApi(), dialog: async () => undefined, go, ...opts })) as () => void;
+  await chooseFlow(main); // the page starts without a flow: these tests are about a flow, chosen under Advanced
+  if (!had) d.clearDraft(); // choosing the flow is not the work these tests look at
+  return cleanup;
 }
 
 beforeEach(() => {
@@ -127,9 +132,13 @@ describe("the draft store", () => {
   it("restoreDraft: defaults, unknown flow, dropped and non-string values", () => {
     const flows = [flow("a", [field("x", { value: "dx" })]), flow("b", [field("y")])];
     expect(d.restoreDraft(flows, null)).toMatchObject({ task: "", restored: false, values: { a: { x: "dx" }, b: { y: "" } } });
-    expect(d.restoreDraft(flows, null).flow).toBe(flows[0]);
+    // no flow is chosen unless the draft names a listed one: the page makes a plan
+    expect(d.restoreDraft(flows, null)).toMatchObject({ flow: null, kind: "idea", repo: "" });
+    expect(d.restoreDraft(flows, { flow: "b" }).flow).toBe(flows[1]);
+    expect(d.restoreDraft(flows, { kind: "issue", repo: "o/r" })).toMatchObject({ kind: "issue", repo: "o/r" });
+    expect(d.restoreDraft(flows, { kind: "nope", repo: 5 })).toMatchObject({ kind: "idea", repo: "5" });
     const r = d.restoreDraft(flows, { flow: "zzz", task: "kept", values: { a: { x: 5, gone: "q" }, b: { y: "yy", gone: "q" } } });
-    expect(r.flow).toBe(flows[0]);
+    expect(r.flow).toBeNull();
     expect(r.task).toBe("kept");
     expect(r.restored).toBe(true);
     expect(r.values).toEqual({ a: { x: "dx" }, b: { y: "yy" } });
@@ -141,7 +150,7 @@ describe("renderStart: review", () => {
     data.flows = [flow("a", [field("github_repo", { required: true }), field("fx", { mode: "fixed", value: "v" })])];
     data.repos = [repo("1", "o/n")];
     await open();
-    expect(one(main, "button", { type: "submit" }).textContent).toBe("Review");
+    expect(one(main, "button", { type: "submit" }).textContent).toBe("Make a plan");
     one(main, "textarea").value = "do it";
     await review(main);
     expect(calls.start).toHaveLength(0);
@@ -221,8 +230,8 @@ describe("renderStart: review", () => {
     expect(one(main, "textarea").value).toBe("t");
     expect(one(main, "input", { name: "o" }).value).toBe("vo");
     expect(one(main, "button", { type: "submit" }).disabled).toBe(false);
-    expect(one(main, "details").attrs.open).toBe("");
-    expect(d.readDraft()).toBeNull();
+    expect(one(main, "details", { class: "start-more" }).attrs.open).toBe("");
+    expect(d.readDraft()).toMatchObject({ task: "t", values: { a: { o: "vo" } } }); // what was typed is kept
     data.startFail = undefined;
     await review(main);
     await clickStart(main);
@@ -237,7 +246,7 @@ describe("renderStart: the draft", () => {
     data.flows = two();
     data.repos = [repo("1", "a/a"), repo("2", "b/b"), repo("3", "c/c")];
     const cleanup = await open();
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     const sel = one(main, "select");
     sel.value = "c/c";
@@ -251,7 +260,7 @@ describe("renderStart: the draft", () => {
     cleanup();
     await open();
     expect(main.textContent).toContain(d.DRAFT_LINE);
-    expect((find(main, "input", { name: "flow" })[1] as any).checked).toBe(true);
+    expect((flowRadios(main)[1] as any).checked).toBe(true);
     expect(one(main, "select").value).toBe("c/c");
     expect(one(main, "input", { name: "y" }).value).toBe("vy");
     expect(one(main, "textarea").value).toBe("my task");
@@ -292,6 +301,7 @@ describe("renderStart: the draft", () => {
     });
     main = document.createElement("div") as unknown as FakeElement;
     const cleanup = await ui.renderStart(main, { a: fakeApi(), dialog, go });
+    await chooseFlow(main);
     one(main, "button", { "data-focus": "add-repo" }).fire("click");
     await flush();
     await flush();
@@ -381,7 +391,9 @@ describe("renderStart: the draft", () => {
     await flush();
     expect(d.readDraft()).toBeNull();
     expect(one(main, "textarea").value).toBe("");
-    expect((find(main, "input", { name: "flow" })[0] as any).checked).toBe(true);
+    // no flow is chosen again: the "No flow" choice is checked
+    expect(flowRadios(main).some((r) => (r as any).checked)).toBe(false);
+    expect(find(main, "input", { name: "flow" }).filter((r) => (r as any).checked).map((r) => (r as any).value)).toEqual([""]);
     expect(main.textContent).not.toContain(d.DRAFT_LINE);
     expect(find(main, "input", { name: "y" })).toHaveLength(0);
   });
@@ -391,7 +403,8 @@ describe("renderStart: the draft", () => {
     data.repos = [repo("1", "a/a"), repo("2", "b/b")];
     d.writeDraft({ flow: "gone", task: "kept text", values: {} });
     await open();
-    expect((find(main, "input", { name: "flow" })[0] as any).checked).toBe(true);
+    // a flow that is gone from the list is not chosen; the text stays
+    expect(flowRadios(main).some((r) => (r as any).checked)).toBe(true); // the test helper chose the first one
     expect(one(main, "textarea").value).toBe("kept text");
     d.writeDraft({ flow: "b", task: "", values: { b: { github_repo: "gone/x" } } });
     await open();

@@ -707,7 +707,7 @@ describe("roles in the page", () => {
     expect(app).toContain('from "./user/start.js"');
     expect(app).toContain('section === "start"');
     // a slow Start work page must not overwrite the page that took over
-    expect(app).toContain("renderStart(box, { admin: true })");
+    expect(app).toContain("renderStart(box, { admin: true, contextRepo:");
     expect(app).toContain("if (mine !== routeGen) done?.();");
   });
 
