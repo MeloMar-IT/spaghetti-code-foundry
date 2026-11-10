@@ -1,6 +1,7 @@
 /* Design tokens (#322). Loaded before style.css by both index.html files.
    Colours are written as light-dark(light, dark), one line per token. Light or dark follows the operating system;
    html[data-theme="light"|"dark"] forces one. html[data-density="compact"] changes only the density tokens.
+   The look (calm, midnight, friendly, editorial or bento) is set on <html> by ui/prefs.js; no look has its own values yet, so every look uses these (Calm).
    Look tokens: fonts (--font-body/display/mono), radii (--radius-*), shadows (--shadow-none/low/high) and spacing (--space-*).
    Rules in ui/**/*.css may use only these (checked by tests/ui-look-tokens.test.ts). */
 

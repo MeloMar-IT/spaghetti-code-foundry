@@ -258,14 +258,14 @@ describe("ensureSignedIn on the fake DOM", () => {
     await auth.ensureSignedIn(fakeApi(SESSION), reload);
     const root = (document as any).documentElement as FakeElement;
     expect(root.attrs).toMatchObject({ "data-theme": "dark", "data-density": "compact" });
-    expect(JSON.parse(store.data).last).toEqual({ theme: "dark", density: "compact" });
+    expect(JSON.parse(store.data).last).toEqual({ theme: "dark", density: "compact", look: "calm" });
   });
 
   it("signs in when storage throws", async () => {
     vi.stubGlobal("localStorage", { getItem: () => { throw new Error("x"); }, setItem: () => { throw new Error("x"); } });
     expect(await auth.ensureSignedIn(fakeApi(SESSION), reload)).toEqual(SESSION.user);
     const root = (document as any).documentElement as FakeElement;
-    expect(root.attrs).toMatchObject({ "data-theme": "system", "data-density": "comfortable" });
+    expect(root.attrs).toMatchObject({ "data-theme": "system", "data-density": "comfortable", "data-look": "calm" });
   });
 
   it("the sign-out button signs out and reloads", async () => {
