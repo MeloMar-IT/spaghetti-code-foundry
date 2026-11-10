@@ -100,11 +100,11 @@ export function reviewNodes(s, d, act) {
 export function reviewLogText(entry) {
   const who = entry.who || "Someone";
   switch (entry.what) {
-    case "review-asked": return `${who} asked the architect to review a story draft`;
+    case "review-asked": return `${who} asked the architect to review a change draft`;
     case "architect-reviewed": {
       const n = Number(entry.detail);
-      if (entry.detail === undefined || entry.detail === "" || !Number.isInteger(n) || n < 0) return "The architect reviewed a story draft";
-      return `The architect reviewed a story draft: ${n === 0 ? "no remarks" : n === 1 ? "1 remark" : `${n} remarks`}`;
+      if (entry.detail === undefined || entry.detail === "" || !Number.isInteger(n) || n < 0) return "The architect reviewed a change draft";
+      return `The architect reviewed a change draft: ${n === 0 ? "no remarks" : n === 1 ? "1 remark" : `${n} remarks`}`;
     }
     case "moved-to-notes": return `${who} moved ${FIELD_WORDS[entry.detail] ?? "a text"} to the notes for the builder`;
     default: return "";

@@ -87,7 +87,7 @@ describe("groupItems", () => {
     expect(group({ group: "owner" }).map((x: any) => x.title)).toEqual(["Ann", "deleted user", "No owner"]);
   });
   it("groups by next move with You first", () => {
-    expect(group({ group: "next" }).map((x: any) => x.title)).toEqual(["You", "Foundry", "Another story"]);
+    expect(group({ group: "next" }).map((x: any) => x.title)).toEqual(["You", "Foundry", "Another change"]);
   });
   it("can leave out grouping", () => {
     const g = group({ group: "none" });

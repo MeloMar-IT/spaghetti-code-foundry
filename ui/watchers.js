@@ -23,11 +23,11 @@ function storyTime(iso, now) {
 /** The one line that says whether the monitor makes bug stories. */
 export function storiesLine(m, now = new Date()) {
   let line;
-  if (m.state === "off") line = `Bug stories: off since ${storyTime(m.since, now)}`;
-  else if (m.state === "quiet") line = `Bug stories: quiet until ${storyTime(m.until, now)} after the restart`;
-  else if (m.state === "breaker") line = `Bug stories: stopped by the circuit breaker since ${storyTime(m.since, now)}${m.why ? ` (${m.why})` : ""}`;
-  else if (m.state === "unreadable") line = "Bug stories: stopped. The state file monitor-guard.json cannot be read.";
-  else line = `Bug stories: on${m.reportTo === false ? " (no repository is set: monitor.report_to)" : ""}`;
+  if (m.state === "off") line = `Bug-fix changes: off since ${storyTime(m.since, now)}`;
+  else if (m.state === "quiet") line = `Bug-fix changes: quiet until ${storyTime(m.until, now)} after the restart`;
+  else if (m.state === "breaker") line = `Bug-fix changes: stopped by the circuit breaker since ${storyTime(m.since, now)}${m.why ? ` (${m.why})` : ""}`;
+  else if (m.state === "unreadable") line = "Bug-fix changes: stopped. The state file monitor-guard.json cannot be read.";
+  else line = `Bug-fix changes: on${m.reportTo === false ? " (no repository is set: monitor.report_to)" : ""}`;
   if (m.reset) line += ` The state file could not be read at ${storyTime(m.reset, now)}; it was kept as monitor-guard.json.broken and started fresh.`;
   return line;
 }
@@ -41,7 +41,7 @@ export function storiesRow(m, reload, { readOnly = false } = {}) {
     if (m.state === "unreadable" && !(await confirmUnreadable())) return;
     try {
       await (wantOn ? api.monitorOn() : api.monitorOff());
-      toast(wantOn ? "Bug stories are on" : "Bug stories are off");
+      toast(wantOn ? "Bug-fix changes are on" : "Bug-fix changes are off");
     } catch (e) {
       toast(e.message, "error");
     }
@@ -51,7 +51,7 @@ export function storiesRow(m, reload, { readOnly = false } = {}) {
   return h("div", { class: "row" },
     h("span", { class: isOn ? "status ok" : "status bad" }, storiesLine(m)),
     h("span", { class: "spacer" }),
-    h("button", { class: "small", onClick: click }, wantOn ? "Switch bug stories on" : "Switch bug stories off"));
+    h("button", { class: "small", onClick: click }, wantOn ? "Switch bug-fix changes on" : "Switch bug-fix changes off"));
 }
 
 /** `version`: that of the list the page was drawn from, not of the config read now. */
@@ -73,7 +73,7 @@ export const describeWatcher = (w) => {
   const flow = w.flow === "default" ? DEFAULT_FLOWS[w.source] ?? "(no flow)" : w.flow;
   return {
     monitor: "checks the Foundry itself for problems",
-    issues: `issues labelled “${w.label}” → ${flow}`,
+    issues: `GitHub issues labelled “${w.label}” → ${flow}`,
     "pr-feedback": `PR review comments → ${flow}`,
     "ci-failures": `CI failures on ${w.branch ?? "the default branch"} → ${flow}`,
     schedule: `${w.at ? `daily at ${w.at}${w.timezone ? ` ${w.timezone}` : ""}` : `every ${w.every}`}: ${(w.task ?? "").slice(0, 60)}${(w.task ?? "").length > 60 ? "…" : ""} → ${flow}`,

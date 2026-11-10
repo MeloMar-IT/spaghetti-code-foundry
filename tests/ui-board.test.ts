@@ -64,6 +64,13 @@ describe("boardView", () => {
     expect(text).toContain(card().next.text);
   });
 
+  it("shows a waiting card's text in change words, from a real dependency record", () => {
+    const dep = nextStep("dependency", { repo: "o/a", issue: 89, title: "Eighty-nine" }, { blockers: [{ issue: 88 }] });
+    const root = view({ ...board(), repos: [{ ...board().repos[0], cards: [{ ...card(), next: { text: dep.text } }] }] });
+    expect(cardEl(root)[0]!.textContent).toContain(dep.text);
+    expect(dep.text).not.toMatch(/\bstor(y|ies)\b/);
+  });
+
   it("marks a bug story as going first", () => {
     expect(cardEl(view(board([card({ goesFirst: true })])))[0]!.textContent).toContain("goes first");
     expect(cardEl(view(board()))[0]!.textContent).not.toContain("goes first");

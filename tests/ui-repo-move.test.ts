@@ -87,7 +87,7 @@ describe("the helpers", () => {
     expect(mv.storyLine({ number: 3, title: "T", status: "unreadable", reason: "bad yaml" })).toBe("#3: cannot be read (bad yaml)");
     expect(mv.storyLine({ number: 3, title: "T", status: "too-large" })).toContain("too large");
     expect(mv.blockedStories(dry({ stories: { plan: plan([{ number: 2, title: "x", state: "open", status: "too-large" }]) } }))).toHaveLength(1);
-    expect(mv.doneLine(real)).toBe("Moved to o/my-app: 1 branch or tag pushed, 1 already up to date; 1 story created on GitHub; 2 watchers moved. The local record is removed; the folder and its .scf/stories files stay.");
+    expect(mv.doneLine(real)).toBe("Moved to o/my-app: 1 branch or tag pushed, 1 already up to date; 1 change created on GitHub; 2 watchers moved. The local record is removed; the folder and its .scf/stories files stay.");
   });
 });
 
@@ -114,7 +114,7 @@ describe("the dialog", () => {
     expect(byLabel("Name of the new repository").value).toBe("my-app");
     expect(walk(root()).find((e) => e.tag === "input" && e.value === "pick")!.disabled).toBe(true);
     expect(checkbox("Private").checked).toBe(true);
-    expect(checkbox("Also move closed stories").checked).toBe(false);
+    expect(checkbox("Also move closed changes").checked).toBe(false);
     expect(button("Yes, publish").disabled).toBe(true);
     expect(audit(root())).toEqual([]);
     key("Escape");
@@ -155,8 +155,8 @@ describe("the dialog", () => {
     expect(text()).not.toContain("Branches");
     await check();
     expect(a.moveToGithub).toHaveBeenLastCalledWith("l1", { target: { create: { name: "other", private: true } }, includeClosed: false, dryRun: true });
-    checkbox("Also move closed stories").checked = true;
-    checkbox("Also move closed stories").fire("change");
+    checkbox("Also move closed changes").checked = true;
+    checkbox("Also move closed changes").fire("change");
     expect(button("Yes, publish").disabled).toBe(true);
     await check();
     button("Yes, publish").click();

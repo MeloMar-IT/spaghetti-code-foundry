@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { plainServerText, whoText } from "../ui/change-words.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -71,7 +72,7 @@ describe("listView", () => {
   it("shows the story, status, next move, owner and age in a row", () => {
     const c = card();
     const text = rows(view(board()))[0]!.textContent;
-    for (const s of ["#89", "Eighty-nine", c.next.text, c.next.status, c.next.who, "#88", "Ann", "3 d"]) expect(text, s).toContain(s);
+    for (const s of ["#89", "Eighty-nine", plainServerText(c.next.text), plainServerText(c.next.status), whoText(c.next.who), "#88", "Ann", "3 d"]) expect(text, s).toContain(s);
     if (c.next.action) expect(text).toContain(c.next.action);
   });
 
@@ -92,7 +93,7 @@ describe("listView", () => {
     expect(rows(root)[0]!.textContent).toContain(card().next.status);
     const tables = root.all("table");
     expect(tables).toHaveLength(2);
-    for (const t of tables) expect(t.all("th").map((x) => x.textContent).slice(0, 1)).toEqual(["Story"]);
+    for (const t of tables) expect(t.all("th").map((x) => x.textContent).slice(0, 1)).toEqual(["Change"]);
     expect(tables[0]!.all("th")[0]).not.toBe(tables[1]!.all("th")[0]);
   });
 
@@ -113,7 +114,7 @@ describe("listView", () => {
   it("hides a column whose name is not in props", () => {
     const root = view(board(), prefs({ props: ["age"] }));
     const t = root.all("th").map((x) => x.textContent);
-    expect(t).toEqual(["Story", "Status", "Age"]);
+    expect(t).toEqual(["Change", "Status", "Age"]);
     expect(rows(root)[0]!.textContent).not.toContain("Ann");
   });
 
@@ -184,14 +185,14 @@ describe("counts and empty states", () => {
   it("puts the count next to each heading", () => {
     expect(heads(view(two))).toEqual(TITLES.map((t) => `${t} ${t === "Coding" || t === "Waiting for another story" ? 1 : 0}`));
   });
-  it("says 'N of M stories' only when a filter hides something", () => {
-    expect(view(two).textContent).not.toContain("stories");
-    expect(view(two, prefs({ status: ["coding"] })).textContent).toContain("1 of 2 stories");
+  it("says 'N of M changes' only when a filter hides something", () => {
+    expect(view(two).textContent).not.toContain("changes");
+    expect(view(two, prefs({ status: ["coding"] })).textContent).toContain("1 of 2 changes");
   });
   it("offers Clear filters when nothing matches, and the button works", () => {
     const h = handlers();
     const root = view(two, prefs({ text: "zzz" }), h);
-    expect(root.textContent).toContain("No story matches the filters.");
+    expect(root.textContent).toContain("No change matches the filters.");
     expect(root.all("h3")).toHaveLength(0);
     focus(root, "work-clear").listeners.click![0]!();
     expect(h.onClear).toHaveBeenCalled();
@@ -209,7 +210,7 @@ describe("counts and empty states", () => {
   it("keeps the scope controls and Clear filters on an empty board with an owner of the address", () => {
     const h = handlers();
     const root = view({ ...board([]), empty: "No stories yet." }, prefs({ owner: "u2" }), h);
-    expect(root.textContent).toContain("No story matches the filters.");
+    expect(root.textContent).toContain("No change matches the filters.");
     expect(root.textContent).not.toContain("No stories yet.");
     expect(focus(root, "work-owner")).toBeTruthy();
     focus(root, "work-clear").listeners.click![0]!();
@@ -398,7 +399,7 @@ describe("renderWork", () => {
     calls.shift()!.answer(board([card(), card({ issue: 5, title: "Five", column: "coding", key: "acme/app#5" }), card({ issue: 6, title: "Six", key: "acme/app#6" })]));
     await flush();
     expect(selected(m, "work-group")).toBe("none");
-    expect(m.textContent).toContain("1 of 3 stories");
+    expect(m.textContent).toContain("1 of 3 changes");
     cleanup();
   });
 
@@ -408,7 +409,7 @@ describe("renderWork", () => {
     input.listeners.input![0]!({ target: { value: "eight" } });
     expect(focus(m, "work-text")).toBe(input);
     input.listeners.input![0]!({ target: { value: "zzz" } });
-    expect(m.textContent).toContain("No story matches the filters.");
+    expect(m.textContent).toContain("No change matches the filters.");
     cleanup();
   });
 
@@ -564,7 +565,7 @@ describe("renderWork", () => {
   it("keeps the owner and offers Clear filters on an empty board, also when the last story goes", async () => {
     const empty = { ...board([]), empty: "No stories yet." };
     const a = await open(empty, undefined, mem(), "u1", { owner: "u2" });
-    expect(a.m.textContent).toContain("No story matches the filters.");
+    expect(a.m.textContent).toContain("No change matches the filters.");
     expect(selected(a.m, "work-owner")).toBe("u2");
     expect(a.go).not.toHaveBeenCalled();
     a.cleanup();
@@ -573,7 +574,7 @@ describe("renderWork", () => {
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(empty);
     await flush();
-    expect(b.m.textContent).toContain("No story matches the filters.");
+    expect(b.m.textContent).toContain("No change matches the filters.");
     expect(selected(b.m, "work-owner")).toBe("u2");
     focus(b.m, "work-clear").listeners.click![0]!();
     expect(b.go).toHaveBeenLastCalledWith("#/board");

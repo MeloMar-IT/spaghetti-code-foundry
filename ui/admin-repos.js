@@ -104,7 +104,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       testCommand: ["Test command"], docs: ["Docs to update (one path per line)"], protectedBranches: ["Protected branches (one pattern per line)", PATTERN_HINT],
       mainBranch: ["Main branch"], developBranch: ["Develop branch"],
       releaseRecipe: ["Release-build recipe (YAML)", "Used by release-build when the commit has no .factory/release-build.yaml. A file in the repository wins."],
-      decideTechnical: ["Decide technical questions itself", "The Foundry takes its own recommendation on technical questions and says so on the issue. Off: you are asked every question."],
+      decideTechnical: ["Decide technical questions itself", "The Foundry takes its own recommendation on technical questions and says so on the GitHub issue. Off: you are asked every question."],
       pushRemote: ["Also push to the remote", "After each merge into develop, the Foundry pushes develop to your folder's remote with plain git. A failed push is reported; the merge stays."],
     };
     const err = h("p", { class: "status bad flush", role: "alert" });

@@ -256,7 +256,7 @@ describe("pure functions", () => {
     const late = ok();
     late.parts[0].dependsOn = [late.parts[1].key];
     expect(sp.planProblem(late, d, 1)).toBe("Part 1 depends on part 2, which comes later. Change the order or remove the dependency.");
-    expect(sp.planProblem(ok(), d, 19)).toBe("A session has at most 20 story drafts. This split would make 21.");
+    expect(sp.planProblem(ok(), d, 19)).toBe("A session has at most 20 change drafts. This split would make 21.");
   });
   it("planBody", () => {
     const p = sp.planFromWay(WAYS[0], 0, AT);
@@ -283,14 +283,14 @@ describe("pure functions", () => {
     expect(sp.planBody(sp.emptyPlan(), d).parts[0]).not.toHaveProperty("sentence");
   });
   it("splitLogText", () => {
-    expect(sp.splitLogText({ what: "split-asked", who: "Ann" })).toBe("Ann asked the architect for ways to split a story draft");
-    expect(sp.splitLogText({ what: "architect-split", detail: "1" })).toBe("The architect proposed 1 way to split a story draft");
-    expect(sp.splitLogText({ what: "architect-split", detail: "2" })).toBe("The architect proposed 2 ways to split a story draft");
-    expect(sp.splitLogText({ what: "architect-split" })).toBe("The architect proposed ways to split a story draft");
-    expect(sp.splitLogText({ what: "draft-split", who: "Ann", detail: "3" })).toBe("Ann split a story draft into 3 drafts");
-    expect(sp.splitLogText({ what: "draft-split", who: "Ann" })).toBe("Ann split a story draft");
+    expect(sp.splitLogText({ what: "split-asked", who: "Ann" })).toBe("Ann asked the architect for ways to split a change draft");
+    expect(sp.splitLogText({ what: "architect-split", detail: "1" })).toBe("The architect proposed 1 way to split a change draft");
+    expect(sp.splitLogText({ what: "architect-split", detail: "2" })).toBe("The architect proposed 2 ways to split a change draft");
+    expect(sp.splitLogText({ what: "architect-split" })).toBe("The architect proposed ways to split a change draft");
+    expect(sp.splitLogText({ what: "draft-split", who: "Ann", detail: "3" })).toBe("Ann split a change draft into 3 drafts");
+    expect(sp.splitLogText({ what: "draft-split", who: "Ann" })).toBe("Ann split a change draft");
     expect(sp.splitLogText({ what: "created" })).toBe("");
-    expect(ui.logText({ what: "draft-split", who: "Ann", detail: "2" })).toBe("Ann split a story draft into 2 drafts");
+    expect(ui.logText({ what: "draft-split", who: "Ann", detail: "2" })).toBe("Ann split a change draft into 2 drafts");
   });
   it("has words for every server cut", () => {
     for (const c of SPLIT_CUTS) expect(sp.CUT_WORDS[c]).toBeTruthy();
@@ -382,8 +382,8 @@ describe("the ways", () => {
     await open();
     const text = box().textContent;
     for (const w of ["Way 1: By step", "Way 2: By data", "Export a file", "Users can export rows to a file.", "Rows are exported", "Columns can be chosen",
-      "The first story already delivers: A file with all rows.", "Depends on: story 1", "Old formats work", "Every criterion has a place.",
-      "Story 2 delivers nothing a user can see or check: Only a setting.", "Stories 1 and 2 touch the same code: Both change the writer."]) expect(text).toContain(w);
+      "The first change already delivers: A file with all rows.", "Depends on: change 1", "Old formats work", "Every criterion has a place.",
+      "Change 2 delivers nothing a user can see or check: Only a setting.", "Changes 1 and 2 touch the same code: Both change the writer."]) expect(text).toContain(w);
     expect(text.indexOf("Export a file")).toBeLessThan(text.indexOf("Choose columns"));
     expect(button(sp.ASK_AGAIN, box())).toBeDefined();
     expect(text).not.toContain(sp.OUT_OF_DATE);
@@ -732,15 +732,15 @@ describe("parts: pure functions", () => {
   it("splitLogText for a move and a merge", () => {
     expect(sp.splitLogText({ what: "criterion-moved", who: "Ann", detail: "Old formats work" })).toBe('Ann moved a criterion to another draft: "Old formats work"');
     expect(sp.splitLogText({ what: "criterion-moved", who: "Ann" })).toBe("Ann moved a criterion to another draft");
-    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann" })).toBe("Ann merged two story drafts");
-    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"Export a file" + "Choose columns"' })).toBe('Ann merged two story drafts: "Export a file" and "Choose columns"');
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann" })).toBe("Ann merged two change drafts");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"Export a file" + "Choose columns"' })).toBe('Ann merged two change drafts: "Export a file" and "Choose columns"');
     expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B"; removed "C" → "D", "C" → "E"' })).toBe(
-      'Ann merged two story drafts: "A" and "B". Dependencies that no longer fit the split were removed: "C" → "D", "C" → "E"');
+      'Ann merged two change drafts: "A" and "B". Dependencies that no longer fit the split were removed: "C" → "D", "C" → "E"');
     // titles that hold the delimiters: the plain sentence, never a wrong one
-    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B" + "C"' })).toBe("Ann merged two story drafts");
-    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A; removed x" + "B"' })).toBe("Ann merged two story drafts");
-    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A + B" + "C"' })).toBe('Ann merged two story drafts: "A + B" and "C"');
-    expect(ui.logText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B"' })).toBe('Ann merged two story drafts: "A" and "B"');
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B" + "C"' })).toBe("Ann merged two change drafts");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A; removed x" + "B"' })).toBe("Ann merged two change drafts");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A + B" + "C"' })).toBe('Ann merged two change drafts: "A + B" and "C"');
+    expect(ui.logText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B"' })).toBe('Ann merged two change drafts: "A" and "B"');
     expect(ui.logText({ what: "criterion-moved", who: "Ann" })).toBe("Ann moved a criterion to another draft");
   });
 });
@@ -821,7 +821,7 @@ describe("parts: a part", () => {
     family();
     await show();
     await openDraft(P1);
-    for (const x of ["Part 1 of 2 of", "Export rows", "Hint from the architect", HINT, "(not part of the story)"]) expect(section().textContent).toContain(x);
+    for (const x of ["Part 1 of 2 of", "Export rows", "Hint from the architect", HINT, "(not part of the change)"]) expect(section().textContent).toContain(x);
     await openDraft(P1);
     await openDraft(P2);
     expect(section().textContent).toContain("Part 2 of 2 of");

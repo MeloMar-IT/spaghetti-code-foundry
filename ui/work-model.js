@@ -1,4 +1,5 @@
 import { ownerLabel } from "./runs.js";
+import { whoText } from "./change-words.js";
 
 // The Work page's data work: flatten the board answer, filter, group, order. Pure; the server's
 // record decides status, column, sentence and blockers — nothing here computes them.
@@ -28,7 +29,7 @@ export const GROUPS = [
   { id: "none", label: "No grouping" },
 ];
 export const ORDERS = [
-  { id: "issue", label: "Order by issue" },
+  { id: "issue", label: "Order by issue number" },
   { id: "age", label: "Order by age (oldest first)" },
   { id: "title", label: "Order by title" },
 ];
@@ -107,7 +108,7 @@ export function groupItems(items, prefs, columns = []) {
       const found = [...new Set(items.map((i) => i.next?.who))];
       const known = WHO.filter((w) => found.includes(w));
       const rest = found.filter((w) => !WHO.includes(w)).sort();
-      return [...known, ...rest].map((w) => make(w, w, items.filter((i) => i.next?.who === w)));
+      return [...known, ...rest].map((w) => make(w, whoText(w), items.filter((i) => i.next?.who === w)));
     }
     default: {
       // The status filter narrows the items, not the columns: all of them show, empty ones with a count of 0.
@@ -148,6 +149,6 @@ export function facets(items, data) {
   return {
     repos: [...repos].sort((a, b) => a[0].localeCompare(b[0])).map(([id, count]) => ({ id, name: id, count })),
     owners: [...owners.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    who: [...who].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])).map(([id, count]) => ({ id, name: id, count })),
+    who: [...who].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])).map(([id, count]) => ({ id, name: whoText(id), count })),
   };
 }

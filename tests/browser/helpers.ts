@@ -19,6 +19,20 @@ export function seed(which: "default" | "large" = "default"): Seed {
 /** "/" for an admin, "/user/" for a user. */
 export const displayPath = (role: Role): string => (role === "admin" ? "/" : "/user/");
 
+/**
+ * The Simple view. The shared seed account is never changed: the page's own GET /api/session answer is
+ * edited on the way (view = simple), so only this page sees the Simple view.
+ */
+export async function asSimple(page: Page): Promise<void> {
+  await page.route("**/api/session", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const body = (await res.json()) as { user: Record<string, unknown> };
+    body.user = { ...body.user, view: "simple" };
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
 export interface OpenOptions {
   /** sets data-theme on <html> before the page scripts run */
   theme?: Theme;

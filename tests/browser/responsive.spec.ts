@@ -1,6 +1,75 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expectNoSidewaysScroll, openAs } from "./helpers.js";
+import { asSimple, expectNoSidewaysScroll, openAs, type Role } from "./helpers.js";
 import { VIEW_HEIGHT, WIDTHS, usesDrawer } from "./widths.js";
+
+// Redesign 8 (#847): the shell, Start work and a change page at 375 px in each view and theme, by keyboard, in plain words.
+const VIEWS: { name: string; role: Role; simple: boolean }[] = [
+  { name: "admin", role: "admin", simple: false },
+  { name: "advanced", role: "user", simple: false },
+  { name: "simple", role: "user", simple: true },
+];
+
+for (const view of VIEWS) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`the shell, Start work and a change at 375 px, ${view.name} view, ${theme}, by keyboard`, async ({ browser }) => {
+      const page = await openAs(browser, view.role, 375, "#/home", { theme, before: view.simple ? asSimple : undefined });
+      try {
+        expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(theme === "dark");
+        await expectNoSidewaysScroll(page);
+
+        // The drawer: Enter opens it, Tab stays inside (forward from the last control, back from the first), Escape returns to the button.
+        const menu = page.locator("#menu-btn");
+        await menu.focus();
+        await page.keyboard.press("Enter");
+        await expect(page.locator("#side")).toBeVisible();
+        const inSide = () => page.evaluate(() => !!document.activeElement?.closest("#side"));
+        expect(await inSide()).toBe(true);
+        await page.keyboard.press("Shift+Tab");
+        expect(await inSide(), "Shift+Tab from the first control").toBe(true);
+        for (let i = 0; i < 20; i++) {
+          await page.keyboard.press("Tab");
+          expect(await inSide(), `Tab ${i + 1}`).toBe(true);
+        }
+        await page.keyboard.press("Escape");
+        await expect(menu).toBeFocused();
+
+        // The words of the shell: "change", never "story" or "issue" (the GitHub name is allowed).
+        const words = await page.evaluate(async () => {
+          const { oldWordsIn } = await import("/change-words.js");
+          return oldWordsIn(`${(document.getElementById("side") as HTMLElement).innerText} ${(document.getElementById("top") as HTMLElement).innerText}`);
+        });
+        expect(words).toEqual([]);
+
+        // Start work: Tab reaches the box for the change.
+        await page.goto(page.url().replace(/#.*$/, "") + "#/start");
+        const box = page.getByLabel("What would you like to change?").first();
+        await expect(box).toBeVisible();
+        let reached = false;
+        for (let i = 0; i < 40 && !reached; i++) {
+          await page.keyboard.press("Tab");
+          reached = await box.evaluate((el) => el === document.activeElement);
+        }
+        expect(reached, "Tab reaches the box").toBe(true);
+        await expectNoSidewaysScroll(page);
+
+        // A change page has the five phases and does not scroll sideways (not in the Simple view, which has its own project page).
+        if (!view.simple) {
+          await page.goto(page.url().replace(/#.*$/, "") + "#/runs");
+          const row = page.locator("#main a[href^='#/runs/']").first();
+          await expect(row).toBeVisible();
+          await row.focus();
+          await page.keyboard.press("Enter");
+          const strip = page.locator("ol.scf-phase-strip").first();
+          await expect(strip).toBeVisible();
+          expect((await strip.boundingBox())!.width).toBeLessThanOrEqual(375);
+          await expectNoSidewaysScroll(page);
+        }
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+}
 
 // UI quality 1b (#368): no sideways scroll, 44 px touch targets, and dialogs that are sheets below 768 px.
 

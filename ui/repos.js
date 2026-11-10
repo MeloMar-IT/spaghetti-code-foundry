@@ -72,7 +72,7 @@ export const METHODS = [
     local: true,
     label: "Local (no GitHub)",
     help: [
-      "A git repository on this machine, with or without a remote. The Foundry keeps its stories in .scf/stories/ in that folder and never calls GitHub for it.",
+      "A git repository on this machine, with or without a remote. The Foundry keeps its changes in .scf/stories/ in that folder and never calls GitHub for it.",
       "Give the absolute path of the top folder, for example /Users/you/projects/app.",
     ],
     fields: [],

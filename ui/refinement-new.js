@@ -147,7 +147,7 @@ export function newSessionDialog(repos, onMade, { kind, preferred, fill: given }
       h("label", { class: "field" }, h("span", {}, "Repository"), select),
       h("fieldset", {}, h("legend", {}, "What do you want to refine?"),
         h("label", { class: "choice" }, ideaRadio, h("b", {}, "An idea")),
-        h("label", { class: "choice" }, issueRadio, h("b", {}, "An existing issue"))),
+        h("label", { class: "choice" }, issueRadio, h("b", {}, "An existing GitHub issue"))),
       fields, err, h("div", { class: "row" }, h("span", { class: "spacer" }), start));
   });
 }

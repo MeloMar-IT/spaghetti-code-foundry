@@ -689,7 +689,7 @@ describe("Settings → restart box", () => {
     const hits: string[] = [];
     const box = ui.restartBox({ needed: need, canRestart: true }, { onRequest: () => hits.push("request") });
     expect(box.textContent).toContain("A restart is needed: Listen on 127.0.0.1 → 0.0.0.0.");
-    expect(buttons(box)).toEqual(["Restart when no story is running"]);
+    expect(buttons(box)).toEqual(["Restart when no change is running"]);
     box.all("button")[0].click();
     expect(hits).toEqual(["request"]);
   });
@@ -728,7 +728,7 @@ describe("Settings → restart box", () => {
   it("is on the page, and the button posts the request", async () => {
     const { main, restarts } = await render({ listen: "0.0.0.0" }, "127.0.0.1", 200, {}, { needed: need, canRestart: true });
     expect(main.textContent).toContain("A restart is needed: Listen on 127.0.0.1 → 0.0.0.0.");
-    main.all("button").find((b) => b.textContent === "Restart when no story is running")!.click();
+    main.all("button").find((b) => b.textContent === "Restart when no change is running")!.click();
     await flush();
     expect(restarts).toContain("POST");
   });

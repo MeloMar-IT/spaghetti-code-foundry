@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextStep, runNextStep, type NextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { plainServerText, whoText } from "../ui/change-words.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -117,7 +118,7 @@ describe("ui/next.js renderer", () => {
     const n = { ...dep(), until: "after #3" };
     const parts = render(ui.nextParts(n));
     const text = parts.map((p) => p.textContent).join(" ");
-    for (const s of [n.who, "#7", "Seven", n.action, n.why, "Continues: after #3"]) expect(text).toContain(s);
+    for (const s of [whoText(n.who), "#7", "Seven", plainServerText(n.action), plainServerText(n.why), "Continues: after #3"]) expect(text).toContain(s);
     const link = parts.find((p) => p.tag === "a" && p.attrs.href === "https://github.com/o/r/issues/7")!;
     expect(link.attrs.target).toBe("_blank");
     expect(link.attrs.rel).toBe("noopener");
@@ -373,8 +374,8 @@ describe("the \"?\" and the status names", () => {
     for (const kind of KINDS) {
       const n = nextStep(kind, { repo: "o/r", runId: "x" }, { blockers: [{ issue: 1, title: "t" }] as never });
       const [pill, help] = ui.nextStatus(n) as FakeElement[];
-      expect(pill!.textContent).toBe(n.status);
-      expect(help!.all("span").find((s) => s.attrs.role === "note")!.textContent).toBe(n.help);
+      expect(pill!.textContent).toBe(plainServerText(n.status));
+      expect(help!.all("span").find((s) => s.attrs.role === "note")!.textContent).toBe(plainServerText(n.help));
       const icons = pill!.all("svg");
       expect(icons).toHaveLength(1);
       expect(icons[0]!.attrs.class!.includes("spin")).toBe(kind === "running");

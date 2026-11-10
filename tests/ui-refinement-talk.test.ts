@@ -148,8 +148,8 @@ describe("pure functions", () => {
     expect(talk.answerText({ ...q, answer: { unknown: true } })).toBe("I don't know yet");
     expect(talk.answerText(q)).toBe("");
     expect(talk.openLine(0)).toBe("");
-    expect(talk.openLine(1)).toBe("1 open question — a story with open questions is not ready");
-    expect(talk.openLine(2)).toBe("2 open questions — a story with open questions is not ready");
+    expect(talk.openLine(1)).toBe("1 open question — a change with open questions is not ready");
+    expect(talk.openLine(2)).toBe("2 open questions — a change with open questions is not ready");
     expect(talk.doneText("All clear.")).toBe("All clear.");
     expect(talk.doneText("")).toBe("The architect has nothing important left to ask");
   });
@@ -344,7 +344,7 @@ describe("answers", () => {
     expect(text()).not.toContain("open question");
     await press(button("I don't know yet", card("q1")!));
     expect(sent[0]!.body).toEqual({ unknown: true });
-    for (const [n, line] of [[1, "1 open question — a story with open questions is not ready"], [2, "2 open questions — a story with open questions is not ready"]] as const) {
+    for (const [n, line] of [[1, "1 open question — a change with open questions is not ready"], [2, "2 open questions — a change with open questions is not ready"]] as const) {
       const open = Array.from({ length: n }, (_, i) => ({ id: `o${i}`, text: `Open ${i}`, at: "x" }));
       postAnswer = session({ talk: mkTalk({ map: { rules: [], examples: [], open } }) });
       await press(byFocus("unknown-q2"));

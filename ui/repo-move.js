@@ -85,13 +85,13 @@ export function doneLine(r) {
   const made = r.stories?.created?.length ?? 0;
   let first = `${count(pushed, "branch or tag", "branches and tags")} pushed`;
   if (same) first += `, ${same} already up to date`;
-  const parts = [first, `${count(made, "story", "stories")} created on GitHub`];
+  const parts = [first, `${count(made, "change", "changes")} created on GitHub`];
   const w = r.switched?.watchers?.length ?? 0;
   if (w) parts.push(`${count(w, "watcher")} moved`);
   return `Moved to ${r.github}: ${parts.join("; ")}. The local record is removed; the folder and its .scf/stories files stay.`;
 }
 
-const MOVING = "Moving… This pushes every branch and tag and moves the stories. It can take a few minutes; keep this page open.";
+const MOVING = "Moving… This pushes every branch and tag and moves the changes. It can take a few minutes; keep this page open.";
 
 /**
  * The dialog. Resolves `{ called, result }` however it is closed (Escape, ✕, the backdrop, Cancel): `called` is true once a real
@@ -158,7 +158,7 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
     area.replaceChildren(...[
       h("p", {}, repositoryLine(r, { private: f.private })),
       list("Branches", g.branches), list("Tags", g.tags),
-      h("div", {}, h("strong", {}, `Stories (${plan.length})`), plan.length ? h("ul", {}, plan.map((p) => h("li", {}, storyLine(p)))) : h("p", { class: "muted" }, "No stories to move.")),
+      h("div", {}, h("strong", {}, `Changes (${plan.length})`), plan.length ? h("ul", {}, plan.map((p) => h("li", {}, storyLine(p)))) : h("p", { class: "muted" }, "No changes to move.")),
     ].filter(Boolean));
   };
 
@@ -180,7 +180,7 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
       // no token (a story cannot go along, or the server sent none): nothing can be confirmed
       checked = { body: moveBody(f, false, token), blocked: blocked || typeof token !== "string" || !token };
       showCheck(r);
-      note.textContent = blocked ? "Some stories cannot be moved. Fix or remove them, then check again." : "";
+      note.textContent = blocked ? "Some changes cannot be moved. Fix or remove them, then check again." : "";
     } catch (e) {
       alertLine.textContent = errorText(e);
     }
@@ -220,11 +220,11 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
     close = c;
     sync();
     return h("div", { class: "stack" },
-      h("p", { class: "muted" }, `Moves ${repo.url} to GitHub: every branch, tag and story. Check first; nothing leaves this computer until you press Yes, publish.`),
+      h("p", { class: "muted" }, `Moves ${repo.url} to GitHub: every branch, tag and change. Check first; nothing leaves this computer until you press Yes, publish.`),
       h("fieldset", { class: "stack" }, h("legend", {}, "Where to?"),
         label(pickRadio, "Use one of my GitHub repositories"), select,
         label(createRadio, "Create a new repository"), nameField, label(priv, "Private")),
-      label(closed, "Also move closed stories"),
+      label(closed, "Also move closed changes"),
       alertLine, status, area, note,
       h("div", { class: "row" }, h("span", { class: "spacer" }), cancelBtn, checkBtn, moveBtn));
   }, { busy: () => busy });

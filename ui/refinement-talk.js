@@ -39,7 +39,7 @@ export function answerText(q) {
 /** The line about open questions of the map, or "" when there are none. */
 export function openLine(n) {
   if (!n) return "";
-  return `${n} open ${n === 1 ? "question" : "questions"} — a story with open questions is not ready`;
+  return `${n} open ${n === 1 ? "question" : "questions"} — a change with open questions is not ready`;
 }
 
 /** The sentence of the architect for a round with nothing left to ask. */

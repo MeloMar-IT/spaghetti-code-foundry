@@ -86,7 +86,7 @@ export function finishView(row, opts = {}) {
 
 /** "3 of 10 done; Working 2, Waiting 4": only non-zero states besides done. */
 export function progressText(counts, total) {
-  if (!total) return "No stories yet";
+  if (!total) return "No changes yet";
   const rest = SEGMENTS.filter((s) => s.id !== "done" && counts?.[s.id] > 0).map((s) => `${s.word} ${counts[s.id]}`);
   const head = `${counts?.done ?? 0} of ${total} done`;
   return rest.length ? `${head}; ${rest.join(", ")}` : head;
@@ -109,12 +109,12 @@ export function barSegments(counts, total) {
 
 /** "Stories: 21 at the start, 95 now (16 were split)". The server's text wins; else the same format from the numbers. */
 export function growthSentence(row) {
-  if (row?.growthText) return `Stories: ${row.growthText}`;
+  if (row?.growthText) return `Changes: ${row.growthText}`;
   const g = row?.growth;
   if (!g || typeof g.atStart !== "number" || typeof g.now !== "number") return "";
   const base = `${g.atStart} at the start, ${g.now} now`;
   const split = g.split > 0 ? ` (${g.split} ${g.split === 1 ? "was" : "were"} split)` : "";
-  return `Stories: ${base}${split}`;
+  return `Changes: ${base}${split}`;
 }
 
 /** "#12", "#12 and #14", "#1, #2 and #3"; more than five: "#1, #2, #3, #4, #5 and 3 more". */
@@ -129,7 +129,7 @@ export function issueList(issues) {
 export function blockTexts(ups) {
   return (ups ?? []).map((u) => {
     const n = u.waiting?.length ?? 0;
-    const more = n ? `; ${n} more ${plural(n, "story waits for it", "stories wait for them")}` : "";
+    const more = n ? `; ${n} more ${plural(n, "change waits for it", "changes wait for them")}` : "";
     return { kind: u.kind, text: `${upperFirst(u.status ?? "")}: ${issueList(u.issues)}${more}`, help: u.help ?? "" };
   });
 }
@@ -145,8 +145,8 @@ export function sortRows(rows) {
 export function freshText(data) {
   if (data?.state !== "fresh") return "";
   const age = data.ageMs < 60_000 ? "just now" : `${ageText(data.readAt, new Date(Date.parse(data.readAt) + data.ageMs)) || "a while"} ago`;
-  const base = `Issues read ${age}`;
-  return data.cut ? `${base}. Not every issue was read, so the counts can be too low` : base;
+  const base = `GitHub issues read ${age}`;
+  return data.cut ? `${base}. Not every GitHub issue was read, so the counts can be too low` : base;
 }
 
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;

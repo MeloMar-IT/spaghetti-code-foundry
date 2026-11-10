@@ -16,7 +16,7 @@ export const RISK_WORDS = { data: "Data", security: "Security", compatibility: "
 export const SIZE_WORDS = { small: "Small", medium: "Medium", large: "Large" };
 export const OVERLAP_FOUND = "Cannot be built at the same time as this draft.";
 export const OVERLAP_ESTIMATE = "May touch the same code — likely cannot be built at the same time.";
-export const LABEL_ASK = "Add the review label when this story is published";
+export const LABEL_ASK = "Add the review label when this change is published";
 export const NOTHING = "Nothing named.";
 
 /** The same rule as `draftTitle` in refinement-draft.js (which imports this file, so it is not imported here). */
@@ -91,7 +91,7 @@ export function viewNodes(s, d, act) {
       h("b", {}, o.issue !== undefined ? `#${o.issue}` : `${o.title || "Untitled draft"} (draft)`),
       h("small", { class: "muted" }, o.areas.join(", ")), basis(o.basis), h("span", { class: "said" }, o.why),
       " ", o.basis === "found" ? OVERLAP_FOUND : OVERLAP_ESTIMATE)))
-    : h("p", { class: "muted" }, "No other open story or draft named."));
+    : h("p", { class: "muted" }, "No other open change or draft named."));
 
   if (v.planReview) {
     out.push(h("h4", {}, "Plan review"), h("p", {}, v.planReview.text, basis("estimate")));
@@ -99,7 +99,7 @@ export function viewNodes(s, d, act) {
     const label = v.planReview.label;
     // The label choice is the person's, not the architect's: it stays outside the AI region.
     if (act && label) tail.push(labelBox(d, act, `${LABEL_ASK} ("${label}")`));
-    else if (!act && label && d.addReviewLabel) tail.push(h("p", { class: "muted" }, `The review label "${label}" is added when this story is published.`));
+    else if (!act && label && d.addReviewLabel) tail.push(h("p", { class: "muted" }, `The review label "${label}" is added when this change is published.`));
   }
   return [h("div", { class: "stack", ...aiProps("the architect's view") }, out), ...tail];
 }
@@ -113,7 +113,7 @@ const labelBox = (d, act, text) => h("label", { class: "check check-row" },
 /** A stored choice to add the review label that the view does not offer now (no recommendation or no label): shown so it can be seen and cleared. */
 export function staleChoiceNodes(d, act) {
   if (d.addReviewLabel !== true || d.impact?.planReview?.label) return [];
-  if (!act) return [h("p", { class: "muted" }, "You chose to add the review label when this story is published. No review label is offered now.")];
+  if (!act) return [h("p", { class: "muted" }, "You chose to add the review label when this change is published. No review label is offered now.")];
   return [h("p", { class: "muted" }, "No review label is offered now (no review is recommended, or no label is set)."),
     labelBox(d, act, `${LABEL_ASK} — untick to remove this choice`)];
 }
@@ -137,11 +137,11 @@ export function impactNodes(s, d, act) {
 /** A log line of the view in words, or "" when the line is not one of them. */
 export function impactLogText(entry) {
   const who = entry.who || "Someone";
-  if (entry.what === "impact-asked") return `${who} asked for the architect's view of a story draft`;
+  if (entry.what === "impact-asked") return `${who} asked for the architect's view of a change draft`;
   if (entry.what === "architect-impact") {
     return ["small", "medium", "large"].includes(entry.detail)
-      ? `The architect wrote its view of a story draft: ${entry.detail}`
-      : "The architect wrote its view of a story draft";
+      ? `The architect wrote its view of a change draft: ${entry.detail}`
+      : "The architect wrote its view of a change draft";
   }
   return "";
 }

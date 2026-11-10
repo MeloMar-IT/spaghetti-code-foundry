@@ -175,7 +175,7 @@ describe("planRecordNote", () => {
     }
   });
   it("says how a stop and a warning end", () => {
-    expect(note({ outcome: "comment-changed", stopped: true })).toContain("Plan the issue again, then resume.");
+    expect(note({ outcome: "comment-changed", stopped: true })).toContain("Plan the change again, then resume.");
     expect(note({ outcome: "newer-plan" })).toContain("The run goes on without the plan's skills.");
     expect(note({ outcome: "none" })).toContain("codes without the plan's skills");
   });
@@ -193,7 +193,7 @@ describe("planRecordNote", () => {
     const t = text(card(v));
     expect(t).toContain("The plan comments could not be read.");
     expect(t).toContain("resume to check again");
-    expect(t).not.toContain("Plan the issue again");
+    expect(t).not.toContain("Plan the change again");
     expect(t).not.toContain("goes on without");
   });
   it("draws nothing for an unknown outcome and draws the note as text", () => {

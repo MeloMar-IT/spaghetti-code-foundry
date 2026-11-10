@@ -163,7 +163,7 @@ export function initPalette({
     const base = `palette-${++seq}`;
     const input = h("input", {
       class: "palette-input", type: "text", role: "combobox", "aria-label": "Search", "aria-autocomplete": "list", "aria-expanded": "false",
-      "aria-controls": `${base}-list`, autocomplete: "off", maxlength: 100, placeholder: "Search pages, actions, runs, issues…",
+      "aria-controls": `${base}-list`, autocomplete: "off", maxlength: 100, placeholder: "Search pages, actions, runs, changes…",
     });
     const status = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
     const list = h("div", { id: `${base}-list`, class: "palette-list", role: "listbox", "aria-label": "Results" });

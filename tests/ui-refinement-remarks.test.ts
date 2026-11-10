@@ -184,11 +184,11 @@ describe("pure functions", () => {
     expect(rm.remarkNodes({ id: D1 }, "what")).toEqual([]);
   });
   it("reviewLogText", () => {
-    expect(rm.reviewLogText({ what: "review-asked", who: "Ann" })).toBe("Ann asked the architect to review a story draft");
-    expect(rm.reviewLogText({ what: "architect-reviewed", detail: "0" })).toBe("The architect reviewed a story draft: no remarks");
-    expect(rm.reviewLogText({ what: "architect-reviewed", detail: "1" })).toBe("The architect reviewed a story draft: 1 remark");
-    expect(rm.reviewLogText({ what: "architect-reviewed", detail: "3" })).toBe("The architect reviewed a story draft: 3 remarks");
-    expect(rm.reviewLogText({ what: "architect-reviewed" })).toBe("The architect reviewed a story draft");
+    expect(rm.reviewLogText({ what: "review-asked", who: "Ann" })).toBe("Ann asked the architect to review a change draft");
+    expect(rm.reviewLogText({ what: "architect-reviewed", detail: "0" })).toBe("The architect reviewed a change draft: no remarks");
+    expect(rm.reviewLogText({ what: "architect-reviewed", detail: "1" })).toBe("The architect reviewed a change draft: 1 remark");
+    expect(rm.reviewLogText({ what: "architect-reviewed", detail: "3" })).toBe("The architect reviewed a change draft: 3 remarks");
+    expect(rm.reviewLogText({ what: "architect-reviewed" })).toBe("The architect reviewed a change draft");
     expect(rm.reviewLogText({ what: "moved-to-notes", who: "Ann", detail: "criteria" })).toBe("Ann moved a criterion to the notes for the builder");
     expect(rm.reviewLogText({ what: "moved-to-notes", who: "Ann", detail: "title" })).toBe("Ann moved the title to the notes for the builder");
     expect(rm.reviewLogText({ what: "moved-to-notes", who: "Ann" })).toBe("Ann moved a text to the notes for the builder");

@@ -44,7 +44,7 @@ const labelled = (text: string) => walk(root()).find((e) => e.tag === "label" &&
 const inputOf = (text: string) => walk(labelled(text)).find((e) => e.tag === "input" || e.tag === "textarea")!;
 /** True when the element or a parent is hidden. */
 const hidden = (el: FakeElement): boolean => el.hidden || (el.parent ? hidden(el.parent) : false);
-const NOTE = "A local project: the watcher starts the stories set to";
+const NOTE = "A local project: the watcher starts the changes set to";
 const open = (repos: object[], existing: object | null = null) => form.repoWatcherDialog({ repos, flows: [{ name: "issue-gitflow" }], existing }) as Promise<unknown>;
 const choose = (id: string) => {
   const select = field("repo");

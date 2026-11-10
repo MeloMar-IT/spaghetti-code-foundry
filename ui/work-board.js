@@ -3,6 +3,7 @@ import { whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { issueLink, wayButton } from "./work-list.js";
 import { ageText, keyOf } from "./work-model.js";
+import { plainServerText, whoText } from "./change-words.js";
 
 // The board layout of the Work page: one column per group, a compact card per story. Every word comes
 // from the server's record. Keyboard: one Tab stop per column (roving tabindex), arrows move between cards.
@@ -47,7 +48,7 @@ export function workCard(item, prefs, handlers = {}) {
     item.goesFirst ? " " : null, item.goesFirst ? h("span", { class: "pill first" }, "goes first") : null,
     yours ? " " : null, yours ? h("span", { class: "pill who-you" }, "Your turn") : null,
     blocked ? " " : null, blocked ? h("span", { class: "pill" }, "Blocked") : null));
-  if (on("next") && (n.who || n.action)) parts.push(h("div", { class: "work-card-next" }, n.who ? h("span", { class: `pill ${whoClass(n)}` }, n.who) : null, n.who ? " " : null, n.action ?? ""));
+  if (on("next") && (n.who || n.action)) parts.push(h("div", { class: "work-card-next" }, n.who ? h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)) : null, n.who ? " " : null, plainServerText(n.action ?? "")));
   if (blocked) {
     parts.push(h("div", { class: "work-card-deps" },
       on("blockers") ? ["Blocked by ", ...item.after.flatMap((i, k) => [k ? ", " : null, issueLink(item.repo, i, leave)]), " "] : null,
@@ -62,7 +63,7 @@ export function workCard(item, prefs, handlers = {}) {
   ].filter(Boolean);
   if (meta.length) parts.push(h("div", { class: "work-card-meta muted" }, ...meta.flatMap((m, k) => [k ? " · " : null, m])));
   const open = () => { globalThis.location.hash = `#/runs/${item.runId}`; };
-  const attrs = { class: `work-card${yours ? " yours" : ""}${item.runId ? " link" : ""}`, "data-card": keyOf(item), "data-focus": `card:${keyOf(item)}`, title: n.text, tabindex: "-1" };
+  const attrs = { class: `work-card${yours ? " yours" : ""}${item.runId ? " link" : ""}`, "data-card": keyOf(item), "data-focus": `card:${keyOf(item)}`, title: n.text === undefined ? undefined : plainServerText(n.text), tabindex: "-1" };
   if (item.runId) Object.assign(attrs, { role: "link", onClick: open });
   const el = h("div", attrs, ...parts);
   el.open = item.runId ? open : handlers.onOpen ? () => handlers.onOpen(item, `card:${keyOf(item)}`) : undefined;

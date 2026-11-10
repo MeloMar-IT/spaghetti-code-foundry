@@ -74,7 +74,7 @@ describe("suggested questions", () => {
       expect(list, hash).toContain("What can Ask SCF help me with?");
       for (const s of list) expect(s, s).toMatch(/^[A-Z].*\?$/);
     }
-    expect(m.suggestionsFor(null)).toEqual(["What can Ask SCF help me with?", "Where do I start work on an issue?"]);
+    expect(m.suggestionsFor(null)).toEqual(["What can Ask SCF help me with?", "Where do I start work on a change?"]);
   });
 });
 

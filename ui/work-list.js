@@ -2,6 +2,7 @@ import { h, tableBox } from "./dom.js";
 import { whereLink, whereTarget, whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { ageText } from "./work-model.js";
+import { plainServerText, whoText } from "./change-words.js";
 
 // The list layout of the Work page: one table per group. Every word comes from the server's record.
 
@@ -36,13 +37,13 @@ function rowView(item, cols, handlers) {
   const open = () => { globalThis.location.hash = `#/runs/${item.runId}`; };
   const own = item.runId && n.where?.url === `#/runs/${item.runId}`;
   const cells = [
-    h("td", {}, issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title), " ", wayButton(item, handlers), cols.next && n.text ? h("div", { class: "muted" }, n.text) : null),
+    h("td", {}, issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title), " ", wayButton(item, handlers), cols.next && n.text ? h("div", { class: "muted" }, plainServerText(n.text)) : null),
   ];
   if (cols.repo) cells.push(h("td", { class: "muted" }, item.repo));
-  cells.push(h("td", {}, n.status || item.columnTitle, cols.step && item.step ? h("div", { class: "muted work-step" }, item.step) : null));
+  cells.push(h("td", {}, plainServerText(n.status) || item.columnTitle,cols.step && item.step ? h("div", { class: "muted work-step" }, item.step) : null));
   if (cols.next) {
     cells.push(h("td", {},
-      h("span", { class: `pill ${whoClass(n)}` }, n.who), " ", n.action ?? "",
+      h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)), " ", plainServerText(n.action ?? ""),
       !own && n.where?.label
         ? h("span", { onClick: (e) => { e?.stopPropagation?.(); if (whereTarget(n.where)?.external) leave(); } }, " ", whereLink(n.where))
         : null));
@@ -78,7 +79,7 @@ export function listView(groups, prefs, handlers = {}) {
     owner: props.includes("owner"),
     age: props.includes("age"),
   };
-  const head = ["Story", cols.repo ? "Repository" : null, "Status", cols.next ? "Next move" : null, cols.blockers ? "After" : null, cols.owner ? "Owner" : null, cols.age ? "Age" : null]
+  const head = ["Change", cols.repo ? "Repository" : null, "Status", cols.next ? "Next move" : null, cols.blockers ? "After" : null, cols.owner ? "Owner" : null, cols.age ? "Age" : null]
     .filter(Boolean);
   const headRow = () => h("tr", {}, ...head.map((t) => h("th", {}, t))); // fresh nodes for every table
   return groups.map((g) => h("div", { class: "work-group" },

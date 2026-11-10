@@ -19,7 +19,7 @@ export function sourceSection(s, { send }) {
   const link = String(src.url ?? "").startsWith("https://")
     ? h("a", { href: src.url, target: "_blank", rel: "noopener noreferrer" }, label)
     : h("span", {}, label);
-  const nodes = [h("p", { class: "muted" }, "From issue ", link)];
+  const nodes = [h("p", { class: "muted" }, "From GitHub issue ", link)];
   if (src.buildLabel) {
     const canRemove = s.mine && s.state !== "dropped" && s.repoAvailable !== false;
     const button = canRemove
@@ -28,7 +28,7 @@ export function sourceSection(s, { send }) {
         if (ok) toast("Build label removed");
       } }, "Remove the build label")
       : null;
-    nodes.push(h("p", { class: "status bad" }, `This issue has the build label "${src.buildLabel}". The Foundry may start building it while you refine it.`, " ", button));
+    nodes.push(h("p", { class: "status bad" }, `This GitHub issue has the build label "${src.buildLabel}". The Foundry may start building it while you refine it.`, " ", button));
   }
   return nodes;
 }
@@ -36,7 +36,7 @@ export function sourceSection(s, { send }) {
 /** The log lines of this part in words, or "". */
 export function importLogText(entry) {
   const who = entry.who || "Someone";
-  if (entry.what === "imported") return `${who} started the session from issue ${entry.detail ?? ""}`.trim();
-  if (entry.what === "source-label-removed") return `${who} removed the build label${entry.detail ? ` "${entry.detail}"` : ""} from the issue`;
+  if (entry.what === "imported") return `${who} started the session from GitHub issue ${entry.detail ?? ""}`.trim();
+  if (entry.what === "source-label-removed") return `${who} removed the build label${entry.detail ? ` "${entry.detail}"` : ""} from the GitHub issue`;
   return "";
 }

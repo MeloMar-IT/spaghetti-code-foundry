@@ -444,11 +444,11 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   };
   const clear = () => setFilters({});
   const toolbar = (full) => h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
-    h("span", { class: "muted" }, "Where a rough idea grows into a story"),
+    h("span", { class: "muted" }, "Where a rough idea grows into a change"),
     h("span", { class: "spacer" }), full ? [filter("Open sessions", false), filter("Dropped", true)] : null,
     full && !readOnly ? [
       h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
-      h("button", { onClick: () => newSessionDialog(repos, opened, { kind: "issue", preferred: view.filters.repo }) }, "Refine an existing issue"),
+      h("button", { onClick: () => newSessionDialog(repos, opened, { kind: "issue", preferred: view.filters.repo }) }, "Refine an existing GitHub issue"),
       h("button", { class: "primary", onClick: async () => {
         await newSessionDialog(repos, opened, { preferred: view.filters.repo });
       } }, "New session"),

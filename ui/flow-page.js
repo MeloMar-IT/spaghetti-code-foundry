@@ -634,7 +634,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     } else {
       openNew(result.yaml);
     }
-    toast(result.error ? "Claude's draft has issues — see the errors" : `Done · $${result.costUsd.toFixed(3)} — review, then Save`, result.error ? "error" : "info");
+    toast(result.error ? "Claude's draft has problems — see the errors" : `Done · $${result.costUsd.toFixed(3)} — review, then Save`, result.error ? "error" : "info");
   }
 
   /** Goes to the place of a problem; does nothing when the text changed since it was checked. */

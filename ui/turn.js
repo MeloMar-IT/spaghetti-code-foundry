@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { plainServerText } from "./change-words.js";
 import { h, mount, toast } from "./dom.js";
 import { dialogOpen, keepScroll, liveStates, poller } from "./live.js";
 import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
@@ -93,7 +94,7 @@ export function sinceText(iso, now = new Date()) {
   return t ? `since ${t}` : "";
 }
 
-const stories = (n) => `${n} ${n === 1 ? "story" : "stories"}`;
+const stories = (n) => `${n} ${n === 1 ? "change" : "changes"}`;
 
 /** A bug story as a link (only for an https address), else "#12" as text. */
 function storyLink(s, focus) {
@@ -132,13 +133,13 @@ function itemView(item, { onDismiss, onLeave, onAct }, embedded = false) {
         h("b", {}, item.what)),
       // On Home the advice of a failed run is one plain sentence (the record's own text may name a label to remove);
       // the cause is one click away.
-      h("div", {}, h("span", { class: "hold-action" }, embedded && n.kind === "failed" ? STUCK.line : n.action)),
+      h("div", {}, h("span", { class: "hold-action" }, embedded && n.kind === "failed" ? STUCK.line : plainServerText(n.action))),
       embedded
-        ? h("details", { class: "today-cause" }, h("summary", { "data-focus": `turn-cause-${k}` }, TODAY.seeWhat), h("p", { class: "muted" }, String(n.why ?? "").trim() || TODAY.noCause))
-        : h("div", { class: "muted" }, n.why),
+        ? h("details", { class: "today-cause" }, h("summary", { "data-focus": `turn-cause-${k}` }, TODAY.seeWhat), h("p", { class: "muted" }, plainServerText(n.why).trim() || TODAY.noCause))
+        : h("div", { class: "muted" }, plainServerText(n.why)),
       n.issueUnchecked ? h("div", { class: "muted" }, ISSUE_UNCHECKED) : null,
       n.evidence?.length ? h("div", { class: "muted" }, n.evidence.map((l) => h("div", {}, l))) : null,
-      n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s, `turn-story-${k}-${s.issue}`)])) : null,
+      n.stories?.length ? h("div", {}, "Bug changes: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s, `turn-story-${k}-${s.issue}`)])) : null,
       item.unblocks > 0 ? h("div", { class: "muted" }, `${stories(item.unblocks)} ${item.unblocks === 1 ? "waits" : "wait"} for this`) : null,
       since ? h("div", { class: "muted", title: new Date(item.since).toLocaleString() }, since) : null,
       ownerLabel(item.ownerName) ? h("div", { class: "muted" }, `Owner: ${ownerLabel(item.ownerName)}`) : null),

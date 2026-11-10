@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { plainServerText, whoText } from "./change-words.js";
 import { h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo } from "./filters.js";
 import { pageViews } from "./views.js";
@@ -388,14 +389,14 @@ export function failureCard(s, { onStep } = {}) {
   if (!f) return null;
   const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
   return h("div", { class: `card next-step failure ${whoClass(n)}` },
-    h("div", { class: "next-parts" }, h("b", {}, "This run failed"), h("span", { class: `pill ${whoClass(n)}` }, n.who), h("span", { class: `pill kind-${f.cause}` }, f.kind)),
+    h("div", { class: "next-parts" }, h("b", {}, "This run failed"), h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)), h("span", { class: `pill kind-${f.cause}` }, plainServerText(f.kind))),
     h("dl", { class: "meta" },
-      row("What happened", f.what),
-      row("Why", f.byModel ? [f.why, h("div", { class: "muted" }, "A model read the output of the failing step to write this sentence. It can be wrong.")] : f.why),
-      row("Already tried", f.tried),
-      n.action ? row("Do first", n.action) : null),
+      row("What happened", plainServerText(f.what)),
+      row("Why", f.byModel ? [plainServerText(f.why), h("div", { class: "muted" }, "A model read the output of the failing step to write this sentence. It can be wrong.")] : plainServerText(f.why)),
+      row("Already tried", plainServerText(f.tried)),
+      n.action ? row("Do first", plainServerText(n.action)) : null),
     h("b", {}, "Your options"),
-    h("ul", { class: "options" }, f.options.map((o) => h("li", {}, o))),
+    h("ul", { class: "options" }, f.options.map((o) => h("li", {}, plainServerText(o)))),
     onStep ? h("button", { class: "small", "data-focus": "failed-step", onClick: onStep }, "Show the failed step") : null,
     s.reason ? h("details", { class: "raw" }, h("summary", { "data-focus": "raw-details" }, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
 }
@@ -423,7 +424,7 @@ export function actions(s, run = () => {}) {
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => run("reject") }, "✘ Reject"));
   }
   if (s.status === "stopped" && /^the issue's spending limit /.test(s.reason ?? "") && !closed) {
-    b.push(h("button", { "data-focus": "act-raise-limit", onClick: () => run("raise-limit") }, "Raise the issue's limit"));
+    b.push(h("button", { "data-focus": "act-raise-limit", onClick: () => run("raise-limit") }, "Raise the change's limit"));
   }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
     b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => run("resume") }, "Retry from the failing step"));
