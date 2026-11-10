@@ -18,6 +18,7 @@ import { createTimeline } from "../run-timeline.js";
 import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
 import { archivedSections, listRow, myRunsEntries, readDensity, renderSections, runSections, sectionOf, writeDensity } from "../runs-list.js";
 import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "../runs-bar.js";
+import { inGroup } from "../today.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, isActive, isServerActive, jobMatches, serverKey } from "../runs-filter.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
@@ -161,6 +162,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
       if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
       if (!e.run && !jobMatches(e.job, f, { now })) return false;
       if (f.needs && sectionOf(e) !== "needs") return false;
+      if (f.group && !inGroup(f.group, e, now)) return false;
       if (arch) return true;
       return !f.view || sectionOf(e) === f.view;
     };

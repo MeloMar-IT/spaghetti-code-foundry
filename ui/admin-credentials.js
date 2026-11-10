@@ -1,5 +1,6 @@
 import { api } from "./api.js";
-import { h, mount, tableBox } from "./dom.js";
+import { h, mount, table } from "./dom.js";
+import { pageHeader } from "./kit/product.js";
 import { credentialIntegration, integrationBlock } from "./integration.js";
 import { loadFailed, scopeSwitch } from "./repos.js";
 import { emptyState, loadingState } from "./states.js";
@@ -21,8 +22,8 @@ const onPage = () => {
 /** The admin page with the stored credentials of all accounts: only to look at. Returns a cleanup. */
 export async function renderCredentials(main) {
   const mine = ++generation;
-  const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Credentials"), h("span", { class: "muted" }, "The stored credentials of all accounts. Secrets are never shown."),
-    scopeSwitch("credentials"));
+  const head = () => pageHeader({ layout: "toolbar", title: "Credentials", meta: h("span", { class: "muted" }, "The stored credentials of all accounts. Secrets are never shown."),
+    actions: scopeSwitch("credentials") });
   const load = async () => {
     mount(main, head(), loadingState("Loading the credentials", { rows: 3, shape: "table" }));
     let list;
@@ -53,9 +54,7 @@ export async function renderCredentials(main) {
   const draw = (list, repos, options) => mount(main,
     head(),
     list.length
-      ? tableBox(h("table", { class: "table" },
-        h("thead", {}, h("tr", {}, ["Owner", "Provider", "Identity", "Scope", "Fingerprint", "Created", "Last used"].map((t) => h("th", {}, t)))),
-        h("tbody", {}, list.map((c) => row(c, repos, options)))))
+      ? table(["Owner", "Provider", "Identity", "Scope", "Fingerprint", "Created", "Last used"], list.map((c) => row(c, repos, options)), { caption: "Stored credentials" })
       : emptyState("No stored credentials yet."));
   await load();
   return () => {

@@ -194,7 +194,10 @@ describe("the pages", () => {
   it("lists one card per project with the state and a big button", () => {
     const [home] = pages();
     expect(home!.all("li").length).toBe(2);
-    expect(home!.all("h1")[0]!.textContent).toBe("My projects");
+    // the greeting of Today is the h1 of the page; My projects is a section below it, each project a heading under that
+    expect(home!.all("h1")).toHaveLength(0);
+    expect(home!.all("h2")[0]!.textContent).toBe("My projects");
+    expect(home!.all("h3")).toHaveLength(2);
     expect(texts(home!).join("|")).toContain("Waiting for your answer");
     expect(box(view.projectsView([])).textContent).toContain("No projects yet");
   });
@@ -306,6 +309,95 @@ describe("the pages", () => {
     const main4 = new FakeElement("div");
     (await view.renderSimpleHome(main4, { a: bad }))();
     expect(main4.textContent).toContain("could not be loaded");
+  });
+});
+
+describe("the Simple Home is Today with My projects below it", () => {
+  const api = (runs: any[], list: any[] = repos): any => ({ repos: vi.fn(async () => list), runs: vi.fn(async () => runs), queue: vi.fn(async () => ({ active: [], pending: [] })), run: vi.fn() });
+  const open = async (runs: any[], opts: any = {}) => {
+    const main = new FakeElement("div");
+    const stop = await view.renderSimpleHome(main, { a: api(runs), openGuide: vi.fn(), ...opts });
+    return { main, stop };
+  };
+  const stuck = (id: string, flags: any = {}) => run(id, "failed", { status: "failed", next: { ...nextStep("failed", { runId: id, repo: "o/app", title: "Fix the colours" } as any), why: "The branch could not be merged; the tests failed.", ...flags } });
+  const sections = (root: FakeElement) => root.all("h2").map((e) => e.textContent);
+  const forbiddenRuns = [
+    run("a", "questions", { next: { ...nextStep("questions", { runId: "a", repo: "o/app" } as any), text: "waiting for you — release pull request issue #12", where: { label: "issue #12", url: "#/runs/a" } } }),
+    run("b", "running", { state: { next: "implement" }, cost: 12.5, model: "opus", agent: "claude", branch: "feature/12-x" }),
+    run("c", "done", { finishedAt: iso(1), label: "scf:done", transcript: "log" }),
+    run("d", "approve_plan"),
+  ];
+
+  it("shows the greeting, Today and then My projects with the project headings", async () => {
+    const { main, stop } = await open([run("q", "approve_plan"), run("b", "running", { state: { next: "implement" } }), run("d", "done", { finishedAt: new Date().toISOString() })]);
+    expect(main.all("h1").map((e) => e.textContent)).toEqual([expect.stringMatching(/^Good /)]);
+    expect(sections(main)).toEqual(["Needs you", "Building now", "Finished recently", "My projects"]);
+    expect(main.all("h3").map((e) => e.textContent)).toEqual(expect.arrayContaining(["app", "other"]));
+    expect(main.all("ol")[0]!.attrs.class).toContain("scf-phase-strip");
+    expect(main.all("p").find((p) => p.attrs.class === "today-summary")!.textContent).toBe("1 thing needs you, 1 change is being built, 1 finished today");
+    stop();
+  });
+
+  it("links the work and the card button to the project page, and the counters to lists on Home", async () => {
+    const { main, stop } = await open([run("q", "approve_plan")]);
+    const card = main.all("li").find((l) => l.attrs.class?.includes("today-card"))!;
+    expect(card.all("a").find((a) => a.attrs.class === "btn primary")!.attrs.href).toBe("#/repos/r1");
+    expect(main.all("nav")[0]!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=waiting", "#/home?list=building", "#/home?list=check", "#/home?list=finished-today"]);
+    stop();
+  });
+
+  it("opens the list a counter points to, without leaving Simple", async () => {
+    const { main, stop } = await open([run("b", "running")], { list: "building" });
+    const section = main.all("section").find((s) => s.attrs.class === "today-list")!;
+    expect(section.all("h2")[0]!.textContent).toBe("Building");
+    expect(section.all("li")).toHaveLength(1);
+    expect(section.all("a").some((a) => a.attrs.href === "#/home")).toBe(true);
+    stop();
+  });
+
+  it("does not show work of a project that is not in the list", async () => {
+    const { main, stop } = await open([run("x", "approve_plan", { vars: { github_repo: "o/stranger" } })]);
+    expect(main.all("li").filter((l) => l.attrs.class?.includes("today-card"))).toHaveLength(0);
+    expect(main.all("p").find((p) => p.attrs.class === "today-summary")!.textContent).toBe("Nothing needs you");
+    stop();
+  });
+
+  it("gives a stuck change a card with plain words, and no card or count for one that is closed or put aside", async () => {
+    const { main, stop } = await open([stuck("s"), stuck("c", { issueClosed: true }), stuck("n", { notNow: true })]);
+    const cards = main.all("li").filter((l) => l.attrs.class?.includes("today-card"));
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.textContent).toContain("This got stuck");
+    expect(main.all("nav")[0]!.all("a")[2]!.textContent).toBe("1 Needs your check");
+    stop();
+  });
+
+  it("shows no forbidden term in any text, aria-label or title of the whole Home", async () => {
+    const { main, stop } = await open([...forbiddenRuns, stuck("s"), run("b2", "running", { state: { next: "implement" }, task: "Fix failed release", next: { ...nextStep("running", { runId: "b2", repo: "o/app" } as any), title: "Fix failed release" } })]);
+    expect(words.forbiddenIn(texts(main).join("\n")), texts(main).join("|")).toEqual([]);
+    expect(main.all("button").filter((b) => b.attrs.class?.includes("help-mark"))).toEqual([]);
+    expect(main.textContent).not.toContain("Open the run");
+    stop();
+  });
+
+  it("passes the audit and its headings step by one", async () => {
+    const { main, stop } = await open([...forbiddenRuns, stuck("s")]);
+    expect(audit(main)).toEqual([]);
+    const levels = walk(main).filter((e) => /^h\d$/.test(e.tag)).map((e) => Number(e.tag[1]));
+    levels.forEach((l, i) => { if (i) expect(l - levels[i - 1]!).toBeLessThanOrEqual(1); });
+    const names = walk(main).filter((e) => e.tag === "a" || e.tag === "summary").map((e) => e.attrs["data-focus"]);
+    expect(names.every(Boolean)).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+    stop();
+  });
+
+  it("with no project it still shows Today, My projects and the guide opens once", async () => {
+    const openGuide = vi.fn();
+    const main = new FakeElement("div");
+    (await view.renderSimpleHome(main, { a: api([], []), openGuide }))();
+    expect(openGuide).toHaveBeenCalledTimes(1);
+    expect(main.all("h1")).toHaveLength(1);
+    expect(sections(main)).toEqual(["Building now", "Finished recently", "My projects"]);
+    expect(main.textContent).toContain("No projects yet");
   });
 });
 

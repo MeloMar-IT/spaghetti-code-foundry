@@ -368,7 +368,7 @@ describe("the page", () => {
     // the failed row comes first, then the untested one
     const pills = walk(main()).filter((e) => e.tag === "td" && e.attrs["data-label"] === "Connection").flatMap((td) => byClass(td, "pill"));
     expect(pills.map((p) => p.textContent)).toEqual(["Failed", "Not tested yet", "Connected"]);
-    expect(pills.map((p) => p.attrs.class)).toEqual(["pill fail", "pill", "pill ok"]);
+    expect(pills.map((p) => p.attrs.class)).toEqual(["pill sem-danger", "pill sem-neutral", "pill sem-success"]);
     expect(byClass(main(), "muted").filter((e) => e.textContent.startsWith("tested ")).map((e) => e.textContent)).toEqual(["tested just now", "tested just now"]);
     expect(byClass(main(), "muted").find((e) => e.textContent.startsWith("tested "))!.attrs.title).toBeTruthy();
     expect(byClass(main(), "status").map((e) => [e.attrs.class, e.textContent])).toEqual([
@@ -1509,7 +1509,7 @@ describe("rows with health and the next step (#380)", () => {
     repos = [rec({ method: "none" }), rec({ connection: connection(false) }), rec({ connection: connection(true) })];
     await show();
     const [none, fail, ok] = rows();
-    expect(byClass(cell(none!, "Next step"), "pill")[0]!.attrs.class).toBe("pill fail");
+    expect(byClass(cell(none!, "Next step"), "pill")[0]!.attrs.class).toBe("pill sem-danger");
     expect(texts(cell(none!, "Next step"))).toEqual(["Change authentication"]);
     expect(texts(cell(none!, "Actions"))).not.toContain("Change authentication");
     expect(texts(cell(fail!, "Next step"))).toEqual(["Test again"]);

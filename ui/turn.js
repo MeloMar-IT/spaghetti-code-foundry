@@ -4,6 +4,8 @@ import { dialogOpen, keepScroll, liveStates, poller } from "./live.js";
 import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { setCount } from "./shell.js";
+import { STUCK } from "./simple-words.js";
+import { TODAY } from "./today.js";
 import { actButtons } from "./turn-act.js";
 
 // The "Your turn" page: only what waits for the owner, from GET /api/your-turn. No wording of
@@ -101,9 +103,9 @@ function storyLink(s, focus) {
 }
 
 const turnHead = (embedded, count = 0) =>
-  embedded ? h("h2", {}, count > 0 ? `Needs you (${count})` : "Needs you") : h("div", { class: "toolbar" }, h("h1", {}, "Your turn"));
+  embedded ? h("h2", {}, count > 0 ? `Your turn (${count})` : "Your turn") : h("div", { class: "toolbar" }, h("h1", {}, "Your turn"));
 
-function itemView(item, { onDismiss, onLeave, onAct }) {
+function itemView(item, { onDismiss, onLeave, onAct }, embedded = false) {
   const n = item.next;
   const k = item.key;
   // The buttons of an item are named by what they say, so a button that appears or goes does not change the others' names.
@@ -128,8 +130,12 @@ function itemView(item, { onDismiss, onLeave, onAct }) {
         issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": `turn-issue-${k}`, onClick: () => onLeave(item) }, `#${n.issue}`) : null,
         issueOk ? " " : null,
         h("b", {}, item.what)),
-      h("div", {}, h("span", { class: "hold-action" }, n.action)),
-      h("div", { class: "muted" }, n.why),
+      // On Home the advice of a failed run is one plain sentence (the record's own text may name a label to remove);
+      // the cause is one click away.
+      h("div", {}, h("span", { class: "hold-action" }, embedded && n.kind === "failed" ? STUCK.line : n.action)),
+      embedded
+        ? h("details", { class: "today-cause" }, h("summary", { "data-focus": `turn-cause-${k}` }, TODAY.seeWhat), h("p", { class: "muted" }, String(n.why ?? "").trim() || TODAY.noCause))
+        : h("div", { class: "muted" }, n.why),
       n.issueUnchecked ? h("div", { class: "muted" }, ISSUE_UNCHECKED) : null,
       n.evidence?.length ? h("div", { class: "muted" }, n.evidence.map((l) => h("div", {}, l))) : null,
       n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s, `turn-story-${k}-${s.issue}`)])) : null,
@@ -157,12 +163,17 @@ function continuingView(item) {
 }
 
 /** The page for one answer of the server. */
-export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embedded = false } = {}) {
+export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embedded = false, keep } = {}) {
+  // `keep` leaves out items (Home hides what Today already shows, or what the person put aside); groups left empty go too.
+  const groups = typeof keep === "function"
+    ? (data.groups ?? []).map((g) => ({ ...g, items: g.items.filter((i) => keep(i)) })).filter((g) => g.items.length > 0)
+    : (data.groups ?? []);
+  const count = typeof keep === "function" ? groups.reduce((n, g) => n + g.items.length, 0) : data.count;
   return [
-    turnHead(embedded, data.count),
-    data.count === 0 ? h("div", { class: embedded ? "home-clear" : "empty" }, data.empty) : null,
-    ...(data.groups ?? []).map((g) =>
-      h("div", { class: "card turn-group" }, h("h3", {}, g.repo), ...g.items.map((i) => itemView(i, { onDismiss, onLeave, onAct })))),
+    turnHead(embedded, count),
+    count === 0 ? h("div", { class: embedded ? "home-clear" : "empty" }, data.empty ?? "Nothing needs you.") : null,
+    ...groups.map((g) =>
+      h("div", { class: "card turn-group" }, h("h3", {}, g.repo), ...g.items.map((i) => itemView(i, { onDismiss, onLeave, onAct }, embedded)))),
     data.continuing?.length
       ? h("div", { class: "card turn-group" }, h("h3", {}, "Done — continuing"), ...data.continuing.map(continuingView))
       : null,
@@ -173,8 +184,10 @@ export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embed
 }
 
 /** Opens the page; returns a function that closes it. `embedded`: a section of Home; `onData` gets every answer drawn;
- * `focus` is a prefix for the names of the Retry buttons. Never rejects. */
-export async function renderYourTurn(main, { embedded = false, onData, focus } = {}) {
+ * `focus` is a prefix for the names of the Retry buttons. `keep(item)` leaves out items (read at every draw); `hook` gets
+ * `redraw()`, which draws the last answer again with the current `keep` (not while a dialog is open: the next answer does it).
+ * Never rejects. */
+export async function renderYourTurn(main, { embedded = false, onData, focus, keep, hook, onState } = {}) {
   let left; // an item with a watcher whose link was opened: check GitHub again when the user comes back
   const fail = (e) => toast(e.message, "error");
   const handlers = {
@@ -205,18 +218,25 @@ export async function renderYourTurn(main, { embedded = false, onData, focus } =
     retry: () => poll.refresh(),
     focus,
   });
-  const draw = (data) => {
-    const [head, ...rest] = turnView(data, handlers, { embedded });
+  let last = null; // the newest answer drawn
+  let closed = false;
+  const paint = (data) => {
+    const [head, ...rest] = turnView(data, handlers, { embedded, keep });
     keepScroll(main, () => mount(main, head, states.alert, ...rest, states.note));
+  };
+  const draw = (data) => {
+    last = data;
+    paint(data);
     onData?.(data);
   };
+  if (hook) hook.redraw = () => { if (last && !closed && !dialogOpen()) paint(last); };
   const mine = (data) => poll.show(data);
   page = mine;
   poll = poller({
     load: () => ask(),
     draw,
     every: 5000,
-    onState: states.onState,
+    onState: (s) => { states.onState(s); onState?.(s); },
     hold: dialogOpen, // a dialog opened from an item remembers its button: no redraw while it is open
     wake: async () => { // back from a GitHub link: the watcher checks GitHub first
       if (!left) return;
@@ -228,6 +248,7 @@ export async function renderYourTurn(main, { embedded = false, onData, focus } =
   await poll.ready;
   // Only clear the hook if it is still ours: a newer page may have taken it over.
   return () => {
+    closed = true;
     poll.stop();
     if (page === mine) page = null;
   };

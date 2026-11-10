@@ -3,7 +3,10 @@ import { errorText, linkHash } from "./auth.js";
 import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
 import { renderSimpleProjects } from "./admin-repos.js";
 import { defaultGo } from "./filters.js";
+import { statusPill } from "./icons.js";
+import { LIMIT_FIELDS, limitParts, limitsPatch, readLimits } from "./user-limits.js";
 import { table } from "./kit/display.js";
+import { pageHeader } from "./kit/product.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
 
 const text = (s) => String(s ?? "").trim();
@@ -30,9 +33,15 @@ export const isProvider = (u) => u?.provider === true;
 export const statusText = (u, now = Date.now()) =>
   u.status === "blocked" ? "blocked" : isProvider(u) ? "account system" : !u.hasPassword ? "no password yet" : isLocked(u, now) ? "locked" : "active";
 
+/** The status semantic of an account, in the order of `statusText`. */
+export const userSemantic = (u, now = Date.now()) =>
+  u.status === "blocked" ? "danger" : isProvider(u) ? "success" : !u.hasPassword ? "neutral" : isLocked(u, now) ? "warning" : "success";
+
 /** The classes of the status pill. */
-export const pillClass = (u, now = Date.now()) =>
-  `pill${u.status === "blocked" ? " fail" : isProvider(u) ? " ok" : !u.hasPassword ? "" : isLocked(u, now) ? " locked" : " ok"}`;
+export const pillClass = (u, now = Date.now()) => `pill sem-${userSemantic(u, now)}`;
+
+/** The status pill of an account: icon and word. */
+export const userStatusPill = (u, now = Date.now()) => statusPill(userSemantic(u, now), statusText(u, now));
 
 /** When the account last signed in, or "never". */
 export const lastSignInText = (u) => (u.lastSignIn ? timeAgo(u.lastSignIn) : "never");
@@ -286,59 +295,9 @@ const deleteDialog = (u, { me }) => callDialog({
   prepare: () => () => api.deleteUser(u.id),
 });
 
-// ---- limits (stored and shown only; the server does not enforce them yet) ----------------------------
+// ---- limits: the pure helpers are in user-limits.js ----------------------------
 
-export const LIMIT_FIELDS = [
-  { key: "maxConcurrent", label: "Runs at the same time" },
-  { key: "maxRunsPerDay", label: "Runs per day" },
-  { key: "dailyBudgetUsd", label: "Daily budget (USD)" },
-];
-const LIMIT_TEXT = {
-  maxConcurrent: (v) => `${v} at a time`,
-  maxRunsPerDay: (v) => `${v} runs a day`,
-  dailyBudgetUsd: (v) => `$${v} a day`,
-};
-
-/** The limits that apply to an account: `[{ key, text, override }]`, an own value wins over the default. Empty means no limits. */
-export function limitParts(limits, id) {
-  const own = limits?.users?.[id] ?? {};
-  const defaults = limits?.defaults ?? {};
-  return LIMIT_FIELDS.flatMap(({ key }) => {
-    const override = own[key] !== undefined;
-    const v = override ? own[key] : defaults[key];
-    return v === undefined ? [] : [{ key, text: LIMIT_TEXT[key](v), override }];
-  });
-}
-
-/** Reads the three input texts: `{ problem }` or `{ values }` (a missing key is empty = no limit). */
-export function readLimits(input) {
-  const values = {};
-  for (const { key, label } of LIMIT_FIELDS) {
-    const t = text(input[key]);
-    if (!t) continue;
-    if (key === "dailyBudgetUsd") {
-      const n = Number(t);
-      if (!/^\d+(\.\d+)?([eE][+-]?\d+)?$/.test(t) || !Number.isFinite(n) || n <= 0) return { problem: "Daily budget must be a number above 0, or empty." };
-      values[key] = n;
-    } else {
-      const n = Number(t);
-      if (!/^\d+$/.test(t) || !Number.isSafeInteger(n) || n < 1) return { problem: `${label} must be a whole number of 1 or more, or empty.` };
-      values[key] = n;
-    }
-  }
-  return { values };
-}
-
-/** Only the keys that differ: a number to set, null to clear. {} means no change. */
-export function limitsPatch(current, values) {
-  const patch = {};
-  for (const { key } of LIMIT_FIELDS) {
-    if (values[key] !== undefined) {
-      if (values[key] !== current?.[key]) patch[key] = values[key];
-    } else if (current?.[key] !== undefined) patch[key] = null;
-  }
-  return patch;
-}
+export { LIMIT_FIELDS, limitParts, limitsPatch, readLimits };
 
 function limitsForm(current, hintOf) {
   const inputs = Object.fromEntries(LIMIT_FIELDS.map(({ key }) => [key, h("input", { name: key, inputmode: "decimal", autocomplete: "off", value: current?.[key] === undefined ? "" : String(current[key]), placeholder: hintOf(key) })]));
@@ -437,7 +396,7 @@ let reloads = 0; // the newest reload wins
 export async function renderUsers(main, { me = "", notice, page = browserPage, data, readOnly = false, query = {}, go = defaultGo } = {}) {
   const simpleOnly = query?.view === "simple";
   const mine = ++generation;
-  if (!data && onPage()) mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Users")), loadingState("Loading users…", { rows: 5, shape: "table" }));
+  if (!data && onPage()) mount(main, pageHeader({ layout: "toolbar", title: "Users", meta: h("span", { class: "muted" }, "Who can sign in") }), loadingState("Loading users…", { rows: 5, shape: "table" }));
   const [users, limits] = data ?? await loadUsers();
   if (mine !== generation || !onPage()) return () => {};
   const at = Date.now();
@@ -469,8 +428,8 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
     { key: "name", label: "Name", cell: (u) => [h("a", { href: `#/users/${encodeURIComponent(u.id)}` }, u.name), u.id === me ? h("span", { class: "muted" }, " (you)") : null] },
     { key: "email", label: "E-mail", cell: (u) => h("span", { class: "mono" }, u.email) },
     { key: "role", label: "Role" },
-    { key: "view", label: "View", cell: (u) => (isSimple(u) ? h("span", { class: "pill" }, "Simple") : h("span", { class: "muted" }, VIEW_TEXT[u.view] ?? "")) },
-    { key: "status", label: "Status", cell: (u) => h("span", { class: pillClass(u) }, statusText(u)) },
+    { key: "view", label: "View", cell: (u) => (isSimple(u) ? statusPill("accent", "Simple") : h("span", { class: "muted" }, VIEW_TEXT[u.view] ?? "")) },
+    { key: "status", label: "Status", cell: (u) => userStatusPill(u) },
     { key: "lastSignIn", label: "Last sign-in", cell: (u) => h("span", { class: "muted" }, lastSignInText(u)) },
     { key: "runs", label: "Runs", cell: (u) => h("span", { class: "mono" }, String(u.runs ?? 0)) },
     { key: "limits", label: "Limits", cell: (u) => h("span", {}, limitsCell(limits, u.id)) },
@@ -483,9 +442,10 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
   const filter = h("label", { class: "field-inline" }, h("input", { type: "checkbox", name: "simpleOnly", checked: simpleOnly, onChange: toggle }), " Only Simple accounts");
   const box = h("div", {});
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"), h("span", { class: "spacer" }), filter,
-      ...(readOnly ? [] : [" ", h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
-        h("button", { class: "primary", onClick: add }, "+ Add user")])),
+    pageHeader({ layout: "toolbar", title: "Users", meta: h("span", { class: "muted" }, "Who can sign in"),
+      actions: [h("span", { class: "spacer" }), filter,
+        ...(readOnly ? [] : [" ", h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
+          h("button", { class: "primary", onClick: add }, "+ Add user")])] }),
     note,
     users.length === 0 ? (readOnly ? emptyState("No users yet.") : emptyState("No users yet.", { label: "+ Add user", onClick: add }))
       : simpleOnly && shown.length === 0 ? emptyState("No account uses the Simple view.")

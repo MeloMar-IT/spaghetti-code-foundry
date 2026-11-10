@@ -62,6 +62,21 @@ export function groupOf(entry) {
   return "planned";
 }
 
+/** The phase of a run's current step ({ key, index, word, line, source }), or null when it has no step yet. */
+export function runPhase(run) {
+  const step = run?.state?.next ?? run?.history?.at(-1)?.id ?? "";
+  if (!step) return null;
+  const steps = Array.isArray(run.flowDef?.steps) ? run.flowDef.steps : [];
+  const index = steps.findIndex((s) => s?.id === step);
+  return stepPhase(step, index >= 0 ? { index, total: steps.length } : undefined);
+}
+
+/** → (entry) => the id of the project the work belongs to, or null (also for work of a repository not in the list). */
+export function projectOfWork(repos) {
+  const all = (Array.isArray(repos) ? repos : []).map((repo) => ({ repo, key: projectKey(repo) })).filter((x) => x.key);
+  return (entry) => all.find((x) => workOf(entry, x.key, x.repo))?.repo.id ?? null;
+}
+
 /** One card: only word-list text and the person's own title and summary. Never the server's `text`, `status` or `where.label`. */
 export function cardOf(entry) {
   const n = recordOf(entry);
@@ -77,12 +92,8 @@ export function cardOf(entry) {
     line: words.line,
   };
   if (group === "building" && run) {
-    const step = run.state?.next ?? run.history?.at(-1)?.id ?? "";
-    if (step) {
-      const steps = Array.isArray(run.flowDef?.steps) ? run.flowDef.steps : [];
-      const index = steps.findIndex((s) => s?.id === step);
-      card.progress = phaseText(stepPhase(step, index >= 0 ? { index, total: steps.length } : undefined));
-    }
+    const phase = runPhase(run);
+    if (phase) card.progress = phaseText(phase);
   }
   if (group === "check") {
     card.todo = words.todo;

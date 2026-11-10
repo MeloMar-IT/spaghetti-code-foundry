@@ -199,6 +199,8 @@ const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 const OWNER_OK = /^[\w-]+$/;
 const VALID = { repo: (v) => v === ALL_REPOS || (v.length <= 200 && REPO_OK.test(v)), owner: (v) => v.length <= 64 && OWNER_OK.test(v),
   view: (v) => v === "simple",
+  // the list a Today counter opens on the Simple Home (see GROUPS in runs-filter.js)
+  list: (v) => ["waiting", "building", "check", "finished", "finished-today"].includes(v),
   method: (v) => ["none", "github-token", "https-token", "ssh-deploy-key", "github-app"].includes(v) };
 
 /** Splits an address into its path and the text after the first "?" ("" when there is none). */

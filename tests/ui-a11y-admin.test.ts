@@ -13,7 +13,7 @@ beforeAll(async () => {
   restore = installFakeDom();
   for (const [k, f] of Object.entries({
     dom: "dom", auth: "auth", users: "users", userDetail: "user-detail", repos: "repos", adminRepos: "admin-repos", admin: "admin", watchers: "watchers", watcherForm: "watcher-form",
-    models: "models", audit: "audit", monitor: "monitor", problems: "problems",
+    models: "models", audit: "audit", monitor: "monitor", problems: "problems", adminCredentials: "admin-credentials",
   })) m[k] = await import(`../ui/${f}.js` as string);
 });
 afterAll(() => restore());
@@ -86,6 +86,13 @@ function tablesOk(root: FakeElement) {
   }
 }
 
+/** The page has exactly one `h1`, it reads `title`, and it sits in a toolbar (the shared page header). */
+function headOk(root: FakeElement, title: string) {
+  const h1s = root.all("h1");
+  expect(h1s.map((x) => x.textContent), "one h1").toEqual([title]);
+  expect(h1s[0]!.parent?.attrs.class ?? "").toContain("toolbar");
+}
+
 // ---- data ---------------------------------------------------------------------------------------
 
 const NOW = new Date().toISOString();
@@ -135,6 +142,7 @@ describe("pages", () => {
     routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" }, "GET /api/settings": settingsAnswer };
     await m.admin.renderSettings(main());
     noViolations(main());
+    headOk(main(), "Settings");
     const boxes = controls(main()).filter((c) => c.attrs.type === "checkbox");
     expect(boxes.length).toBeGreaterThan(5);
     for (const b of boxes) {
@@ -175,6 +183,7 @@ describe("pages", () => {
     };
     await m.watchers.renderWatchers(main());
     noViolations(main());
+    headOk(main(), "Watchers");
     tablesOk(main());
   });
   it("A watcher", async () => {
@@ -215,6 +224,7 @@ describe("pages", () => {
     routes = { "GET /api/monitor": monitorState };
     await m.problems.renderProblems(main());
     noViolations(main());
+    headOk(main(), "Problems");
     tablesOk(main());
   });
   it("Audit", async () => {
@@ -243,6 +253,7 @@ describe("pages", () => {
     routes = { "GET /api/users": USERS, "GET /api/users/limits": { defaults: {}, users: {} } };
     await m.users.renderUsers(main(), { me: "me", page });
     noViolations(main());
+    headOk(main(), "Users");
     tablesOk(main());
   });
   it("User detail", async () => {
@@ -260,6 +271,18 @@ describe("pages", () => {
     routes = { "GET /api/admin/repos": [repo()] };
     await m.adminRepos.renderAllRepos(main());
     noViolations(main());
+    headOk(main(), "All repositories");
+    tablesOk(main());
+  });
+  it("Credentials", async () => {
+    routes = {
+      "GET /api/admin/credentials": [{ id: "c1", ownerName: "Ann", provider: "github", kind: "token", fingerprint: "ab12cd34", created: NOW, lastUsed: null }],
+      "GET /api/admin/repos": [repo()], "GET /api/repos/methods": { methods: ["ssh-deploy-key", "https-token"] },
+    };
+    await m.adminCredentials.renderCredentials(main());
+    await settle();
+    noViolations(main());
+    headOk(main(), "Credentials");
     tablesOk(main());
   });
 });
@@ -956,6 +979,7 @@ describe("Overview", () => {
     fail("GET", "/api/queue", 500, "queue broke");
     await operations.renderOperations(main());
     noViolations(main());
+    headOk(main(), "Overview");
     tablesOk(main());
     expect(alerts(main()).map((a) => a.textContent)).toEqual(["Not available. queue broke"]);
   });

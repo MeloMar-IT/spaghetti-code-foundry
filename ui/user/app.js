@@ -98,6 +98,7 @@ async function route() {
     if (to.page.nav === "plugin") done = await renderPluginPage(box, to.page, { user: me, readOnly });
     else if (simple && page.section === "home") {
       done = await renderSimpleHome(box, {
+        list: to.query?.list ?? "",
         alive: () => mine === generation && !stopped,
         openGuide: () => {
           if (guideOffered) return;

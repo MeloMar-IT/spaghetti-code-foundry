@@ -1,13 +1,20 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { audit } from "./helpers/a11y.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let today: any;
+let filter: any;
+let list: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/home.js" as string);
+  today = await import("../ui/today.js" as string);
+  filter = await import("../ui/runs-filter.js" as string);
+  list = await import("../ui/runs-list.js" as string);
 });
 afterAll(() => restore());
 beforeEach(() => vi.useFakeTimers());
@@ -27,37 +34,16 @@ const view = (nodes: any[]) => {
 };
 const text = (nodes: any[]) => view(nodes).textContent;
 const links = (root: FakeElement) => root.all("a");
+const NOON = new Date(2026, 0, 1, 15, 0).getTime();
+const at = (dayOffset: number, hour: number) => new Date(2026, 0, 1 + dayOffset, hour).toISOString();
+/** A failed run whose record carries #838 flags. */
+const failed = (id: string, flags: any = {}, over: any = {}) => ({
+  ...run(id, "failed", { status: "failed", ...over }),
+  next: { ...rec("failed", id), ...flags },
+});
 
-describe("homeModel", () => {
-  it("groups by the next-step record, not by the status", () => {
-    const m = ui.homeModel([
-      run("need", "approval"),
-      run("wrong", "failed", { status: "failed" }),
-      run("go", "running"),
-      run("wait", "dependency", { status: "waiting" }, { blockers: [] }),
-      run("rel", "release", { status: "succeeded" }), // succeeded, but a release waits for the person
-      run("limit", "daily_budget", { status: "waiting" }),
-      run("done", "done", { status: "succeeded", finishedAt: iso(1) }),
-      run("old", "done", { status: "succeeded", finishedAt: iso(50) }),
-      run("cx", "cancelled", { status: "cancelled" }),
-      run("sup", "superseded"),
-      run("closed", "issue_closed"),
-      { runId: "legacy", flow: "f", startedAt: iso(3), status: "succeeded" },
-    ], [job("j")]);
-    const ids = (l: any[]) => l.map((e) => e.run?.runId ?? `job:${e.job.runId}`).sort();
-    expect(ids(m.needs)).toEqual(["need", "rel", "wrong"]);
-    expect(m.problems).toEqual([]);
-    expect(ids(m.active)).toEqual(["go", "job:j", "limit", "wait"]);
-    expect(m.recent.map((e: any) => e.run.runId)).toEqual(["done", "old"]);
-    expect(m.total).toBe(12); // the legacy run has no record and is in no list
-  });
-
-  it("handles bad input", () => {
-    expect(ui.homeModel(null, "x")).toEqual({ needs: [], problems: [], active: [], recent: [], total: 0 });
-    expect(ui.homeModel({}, undefined).total).toBe(0);
-  });
-
-  it("needsUser follows the server rule", () => {
+describe("needsUser", () => {
+  it("follows the server rule", () => {
     expect(ui.needsUser(rec("approval"))).toBe(true);
     expect(ui.needsUser(rec("failed"))).toBe(true);
     expect(ui.needsUser(rec("cancelled"))).toBe(false);
@@ -83,136 +69,272 @@ describe("recordLink", () => {
   });
 });
 
-describe("bestAction and countsText", () => {
-  const first = { ...rec("approval"), runId: "r1", where: { label: "Review", url: "#/runs/r1" } };
-  const a = { run: run("a", "running") };
-  it("picks need, then problem, then active, then Start work", () => {
-    expect(ui.bestAction({ first, problems: [first], active: [a] }, "user")).toMatchObject({ href: "#/runs/r1", label: "Review", primary: false });
-    const p = { ...rec("failed", "p1"), runId: "p1", where: { label: "See", url: "#/runs/p1" } };
-    expect(ui.bestAction({ problems: [p], active: [a] }, "admin")).toMatchObject({ href: "#/runs/p1", primary: false });
-    expect(ui.bestAction({ active: [a] }, "user")).toMatchObject({ href: "#/runs/a", label: "Follow", primary: false });
-    expect(ui.bestAction({}, "user")).toMatchObject({ href: "#/start", label: "Start work", primary: true });
+describe("greeting and summaryLine", () => {
+  it("greets by the hour", () => {
+    expect(today.greeting(new Date(2026, 0, 1, 7))).toBe("Good morning");
+    expect(today.greeting(new Date(2026, 0, 1, 12))).toBe("Good afternoon");
+    expect(today.greeting(new Date(2026, 0, 1, 17, 59))).toBe("Good afternoon");
+    expect(today.greeting(new Date(2026, 0, 1, 18))).toBe("Good evening");
   });
-  it("counts", () => {
-    expect(ui.countsText({ needs: 1, active: 0, problems: 0 })).toBe("1 needs you");
-    expect(ui.countsText({ needs: 2, active: 1, problems: 1 })).toBe("2 need you · 1 active · 1 problem");
-    expect(ui.countsText({ needs: 0, active: 0, problems: 3 })).toBe("3 problems");
-    expect(ui.countsText({ needs: 0, active: 0, problems: 0 })).toBe("");
+  it("says each part, singular and plural, and leaves zero parts out", () => {
+    expect(today.summaryLine({ check: 1, building: 1, finishedToday: 3 })).toBe("1 thing needs you, 1 change is being built, 3 finished today");
+    expect(today.summaryLine({ check: 2, building: 4, finishedToday: 1 })).toBe("2 things need you, 4 changes are being built, 1 finished today");
+    expect(today.summaryLine({})).toBe("Nothing needs you");
+    expect(today.summaryLine({ building: 1 })).toBe("Nothing needs you, 1 change is being built");
   });
-});
-
-describe("workRow", () => {
-  it("shows status, the first line of the task and the record's sentence, with one primary link", () => {
-    const e = { run: run("a", "approval", { vars: { github_repo: "o/r", issue: "7" } }), job: null };
-    const row = view([ui.workRow(e)]);
-    expect(row.textContent).toContain("task a");
-    expect(row.textContent).not.toContain("second line");
-    expect(row.textContent).toContain(e.run.next.text);
-    expect(row.textContent).toContain("o/r#7");
-    expect(row.all("span").some((s) => s.attrs.class?.startsWith("pill"))).toBe(true);
-    expect(links(row).filter((l) => l.attrs.class?.includes("primary"))).toHaveLength(1);
-    expect(links(row).filter((l) => l.attrs.class?.includes("primary"))[0]!.attrs.href).toBeDefined();
-  });
-  it("has a Details link only when it differs from the primary link", () => {
-    const same = { run: { ...run("a", "approval"), next: { ...rec("approval", "a"), where: { label: "Open", url: "#/runs/a" } } }, job: null };
-    expect(links(view([ui.workRow(same)])).some((l) => l.textContent === "Details")).toBe(false);
-    const other = { run: { ...run("a", "approval"), next: { ...rec("approval", "a"), where: { label: "PR", url: "https://github.com/o/r/pull/1" } } }, job: null };
-    const l = links(view([ui.workRow(other)])).find((x) => x.textContent === "Details")!;
-    expect(l.attrs.href).toBe("#/runs/a");
-  });
-  it("shows the owner only for the admin", () => {
-    const e = { run: run("a", "running", { ownerName: "Ann" }), job: null };
-    expect(text([ui.workRow(e)])).not.toContain("Ann");
-    expect(text([ui.workRow(e, { owner: true, role: "admin" })])).toContain("Ann");
-  });
-  it("can draw a queued job with no run", () => {
-    expect(text([ui.workRow({ run: null, job: job("j") })])).toContain("queued j");
+  it("does not say that nothing needs the person when that is not known", () => {
+    expect(today.summaryLine({ unknown: true, building: 1 })).not.toContain("Nothing needs you");
   });
 });
 
-describe("homeView", () => {
-  const model = (over: any = {}) => ({ needs: [], problems: [], active: [], recent: [], total: 1, ...over });
+describe("todayModel", () => {
+  it("groups by the record, not by the status", () => {
+    const m = today.todayModel([
+      run("need", "approval"),
+      run("wrong", "failed", { status: "failed" }),
+      run("go", "running"),
+      run("wait", "dependency", { status: "waiting" }, { blockers: [] }),
+      run("done", "done", { status: "succeeded", finishedAt: at(0, 10) }),
+      run("old", "done", { status: "succeeded", finishedAt: at(-3, 10) }),
+      run("cx", "cancelled", { status: "cancelled" }),
+      run("sup", "superseded"),
+      { runId: "legacy", flow: "f", startedAt: iso(3), status: "succeeded" },
+    ], [job("j")], { now: NOON });
+    expect(m.attention.map((c: any) => c.id).sort()).toEqual(["need", "wrong"]);
+    expect(m.building.map((b: any) => b.id)).toEqual(["go"]);
+    expect(m.counts.waiting).toBe(2); // the queued job and the run that waits for another
+    expect(m.finished.map((f: any) => f.id)).toEqual(["done", "old"]);
+    expect(m.counts["finished-today"]).toBe(1);
+    expect(m.total).toBe(9); // the legacy run has no record
+  });
+
+  it("drops a failed run whose change is closed or put aside, and counts a split that made all its parts as finished", () => {
+    const m = today.todayModel([
+      failed("closed", { issueClosed: true }),
+      failed("aside", { notNow: true }),
+      failed("split", { splitMade: "all" }, { finishedAt: at(0, 9) }),
+      failed("some", { splitMade: "some" }),
+    ], [], { now: NOON });
+    expect(m.attention.map((c: any) => c.id)).toEqual(["some"]);
+    expect(m.counts.check).toBe(1);
+    expect(m.finished.map((f: any) => f.id)).toEqual(["split"]);
+    expect([...today.droppedRuns([failed("closed", { issueClosed: true }), failed("aside", { notNow: true }), failed("x"), run("r", "running")])].sort()).toEqual(["aside", "closed"]);
+  });
+
+  it("counts finished today by the day it finished, not the day it started", () => {
+    const m = today.todayModel([
+      run("a", "done", { status: "succeeded", startedAt: at(-1, 20), finishedAt: at(0, 8) }),
+      run("b", "done", { status: "succeeded", startedAt: at(0, 7), finishedAt: at(-1, 23) }),
+    ], [], { now: NOON });
+    expect(m.counts["finished-today"]).toBe(1);
+    expect(m.lists["finished-today"].map((i: any) => i.id)).toEqual(["a"]);
+  });
+
+  it("handles bad input", () => {
+    for (const m of [today.todayModel(null, "x"), today.todayModel({}, undefined)]) {
+      expect(m.total).toBe(0);
+      expect(m.attention).toEqual([]);
+      expect(m.counts).toEqual({ waiting: 0, building: 0, check: 0, "finished-today": 0 });
+    }
+  });
+
+  it("Simple: only work of a known project, with the project's address", () => {
+    const projectOf = (e: any) => (e.run?.runId === "mine" ? "p1" : null);
+    const m = today.todayModel([run("mine", "approval"), run("other", "approval")], [], { simple: true, projectOf });
+    expect(m.total).toBe(1);
+    expect(m.attention[0].action.href).toBe("#/repos/p1");
+  });
+
+  it("the counters and the Runs list a counter opens use the same predicate", () => {
+    const runs = [run("a", "approval"), run("b", "running"), run("c", "running", { history: [{ id: "implement" }] }), run("d", "done", { finishedAt: at(0, 9) }), failed("e", { splitMade: "all" }, { finishedAt: at(0, 10) }), failed("f")];
+    const m = today.todayModel(runs, [job("j")], { now: NOON });
+    const entries = list.myRunsEntries(runs, [job("j")]);
+    for (const key of ["waiting", "building", "check", "finished-today"]) {
+      const listed = entries.filter((e: any) => today.inGroup(key, e, NOON));
+      expect(listed.length, key).toBe(m.counts[key]);
+    }
+    // a failed split that made all its parts is in Finished, not in the Failed section of the list
+    expect(entries.filter((e: any) => today.inGroup("finished", e, NOON)).map((e: any) => e.run.runId).sort()).toEqual(["d", "e"]);
+    expect(list.sectionOf(entries.find((e: any) => e.run?.runId === "e"))).toBe("failed");
+  });
+});
+
+describe("counters and their destinations", () => {
+  it("links the four counters to a filtered Runs list, and to a list on Home in Simple", () => {
+    const c = today.counterLinks({ waiting: 1, building: 2, check: 3, "finished-today": 4 });
+    expect(c.map((x: any) => [x.label, x.count, x.href])).toEqual([
+      ["Waiting", 1, "#/runs?group=waiting"], ["Building", 2, "#/runs?group=building"],
+      ["Needs your check", 3, "#/runs?group=check"], ["Finished today", 4, "#/runs?group=finished-today"],
+    ]);
+    expect(today.counterLinks({}, { simple: true }).map((x: any) => x.href)).toEqual([
+      "#/home?list=waiting", "#/home?list=building", "#/home?list=check", "#/home?list=finished-today"]);
+  });
+  it("the Runs address round-trips through the filter", () => {
+    for (const g of filter.GROUPS) expect(filter.parseFilter(filter.filterHash({ group: g })).group).toBe(g);
+    expect(filter.parseFilter("#/runs?group=nope").group).toBe("");
+  });
+  it("Simple: a counter opens its list on Home", () => {
+    const projectOf = () => "p1";
+    const m = today.todayModel([run("b", "running", { task: "Build it" })], [], { simple: true, projectOf, now: NOON });
+    const root = view(today.todayView(m, { focus: "t", simple: true, list: "building" }));
+    expect(root.all("section").find((s) => s.attrs.class === "today-list")!.textContent).toContain("Build it");
+    expect(links(root).some((a) => a.attrs.href === "#/home")).toBe(true);
+    // an unknown list name shows no list
+    expect(view(today.todayView(m, { focus: "t", simple: true, list: "nope" })).all("section").some((s) => s.attrs.class === "today-list")).toBe(false);
+  });
+});
+
+describe("todayView", () => {
+  const model = (runs: any[], pending: any[] = [], opts: any = {}) => today.todayModel(runs, pending, { now: NOON, ...opts });
   const headings = (root: FakeElement) => root.all("h2").map((h) => h.textContent);
 
-  it("orders head, Needs you, Active, and closes Recently completed", () => {
-    const m = ui.homeModel([run("n", "approval"), run("a", "running"), run("d", "done", { finishedAt: iso(1) })], []);
-    const root = view(ui.homeView(m));
-    expect(root.all("h1")[0]!.textContent).toBe("Home");
-    expect(headings(root)).toEqual(["Needs you (1)", "Active (1)"]);
-    const d = root.all("details")[0]!;
-    expect(d.all("summary")[0]!.textContent).toBe("Recently completed (1)");
-    expect(root.textContent).toContain("1 needs you · 1 active");
-    // one primary button at the top only when nothing needs the person
-    expect(links(root).filter((l) => l.attrs.class?.includes("primary"))).toHaveLength(0);
+  it("starts with the greeting and the summary, then cards, counters, Building now and Finished recently", () => {
+    const root = view(today.todayView(model([run("n", "approval"), run("a", "running"), run("d", "done", { finishedAt: at(0, 10) })]), { focus: "home" }));
+    expect(root.all("h1")).toHaveLength(1);
+    expect(root.all("h1")[0]!.textContent).toMatch(/^Good (morning|afternoon|evening)$/);
+    expect(root.all("p")[0]!.textContent).toBe("1 thing needs you, 1 change is being built, 1 finished today");
+    expect(headings(root)).toEqual(["Needs you", "Building now", "Finished recently"]);
+    expect(root.all("nav")[0]!.all("a").map((a) => a.attrs.href)).toHaveLength(4);
   });
 
-  it("shows no cost, model, owner or other-account text", () => {
-    const m = ui.homeModel([run("a", "running", { totalCostUsd: 1.23, model: "opus-x", ownerName: "Ann" })], []);
-    const t = text(ui.homeView(m));
-    expect(t).not.toMatch(/\$|Owner|Ann|opus|cost/i);
+  it("one card per run that needs the person, with the title, a word-list sentence, one button and the cause behind a disclosure", () => {
+    const n = { ...rec("approval", "n"), title: "Add dark mode", why: "The plan is ready." };
+    const root = view(today.todayView(model([{ ...run("n", "approval"), next: n }, run("m", "approval")]), { focus: "home" }));
+    const cards = root.all("li").filter((l) => l.attrs.class?.includes("today-card"));
+    expect(cards).toHaveLength(2);
+    const card = cards.find((c) => c.textContent.includes("Add dark mode"))!;
+    expect(card.all("h3")[0]!.textContent).toBe("Add dark mode");
+    expect(card.textContent).not.toContain("flow-n");
+    expect(card.all("a").filter((a) => a.attrs.class === "btn primary")).toHaveLength(1);
+    const d = card.all("details")[0]!;
+    expect(d.all("summary")[0]!.textContent).toBe("See what happened");
+    expect(d.textContent).toContain("The plan is ready.");
+    expect(new Set(cards.map((c) => c.all("h3")[0]!.textContent)).size).toBe(2);
   });
 
-  it("caps a section and links to the full list", () => {
-    const runs = Array.from({ length: 8 }, (_, i) => run(`r${i}`, "running", { startedAt: iso(i) }));
-    const root = view(ui.homeView(ui.homeModel(runs, [])));
-    expect(root.all("li").length).toBe(ui.SHOWN);
-    const more = links(root).find((l) => l.textContent === "+3 more")!;
-    expect(more.attrs.href).toBe("#/runs");
+  it("a watched failed run: the card has the stuck sentence, the run page and no label advice", () => {
+    const n = { ...rec("failed", "w"), text: "Failed: remove the `ready` label.", action: "Fix it, then remove the `ready` label to start over", why: "The tests did not pass." };
+    const root = view(today.todayView(model([{ ...run("w", "failed", { status: "failed" }), next: n }]), { focus: "home" }));
+    const t = root.textContent;
+    expect(t).not.toContain("label");
+    expect(t).not.toContain("remove the");
+    expect(t).not.toContain(n.text);
+    expect(t).toContain("This got stuck");
+    expect(root.all("details")[0]!.textContent).toContain("The tests did not pass.");
+    expect(root.all("a").find((a) => a.attrs.class === "btn primary")!.attrs.href).toBe("#/runs/w");
   });
 
-  it("empty state: a start action and a link to repositories, no tiles or tables", () => {
-    const root = view(ui.homeView(ui.homeModel([], [])));
+  it("a user gets no link to a page the user display lacks, and an external link opens in a new tab", () => {
+    const board = { ...rec("approval", "b"), where: { label: "Look", url: "#/board" } };
+    const ext = { ...rec("approval", "e"), where: { label: "Review", url: "https://github.com/o/r/pull/1" } };
+    const root = view(today.todayView(model([{ ...run("b", "approval"), next: board }, { ...run("e", "approval"), next: ext }]), { focus: "home" }));
+    expect(root.all("a").some((a) => a.attrs.href === "#/board")).toBe(false);
+    const x = root.all("a").find((a) => a.attrs.href === "https://github.com/o/r/pull/1")!;
+    expect(x.attrs.target).toBe("_blank");
+    expect(x.attrs.rel).toContain("noopener");
+    expect(x.textContent).toContain("↗");
+  });
+
+  it("Building now: the phase strip with the current phase, and the phase line of running work", () => {
+    const r = run("b", "running", { state: { next: "implement" } });
+    const root = view(today.todayView(model([r]), { focus: "home" }));
+    const strip = root.all("ol")[0]!;
+    expect(strip.attrs.class).toContain("scf-phase-strip");
+    const current = strip.all("li").filter((li) => li.attrs["aria-current"] === "step");
+    expect(current).toHaveLength(1);
+    expect(current[0]!.textContent).toContain("Build");
+    expect(root.textContent).toContain("Making the change.");
+    // no step: nothing is marked
+    const none = view(today.todayView(model([run("c", "running")]), { focus: "home" }));
+    expect(none.all("li").some((li) => li.attrs["aria-current"] === "step")).toBe(false);
+  });
+
+  it("paused work with a history and a step says what it waits for, not that it is being built", () => {
+    const r = run("p", "daily_budget", { status: "waiting", history: [{ id: "implement" }], state: { next: "implement" } });
+    const m = model([r]);
+    expect(m.building).toHaveLength(1);
+    expect(m.building[0].line).not.toBe("Making the change.");
+    expect(m.building[0].line.length).toBeGreaterThan(0);
+    expect(m.building[0].phase.word).toBe("Build"); // the strip still shows where it stopped
+  });
+
+  it("Finished recently: at most 5 titles and a Show all link", () => {
+    const runs = Array.from({ length: 7 }, (_, i) => run(`d${i}`, "done", { status: "succeeded", finishedAt: at(0, 1 + i) }));
+    const root = view(today.todayView(model(runs), { focus: "home" }));
+    const sec = root.all("section").find((s) => s.attrs.class === "today-finished")!;
+    expect(sec.all("li")).toHaveLength(5);
+    expect(sec.all("li")[0]!.textContent).toBe("task d6"); // newest first
+    expect(sec.all("a").at(-1)!.textContent).toBe("Show all");
+    expect(sec.all("a").at(-1)!.attrs.href).toBe("#/runs?group=finished");
+  });
+
+  it("more than 5 cards give '+n more' to the check list", () => {
+    const root = view(today.todayView(model(Array.from({ length: 7 }, (_, i) => run(`n${i}`, "approval", { startedAt: iso(i) }))), { focus: "home" }));
+    expect(root.all("li").filter((l) => l.attrs.class?.includes("today-card"))).toHaveLength(5);
+    const more = root.all("a").find((a) => a.textContent === "+2 more")!;
+    expect(more.attrs.href).toBe("#/runs?group=check");
+  });
+
+  it("has no help button anywhere", () => {
+    const root = view(today.todayView(model([run("n", "approval"), run("a", "running")]), { focus: "home" }));
+    expect(root.all("button").filter((b) => b.attrs.class?.includes("help-mark"))).toEqual([]);
+    expect(root.querySelectorAll("[aria-label]").some((e) => e.attrs["aria-label"] === "What does this mean?")).toBe(false);
+  });
+
+  it("empty: still the whole layout, with the first steps added", () => {
+    const root = view(ui.homeView(model([])));
+    expect(root.all("h1")).toHaveLength(1);
+    expect(root.all("p")[0]!.textContent).toBe("Nothing needs you");
+    expect(headings(root)).toEqual(["Building now", "Finished recently"]);
+    expect(root.all("nav")[0]!.all("a")).toHaveLength(4);
     expect(root.textContent).toContain(ui.EMPTY);
-    expect(links(root).find((l) => l.attrs.href === "#/start")!.attrs.class).toContain("primary");
-    expect(links(root).some((l) => l.attrs.href === "#/repos")).toBe(true);
-    expect(root.all("table")).toHaveLength(0);
-    expect(JSON.stringify(root.all("div").map((d) => d.attrs.class))).not.toContain("tile");
-  });
-
-  it("all clear: says so and keeps Start work as the one primary action", () => {
-    const root = view(ui.homeView(ui.homeModel([run("d", "done", { finishedAt: iso(1) })], [])));
-    expect(root.textContent).toContain(ui.ALL_CLEAR);
-    expect(root.textContent).toContain(ui.NOTHING_ACTIVE);
     expect(links(root).filter((l) => l.attrs.class?.includes("primary")).map((l) => l.attrs.href)).toEqual(["#/start"]);
+    // with work, no first steps
+    expect(view(ui.homeView(model([run("a", "running")]))).textContent).not.toContain(ui.EMPTY);
   });
 
-  it("every Tab stop has a unique data-focus", () => {
-    const entries = (n: number, kind: any, over: any = {}) => Array.from({ length: n }, (_, i) => run(`${kind}${i}`, kind, { startedAt: iso(i), ...over }));
+  it("every Tab stop has a unique data-focus, the audit passes and the headings step by one", () => {
     const runs = [
-      ...entries(7, "running"),
-      { ...run("n", "approval"), next: { ...rec("approval", "n"), where: { label: "PR", url: "https://github.com/o/r/pull/1" } } },
-      run("d", "done", { status: "succeeded", finishedAt: iso(1) }),
+      ...Array.from({ length: 7 }, (_, i) => run(`running${i}`, "running", { startedAt: iso(i) })),
+      ...Array.from({ length: 7 }, (_, i) => run(`approval${i}`, "approval", { startedAt: iso(i) })),
+      run("d", "done", { status: "succeeded", finishedAt: at(0, 9) }),
     ];
-    const root = view(ui.homeView(ui.homeModel(runs, [job("j")]), { prompts: ["One", "Two"] }));
+    const root = view(today.todayView(model(runs, [job("j")]), { focus: "home" }));
     const stops = [...root.all("a").filter((a) => a.attrs.href), ...root.all("button"), ...root.all("summary")];
     const names = stops.map((s) => s.attrs["data-focus"]);
     expect(names.every(Boolean)).toBe(true);
     expect(new Set(names).size).toBe(names.length);
-    for (const want of ["home-action", "home-open-n", "home-more-active", "home-summary-recently-completed", "home-ask-0", "home-ask-1", "home-status-n"]) {
-      expect(names.some((x) => x === want) || root.querySelectorAll("[data-focus]").some((e) => e.attrs["data-focus"] === want)).toBe(true);
-    }
-    const all = root.querySelectorAll("[data-focus]").map((e) => e.attrs["data-focus"]);
-    expect(all.some((x) => x?.startsWith("home-details-"))).toBe(true);
-    const empty = view(ui.homeView(ui.homeModel([], []))).querySelectorAll("[data-focus]").map((e) => e.attrs["data-focus"]);
-    expect(empty).toEqual(expect.arrayContaining(["home-start", "home-repos"]));
+    expect(audit(root)).toEqual([]);
+    const levels = root.querySelectorAll("h1, h2, h3").map((e) => Number(e.tag[1]));
+    levels.reduce((prev, l) => { expect(l - prev).toBeLessThanOrEqual(1); return l; }, 0);
   });
 
-  it("a job without an id uses x", () => {
-    const root = view([ui.workRow({ run: null, job: { ...job("j"), runId: undefined } })]);
-    const all = root.querySelectorAll("[data-focus]").map((e) => e.attrs["data-focus"]);
-    expect(all.some((x) => x?.endsWith("-x"))).toBe(true);
+  it("keeps a disclosure open across a redraw", () => {
+    const m = model([run("n", "approval")]);
+    const first = view(today.todayView(m, { focus: "keep" }));
+    const d = first.all("details")[0]!;
+    d.fire("toggle", { target: { open: true } });
+    const second = view(today.todayView(m, { focus: "keep" }));
+    expect("open" in second.all("details")[0]!.attrs).toBe(true);
+    second.all("details")[0]!.fire("toggle", { target: { open: false } });
+    expect("open" in view(today.todayView(m, { focus: "keep" })).all("details")[0]!.attrs).toBe(false);
   });
 
-  it("Ask section: last with prompts, absent without, click calls onAsk", () => {
-    const m = ui.homeModel([run("a", "running")], []);
-    expect(headings(view(ui.homeView(m)))).not.toContain("Ask SCF");
-    const onAsk = vi.fn();
-    const nodes = ui.homeView(m, { prompts: ["What needs me?"], onAsk });
-    const root = view(nodes);
-    expect(headings(root).at(-1)).toBe("Ask SCF");
-    root.all("button").find((b) => b.textContent === "What needs me?")!.click();
-    expect(onAsk).toHaveBeenCalledWith("What needs me?");
-    expect(ui.askView([], onAsk)).toBeNull();
+  it("an admin sees the owner on a card; the summary counts the other needs and does not claim a clear page when unknown", () => {
+    const m = today.todayModel([{ ...run("n", "approval"), ownerName: "alice" }], [], { role: "admin", now: NOON, extraNeeds: 2 });
+    const root = view(today.todayView(m, { focus: "home" }));
+    expect(root.textContent).toContain("Owner:");
+    expect(root.all("p")[0]!.textContent).toBe("3 things need you");
+    m.needsUnknown = true;
+    m.extraNeeds = 0;
+    m.attention = [];
+    expect(text(today.todayView(m, { focus: "home" }))).not.toContain("Nothing needs you");
+  });
+
+  it("exclude leaves out the runs another panel shows, without losing the counters", () => {
+    const m = today.todayModel([run("n", "approval"), run("m", "approval")], [], { now: NOON, exclude: new Set(["n"]) });
+    expect(m.attention.map((c: any) => c.id)).toEqual(["m"]);
+    expect(m.counts.check).toBe(2);
   });
 });
 
@@ -230,10 +352,12 @@ describe("renderHome", () => {
     const main = new FakeElement("main");
     const off = await ui.renderHome(main, { a });
     expect(main.textContent).toContain("task a");
+    expect(main.all("h1")[0]!.textContent).toMatch(/^Good /);
     expect(a.runs).toHaveBeenCalledTimes(1);
     a.runs.mockResolvedValue([run("b", "approval")]);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(main.textContent).toContain("task b");
+    expect(main.querySelectorAll("button").filter((b) => b.attrs.class?.includes("help-mark"))).toEqual([]);
     off();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(a.runs).toHaveBeenCalledTimes(2);

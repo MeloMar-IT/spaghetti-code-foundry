@@ -1,4 +1,4 @@
-import { h, svg, tableBox, timeAgo } from "./dom.js";
+import { h, svg, table as domTable, timeAgo } from "./dom.js";
 
 export const CAP_LABELS = { load: "Load governor", busy: "Busy mode (switched on)", "busy-apps": "Busy mode (a program runs)", limits: "Usage limits" };
 
@@ -58,16 +58,11 @@ export function capChart(history, configured) {
 export function capList(history, configured) {
   const rows = [{ at: history.since, runs: history.start, why: "at the start of the 24 hours" }, ...history.steps];
   return h("details", {}, h("summary", {}, "Show as list"),
-    tableBox(h("table", { class: "table compact" },
-      h("caption", { class: "sr-only" }, `Runs at once over the last 24 hours (configured: ${configured})`),
-      h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Time"), h("th", { scope: "col" }, "Runs at once"), h("th", { scope: "col" }, "Why"))),
-      h("tbody", {}, rows.map((s) => h("tr", {}, h("td", { class: "mono" }, String(s.at).slice(0, 16).replace("T", " ")), h("td", {}, String(s.runs)), h("td", { class: "muted" }, s.why ?? "")))))));
+    table(`Runs at once over the last 24 hours (configured: ${configured})`, ["Time", "Runs at once", "Why"],
+      rows.map((s) => h("tr", {}, h("td", { class: "mono" }, String(s.at).slice(0, 16).replace("T", " ")), h("td", {}, String(s.runs)), h("td", { class: "muted" }, s.why ?? "")))));
 }
 
-const table = (caption, heads, rows) => tableBox(h("table", { class: "table compact" },
-  h("caption", { class: "sr-only" }, caption),
-  h("thead", {}, h("tr", {}, heads.map((t) => h("th", { scope: "col" }, t)))),
-  h("tbody", {}, rows)));
+const table = (caption, heads, rows) => domTable(heads, rows, { caption, class: "compact" });
 
 /** The content of the Load governor card. No buttons; every name is a text node. */
 export function governorBody(view) {
