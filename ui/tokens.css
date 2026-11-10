@@ -1,6 +1,8 @@
 /* Design tokens (#322). Loaded before style.css by both index.html files.
    Colours are written as light-dark(light, dark), one line per token. Light or dark follows the operating system;
-   html[data-theme="light"|"dark"] forces one. html[data-density="compact"] changes only the density tokens. */
+   html[data-theme="light"|"dark"] forces one. html[data-density="compact"] changes only the density tokens.
+   Look tokens: fonts (--font-body/display/mono), radii (--radius-*), shadows (--shadow-none/low/high) and spacing (--space-*).
+   Rules in ui/**/*.css may use only these (checked by tests/ui-look-tokens.test.ts). */
 
 :root {
   color-scheme: light dark;
@@ -48,7 +50,9 @@
   --color-log-dim: #8b887f;
 
   /* typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
+  --font-sans: var(--font-body);
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --text-micro: 11px;
   --text-meta: 12px;
@@ -109,8 +113,11 @@
 
   /* elevation */
   --shadow-sm: 0 1px 2px rgb(0 0 0 / .06);
-  --shadow-md: 0 4px 12px rgb(0 0 0 / .12);
-  --shadow-lg: 0 20px 60px rgb(0 0 0 / .25);
+  --shadow-none: none;
+  --shadow-low: 0 4px 12px rgb(0 0 0 / .12);
+  --shadow-high: 0 20px 60px rgb(0 0 0 / .25);
+  --shadow-md: var(--shadow-low);
+  --shadow-lg: var(--shadow-high);
 
   /* motion */
   --motion-fast: .1s;

@@ -3,8 +3,8 @@ html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--text); font: var(--text-body)/var(--leading-body) var(--sans); }
 a { color: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 600; }
-h1 { font-size: var(--text-page); }
-h2 { font-size: var(--text-section); }
+h1 { font-family: var(--font-display); font-size: var(--text-page); }
+h2 { font-family: var(--font-display); font-size: var(--text-section); }
 h3 { font-size: var(--text-small); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 code, pre, .mono { font-family: var(--mono); font-size: var(--text-code); }
 
@@ -837,7 +837,7 @@ button.icon { justify-content: center; }
   .work-col { scroll-snap-align: start; }
   .work-card a, .work-card button, .work-bar .seg button, .work-display summary { display: inline-flex; align-items: center; min-height: 44px; }
   .work-card[role="link"] { min-height: 44px; }
-  .work-panel { position: fixed; inset: 0; z-index: var(--layer-overlay); width: auto; max-width: none; max-height: none; margin: 0; border: 0; border-radius: unset; }
+  .work-panel { position: fixed; inset: 0; z-index: var(--layer-overlay); width: auto; max-width: none; max-height: none; margin: 0; border: 0; border-radius: var(--radius-none); }
   .work-panel a, .work-panel button { display: inline-flex; align-items: center; min-height: 44px; }
 }
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
