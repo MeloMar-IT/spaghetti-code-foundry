@@ -1,19 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expectNoSidewaysScroll, expectUsable, openAs } from "./helpers.js";
-
-/**
- * The Simple view at 375 px. The shared seed account is never changed: the page's own GET /api/session answer is
- * edited on the way (view = simple), so only this page sees the Simple view.
- */
-async function asSimple(page: Page): Promise<void> {
-  await page.route("**/api/session", async (route) => {
-    if (route.request().method() !== "GET") return route.continue();
-    const res = await route.fetch();
-    const body = (await res.json()) as { user: Record<string, unknown> };
-    body.user = { ...body.user, view: "simple" };
-    await route.fulfill({ response: res, json: body });
-  });
-}
+import { asSimple, expectNoSidewaysScroll, expectUsable, openAs } from "./helpers.js";
 
 /** The forbidden terms in the visible text of the whole page: shell, top bar and #main (the page's own list, so the two never differ). */
 const forbiddenOnPage = (page: Page): Promise<string[]> =>

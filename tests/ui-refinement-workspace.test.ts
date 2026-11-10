@@ -25,7 +25,7 @@ const session = (over: object = {}): any => ({ id: "s1", repo: "acme/app", repoA
 const draft = (over: object = {}) => ({ id: D1, state: "drafting", ...over });
 const talk = (over: object = {}) => ({ rounds: [], proposals: [], map: { rules: [], examples: [], open: [] }, asked: [], ...over });
 const q = (answer?: object) => ({ id: "q", text: "?", ...(answer ? { answer } : {}) });
-const LABELS: Record<string, string> = { brief: "Idea and brief", talk: "Conversation", drafts: "Story drafts", handoff: "Hand off", log: "Log" };
+const LABELS: Record<string, string> = { brief: "Idea and brief", talk: "Conversation", drafts: "Change drafts", handoff: "Hand off", log: "Log" };
 const run = (state: string, kind = "brief") => ({ state, kind });
 
 describe("partSummary", () => {
@@ -145,7 +145,7 @@ describe("workspace", () => {
   it("has tab roles and linked panels", () => {
     const { w, tabs, panels } = make();
     expect(walk(w.node).filter((e) => e.attrs.role === "tablist").length).toBe(1);
-    expect(tabs().map((t) => t.textContent.trim())).toEqual(["Idea and brief", "Conversation", "Story drafts", "Hand off", "Log"]);
+    expect(tabs().map((t) => t.textContent.trim())).toEqual(["Idea and brief", "Conversation", "Change drafts", "Hand off", "Log"]);
     tabs().forEach((t, i) => {
       expect(t.attrs["aria-controls"]).toBe(panels()[i]!.attrs.id);
       expect(panels()[i]!.attrs["aria-labelledby"]).toBe(t.attrs.id);
@@ -276,7 +276,7 @@ describe("the session page", () => {
     expect(open()[0]).toBe("Idea and brief");
     cleanup!();
     await show({ drafts: [draft({ criteria: [], dependsOn: [] })] });
-    expect(open()[0]).toBe("Story drafts");
+    expect(open()[0]).toBe("Change drafts");
   });
   it("keeps the head above the parts and puts the sections in their own panels", async () => {
     await show({ drafts: [draft()] });
@@ -287,14 +287,14 @@ describe("the session page", () => {
     expect(inside(buttons().find((b) => b.textContent === "Rename")!)).toBe(false);
     expect(inside(buttons().find((b) => b.textContent === "Drop")!)).toBe(false);
     expect(inPanel("Idea")).toBe(inPanel("Context brief"));
-    const where = [inPanel("Idea"), inPanel("Story drafts"), inPanel("Log")];
+    const where = [inPanel("Idea"), inPanel("Change drafts"), inPanel("Log")];
     expect(new Set(where).size).toBe(3);
     expect(where.every((i) => i >= 0)).toBe(true);
   });
   it("shows the state on each tab", async () => {
     await show({ drafts: [draft({ state: "ready" })] });
     expect(tab("Idea and brief").textContent).toContain("made");
-    expect(tab("Story drafts").textContent).toContain("1 draft, 1 ready");
+    expect(tab("Change drafts").textContent).toContain("1 draft, 1 ready");
     expect(tab("Hand off").textContent).toContain("1 ready");
   });
   it("keeps a typed draft field and its save when the part changes", async () => {
@@ -307,7 +307,7 @@ describe("the session page", () => {
     field.fire("input");
     expect(dr.unsaved.size).toBe(1);
     tab("Conversation").click();
-    tab("Story drafts").click();
+    tab("Change drafts").click();
     const again = walk(main()).find((e) => e.attrs.name === "notes")!;
     expect(again).toBe(field);
     expect(again.value).toBe("typed notes");
@@ -365,7 +365,7 @@ describe("the session page", () => {
   it("shows the architect's line in a part that does not draw it", async () => {
     await show({ architect: run("running"), drafts: [draft()] });
     const box = () => walk(main()).filter((e) => e.textContent.includes("The architect is at work."));
-    expect(open()[0]).toBe("Story drafts");
+    expect(open()[0]).toBe("Change drafts");
     const line = () => (walk(main()).find((e) => e.attrs.class === "scf-tabs session-parts")!.children[2] as FakeElement).textContent;
     expect(line()).toContain("The architect is at work.");
     tab("Idea and brief").click();
@@ -387,7 +387,7 @@ describe("the session page", () => {
     expect(next.textContent).toBe("Next: add a draft");
     const before = gets;
     next.click();
-    expect(open()[0]).toBe("Story drafts");
+    expect(open()[0]).toBe("Change drafts");
     expect(sent.length).toBe(0);
     expect(gets).toBe(before);
     expect(location.hash).toBe("#/refinement/s1");
@@ -417,6 +417,6 @@ describe("the session page", () => {
     await show({ repoAvailable: false, briefHidden: true, talkHidden: true, draftsHidden: true, drafts: [] });
     expect(main().textContent).toContain("not in My repositories any more");
     expect(walk(main()).some((e) => e.attrs.class === "ws-next")).toBe(false);
-    for (const label of ["Idea and brief", "Conversation", "Story drafts", "Hand off"]) expect(tab(label).textContent).toContain("not shown");
+    for (const label of ["Idea and brief", "Conversation", "Change drafts", "Hand off"]) expect(tab(label).textContent).toContain("not shown");
   });
 });

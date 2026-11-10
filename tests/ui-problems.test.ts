@@ -95,7 +95,7 @@ const drawDetail = async (id: string) => {
   return main;
 };
 const id = (n: number) => String(n).padStart(16, "0");
-/** The buttons of one group of the problem page ("Bug story" or "Mute"), or undefined when it is not drawn. */
+/** The buttons of one group of the problem page ("Bug-fix change" or "Mute"), or undefined when it is not drawn. */
 const groupLabels = (main: FakeElement, title: string) => {
   const g = main.all("section").find((s) => s.all("h2")[0]?.textContent === title);
   return g ? g.all("button").map((b) => b.textContent) : undefined;
@@ -110,17 +110,17 @@ describe("monitorSentence", () => {
   const s = (over: Record<string, unknown> = {}) => ui.monitorSentence({ ...base(), ...over });
   it("says on, with the last check, the count, the limit and the breaker", () => {
     const t = s();
-    expect(t).toContain("The monitor is running; bug stories are on;");
-    expect(t).toContain("it made 1 bug story today (on its own at most 3 a day)");
+    expect(t).toContain("The monitor is running; bug-fix changes are on;");
+    expect(t).toContain("it made 1 bug-fix change today (on its own at most 3 a day)");
     expect(t).toContain("the circuit breaker is closed");
     expect(t).toContain("it last checked at");
   });
   it("says when no repository is set", () => {
-    expect(s({ reportTo: false })).toContain("bug stories are on, but no repository is set");
+    expect(s({ reportTo: false })).toContain("bug-fix changes are on, but no repository is set");
   });
   it("says quiet, off, unreadable and the circuit breaker with its reason", () => {
     expect(s({ state: "quiet", until: iso(12) })).toContain("quiet until");
-    expect(s({ state: "off", since: iso(12) })).toContain("bug stories are off since");
+    expect(s({ state: "off", since: iso(12) })).toContain("bug-fix changes are off since");
     expect(s({ state: "unreadable" })).toContain("monitor-guard.json cannot be read");
     const b = s({ state: "breaker", since: iso(12), breaker: { open: true, why: "7 new findings within 60 minutes" } });
     expect(b).toContain("the circuit breaker is open (7 new findings within 60 minutes)");
@@ -129,34 +129,34 @@ describe("monitorSentence", () => {
     const t = s({ running: false });
     expect(t).toContain("The monitor is not running;");
     expect(t).toContain("(since the server started)");
-    expect(t).toContain("1 bug story today (on its own at most 3 a day)");
+    expect(t).toContain("1 bug-fix change today (on its own at most 3 a day)");
     expect(t).toContain("circuit breaker is closed");
     expect(s({ lastCheck: undefined })).toContain("it has not checked since the server started");
   });
   it("allows the count to be above the limit", () => {
-    expect(s({ madeToday: 4 })).toContain("it made 4 bug stories today (on its own at most 3 a day)");
+    expect(s({ madeToday: 4 })).toContain("it made 4 bug-fix changes today (on its own at most 3 a day)");
   });
 });
 
 describe("words", () => {
   it("stateText names all eight states and both kinds of muted", () => {
     const t = (state: string, over: Record<string, unknown> = {}) => ui.stateText({ state, story: story(12), ...over });
-    expect(t("seen", { story: undefined })).toBe("seen, no story yet");
-    expect(t("waiting")).toBe("bug story #12 is waiting");
-    expect(t("building")).toBe("bug story #12 is being built");
+    expect(t("seen", { story: undefined })).toBe("seen, no change yet");
+    expect(t("waiting")).toBe("bug-fix change #12 is waiting");
+    expect(t("building")).toBe("bug-fix change #12 is being built");
     expect(t("fixed-watching")).toBe("fixed, watching");
     expect(t("came-back")).toBe("came back");
     expect(t("needs-you")).toBe("needs you");
     expect(t("gone")).toBe("gone");
     expect(t("muted", { mute: { id: "m", kind: "finding", reason: "noise" } })).toBe("muted for good: noise");
-    expect(t("muted")).toBe("muted (the story was closed as not planned)");
+    expect(t("muted")).toBe("muted (the change was closed as not planned)");
   });
   it("storyButton covers the four cases", () => {
-    expect(ui.storyButton(base())).toEqual({ label: "Make a story now", enabled: true });
-    expect(ui.storyButton({ ...base(), running: false })).toEqual({ label: "Make a story now (the monitor is not running)", enabled: false });
-    expect(ui.storyButton({ ...base(), state: "off" }).label).toBe("Make a story now (the monitor is off)");
-    expect(ui.storyButton({ ...base(), state: "unreadable" }).label).toBe("Make a story now (the monitor is off)");
-    expect(ui.storyButton({ ...base(), reportTo: false })).toEqual({ label: "Make a story now (no repository is set)", enabled: false });
+    expect(ui.storyButton(base())).toEqual({ label: "Make a bug-fix change now", enabled: true });
+    expect(ui.storyButton({ ...base(), running: false })).toEqual({ label: "Make a bug-fix change now (the monitor is not running)", enabled: false });
+    expect(ui.storyButton({ ...base(), state: "off" }).label).toBe("Make a bug-fix change now (the monitor is off)");
+    expect(ui.storyButton({ ...base(), state: "unreadable" }).label).toBe("Make a bug-fix change now (the monitor is off)");
+    expect(ui.storyButton({ ...base(), reportTo: false })).toEqual({ label: "Make a bug-fix change now (no repository is set)", enabled: false });
   });
   it("settingProblem names the field and the range", () => {
     const d = S("k", "Resumes", { max: 49 });
@@ -192,7 +192,7 @@ describe("the page", () => {
   it("draws the sentence and the rows in server order, each linking to its page, without a button", async () => {
     withFindings();
     const main = await draw();
-    expect(main.textContent).toContain("The monitor is running; bug stories are on;");
+    expect(main.textContent).toContain("The monitor is running; bug-fix changes are on;");
     const table = main.all("table")[0]!;
     const rows = table.all("tr").slice(1);
     expect(rows.map((r) => /sentence (\d)/.exec(r.textContent)![1])).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
@@ -205,9 +205,9 @@ describe("the page", () => {
     withFindings();
     const g = async (n: number) => {
       const main = await drawDetail(id(n));
-      return [groupLabels(main, "Bug story"), groupLabels(main, "Mute")];
+      return [groupLabels(main, "Bug-fix change"), groupLabels(main, "Mute")];
     };
-    expect(await g(1)).toEqual([["Make a story now"], ["Mute", "This is not a problem"]]);
+    expect(await g(1)).toEqual([["Make a bug-fix change now"], ["Mute", "This is not a problem"]]);
     expect(await g(2)).toEqual([undefined, ["Mute", "This is not a problem"]]);
     expect(await g(3)).toEqual([["Try again"], ["Mute", "This is not a problem"]]);
     expect(await g(4)).toEqual([undefined, ["End mute"]]);
@@ -262,15 +262,15 @@ describe("the page", () => {
     withFindings();
     details = { evidence: [], stories: [], runs: [] };
     const main = await drawDetail(id(1));
-    for (const t of ["No evidence was recorded.", "No bug story yet.", "No run yet."]) expect(main.textContent).toContain(t);
+    for (const t of ["No evidence was recorded.", "No bug-fix change yet.", "No run yet."]) expect(main.textContent).toContain(t);
   });
 
-  it("Make a story now posts the finding and loads both again; it is disabled when the monitor is off", async () => {
+  it("Make a bug-fix change now posts the finding and loads both again; it is disabled when the monitor is off", async () => {
     withFindings();
     const main = await drawDetail(id(1));
     sent = [];
     bodies = [];
-    button(main, "Make a story now")!.click();
+    button(main, "Make a bug-fix change now")!.click();
     await wait();
     expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/story" });
     expect(bodies[0]).toEqual({ finding: "0000000000000001" });
@@ -279,7 +279,7 @@ describe("the page", () => {
     state.state = "off";
     state.since = iso(12);
     const off = await drawDetail(id(1));
-    expect(disabled(button(off, "Make a story now (the monitor is off)"))).toBe(true);
+    expect(disabled(button(off, "Make a bug-fix change now (the monitor is off)"))).toBe(true);
   });
 
   it("a refused story does not break the page", async () => {
@@ -287,7 +287,7 @@ describe("the page", () => {
     fails["POST /api/monitor/story"] = "this finding is muted";
     const main = await drawDetail(id(1));
     sent = [];
-    button(main, "Make a story now")!.click();
+    button(main, "Make a bug-fix change now")!.click();
     await wait();
     expect(sent.some((s) => s.url === "/api/monitor")).toBe(true);
   });
@@ -296,7 +296,7 @@ describe("the page", () => {
     withFindings();
     const main = await drawDetail(id(1));
     button(main, "This is not a problem")!.click();
-    expect(modalRoot().textContent).toContain("The monitor still records it, but never makes a bug story for it.");
+    expect(modalRoot().textContent).toContain("The monitor still records it, but never makes a bug-fix change for it.");
     expect(modalRoot().all("select")).toHaveLength(0);
     sent = [];
     bodies = [];
@@ -429,10 +429,10 @@ describe("the page", () => {
     const field = (sec: FakeElement, label: string) => sec.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("scf-field") && d.all("label")[0]?.textContent === label)!.all("input")[0]!;
     const forms = (sec: FakeElement) => sec.all("button").filter((b) => b.textContent === "Save");
 
-    it("has Bug stories with the warning, and the Circuit breaker", async () => {
+    it("has Bug-fix changes with the warning, and the Circuit breaker", async () => {
       const { sec } = await section();
-      expect(sec.all("h3").map((x) => x.textContent)).toEqual(["Bug stories", "Circuit breaker"]);
-      expect(sec.textContent).toContain("written as issues to this repository");
+      expect(sec.all("h3").map((x) => x.textContent)).toEqual(["Bug-fix changes", "Circuit breaker"]);
+      expect(sec.textContent).toContain("written as GitHub issues to this repository");
       expect(sec.all("input")).toHaveLength(8);
     });
 

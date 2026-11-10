@@ -39,28 +39,28 @@ export function sessionNext(s) {
   if (a === "paused") return you("The architect paused, so press Ask again to let it carry on.");
   if (a === "failed") return you("The architect could not finish, so press Try again or carry on without it.");
   if (s.source?.replace === "due") return you(`Press ${PUBLISH} to finish replacing issue #${s.source.issue}.`);
-  if (s.state === "published") return nobody("Nothing more to do: every story is on GitHub.");
+  if (s.state === "published") return nobody("Nothing more to do: every change is on GitHub.");
   const ready = publishable(drafts).length;
-  if (ready) return you(ready === 1 ? `1 story is ready, so press ${PUBLISH} to put it on GitHub.` : `${ready} stories are ready, so press ${PUBLISH} to put them on GitHub.`);
+  if (ready) return you(ready === 1 ? `1 change is ready, so press ${PUBLISH} to put it on GitHub.` : `${ready} changes are ready, so press ${PUBLISH} to put them on GitHub.`);
   const last = talk?.rounds?.at(-1);
   const unanswered = (last?.questions ?? []).filter((q) => !q.answer).length;
   if (unanswered) return you(`Answer the architect's ${many(unanswered, "question", "questions")}, and "I don't know yet" counts as an answer.`);
   const proposed = talk?.proposals?.length ?? 0;
   if (proposed) return you(`Accept or reject the ${many(proposed, "entry", "entries")} the architect proposed for the map.`);
   if (!drafts.length) {
-    if (!s.brief) return you(`${ASK_BRIEF}, or write your first story draft.`);
-    if (!talk?.rounds?.length) return you("Ask the architect for questions, or write your first story draft.");
-    return you("Write your first story draft.");
+    if (!s.brief) return you(`${ASK_BRIEF}, or write your first change draft.`);
+    if (!talk?.rounds?.length) return you("Ask the architect for questions, or write your first change draft.");
+    return you("Write your first change draft.");
   }
   const open = talk?.map?.open?.length ?? 0;
-  if (open) return you(`Settle the ${many(open, "open question", "open questions")}, because a story with open questions is not ready.`);
+  if (open) return you(`Settle the ${many(open, "open question", "open questions")}, because a change with open questions is not ready.`);
   const drafting = drafts.filter((d) => d.state !== "split" && !d.published);
-  if (drafting.some((d) => !d.readiness)) return you(`Finish the story draft and press ${CHECK}.`);
+  if (drafting.some((d) => !d.readiness)) return you(`Finish the change draft and press ${CHECK}.`);
   if (drafting.some((d) => d.readiness.stale)) return you(`The Definition of Ready changed, so press ${CHECK} again.`);
   if (!s.brief && drafting.some((d) => (d.readiness.items ?? []).some((i) => i.result === "unsure"))) return you(`${ASK_BRIEF}, then press ${CHECK} again.`);
   const accepted = (d, i) => (d.acceptedAnyway ?? []).some((x) => x.id === i.id);
   const rest = drafting.flatMap((d) => (d.readiness.items ?? []).filter((i) => i.result !== "met" && !accepted(d, i)));
-  if (rest.length && rest.every((i) => i.id === "no-plan")) return you(`Move the implementation plan out of the story, then press ${CHECK} again.`);
+  if (rest.length && rest.every((i) => i.id === "no-plan")) return you(`Move the implementation plan out of the change, then press ${CHECK} again.`);
   return you("Fix what the readiness check found, or accept an item anyway with a reason.");
 }
 

@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { plainServerText } from "./change-words.js";
 import { h, mount } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, withQuery } from "./filters.js";
 import { ALL_REPOS } from "./ia.js";
@@ -42,7 +43,7 @@ export function cardView(card, repo, { lit, onChain, onLeave }) {
   }
   return h("div", props,
     h("div", {}, link(card.issue, `card-${k}-issue`), " ", h("b", {}, card.title), card.goesFirst ? " " : null, card.goesFirst ? h("span", { class: "pill first" }, "goes first") : null),
-    h("div", { class: "muted" }, n.text),
+    h("div", { class: "muted" }, plainServerText(n.text)),
     card.step ? h("div", { class: "board-step" }, card.step) : null,
     ownerLabel(card.ownerName) ? h("div", { class: "muted board-owner" }, `Owner: ${ownerLabel(card.ownerName)}`) : null,
     card.after.length

@@ -102,7 +102,7 @@ export const RISKS = [
     sentences: (before, after) => {
       const now = valueAt(after, "authoring.repository");
       return typeof now === "string" && now !== "" && now !== valueAt(before, "authoring.repository")
-        ? ["The Foundry opens issues in this repository by itself when it finds a missing skill; they list run ids, finding kinds and technology names, never file content."]
+        ? ["The Foundry opens GitHub issues in this repository by itself when it finds a missing skill; they list run ids, finding kinds and technology names, never file content."]
         : [];
     },
   },

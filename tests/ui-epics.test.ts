@@ -101,7 +101,7 @@ describe("the table", () => {
     await mountPage(b, api());
     const row = b.all("tbody")[0]!.all("tr")[0]!;
     const t = text(row);
-    expect(t).toContain("Stories: 8 at the start, 10 now (1 was split)");
+    expect(t).toContain("Changes: 8 at the start, 10 now (1 was split)");
     expect(t).toContain("Mon 12 – Tue 13 Oct (most likely Tue 13 Oct)");
     expect(t).toContain("7 stories left at about 2 a day");
     expect(t).toContain("Leaves out: review time");
@@ -123,7 +123,7 @@ describe("the table", () => {
   it("says how fresh the data is", async () => {
     const b = box();
     await mountPage(b, api());
-    expect(text(b)).toContain("Issues read 12 min ago");
+    expect(text(b)).toContain("GitHub issues read 12 min ago");
   });
 });
 

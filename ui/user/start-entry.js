@@ -21,7 +21,7 @@ export const NEEDS_GITHUB = "An existing change needs a GitHub repository. Choos
 export const NO_PLAN_REPO = "Add the repository you work in.";
 export const NO_PLAN_PROJECT = "Add a project first.";
 export const PLAN_FAILED = "The plan could not be started.";
-export const SESSION_EXISTS = "You already have a session for this issue. It is open now.";
+export const SESSION_EXISTS = "You already have a session for this change. It is open now.";
 export const NO_CONVERSATIONS = "You have no open conversation. Start with a new idea.";
 export const CONVERSATIONS_FAILED = "Your conversations could not be loaded.";
 export const inRepo = (name) => `In ${name}`;

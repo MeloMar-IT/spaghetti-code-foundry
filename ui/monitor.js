@@ -65,8 +65,8 @@ export function muteForm(target, detectors, { notProblem = false } = {}) {
     };
     return h("div", { class: "modal-body" },
       h("p", {}, notProblem
-        ? "The monitor still records it, but never makes a bug story for it. You can end this on the Problems page."
-        : `No bug story is made for ${what} while it is muted. It is still recorded.`),
+        ? "The monitor still records it, but never makes a bug-fix change for it. You can end this on the Problems page."
+        : `No bug-fix change is made for ${what} while it is muted. It is still recorded.`),
       detector ? field("Detector", detector) : null,
       field("Reason", reason),
       notProblem ? null : field("For", hours),
@@ -101,7 +101,7 @@ export const mutesTable = (m, reload, { readOnly = false } = {}) => {
 // A row has no buttons: each finding's page (#/problems/:id) has its actions.
 const findingsTable = (m, redraw) => {
   const rows = m.findings.slice(0, shown);
-  const grid = table(["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted"],
+  const grid = table(["Severity", "Detector", "What", "First seen", "Last seen", "Change", "Muted"],
     rows.map((f) => h("tr", {},
       h("td", {}, f.severity),
       h("td", {}, f.detector),

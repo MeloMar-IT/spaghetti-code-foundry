@@ -195,12 +195,12 @@ describe("pure functions", () => {
   });
   it("readyLogText", () => {
     const c = "1 met, 2 not met, 4 unsure";
-    expect(rd.readyLogText({ what: "ready-checked", who: "Ann", detail: c })).toBe(`Ann checked a story draft against the Definition of Ready: ${c}`);
-    expect(rd.readyLogText({ what: "ready-checked" })).toBe("Someone checked a story draft against the Definition of Ready");
-    expect(rd.readyLogText({ what: "ready-checked", detail: "lots" })).toBe("Someone checked a story draft against the Definition of Ready");
-    expect(rd.readyLogText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a story draft");
-    expect(rd.readyLogText({ what: "architect-judged", detail: c })).toBe(`The architect judged the readiness of a story draft: ${c}`);
-    expect(rd.readyLogText({ what: "architect-judged" })).toBe("The architect judged the readiness of a story draft");
+    expect(rd.readyLogText({ what: "ready-checked", who: "Ann", detail: c })).toBe(`Ann checked a change draft against the Definition of Ready: ${c}`);
+    expect(rd.readyLogText({ what: "ready-checked" })).toBe("Someone checked a change draft against the Definition of Ready");
+    expect(rd.readyLogText({ what: "ready-checked", detail: "lots" })).toBe("Someone checked a change draft against the Definition of Ready");
+    expect(rd.readyLogText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a change draft");
+    expect(rd.readyLogText({ what: "architect-judged", detail: c })).toBe(`The architect judged the readiness of a change draft: ${c}`);
+    expect(rd.readyLogText({ what: "architect-judged" })).toBe("The architect judged the readiness of a change draft");
     expect(rd.readyLogText({ what: "ready-accepted", who: "Ann", detail: "it is small" })).toBe('Ann accepted an item anyway: "it is small"');
     expect(rd.readyLogText({ what: "ready-accepted", who: "Ann" })).toBe("Ann accepted an item anyway");
     expect(rd.readyLogText({ what: "ready-unaccepted", who: "Ann", detail: "it is small" })).toBe('Ann removed the reason of an item accepted anyway: "it is small"');
@@ -208,7 +208,7 @@ describe("pure functions", () => {
     expect(rd.readyLogText({ what: "created" })).toBe("");
   });
   it("the page tells the lines and the kind", () => {
-    expect(ui.logText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a story draft");
+    expect(ui.logText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a change draft");
     expect(talk.kindOf({ kind: "ready" })).toBe("ready");
     expect(ui.architectStatus({ state: "queued", kind: "ready" }).detail).toBe("Then it judges what code could not decide.");
     expect(ui.architectStatus({ state: "running", kind: "ready" }).text).toBe("The architect is judging the readiness of your draft.");

@@ -126,7 +126,7 @@ describe("renderEpic", () => {
     await render(b, a, { onName });
     expect(a.epic).toHaveBeenCalledWith("r1", "12");
     expect(onName).toHaveBeenCalledWith("#12 Payments");
-    expect(b.all("h2").map((x) => x.textContent)).toEqual(["Expected finish", "Critical path", "Stories in build order", "Dependency chains", "Stories over time", "Pace"]);
+    expect(b.all("h2").map((x) => x.textContent)).toEqual(["Expected finish", "Critical path", "Changes in build order", "Dependency chains", "Changes over time", "Pace"]);
     const t = b.textContent;
     expect(t).toContain("Mon 12 – Wed 14 Oct (most likely Tue 13 Oct)");
     expect(t).not.toContain("(Sun 11 Oct)");
@@ -135,9 +135,9 @@ describe("renderEpic", () => {
     expect(t).toContain("3 days ago: Sun 11 Oct");
     expect(t).toContain("Yesterday: Tue 13 Oct");
     expect(t).toContain("2 days later");
-    expect(t).toContain("The longest chain still to do has 1 story left.");
+    expect(t).toContain("The longest chain still to do has 1 change left.");
     expect(t).toContain("Now at #21 Login: Working — reviewing");
-    expect(t).toContain("About 1.4 stories a day over the last 14 days (all epics of this repository).");
+    expect(t).toContain("About 1.4 changes a day over the last 14 days (all epics of this repository).");
     expect(t).toContain("2 h 10 min");
   });
 
@@ -154,14 +154,14 @@ describe("renderEpic", () => {
     for (const li of items) expect(pill(li).all("svg")).toHaveLength(1);
     expect(items[1]!.textContent).toContain("part of #12");
     expect(items[2]!.textContent).toContain("also waits for #77 (outside this epic)");
-    expect(b.textContent).toContain("Stories outside this epic that stories here wait for: #77 Other");
+    expect(b.textContent).toContain("Changes outside this epic that changes here wait for: #77 Other");
   });
 
   it("draws the chart with a table of every row, and the pace table", async () => {
     const b = box();
     await render(b, api());
     const chart = b.all("svg").find((s) => s.getAttribute("role") === "img")!;
-    expect(chart.getAttribute("aria-label")).toBe("Stories in the epic and stories done, per day");
+    expect(chart.getAttribute("aria-label")).toBe("Changes in the epic and changes done, per day");
     expect(chart.all("path").map((p) => p.getAttribute("class"))).toEqual(["line-stories", "line-done"]);
     const tables = b.all("table");
     expect(tables).toHaveLength(2);
@@ -239,10 +239,10 @@ describe("renderEpic", () => {
   it("says an epic without stories has none, and draws no chain section", async () => {
     const b = box();
     await render(b, api({ epic: vi.fn(async () => detail({ stories: [], chains: { order: [], nodes: [], edges: [], outside: [], cycles: [], criticalPath: { stories: [], remaining: 0 } }, series: [], history: [], medianStoryMs: undefined })) }));
-    expect(b.textContent).toContain("This epic has no stories yet.");
+    expect(b.textContent).toContain("This epic has no changes yet.");
     expect(b.textContent).toContain("No history yet.");
     expect(b.textContent).toContain("No forecast saved yet.");
-    expect(b.textContent).toContain("Not enough finished stories yet to say how long one takes.");
+    expect(b.textContent).toContain("Not enough finished changes yet to say how long one takes.");
     expect(b.all("h2").map((x) => x.textContent)).not.toContain("Dependency chains");
   });
 

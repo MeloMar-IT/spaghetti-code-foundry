@@ -25,7 +25,7 @@ const SIGN_IN = "Check the repository's sign-in under My repositories.";
 /** The "Backlog readiness" page: a repository chooser and the open issues of it with a mark per check. */
 export async function renderBacklog(main, { repos, readOnly, errorText, current, goTo }) {
   const back = h("a", { href: "#/refinement" }, "← All sessions");
-  const title = h("div", { class: "toolbar" }, h("h1", {}, "Backlog readiness"), h("span", { class: "muted" }, "Which open issues are not ready to be built"));
+  const title = h("div", { class: "toolbar" }, h("h1", {}, "Backlog readiness"), h("span", { class: "muted" }, "Which open GitHub issues are not ready to be built"));
   if (readOnly) {
     mount(main, back, title, h("p", { class: "muted" }, "The backlog is read with the owner's GitHub sign-in, so it is not shown in a preview."));
     return () => {};
@@ -80,8 +80,8 @@ export async function renderBacklog(main, { repos, readOnly, errorText, current,
     const list = answer.issues ?? [];
     mount(body,
       list.length
-        ? table(["Issue", "Title", ...CHECKS.map(([, l]) => l), h("span", { class: "sr-only" }, "Actions")], list.map((i) => row(answer.repo, i)), { cards: true, caption: `Open issues of ${answer.repo}` })
-        : h("div", { class: "empty" }, "No open issues to refine here."),
+        ? table(["GitHub issue", "Title", ...CHECKS.map(([, l]) => l), h("span", { class: "sr-only" }, "Actions")], list.map((i) => row(answer.repo, i)), { cards: true, caption: `Open GitHub issues of ${answer.repo}` })
+        : h("div", { class: "empty" }, "No open GitHub issues to refine here."),
       answer.cut ? h("p", { class: "muted" }, "GitHub returned a full page of 100 issues and pull requests, so older open issues may be missing.") : null);
   };
 

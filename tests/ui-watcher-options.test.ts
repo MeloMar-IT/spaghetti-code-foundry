@@ -64,7 +64,7 @@ describe("watcherOptions", () => {
     const helps = walk(x.el).filter((e) => e.tag === "small");
     expect(helps).toHaveLength(15);
     for (const s of helps) expect(s.textContent).toContain("Default:");
-    expect(helps.map((s) => s.textContent)).toContain("The Foundry answers its own questions with its recommendations, at most twice per issue; after that a person answers. Default: off.");
+    expect(helps.map((s) => s.textContent)).toContain("The Foundry answers its own questions with its recommendations, at most twice per GitHub issue; after that a person answers. Default: off.");
   });
   it("shows defaults for a watcher without the keys, and stored values otherwise", () => {
     const d = mod.watcherOptions({}, []);
@@ -125,7 +125,7 @@ describe("optionNotes", () => {
   });
   it("names each option that is not at its default", () => {
     expect(mod.optionNotes(FULL)).toEqual([
-      "answers its own questions (at most twice per issue)", "questions check: epic-questions", "labels that go first: urgent", "status labels: working → W",
+      "answers its own questions (at most twice per GitHub issue)", "questions check: epic-questions", "labels that go first: urgent", "status labels: working → W",
       "does not wait for dependencies", "labels that count as done: released", "removes on success: go", "no comment on failure", "no status comment", "one run at a time",
     ]);
     expect(mod.optionNotes({ source: "issues", priority_labels: [] })).toEqual(["no label goes first"]);

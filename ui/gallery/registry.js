@@ -26,7 +26,7 @@ const WIDE_COLS = Array.from({ length: 12 }, (_, i) => ({ key: `c${i}`, label: `
 const SETTING_BASE = { effect: "now", effectText: "at once", optional: false, control: "generated" };
 const SETTING_NUMBER = { ...SETTING_BASE, key: "demo.count", kind: "number", integer: true, min: 1, max: 49, default: 5, label: "Resumes before a restart loop", help: "The same run resumed more often than this is reported." };
 const SETTING_SWITCH = { ...SETTING_BASE, key: "demo.on", kind: "yes-no", default: false, label: "Isolate agents", help: "Run agent steps without your personal setup." };
-const SETTING_TEXT = { ...SETTING_BASE, key: "demo.repo", kind: "text", optional: true, default: undefined, label: "Repository for bug stories", help: "Where the monitor writes bug stories." };
+const SETTING_TEXT = { ...SETTING_BASE, key: "demo.repo", kind: "text", optional: true, default: undefined, label: "Repository for bug-fix changes", help: "Where the monitor writes bug-fix changes." };
 const SETTING_LIST = { ...SETTING_BASE, key: "demo.paths", kind: "list", maxItems: 50, default: [], label: "Extra readable paths", help: "Absolute paths a sandboxed step may read." };
 const SETTING_RECORDS = { ...SETTING_BASE, key: "demo.releases", kind: "list", maxItems: 50, fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }], default: [], label: "Approved releases", help: "The catalogue releases this installation accepts." };
 const SETTING_CHOICE = { ...SETTING_BASE, key: "demo.access", kind: "choice", choices: ["read", "write"], default: "write", label: "Skills file access", help: "The most file access a skill may ask for." };

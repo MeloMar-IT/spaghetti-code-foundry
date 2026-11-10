@@ -88,7 +88,7 @@ describe("the backlog page", () => {
     expect(tables[0]!.attrs.class).toBe("table cards");
     expect(tables[0]!.attrs.role).toBe("table");
     const cells = tables[0]!.all("tr")[1]!.all("td");
-    expect(cells.map((c) => c.attrs["data-label"])).toEqual(["Issue", "Title", "Acceptance criteria", "Value sentence", "Depends on", "No open questions", "Actions"]);
+    expect(cells.map((c) => c.attrs["data-label"])).toEqual(["GitHub issue", "Title", "Acceptance criteria", "Value sentence", "Depends on", "No open questions", "Actions"]);
     expect(cells.every((c) => c.attrs.role === "cell")).toBe(true);
     expect(marks.slice(0, 4)).toEqual([
       "Acceptance criteria: yes",
@@ -151,7 +151,7 @@ describe("the backlog page", () => {
     cut = false;
     issues = [];
     await show();
-    expect(main().textContent).toContain("No open issues to refine here.");
+    expect(main().textContent).toContain("No open GitHub issues to refine here.");
     repos = [];
     await show();
     expect(main().textContent).toContain("You need a GitHub repository first.");

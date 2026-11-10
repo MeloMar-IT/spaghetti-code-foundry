@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { plainServerText, whoText } from "../ui/change-words.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -111,7 +112,7 @@ describe("panelView", () => {
   it("shows the story, its sentence, next move, owner, age and the heading", () => {
     const el = view();
     const n = items[0].next;
-    for (const s of ["#89 Story 89", n.text, n.who, n.action, "Ann", "3 d", "In the way of #89", "Open on GitHub"]) expect(el.textContent, s).toContain(s);
+    for (const s of ["#89 Story 89", plainServerText(n.text), whoText(n.who), plainServerText(n.action), "Ann", "3 d", "In the way of #89", "Open on GitHub"]) expect(el.textContent, s).toContain(s);
     expect(named(el, "work-panel-issue").attrs.href).toBe("https://github.com/acme/app/issues/89");
     expect(named(el, "work-panel-run").attrs.href).toBe("#/runs/r89");
     expect(named(el, "work-panel-run").textContent).toBe("Open run");
@@ -137,7 +138,7 @@ describe("panelView", () => {
     off.click();
     expect(onLeave).toHaveBeenCalledWith(items[0]);
     expect(el.textContent).toContain("not on the board");
-    expect(el.textContent).toContain(items[1].next.who);
+    expect(el.textContent).toContain(whoText(items[1].next.who));
     expect(el.all("li")).toHaveLength(2);
   });
   it("marks only the direct entries", () => {

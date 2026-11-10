@@ -96,7 +96,7 @@ export function initShell(role, { user, media = mediaFor("compact") } = {}) {
     if (ctl.drawer) { ctl.closeDrawer(el("menu-btn")); return; }
     ctl.drawer = true;
     ctl.apply();
-    links()[0]?.focus();
+    links().find((a) => !a.hidden)?.focus();
   });
   // The scrim is a backdrop, not a control: it takes the mouse or a tap; the keyboard uses Escape or the menu button.
   on(el("scrim"), "mousedown", () => ctl.closeDrawer(el("menu-btn")));

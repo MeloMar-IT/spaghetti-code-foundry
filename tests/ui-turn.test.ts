@@ -132,9 +132,18 @@ describe("turnView", () => {
     expect(text).toContain("Five");
     expect(text).toContain("Answer 2 questions");
     expect(text).toContain("It has questions before it starts");
-    expect(text).toContain("3 stories wait for this");
-    expect(text).toContain("1 story waits for this");
+    expect(text).toContain("3 changes wait for this");
+    expect(text).toContain("1 change waits for this");
     expect(text).toContain("since ");
+  });
+
+  it("shows the server's sentences in change words, from a real stopped-monitor record", () => {
+    const stopped = nextStep("monitor_stopped", { repo: "o/a" }, { reason: "the state file cannot be read" });
+    const root = view(data([item({ what: "Monitor" }, stopped)]));
+    const text = root.textContent;
+    expect(text).toContain("Switch bug-fix changes on again on the Watchers page");
+    expect(text).toContain("The monitor stopped making bug-fix changes");
+    expect(text).not.toMatch(/\bstor(y|ies)\b/);
   });
 
   it("the issue number link also counts as leaving", () => {

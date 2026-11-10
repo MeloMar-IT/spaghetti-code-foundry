@@ -1,5 +1,6 @@
 import { h } from "./dom.js";
 import { icon, semanticOf, STATUS } from "./icons.js";
+import { plainServerText, whoText } from "./change-words.js";
 
 // Shows the next-step record from the server. No wording of its own: only fields of the record, plus the label of the "?" button and the note of an unchecked issue.
 
@@ -42,7 +43,7 @@ export function whereTarget(where) {
 /** The link of a record; a plain span when the url is not one we link. */
 export function whereLink(where, focus) {
   const t = whereTarget(where);
-  const label = where?.label ?? "";
+  const label = plainServerText(where?.label ?? "");
   if (!t) return label ? h("span", { class: "hold-link" }, label) : null;
   return t.external
     ? h("a", { href: t.href, target: "_blank", rel: "noopener", class: "hold-link", "data-focus": focus }, `${label} ↗`)
@@ -52,7 +53,7 @@ export function whereLink(where, focus) {
 /** A "?" button: pressing it shows `text` under the line, pressing it again hides it. Mouse, keyboard and touch. */
 export function helpMark(text, focus) {
   if (!text) return null;
-  const note = h("span", { class: "help-text", role: "note" }, text);
+  const note = h("span", { class: "help-text", role: "note" }, plainServerText(text));
   note.hidden = true;
   const set = (open) => {
     note.hidden = !open;
@@ -74,7 +75,7 @@ export function helpMark(text, focus) {
 export const statusMark = (x, cls = "", busy = false, semantic = "neutral", focus) => {
   const sem = Object.hasOwn(STATUS, semantic) ? semantic : "neutral";
   return [
-    h("span", { class: `pill sem-${sem} ${cls}`.trim() }, icon(busy ? "loader-circle" : STATUS[sem], { small: true, spin: busy }), x.status),
+    h("span", { class: `pill sem-${sem} ${cls}`.trim() }, icon(busy ? "loader-circle" : STATUS[sem], { small: true, spin: busy }), plainServerText(x.status)),
     helpMark(x.help, focus),
   ];
 };
@@ -86,16 +87,16 @@ export const nextStatus = (n, focus) => statusMark(n, `${whoClass(n)} kind-${n.k
 export const nextPill = (n) => statusMark({ status: n.status }, `${whoClass(n)} kind-${n.kind}`, n.kind === "running", semanticOf(n.kind))[0];
 
 /** "Continues: …" when the record says when it continues. */
-export const untilPart = (n) => (n.until ? h("span", { class: "muted" }, `Continues: ${n.until}`) : null);
+export const untilPart = (n) => (n.until ? h("span", { class: "muted" }, `Continues: ${plainServerText(n.until)}`) : null);
 
 /** Progress, estimate and the slow hint of a record's `timing`. The texts come from the server. */
 export function timingParts(n, { progress = true } = {}) {
   const t = n.timing;
   if (!t) return [];
   return [
-    progress && t.progress ?h("span", { class: "muted" }, t.progress) : null,
-    t.estimate ? h("span", { class: "muted estimate" }, t.estimate) : null,
-    t.note ? h("span", { class: "slow-note" }, t.note) : null,
+    progress && t.progress ?h("span", { class: "muted" }, plainServerText(t.progress)) : null,
+    t.estimate ? h("span", { class: "muted estimate" }, plainServerText(t.estimate)) : null,
+    t.note ? h("span", { class: "slow-note" }, plainServerText(t.note)) : null,
   ].filter(Boolean);
 }
 
@@ -110,12 +111,12 @@ export function nextParts(n, { ref = true, status = true, focus } = {}) {
   const issueOk = ref && n.issue && /^[\w.-]+\/[\w.-]+$/.test(n.repo ?? "");
   const name = (part) => (focus ? `${focus}-${part}` : undefined);
   return [
-    h("span", { class: `pill ${whoClass(n)}` }, n.who),
+    h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)),
     ...(status ? nextStatus(n, name("help")) : []),
     issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": name("issue") }, `#${n.issue}`) : null,
     ref && n.title ? h("span", { class: "hold-title" }, n.title) : null,
-    h("span", { class: "hold-action" }, n.action),
-    h("span", { class: "muted" }, n.why),
+    h("span", { class: "hold-action" }, plainServerText(n.action)),
+    h("span", { class: "muted" }, plainServerText(n.why)),
     n.issueUnchecked ? h("span", { class: "muted issue-unchecked" }, ISSUE_UNCHECKED) : null,
     untilPart(n),
     ...timingParts(n),
@@ -130,4 +131,4 @@ export const nextList = (records) => h("ul", { class: "holds" }, sortNext(record
 export const nextBlock = (n, focus = "next") => h("div", { class: `card next-step ${whoClass(n)}` },
   h("b", {}, "What happens next"),
   h("div", { class: "next-parts" }, nextParts(n, { ref: false, status: false, focus })),
-  n.who === "You" && n.text ? h("p", { class: "mt-4 mb-4" }, n.text) : null);
+  n.who === "You" && n.text ? h("p", { class: "mt-4 mb-4" }, plainServerText(n.text)) : null);

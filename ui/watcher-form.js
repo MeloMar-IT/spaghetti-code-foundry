@@ -5,7 +5,7 @@ import { mergeVars, splitVars, varFields } from "./var-fields.js";
 import { check, f, input, optionsBody, watcherOptions } from "./watcher-options.js";
 
 const SOURCES = {
-  issues: "Issues with a label → run a flow (default issue-gitflow)",
+  issues: "GitHub issues with a label → run a flow (default issue-gitflow)",
   schedule: "On a schedule → run a flow (default release-daily)",
 };
 // No shipped flow for these any more; still shown for a watcher that already uses them.
@@ -215,8 +215,8 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       return guarded(state, save, send, close, mark)();
     } }, "Save watcher");
     const labelPart = f("Trigger label", label);
-    const localNote = h("p", { class: "muted text-sm flush" }, 'A local project: the watcher starts the stories set to "Yes, build this" (state go). Review comments, CI failures and release files need GitHub.');
-    const labelField = h("div", { class: "grid" }, labelPart, f("Skip issues with these labels", exclude));
+    const localNote = h("p", { class: "muted text-sm flush" }, 'A local project: the watcher starts the changes set to "Yes, build this" (state go). Review comments, CI failures and release files need GitHub.');
+    const labelField = h("div", { class: "grid" }, labelPart, f("Skip GitHub issues with these labels", exclude));
     const atField = h("div", { class: "grid" }, f("Once a day at", at, "Instead of every interval"), f("Time zone", tz));
     const taskField = h("div", {}, f("Chore", task, "Becomes the run's task. The flow opens a PR only if something changed."),
       h("div", { class: "chips mt-6" }, CHORES.map(([name, text]) => h("button", { class: "chip", type: "button", onClick: () => (task.value = text) }, name))));

@@ -145,9 +145,9 @@ export function readyLogText(entry) {
   const counts = COUNTS.test(entry.detail ?? "") ? `: ${entry.detail}` : "";
   const quoted = entry.detail ? `: "${entry.detail}"` : "";
   switch (entry.what) {
-    case "ready-checked": return `${who} checked a story draft against the Definition of Ready${counts}`;
-    case "ready-asked": return `${who} asked the architect to judge the readiness of a story draft`;
-    case "architect-judged": return `The architect judged the readiness of a story draft${counts}`;
+    case "ready-checked": return `${who} checked a change draft against the Definition of Ready${counts}`;
+    case "ready-asked": return `${who} asked the architect to judge the readiness of a change draft`;
+    case "architect-judged": return `The architect judged the readiness of a change draft${counts}`;
     case "ready-accepted": return `${who} accepted an item anyway${quoted}`;
     case "ready-unaccepted": return `${who} removed the reason of an item accepted anyway${quoted}`;
     default: return "";

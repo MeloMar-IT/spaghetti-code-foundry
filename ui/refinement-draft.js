@@ -10,7 +10,7 @@ import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, 
 
 // The story drafts of a refinement session: write, save as you type, preview. Every text is set as text, never as HTML.
 
-export const DRAFTS_HIDDEN = "The story drafts are not shown while the repository is not in My repositories.";
+export const DRAFTS_HIDDEN = "The change drafts are not shown while the repository is not in My repositories.";
 export const SAVE_MS = 1000;
 const SEP = "\u0001";
 const NONE = "None (can be built on its own).";
@@ -155,7 +155,7 @@ export function draftSection(ctx) {
   const saves = saveStates(); let conflict = null; // the state of each save; the draft a save was refused for because it was split
   const root = h("section", { class: "drafts" });
   const boxes = { top: h("div"), epic: h("div"), list: h("div"), editor: h("div"), lost: h("div") };
-  root.append(h("h2", {}, "Story drafts"), ...Object.values(boxes));
+  root.append(h("h2", {}, "Change drafts"), ...Object.values(boxes));
   const memo = {};
   const fill = (name, key, build) => {
     if (memo[name] === key) return;
@@ -456,7 +456,7 @@ export function draftSection(ctx) {
   /** The button that removes a draft (also a split original) after a confirmation. */
   const removeDraftButton = (did) => h("button", { class: "danger", onClick: async (e) => {
     const btn = e.currentTarget;
-    if (!(await confirmDialog({ title: "Remove draft", text: "Remove this story draft?", confirm: "Remove draft" }))) return undefined;
+    if (!(await confirmDialog({ title: "Remove draft", text: "Remove this change draft?", confirm: "Remove draft" }))) return undefined;
     // The typed text stays until the draft is really gone; a refused or failed request gives it its timer back.
     const keys = keysOf(did);
     keys.forEach((k) => {
@@ -509,7 +509,7 @@ export function draftSection(ctx) {
       h("div", { class: "field" }, h("span", {}, "Acceptance criteria"), ed.critList, ed.orphans, ed.sug.get("criteria")),
       field(d, "outOfScope", "textarea", 3),
       h("div", { class: "field" }, h("span", {}, "Depends on"), ed.depList,
-        h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add issue")), ed.depChoose, ed.sug.get("dependsOn")),
+        h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add GitHub issue")), ed.depChoose, ed.sug.get("dependsOn")),
       field(d, "notes", "textarea", 3),
     ];
     boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.partsBox, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, removeDraftButton(d.id), ed.mergeBox), ed.readyBox, ed.previewBox, ed.impactBox, ed.splitBox)));
@@ -685,7 +685,7 @@ export function draftSection(ctx) {
     update(sess);
   };
   const listNodes = (drafts, mine) => {
-    if (!drafts.length) return emptyState("No story drafts yet.");
+    if (!drafts.length) return emptyState("No change drafts yet.");
     const openId = opened.get(sid);
     return h("ul", {}, drafts.map((d) => h("li", { class: "entry" }, h("span", {}, draftTitle(d)), draftStatePill(d),
       d.published ? h("span", { class: "muted" }, "On GitHub: ", issueLink(d)) : null,
@@ -759,7 +759,7 @@ export function draftSection(ctx) {
         const clash = Boolean(d.splitInto) && (conflict === d.id || keysOf(d.id).length > 0);
         fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}|${partsKey(s, d)}|${clash}`, () => h("div", { class: "card" },
           clash ? splitConflict(d.splitInto.map((id, i) => ({ id, label: `Part ${i + 1}: ${draftTitle(draftOf(id))}` })), open) : null,
-          d.published ? h("p", {}, "This story is on GitHub as ", issueLink(d), ". It cannot be changed here.")
+          d.published ? h("p", {}, "This change is on GitHub as ", issueLink(d), ". It cannot be changed here.")
             : h("p", {}, "This draft was split. It is kept as a record and cannot be changed; its parts are worked on instead."),
           partsNodes(s, d, partsAct(d.id)).length ? h("div", { class: "parts" }, partsNodes(s, d, partsAct(d.id))) : null,
           d.splitInto ? h("div", { class: "row" }, removeDraftButton(d.id)) : null,

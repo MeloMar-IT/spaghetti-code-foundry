@@ -18,12 +18,12 @@ const labels = (list: FakeElement[]) => list.map((b) => b.textContent);
 
 describe("the Raise the issue's limit button", () => {
   it("shows for a run stopped by the issue limit", () => {
-    expect(labels(runs.actions(stopped()))).toContain("Raise the issue's limit");
+    expect(labels(runs.actions(stopped()))).toContain("Raise the change's limit");
   });
   it("does not show for another stop, another status or a closed issue", () => {
-    expect(labels(runs.actions(stopped({ reason: "the project's daily limit is reached — resume tomorrow" })))).not.toContain("Raise the issue's limit");
-    expect(labels(runs.actions(stopped({ status: "failed" })))).not.toContain("Raise the issue's limit");
-    expect(labels(runs.actions(stopped({ next: { kind: "issue_closed" } })))).not.toContain("Raise the issue's limit");
+    expect(labels(runs.actions(stopped({ reason: "the project's daily limit is reached — resume tomorrow" })))).not.toContain("Raise the change's limit");
+    expect(labels(runs.actions(stopped({ status: "failed" })))).not.toContain("Raise the change's limit");
+    expect(labels(runs.actions(stopped({ next: { kind: "issue_closed" } })))).not.toContain("Raise the change's limit");
   });
   it("calls run('raise-limit')", () => {
     const run = vi.fn();

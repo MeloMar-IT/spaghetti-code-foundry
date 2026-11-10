@@ -180,11 +180,11 @@ describe("pure functions", () => {
     expect(k(s({ drafts: [d, { id: D2, title: t("A") }] }), d)).not.toBe(k(s({ drafts: [d, { id: D2, title: t("B") }] }), d));
   });
   it("impactLogText", () => {
-    expect(im.impactLogText({ what: "impact-asked", who: "Ann" })).toBe("Ann asked for the architect's view of a story draft");
-    expect(im.impactLogText({ what: "architect-impact", detail: "large" })).toBe("The architect wrote its view of a story draft: large");
-    expect(im.impactLogText({ what: "architect-impact", detail: "huge" })).toBe("The architect wrote its view of a story draft");
+    expect(im.impactLogText({ what: "impact-asked", who: "Ann" })).toBe("Ann asked for the architect's view of a change draft");
+    expect(im.impactLogText({ what: "architect-impact", detail: "large" })).toBe("The architect wrote its view of a change draft: large");
+    expect(im.impactLogText({ what: "architect-impact", detail: "huge" })).toBe("The architect wrote its view of a change draft");
     expect(im.impactLogText({ what: "created" })).toBe("");
-    expect(ui.logText({ what: "impact-asked", who: "Ann" })).toBe("Ann asked for the architect's view of a story draft");
+    expect(ui.logText({ what: "impact-asked", who: "Ann" })).toBe("Ann asked for the architect's view of a change draft");
   });
   it("has words for every server value", () => {
     for (const k of ["found", "estimate"]) expect(im.BASIS_WORDS[k]).toBeTruthy();
@@ -323,7 +323,7 @@ describe("the view", () => {
   it("no overlaps", async () => {
     withView();
     await open();
-    expect(box().textContent).toContain("No other open story or draft named.");
+    expect(box().textContent).toContain("No other open change or draft named.");
   });
   it("text is text", async () => {
     withView({ risks: [{ kind: "data", basis: "estimate", text: "<img src=x onerror=1>" }] });
@@ -346,7 +346,7 @@ describe("the plan review", () => {
     expect(box().textContent).toContain("A plan review by a person is recommended");
     expect(box().textContent).toContain("secrets");
     expect(box().textContent).toContain("It reads a token.");
-    expect(box().textContent).toContain("Add the review label when this story is published");
+    expect(box().textContent).toContain("Add the review label when this change is published");
     expect(box().textContent).toContain("plan-review");
     expect((checkbox() as any).checked).toBeFalsy();
     await tick(checkbox(), true);
@@ -448,7 +448,7 @@ describe("who sees what", () => {
       await show();
       expect(card().textContent).toContain("The export code lives here.");
       expect(walk(card()).filter((e) => e.tag === "button" || e.tag === "input")).toEqual([]);
-      expect(card().textContent).toContain('The review label "plan-review" is added when this story is published.');
+      expect(card().textContent).toContain('The review label "plan-review" is added when this change is published.');
     });
   }
   it("hidden drafts: nothing shows", async () => {

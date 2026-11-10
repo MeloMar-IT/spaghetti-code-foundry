@@ -111,12 +111,12 @@ export function criticalPathView(chains, stories) {
   const list = Array.isArray(stories) ? stories : [];
   const byIssue = new Map(list.map((s) => [s.issue, s]));
   const nodes = chains?.nodes ?? [];
-  if (!list.length && !nodes.length) return { summary: "No stories yet.", path: "", now: "" };
-  if (!nodes.length) return { summary: "No chain to show: the stories of this epic were split or dropped.", path: "", now: "" };
+  if (!list.length && !nodes.length) return { summary: "No changes yet.", path: "", now: "" };
+  if (!nodes.length) return { summary: "No chain to show: the changes of this epic were split or dropped.", path: "", now: "" };
   const cp = chains.criticalPath;
   if (!cp || !cp.remaining) {
     const all = list.length > 0 && list.every((s) => s.state === "done");
-    return { summary: all ? "Nothing left on any chain: every story is done." : "Nothing left on any chain: the stories that can be built are done.", path: "", now: "" };
+    return { summary: all ? "Nothing left on any chain: every change is done." : "Nothing left on any chain: the changes that can be built are done.", path: "", now: "" };
   }
   const nodeOf = new Map(nodes.map((n) => [n.issue, n]));
   const path = (cp.stories ?? []).map((n) => `#${n}${nodeOf.get(n)?.done ? " (done)" : ""}`).join(" → ");
@@ -126,7 +126,7 @@ export function criticalPathView(chains, stories) {
     const title = s?.title ?? nodeOf.get(cp.at)?.title ?? "";
     now = `Now at #${cp.at}${title ? ` ${title}` : ""}: ${s?.words ?? nodeOf.get(cp.at)?.state ?? ""}${s?.status ? ` — ${s.status}` : ""}`;
   }
-  return { summary: `The longest chain still to do has ${cp.remaining} ${plural(cp.remaining, "story", "stories")} left.`, path, now };
+  return { summary: `The longest chain still to do has ${cp.remaining} ${plural(cp.remaining, "change", "changes")} left.`, path, now };
 }
 
 /** The status semantic of a story state (see ui/icons.js STATUS); an unknown state is neutral. */
@@ -151,7 +151,7 @@ export function chainNotes(chains) {
   const out = [];
   for (const c of chains?.cycles ?? []) out.push(`${issueList(c)} depend on each other, so none of them can start first`);
   const outside = chains?.outside ?? [];
-  if (outside.length) out.push(`Stories outside this epic that stories here wait for: ${outside.map((o) => `#${o.issue}${o.title ? ` ${o.title}` : ""}`).join(", ")}`);
+  if (outside.length) out.push(`Changes outside this epic that changes here wait for: ${outside.map((o) => `#${o.issue}${o.title ? ` ${o.title}` : ""}`).join(", ")}`);
   return out;
 }
 
@@ -162,11 +162,11 @@ export function paceView(pace, medianStoryMs) {
   const days = pace?.days ?? [];
   const total = days.reduce((a, d) => a + (d.done || 0), 0);
   const perDay = !pace?.perDay || !total
-    ? `No story was finished in the last ${days.length || 14} days.`
-    : `About ${Math.round(pace.perDay * 10) / 10} ${plural(Math.round(pace.perDay * 10) / 10, "story", "stories")} a day over the last ${days.length} days (all epics of this repository).`;
+    ? `No change was finished in the last ${days.length || 14} days.`
+    : `About ${Math.round(pace.perDay * 10) / 10} ${plural(Math.round(pace.perDay * 10) / 10, "change", "changes")} a day over the last ${days.length} days (all epics of this repository).`;
   const median = typeof medianStoryMs === "number" && medianStoryMs > 0
-    ? `A story takes about ${durationText(medianStoryMs)} from the start of its run to done (the median of the finished runs).`
-    : "Not enough finished stories yet to say how long one takes.";
+    ? `A change takes about ${durationText(medianStoryMs)} from the start of its run to done (the median of the finished runs).`
+    : "Not enough finished changes yet to say how long one takes.";
   const rows = [...days].reverse().map((d, i) => ({ label: windowLabel(i), done: d.done }));
   return { perDay, median, rows };
 }

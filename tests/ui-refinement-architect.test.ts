@@ -108,7 +108,7 @@ describe("pure functions", () => {
     expect(ui.architectStatus({ state: "queued", kind: "round", behind: 3 }).detail).toBe("It first finishes for 3 of your other sessions. Then it writes its questions.");
     expect(ui.architectStatus({ state: "queued", behind: 0 }).detail).toBe("Then it reads the code.");
     expect(ui.architectStatus({ state: "queued", behind: "2" }).detail).toBe("Then it reads the code.");
-    expect(ui.architectStatus({ state: "running", doing: "Reading the open issues." })).toMatchObject({ busy: true, detail: "Reading the open issues." });
+    expect(ui.architectStatus({ state: "running", doing: "Reading the open GitHub issues." })).toMatchObject({ busy: true, detail: "Reading the open GitHub issues." });
     expect(ui.architectStatus({ state: "paused", reason: "The usage limit is reached; ask again later" })).toMatchObject({ busy: false, text: "The architect paused.", detail: "The usage limit is reached; ask again later." });
     expect(ui.architectStatus({ state: "failed", reason: "It broke." })).toMatchObject({ bad: true, detail: "It broke." });
   });
@@ -136,7 +136,7 @@ describe("pure functions", () => {
     expect(ui.architectStatus({ state: "queued", kind: "impact" })).toMatchObject({ busy: true, detail: "Then it looks at what your draft touches." });
     expect(ui.architectStatus({ state: "running", kind: "impact", doing: "Check the form of the architect's answer and pass it on" }))
       .toMatchObject({ busy: true, text: "The architect is looking at what your draft touches.", detail: "Checking the view." });
-    expect(ui.activityText("Only for ask=impact: read the newest 50 open issues", "impact")).toBe("Reading the open issues.");
+    expect(ui.activityText("Only for ask=impact: read the newest 50 open issues", "impact")).toBe("Reading the open GitHub issues.");
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "impact", reason: "x" } }))).toBe("");
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "impact", reason: "x" } }))).toBe("Refresh");
   });
@@ -146,9 +146,9 @@ describe("pure functions", () => {
       .toMatchObject({ busy: true, text: "The architect is looking for ways to split your draft.", detail: "Checking the ways." });
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "split", reason: "x" } }))).toBe("");
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "split", reason: "x" } }))).toBe("Refresh");
-    expect(ui.logText({ what: "split-asked", who: "Ann" })).toBe("Ann asked the architect for ways to split a story draft");
-    expect(ui.logText({ what: "architect-split", detail: "2" })).toBe("The architect proposed 2 ways to split a story draft");
-    expect(ui.logText({ what: "draft-split", who: "Ann", detail: "3" })).toBe("Ann split a story draft into 3 drafts");
+    expect(ui.logText({ what: "split-asked", who: "Ann" })).toBe("Ann asked the architect for ways to split a change draft");
+    expect(ui.logText({ what: "architect-split", detail: "2" })).toBe("The architect proposed 2 ways to split a change draft");
+    expect(ui.logText({ what: "draft-split", who: "Ann", detail: "3" })).toBe("Ann split a change draft into 3 drafts");
   });
   it("the brief part draws no line for a review run", async () => {
     page = session({ brief: BRIEF, architect: { state: "running", kind: "review", draft: "d", doing: "x" } });
