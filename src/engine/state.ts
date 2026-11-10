@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
+import type { PersonCheck } from "./plan-checks.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunAutonomy } from "../governance/autonomy.js";
 import type { PromotionRecord } from "../promotion/gate.js";
@@ -167,6 +168,10 @@ export interface RunSummary {
   skillGap?: { topic: string; issue: number; url: string }[];
   /** The skill request carried from the plan record at plan_check. Absent on older runs and on runs without a plan record. */
   skillCarry?: RunSkillCarry;
+  /** Checks a person can try, from the plan's CHECK lines (`source: "plan"`), set after the plan gate; absent on older runs and when the plan gave none. */
+  checks?: PersonCheck[];
+  /** The plan's one line why there is nothing to try (NO_CHECKS); only with `checks: []`. */
+  checksNone?: string;
   /** What plan_check found (see plan-carry.ts). Absent on older runs and on runs with their own plan gate. */
   planCheck?: RunPlanCheck;
   /** Values a step handed on in `<run dir>/outputs.json` (see run-outputs.ts), e.g. `release_url` and `release_tag` of release-build. Absent on older runs. */
