@@ -24,6 +24,7 @@ import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from 
 import { isTimedOut } from "../errors.js";
 import { stepContextUncited } from "./context-index.js";
 import { claimAfterResolve } from "./release-claim.js";
+import { planPointsAfter } from "./plan-points.js";
 import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
@@ -224,6 +225,9 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
   const decided = readDecidedQuestions(engine.summary.runDir, engine.log);
   if (decided?.length) engine.summary.decidedQuestions = decided;
+  const points = planPointsAfter(engine.summary.planPoints, { stepId: step.id, type: step.type, topLevel: !scope.prefix, ok: res.ok, output: res.output ?? "" });
+  if (points) engine.summary.planPoints = points;
+  else delete engine.summary.planPoints;
   engine.save();
   const identity = stepIdentity(step, scope.prefix, visit);
   let daily: number | undefined;

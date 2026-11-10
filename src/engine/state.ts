@@ -12,6 +12,7 @@ import type { CanonicalSelectionRecord } from "../skills/run-canonical.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
 import type { RunSkillPlan } from "../skills/run-plan.js";
 import type { SessionToolGrant } from "../skills/tool-policy.js";
+import type { PlanPoint } from "./plan-points.js";
 import type { DecidedRound } from "./questions.js";
 import type { OutputLabel } from "./untrusted.js";
 
@@ -172,6 +173,8 @@ export interface RunSummary {
   outputs?: Record<string, string>;
   /** The question rounds the Foundry decided, from `<run dir>/decided.json` (see questions.ts). Admin only; absent on older runs. */
   decidedQuestions?: DecidedRound[];
+  /** The final plan's points: what the issue asked, what the planner assumed (src/engine/plan-points.ts). */
+  planPoints?: PlanPoint[];
   /** The run stopped at this step because content it reads needs a person's approval (sha256 of each content). Only a resume by a person from that step approves it. Absent on older runs and when nothing is held. */
   heldContent?: { step: string; sha256: string[] };
   /** Content hashes a person approved on resume (the newest 200). Absent on older runs. */

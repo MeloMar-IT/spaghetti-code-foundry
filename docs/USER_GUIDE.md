@@ -1708,6 +1708,8 @@ sections cite no entry gets a policy **warning** (`context.uncited`): it shows i
 **Policy decisions** of the Evidence tab. The plan step does not fail. A run with no bundle gets no
 citations and no warning.
 
+**Asked and assumed.** The plan lists its points in two kinds of line. `ASKED:` is a point taken from the issue, its comments or the task. `ASSUMED:` is a choice the planner made itself that the issue does not settle, such as a file location, a default value or who may see something. Read the `ASSUMED:` lines first: a wrong guess is easier to catch before the work is built. The run record keeps them as `planPoints`, a list of `{ kind: "asked" | "assumed", text }`. A plan without these lines, and an older run, has no list.
+
 - **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
   - `max_sources` (default `200`): the most files in the bundle.
   - `max_source_bytes` (`262144`): the most bytes of one file.
