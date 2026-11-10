@@ -24,7 +24,7 @@ import { checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissio
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext, runSince } from "./next.js";
 import { asideCheck, putAside, withNotNow } from "./your-turn.js";
-import { adminRun, answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
+import { adminRun, answerBlock, hidePaths, refinementSessionOf, storyOf, userLogLine, userRecord, userRun, type Criterion } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
 import { cachedSkillRegistryAt } from "../skills/registry.js";
 import { runSkillView, type RunSkillView } from "./skill-view.js";
@@ -129,7 +129,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const ws = callerWorkspaces(user);
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
-  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string } }) => unknown = admin ? adminRun : userRun;
+  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string }; issueTitle?: string; criteria?: Criterion[] }) => unknown = admin ? adminRun : userRun;
   // A running run whose test runs are paused by the load governor: since when (a fresh pause record of the step, see slot-waits.ts).
   const pausedOf = (r: RunSummary): { paused?: { since: string } } => {
     const since = r.status === "running" ? pausedSince(r.runDir, Date.now()) : undefined;
@@ -341,7 +341,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         lastCan = "canAnswer" in can;
         const paused = pausedOf(e.summary);
         lastPaused = paused.paused?.since ?? "";
-        out = { type: "update", summary: shape({ ...withSkills(e.summary), ...can, ...paused, next }) };
+        out = { type: "update", summary: shape({ ...withSkills(e.summary), ...storyOf(e.summary), ...can, ...paused, next }) };
       } else if (!admin) {
         const line = userLogLine(e.line);
         if (line === undefined) return;
@@ -370,7 +370,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   const s = scheduler.get(id);
   if (!s) throw new HttpError(404, "run not found");
-  if (!action && method === "GET") return send(res, 200, hide(shape({ ...withSkills(s), ...answerable(s), ...pausedOf(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
+  if (!action && method === "GET") return send(res, 200, hide(shape({ ...withSkills(s), ...storyOf(s), ...answerable(s), ...pausedOf(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
   if (action === "diff" && method === "GET") {
     if (!admin && (s.flowDef?.workspace === "inplace" || (s.workdir !== undefined && s.workdir === s.repo))) throw new HttpError(403, "only an admin can see the changes of a run that works in the server's folder");
     return send(res, 200, runDiff(s)), true;

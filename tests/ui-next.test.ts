@@ -676,7 +676,7 @@ describe("the Runs pages for a user", () => {
     expect(main.textContent).toContain("walk");
     expect(flowLinks(main)).toHaveLength(0);
     expect(main.textContent).not.toContain("$");
-    expect(main.all("button").map((b) => b.textContent)).toContain("Steps");
+    expect(main.all("button").map((b) => b.textContent)).toContain("Details");
     expect(main.textContent).not.toContain("transcripts");
     expect(main.textContent).not.toContain("Owner");
     stop();
@@ -689,12 +689,17 @@ describe("the Runs pages for a user", () => {
     const stop = runs.renderRunDetail(main, "r1", { admin: true });
     const skillView = { lock: "ok", requested: [], resolved: [{ id: "a", version: "1.0.0", requiredBy: [], integrity: "verified", digest: `sha256:${"a".repeat(64)}`, source: "admin" }] };
     handlers.update!({ data: JSON.stringify({ summary: { ...RUN, skillView } }) });
+    main.all("button").find((b) => b.attrs["data-tab"] === "details")!.click();
+    const section = () => main.all("details").find((el) => el.attrs["data-section"] === "skills")!;
     const card = main.all("section").filter((el) => el.attrs["aria-label"] === "Skills");
     expect(card).toHaveLength(1);
+    expect(section().hidden).toBeFalsy();
     expect(card[0]!.textContent).toContain("a@1.0.0");
     expect(card[0]!.textContent).toContain("Digest");
+    // The section has its own summary: the card has no second heading.
+    expect(card[0]!.all("h2")).toHaveLength(0);
     handlers.update!({ data: JSON.stringify({ summary: RUN }) });
-    expect(main.all("section").filter((el) => el.attrs["aria-label"] === "Skills")).toHaveLength(0);
+    expect(section().hidden).toBe(true);
     expect(main.textContent).toContain("walk");
     stop();
   });
@@ -798,7 +803,7 @@ describe("the Runs pages for a user", () => {
       history: [{ id: "a", type: "shell", ok: false, visit: 1, output: "boom output", error: "exit code 1", durationMs: 5 }], state: { next: "a" },
     };
     const FAILED = { ...base, next: runNextStep(base as never, {}) };
-    const tabs = (main: FakeElement) => main.all("button").filter((b) => ["Overview", "Steps", "Changes", "Evidence", "Logs"].includes(b.textContent));
+    const tabs = (main: FakeElement) => main.all("button").filter((b) => ["Progress", "What changed", "Details"].includes(b.textContent));
     const onTab = (main: FakeElement) => tabs(main).filter((b) => b.attrs["aria-selected"] === "true").map((b) => b.textContent);
     const push = (handlers: Record<string, (e: { data: string }) => void>, summary: unknown) => handlers.update!({ data: JSON.stringify({ summary }) });
 
@@ -835,7 +840,9 @@ describe("the Runs pages for a user", () => {
       expect(main.all("button").filter((b) => b.attrs["data-tab"]).length).toBeGreaterThan(0);
       expect(main.textContent).not.toContain("What happens next");
       expect(main.all("dt").map((d) => d.textContent)).not.toContain("Details");
-      expect(onTab(main)).toEqual(["Steps"]);
+      expect(onTab(main)).toEqual(["Details"]);
+      expect(tabs(main).map((b) => b.textContent)).toEqual(["Progress", "What changed", "Details"]);
+      expect((main.all("details").find((d) => d.attrs["data-section"] === "steps") as any).open).toBe(true);
       stop();
     });
     it("'Show the failed step' lists the steps with that one open", async () => {
@@ -847,7 +854,7 @@ describe("the Runs pages for a user", () => {
       const before = main.all("details").filter((d) => d.attrs.class === "tl");
       main.all("button").find((b) => b.textContent === "Show the failed step")!.click();
       const entries = main.all("details").filter((d) => d.attrs.class === "tl");
-      expect(onTab(main)).toEqual(["Steps"]);
+      expect(onTab(main)).toEqual(["Details"]);
       expect(entries).toHaveLength(1);
       expect(entries[0]).toBe(before[0]);
       expect("open" in entries[0]!.attrs).toBe(true);
@@ -860,7 +867,7 @@ describe("the Runs pages for a user", () => {
       const main = connected();
       const stop = runs.renderRunDetail(main, "r1");
       push(handlers, { ...base, status: "running", reason: undefined, next: nextStep("running") });
-      tabs(main).find((b) => b.textContent === "Steps")!.click();
+      tabs(main).find((b) => b.textContent === "Details")!.click();
       const first = main.all("details").filter((d) => d.attrs.class === "tl")[0]!;
       first.setAttribute("open", "");
       push(handlers, { ...base, status: "running", reason: undefined, next: nextStep("running"), history: [...base.history, { ...base.history[0], id: "later" }] });
@@ -870,14 +877,14 @@ describe("the Runs pages for a user", () => {
       expect("open" in first.attrs).toBe(true);
       stop();
     });
-    it("moves to Steps when a running run fails, unless the reader picked a tab", async () => {
+    it("moves to Details when a running run fails, unless the reader picked a tab", async () => {
       const runs = (await import("../ui/runs.js" as string)) as any;
-      for (const [pick, want] of [[undefined, "Steps"], ["Logs", "Logs"], ["Changes", "Changes"]] as const) {
+      for (const [pick, want] of [[undefined, "Details"], ["Progress", "Progress"], ["What changed", "What changed"]] as const) {
         const { handlers } = stubEventSource();
         const main = connected();
         const stop = runs.renderRunDetail(main, "r1");
         push(handlers, { ...base, status: "running", reason: undefined, next: nextStep("running") });
-        expect(onTab(main)).toEqual(["Overview"]);
+        expect(onTab(main)).toEqual(["Progress"]);
         if (pick) tabs(main).find((b) => b.textContent === pick)!.click();
         push(handlers, FAILED);
         expect(onTab(main)).toEqual([want]);
@@ -891,8 +898,8 @@ describe("the Runs pages for a user", () => {
       const stop = runs.renderRunDetail(main, "r1");
       push(handlers, { ...base, status: "waiting", reason: "Go on?", next: nextStep("approval") });
       expect(main.textContent).toContain("What happens next");
-      expect(main.all("dt").map((d) => d.textContent)).toContain("Details");
-      expect(onTab(main)).toEqual(["Overview"]);
+      expect(main.all("dt").map((d) => d.textContent)).toContain("Reason");
+      expect(onTab(main)).toEqual(["Progress"]);
       stop();
     });
     it("an old run (no steps) says so, and no tab throws", async () => {
@@ -901,7 +908,7 @@ describe("the Runs pages for a user", () => {
       const main = connected();
       const stop = runs.renderRunDetail(main, "r1");
       push(handlers, { ...base, status: "succeeded", reason: undefined, history: [], next: nextStep("running") });
-      tabs(main).find((b) => b.textContent === "Steps")!.click();
+      tabs(main).find((b) => b.textContent === "Details")!.click();
       expect(main.textContent).toContain("No steps recorded.");
       for (const b of tabs(main)) expect(() => b.click()).not.toThrow();
       stop();

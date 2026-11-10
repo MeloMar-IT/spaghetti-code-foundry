@@ -143,7 +143,8 @@ test.describe("budgets", () => {
 
   budgetTest("LARGE_LOG_MS", BUDGETS.LARGE_LOG_MS, async (browser) =>
     (await collect("large-log", () => medianOf(() => onFreshPage(browser, "#/runs/ui-big-log", LOG_READY, { large: true }, async (page) => {
-      await page.locator('button[data-tab="log"]').click();
+      await page.locator('button[data-tab="details"]').click();
+      await page.locator('#main [data-section="log"] > summary').click();
       const m = await loadMetrics(page);
       const lines = page.locator("#main pre.log > span:not(.log-note)");
       await expect(lines).toHaveCount(2000);

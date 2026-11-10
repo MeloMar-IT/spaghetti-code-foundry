@@ -316,11 +316,12 @@ In `ui/kit/product.js`, styled in `ui/kit/product.css`. They are built only from
 
 ### phaseStrip
 
-`phaseStrip({ label, phases, current })`
+`phaseStrip({ label, phases, current, complete })`
 
 - Returns an `<ol>` with one item per word in `phases` (non-empty strings). `current` is the index of the phase now, or `null` when it has not started. Earlier phases show a **Done** icon, the current one a **Now** icon and `aria-current="step"`; later ones have no mark. `label` names the list (optional).
+- `complete: true` marks every phase **Done** (a finished change). It needs `current: null`; with a current phase it throws.
 - A bad `phases` or `current` throws. Other attributes pass through; `style` is refused.
-- It is not used on a page yet. The five phase words (Understand, Plan, Build, Check, Deliver) are in `ui/phases.js`.
+- The run page (`ui/run-header.js`) uses it for the five phase words (Understand, Plan, Build, Check, Deliver), which are in `ui/phases.js`.
 
 ### confirmDestructive
 

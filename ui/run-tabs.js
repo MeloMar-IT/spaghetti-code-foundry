@@ -2,6 +2,7 @@
 // panels it holds. A panel is built once and then hidden or shown: a stream update changes only what moved inside it,
 // and never the selected tab. Relative imports, so a test can load it.
 import { aiProps, h, mount } from "./dom.js";
+import { icon } from "./icons.js";
 import { whereTarget } from "./next.js";
 import { errorState, explainError } from "./states.js";
 
@@ -119,13 +120,16 @@ function evidenceNode(it) {
 }
 
 /**
- * `createTabs(defs, { initial })`, `defs = [{ id, label, build(), update?(s, prev), onShow?() }]`. `build` runs the first
- * time a tab is shown; `update` runs on every summary, for built panels only (a panel built later gets the last summary
+ * `createTabs(defs, { initial })`, `defs = [{ id, label, build(), update?(s, prev), onShow?(), aliases?, reveal?(id) }]`.
+ * `aliases` are old tab ids that now lead to this tab; `reveal(id)` then opens the part of the tab that the id named.
+ * `build` runs the first time a tab is shown; `update` runs on every summary, for built panels only (a panel built later gets the last summary
  * once). `picked()` is true once the reader chose a tab by click or key.
  */
 export function createTabs(defs, { initial } = {}) {
   const ids = defs.map((d) => d.id);
-  let cur = Math.max(0, ids.indexOf(initial));
+  // An old tab id (an alias) finds the tab that holds it now.
+  const indexOf = (id) => defs.findIndex((d) => d.id === id || (d.aliases ?? []).includes(id));
+  let cur = Math.max(0, indexOf(initial));
   let byUser = false;
   let last;
   const built = new Set();
@@ -183,9 +187,15 @@ export function createTabs(defs, { initial } = {}) {
     draw(focus);
   }
   draw(false);
+  if (initial !== undefined) defs[cur].reveal?.(initial);
   return {
     el,
-    show: (id, { byUser: by = false } = {}) => select(ids.indexOf(id), { byUser: by }),
+    show(id, { byUser: by = false } = {}) {
+      const i = indexOf(id);
+      if (i < 0) return;
+      select(i, { byUser: by });
+      defs[i].reveal?.(id);
+    },
     current: () => ids[cur],
     picked: () => byUser,
     update(s, prev) {
@@ -202,24 +212,31 @@ export function showFailedOnce(tabs, s, prev) {
 }
 
 /**
- * The Overview panel: the task, the questions, the step count and the details list. `extra`: a node that is placed once
- * and never touched again (the answer form of the user page). The parts redraw only when their text changed.
+ * The Progress panel: the acceptance criteria (read-only), the task, the questions and, for an administrator, what the
+ * Foundry decided. `extra`: a node that is placed once and never touched again (the answer form of the user page).
+ * The parts redraw only when their text changed. Run ID, flow and step count are in the header's technical details.
  */
-export function overviewPanel({ admin = false, extra = null } = {}) {
+export function progressPanel({ admin = false, extra = null } = {}) {
+  const criteria = h("section", { class: "card mb-16 run-criteria", "aria-label": "Acceptance criteria" });
+  criteria.hidden = true;
   const card = h("div", { class: "card mb-16" });
-  const count = h("p", { class: "muted" });
-  const meta = h("dl", { class: "meta" });
   const decided = admin ? h("div", { class: "card mb-16", "data-part": "decided" }) : null;
-  const keys = { card: null, decided: null, count: null, meta: null };
+  const keys = { criteria: null, card: null, decided: null };
   const part = (name, key, box, nodes) => {
     if (keys[name] === key) return;
     keys[name] = key;
     mount(box, [nodes].flat(Infinity));
   };
   return {
-    build: () => h("div", {}, card, decided, count, meta, extra),
+    build: () => h("div", {}, criteria, card, decided, extra),
     update(raw) {
       const s = withQuestions(raw) ?? {};
+      const items = (Array.isArray(s.criteria) ? s.criteria : []).filter((c) => c && typeof c.text === "string" && c.text.trim() !== "");
+      part("criteria", JSON.stringify(items), criteria, items.length ? [
+        h("h2", {}, "Acceptance criteria"),
+        h("ul", { class: "checklist flush" }, items.map((c) => h("li", {}, c.done ? icon("circle-check", { label: "Done", small: true }) : icon("circle", { label: "Not done yet", small: true }), " ", c.text))),
+      ] : []);
+      criteria.hidden = !items.length;
       const task = s.task?.trim() ? s.task : "";
       const questions = s.questions ?? "";
       part("card", JSON.stringify([task, questions]), card, [
@@ -232,15 +249,54 @@ export function overviewPanel({ admin = false, extra = null } = {}) {
         part("decided", JSON.stringify(items), decided, items.length ? [h("b", {}, "Decided by the Foundry"), items.map(roundNode)] : []);
         decided.hidden = !items.length;
       }
-      const text = stepCountText(s);
-      part("count", text, count, text);
-      count.hidden = !text;
-      const version = s.flowDef?.publish?.enabled ? String(s.flowDef.publish.version) : "";
-      const reason = s.reason && !failedWithRecord(s) ? s.reason : "";
-      const row = (k, v, cls) => (v ? [h("dt", {}, k), h("dd", cls ? { class: cls } : {}, v)] : null);
-      part("meta", JSON.stringify([s.runId, s.flow, version, admin ? s.workdir : "", reason]), meta, [
-        row("Run", s.runId), row("Flow", s.flow), row("Flow version", version), admin ? row("Workspace", s.workdir) : null, row("Details", reason, "pre-wrap"),
-      ]);
+    },
+  };
+}
+
+export const DETAIL_SECTIONS = [["steps", "Steps"], ["evidence", "Evidence"], ["skills", "Skills"], ["log", "Log"]];
+
+/**
+ * The Details panel: Steps (open), Evidence, Skills and Log as sections of one tab, each a `<details>`.
+ * `steps`: { el, update(s) }, `evidence`: { build(), update(s, prev) }, `skills(s)`: a node or null, `log`: { el, restore() }.
+ * Returns a tab def part: { build, update, onShow, reveal(id) }. `reveal` opens the section an old tab id named.
+ */
+export function detailsPanel({ steps, evidence, skills, log }) {
+  const body = {};
+  const box = {};
+  for (const [key, label] of DETAIL_SECTIONS) {
+    body[key] = h("div", { class: "mt-8" });
+    box[key] = h("details", { class: "run-detail-section", "data-section": key }, h("summary", { "data-focus": `details-${key}` }, label), body[key]);
+  }
+  box.steps.open = true;
+  box.skills.hidden = true;
+  let skillKey = null;
+  const restoreLog = () => { if (box.log.open) log.restore(); };
+  box.log.addEventListener("toggle", restoreLog);
+  return {
+    build() {
+      body.steps.append(steps.el);
+      body.evidence.append(evidence.build());
+      body.log.append(log.el);
+      return h("div", {}, DETAIL_SECTIONS.map(([key]) => box[key]));
+    },
+    update(s, prev) {
+      steps.update(s);
+      evidence.update(s, prev);
+      const key = JSON.stringify(s?.skillView ?? null);
+      if (key !== skillKey) {
+        skillKey = key;
+        const node = skills(s);
+        mount(body.skills, node);
+        box.skills.hidden = !node;
+      }
+    },
+    onShow: restoreLog,
+    reveal(id) {
+      const d = box[id];
+      if (!d || d.hidden) return;
+      d.open = true;
+      d.scrollIntoView?.({ block: "nearest" });
+      if (id === "log") log.restore();
     },
   };
 }

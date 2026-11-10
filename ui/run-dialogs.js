@@ -119,7 +119,7 @@ export function adminRunActions(runId, { a = api, ask = confirmDialog, decide = 
         if (!saved) return false;
         toast("Limit raised — continuing");
       } else if (kind === "cancel") {
-        if (!(await asked({ title: "Cancel this run?", text: "You can resume it later.", confirm: "Cancel the run", cancel: "Keep running" }))) return false;
+        if (!(await asked({ title: "Stop this change?", text: "It stops now. You can retry it later.", confirm: "Stop the change", cancel: "Keep it running" }))) return false;
         try {
           const r = await a.cancelRun(runId);
           if (r?.cancelled === false) { setAlert(NOT_CANCELLED); return false; }

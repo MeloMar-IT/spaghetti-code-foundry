@@ -141,9 +141,11 @@ const JOURNEYS: Record<EssentialName, (browser: Browser, v: Variant) => Promise<
       await expect(page).toHaveURL(runUrl);
       await arrived(page, text(page, TASK));
 
-      const logTab = page.locator('button[data-tab="log"]');
+      // The log is a section of the Details tab: open the tab, then the section.
+      const logTab = page.locator('button[data-tab="details"]');
       await use(page, v, logTab);
       await logTab.click();
+      await page.locator('#main [data-section="log"] > summary').click();
       await expect(page.locator("#main pre.log")).toContainText("NOTE_WAITING");
       await arrived(page, page.locator("#main pre.log"));
 

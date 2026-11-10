@@ -7,7 +7,7 @@ import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import type { ServerOptions, startServer } from "../src/server/server.js";
 import { explanationLine } from "../src/policy/explain.js";
-import { USER_ERROR, adminRun, answerBlock, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
+import { USER_ERROR, adminRun, answerBlock, criteriaOf, hidePaths, movedText, refinementSessionOf, storyOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -196,6 +196,62 @@ describe("userRun", () => {
   it("does not throw on an old run without history, flow definition or state", () => {
     const u = userRun({ runId: "old", flow: "f", task: "", status: "succeeded", startedAt: "x", vars: {} } as unknown as RunSummary);
     expect(u).toMatchObject({ history: [], state: { next: null }, flowDef: { name: "f", steps: [] }, vars: {} });
+  });
+});
+
+describe("criteriaOf and storyOf", () => {
+  const ticket = (body: string) => `# #7: Fix login\nhttps://github.com/o/r/issues/7\nLabels: bug\n\n${body}`;
+  it("reads checkbox and plain bullets under an Acceptance criteria heading", () => {
+    const text = ticket("Intro\n\n## Acceptance criteria\n- [ ] one\n- [x] two\n* three\n- [X] four\n\n## Other\n- not this");
+    expect(criteriaOf(text)).toEqual([
+      { text: "one", done: false }, { text: "two", done: true }, { text: "three", done: false }, { text: "four", done: true },
+    ]);
+  });
+  it("accepts other heading levels, any case and a colon", () => {
+    for (const h of ["# acceptance criteria", "### Acceptance Criteria:", "#### ACCEPTANCE CRITERIA"]) expect(criteriaOf(`${h}\n- a`), h).toEqual([{ text: "a", done: false }]);
+    expect(criteriaOf("Acceptance criteria\n- a")).toEqual([]);
+  });
+  it("stops at an unindented paragraph, and skips indented lines", () => {
+    expect(criteriaOf("## Acceptance criteria\n- a\n    more of a\n\t- nested\n- b\nSome text\n- c")).toEqual([{ text: "a", done: false }, { text: "b", done: false }]);
+  });
+  it("ignores criteria in comments, and a comment that quotes the marker is cut", () => {
+    expect(criteriaOf(ticket("body\n--- comment by ann\n## Acceptance criteria\n- x"))).toEqual([]);
+    expect(criteriaOf("## Acceptance criteria\n- a\n--- comment by bob\n- b")).toEqual([{ text: "a", done: false }]);
+  });
+  it("caps the items and the text", () => {
+    const many = Array.from({ length: 40 }, (_, i) => `- item ${i}`).join("\n");
+    expect(criteriaOf(`## Acceptance criteria\n${many}`)).toHaveLength(30);
+    expect(criteriaOf(`## Acceptance criteria\n- ${"x".repeat(500)}`)[0]!.text).toHaveLength(300);
+  });
+  it("is empty without the section and for a non-string", () => {
+    expect(criteriaOf("just text")).toEqual([]);
+    expect(criteriaOf(undefined)).toEqual([]);
+    expect(criteriaOf(5)).toEqual([]);
+  });
+
+  const run = (over: Record<string, unknown> = {}) => ({ runId: "r", flow: "f", task: "t", status: "running", startedAt: "x", vars: {}, history: [], state: { next: null, steps: {}, visits: {} }, ...over }) as unknown as RunSummary;
+  it("storyOf takes the title and the criteria from the pull_ticket output", () => {
+    const s = run({ state: { next: null, steps: { pull_ticket: { output: ticket("## Acceptance criteria\n- [x] a") } }, visits: {} } });
+    expect(storyOf(s)).toEqual({ issueTitle: "Fix login", criteria: [{ text: "a", done: true }] });
+  });
+  it("storyOf falls back to the task for criteria, but not for a refinement run", () => {
+    const task = "## Acceptance criteria\n- from task";
+    expect(storyOf(run({ task }))).toEqual({ criteria: [{ text: "from task", done: false }] });
+    expect(storyOf(run({ task, source: "refinement 11111111-1111-4111-8111-111111111111" }))).toEqual({});
+  });
+  it("storyOf gives nothing when there is nothing, and caps a long title", () => {
+    expect(storyOf(run())).toEqual({});
+    const long = run({ state: { next: null, steps: { pull_ticket: { output: `# #1: ${"t".repeat(300)}\n` } }, visits: {} } });
+    expect(storyOf(long).issueTitle).toHaveLength(200);
+  });
+  it("userRun copies the two fields, hides paths in them, and adds no output", () => {
+    const s = { ...run({ workdir: "/work/dir" }), issueTitle: "Fix /work/dir", criteria: [{ text: "Edit /work/dir/a", done: false }] };
+    const u = userRun(s as never) as any;
+    expect(u.issueTitle).not.toContain("/work/dir");
+    expect(u.criteria[0].text).not.toContain("/work/dir");
+    expect(u.criteria[0].done).toBe(false);
+    expect("output" in u).toBe(false);
+    expect(keys(userRun(run() as never))).not.toContain("criteria");
   });
 });
 

@@ -186,7 +186,8 @@ export function showPage(role, to) {
   pageTitle = to.title;
   document.title = titleText(pageTitle, waiting);
   // Names the place; a detail page adds its argument, because several routes share one title.
-  const where = to.arg && !String(to.title).includes(to.arg) ? `${to.title}: ${to.arg}` : String(to.title);
+  // A page that is named by its content (the run page: the change's title) does not show its argument (the run ID).
+  const where = to.arg && !to.page?.named && !String(to.title).includes(to.arg) ?`${to.title}: ${to.arg}` : String(to.title);
   const title = document.getElementById("page-title");
   if (title) title.textContent = where;
   const main = document.getElementById("main");

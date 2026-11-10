@@ -312,7 +312,7 @@ describe("links", () => {
   it("a reply links to fixed pages only; a source may point at one run or one repository", () => {
     expect(m.pageLink("user", "#/runs/r-1", { fixed: true })).toBeNull();
     expect(m.pageLink("user", "#/repos/acme%2Fapp", { fixed: true })).toBeNull();
-    expect(m.pageLink("user", "#/runs/r-1")).toEqual({ href: "#/runs/r-1", title: "Run r-1" });
+    expect(m.pageLink("user", "#/runs/r-1")).toEqual({ href: "#/runs/r-1", title: "Change" });
     expect(m.pageLink("admin", "#/problems/p-1")).toMatchObject({ href: "#/problems/p-1" });
     expect(m.pageLink("user", "#/problems/p-1")).toBeNull();
     expect(m.pageLink("user", "#/refinement/backlog", { fixed: true })).toMatchObject({ href: "#/refinement/backlog" });

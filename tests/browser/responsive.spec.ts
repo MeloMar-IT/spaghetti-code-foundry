@@ -43,7 +43,8 @@ for (const width of WIDTHS) {
     const log = await openAs(browser, "admin", width, "#/runs/ui-big-log", { large: true });
     try {
       await expect(log.locator("#main")).toContainText("Large seeded log run", { timeout: 30_000 });
-      await log.locator('button[data-tab="log"]').click();
+      await log.locator('button[data-tab="details"]').click();
+      await log.locator('#main [data-section="log"] > summary').click();
       await expect(log.locator("#main pre.log")).toBeVisible({ timeout: 30_000 });
       await expectNoSidewaysScroll(log);
       expect(await log.locator("pre.log").evaluate((e) => e.clientWidth)).toBeLessThanOrEqual(width);

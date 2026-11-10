@@ -202,7 +202,7 @@ describe("renderRunDetail states", () => {
   const lose = (i = 0) => { sources[i].readyState = 2; sources[i].onerror(); };
   const banners = () => find(main, "div", { "data-kind": "error", role: "alert" }).filter((d) => d.textContent.includes(states.STREAM_LOST));
   const actionButtons = () => main.all("div").filter((d) => (d.attrs.class ?? "").includes("run-actions")).flatMap((d) => d.all("button"));
-  const tabsBox = () => one(main, "button", { "data-tab": "log" }).parent!.parent!;
+  const tabsBox = () => one(main, "button", { "data-tab": "details" }).parent!.parent!;
 
   it("shows the skeleton and hides the tabs until the run arrives", async () => {
     table["/api/runs/r1"] = { hang: true };
@@ -279,7 +279,8 @@ describe("renderRunDetail states", () => {
     table["/api/runs/r1"] = { status: 404, body: { error: "run not found" } };
     table["/api/queue"] = { body: { pending: [{ runId: "r1", flow: "walk", task: "queued", ahead: 0 }], active: [] } };
     await open();
-    expect(main.textContent).toContain("Queued run");
+    expect(main.textContent).toContain("Waiting in the queue");
+    expect(main.all("h1")[0]!.textContent).toBe("queued");
     expect(main.textContent).not.toContain(states.NOT_FOUND);
     expect(actionButtons()).toHaveLength(0);
     expect(tabsBox().hidden).toBe(true);
@@ -351,7 +352,7 @@ describe("renderRunDetail states", () => {
     lose();
     expect(banners()).toHaveLength(1);
     expect(main.textContent).toContain("do the thing");
-    one(main, "button", { "data-tab": "log" }).click();
+    one(main, "button", { "data-tab": "details" }).click();
     expect(main.textContent).toContain("▶ step one");
     expect(toastText()).toBe("");
     await flush();
@@ -371,7 +372,7 @@ describe("renderRunDetail states", () => {
     log(1, "▶ step one");
     update(1);
     expect(banners()).toHaveLength(0);
-    one(main, "button", { "data-tab": "log" }).click();
+    one(main, "button", { "data-tab": "details" }).click();
     expect(main.textContent.split("▶ step one").length - 1).toBe(1);
     log(0, "late");
     expect(main.textContent).not.toContain("late");
@@ -429,8 +430,8 @@ describe("renderRunDetail states", () => {
     table["/api/runs/r1/transcript/0"] = { status: 500, body: { error: "disk gone" } };
     await open();
     update(0, { ...RUN, history: [step] });
-    one(main, "button", { "data-tab": "steps" }).click();
-    const details = one(main, "details");
+    one(main, "button", { "data-tab": "details" }).click();
+    const details = find(main, "details").find((d) => !d.attrs["data-section"] && !d.attrs["data-part"])!;
     details.attrs.open = "true";
     (details as any).open = true;
     for (const fn of details.listeners.toggle ?? []) fn({ target: details });
@@ -459,11 +460,25 @@ describe("renderRunDetail states", () => {
     // The panels are built once: a new load comes from Refresh, and a late failure stays in the Changes panel.
     table["/api/runs/r1/diff"] = { hang: true };
     one(main, "button", { "data-focus": "diff-refresh" }).click();
-    one(main, "button", { "data-tab": "log" }).click();
+    one(main, "button", { "data-tab": "details" }).click();
     pending["/api/runs/r1/diff"]!({ status: 500, body: { error: "late" } });
     await flush();
-    expect(one(main, "button", { "data-tab": "log" }).attrs["aria-selected"]).toBe("true");
+    expect(one(main, "button", { "data-tab": "details" }).attrs["aria-selected"]).toBe("true");
     expect(find(main, "pre", { role: "log" })).toHaveLength(1);
+  });
+
+  it("has the tabs Progress, What changed and Details, and names the page after the change", async () => {
+    table["/api/runs/r1"] = { body: RUN };
+    const names: string[] = [];
+    main = connected();
+    const stopIt = runs.renderRunDetail(main, "r1", { admin: true, onName: (n: string) => names.push(n) });
+    await flush();
+    update(0, RUN);
+    expect(find(main, "button").filter((b) => b.attrs["data-tab"]).map((b) => b.textContent)).toEqual(["Progress", "What changed", "Details"]);
+    expect(names).toEqual(["do the thing"]);
+    const tech = find(main, "details", { "data-part": "tech" })[0]!;
+    expect((tech as any).open).toBeFalsy();
+    stopIt();
   });
 
   it("an older run without flowDef still draws its steps", async () => {
@@ -471,8 +486,8 @@ describe("renderRunDetail states", () => {
     table["/api/runs/r1"] = { body: old };
     await open();
     update(0, old);
-    one(main, "button", { "data-tab": "steps" }).click();
-    expect(main.textContent).toContain("what this step does is not saved with this run");
+    one(main, "button", { "data-tab": "details" }).click();
+    expect(main.textContent).toContain("Resumes at step");
     expect(find(main, "select", { "data-focus": "act-retry-from" })).toHaveLength(0);
   });
 });
@@ -546,9 +561,9 @@ describe("renderRunDetail actions", () => {
     await open(RUNNING);
     button("cancel").click();
     await flush();
-    expect(dialog()!.textContent).toContain("Cancel this run?");
+    expect(dialog()!.textContent).toContain("Stop this change?");
     expect(posted).toEqual([]);
-    pressed("Cancel the run");
+    pressed("Stop the change");
     await flush();
     expect(posted).toEqual(["/api/runs/r1/cancel"]);
     expect(dialog()).toBeUndefined();
@@ -558,7 +573,7 @@ describe("renderRunDetail actions", () => {
     await open(RUNNING);
     button("cancel").click();
     await flush();
-    pressed("Keep running");
+    pressed("Keep it running");
     await flush();
     button("cancel").click();
     await flush();
@@ -575,7 +590,7 @@ describe("renderRunDetail actions", () => {
     table["/api/runs/r1/cancel"] = { status: 409, body: { error: "The run is not running." } };
     opener.click();
     await flush();
-    pressed("Cancel the run");
+    pressed("Stop the change");
     await flush();
     expect(alertText()).toBe("The run is not running.");
     expect(toast()).toBe("");
@@ -591,7 +606,7 @@ describe("renderRunDetail actions", () => {
     table["/api/runs/r1/cancel"] = { body: { cancelled: false } };
     button("cancel").click();
     await flush();
-    pressed("Cancel the run");
+    pressed("Stop the change");
     await flush();
     expect(alertText()).toContain("could not be cancelled");
   });
@@ -687,7 +702,7 @@ describe("renderRunDetail actions", () => {
     expect(main.textContent).not.toContain("older task");
     expect(main.textContent).not.toContain("newest task");
     expect(button("cancel")).toBe(opener);
-    pressed("Keep running");
+    pressed("Keep it running");
     await flush();
     expect(main.textContent).toContain("newest task");
     expect(main.textContent).not.toContain("older task");
@@ -703,7 +718,7 @@ describe("renderRunDetail actions", () => {
     sources[0].onerror();
     await flush();
     expect(button("cancel")).toBe(opener);
-    pressed("Keep running");
+    pressed("Keep it running");
     await flush();
     expect(find(main, "button", { "data-focus": "act-cancel" })).toHaveLength(0);
   });

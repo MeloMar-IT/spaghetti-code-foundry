@@ -497,6 +497,13 @@ describe("phaseStrip", () => {
     expect(el.all("li").every((li) => li.getAttribute("aria-current") === null)).toBe(true);
     expect(el.getAttribute("aria-label")).toBeNull();
   });
+  it("marks every phase done, with no current one, when complete", () => {
+    const el = p.phaseStrip({ phases: FIVE, complete: true }) as FakeElement;
+    expect(el.all("li")).toHaveLength(5);
+    expect(el.all("li").every((li) => li.getAttribute("aria-current") === null)).toBe(true);
+    expect(el.all("li").every((li) => (li.attrs.class ?? "").includes("--done"))).toBe(true);
+    expect(() => p.phaseStrip({ phases: FIVE, complete: true, current: 2 })).toThrow();
+  });
   it("throws on bad input", () => {
     for (const phases of [undefined, [], "x", ["a", " "], ["a", 1]]) expect(() => p.phaseStrip({ phases })).toThrow();
     for (const current of [5, -1, 1.5, "1"]) expect(() => p.phaseStrip({ phases: FIVE, current })).toThrow();

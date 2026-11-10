@@ -214,13 +214,14 @@ export function entityLink({ kind, id, label, href, showKind = false, class: cls
 
 /**
  * `phaseStrip({ label, phases, current })`: an `ol` with one item per phase word. `current` is the index of the phase now
- * (or null: not started). Earlier phases are marked "Done", the current one "Now" (aria-current="step"); later ones have no mark.
+ * (or null: not started). `complete` marks every phase done (a finished run; `current` must be null). Earlier phases are marked "Done", the current one "Now" (aria-current="step"); later ones have no mark.
  */
-export function phaseStrip({ label, phases, current = null, class: cls, ...more } = {}) {
+export function phaseStrip({ label, phases, current = null, complete = false, class: cls, ...more } = {}) {
   if (!Array.isArray(phases) || phases.length === 0 || phases.some(blank)) throw new Error("a phase strip needs a non-empty array of words");
   if (current !== null && !(Number.isInteger(current) && current >= 0 && current < phases.length)) throw new Error("current must be null or the index of a phase");
+  if (complete && current !== null) throw new Error("a complete strip has no current phase");
   const items = phases.map((word, i) => {
-    const state = current === null || i > current ? "later" : i < current ? "done" : "current";
+    const state = complete ? "done" : current === null || i > current ? "later" : i < current ? "done" : "current";
     const mark = state === "done" ? icon("circle-check", { label: "Done", small: true })
       : state === "current" ? icon("circle-dot", { label: "Now", small: true })
       : icon("circle", { small: true });

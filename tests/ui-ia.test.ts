@@ -184,7 +184,7 @@ describe("resolve for an admin", () => {
 
   it("builds crumbs and back", () => {
     const crumbs = (h: string) => r(h).crumbs.map((c: any) => [c.label, c.href]);
-    expect(crumbs("#/runs/r1")).toEqual([["Runs", "#/runs"], ["Run r1", null]]);
+    expect(crumbs("#/runs/r1")).toEqual([["Runs", "#/runs"], ["Change", null]]);
     expect(r("#/runs/r1").back).toBe("#/runs");
     expect(crumbs("#/operations")).toEqual([["Administration", "#/operations"], ["Overview", null]]);
     expect(ia.primaryFor("admin").find((p: any) => p.id === "administration")).toMatchObject({ href: "#/operations" });
@@ -208,7 +208,7 @@ describe("resolve for an admin", () => {
     expect(ia.resolve("user", "#/repos/abc-1").crumbs.map((c: any) => [c.label, c.href])).toEqual([["My repositories", "#/repos"], ["Repository", null]]);
     expect(r("#/repos/a/b")).toMatchObject({ hash: "#/home", redirected: true });
     expect(ia.PAGES.find((p: any) => p.id === "repo").scope).toBeUndefined();
-    expect(r("#/runs/r1").title).toBe("Run r1");
+    expect(r("#/runs/r1").title).toBe("Change");
     expect(r("#/runs").title).toBe("Runs");
   });
 
@@ -273,7 +273,7 @@ describe("resolve for a user", () => {
   });
 
   it("builds crumbs", () => {
-    expect(r("#/runs/r1").crumbs.map((c: any) => c.label)).toEqual(["My runs", "Run r1"]);
+    expect(r("#/runs/r1").crumbs.map((c: any) => c.label)).toEqual(["My runs", "Change"]);
     expect(r("#/repos").crumbs).toEqual([]);
   });
 });

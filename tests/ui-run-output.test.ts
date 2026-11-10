@@ -173,7 +173,7 @@ describe("the run pages use the bounded log", () => {
     const main = new FakeElement("div") as any;
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
     for (let i = 0; i < 2010; i++) handlers.log!({ data: JSON.stringify({ line: `l${i}` }) });
-    main.all("button").find((b: any) => b.attrs["data-tab"] === "log").click();
+    main.all("button").find((b: any) => b.attrs["data-tab"] === "details").click();
     const pre = one(main, "pre", { class: "log" });
     expect(spans(pre)).toHaveLength(2000);
     expect(notes(pre)[0].textContent).toBe("10 earlier lines are not shown");
@@ -188,7 +188,7 @@ describe("the run pages use the bounded log", () => {
     const main = new FakeElement("div") as any;
     const stop = ui.renderMyRun(main, "r1", { a });
     for (let i = 0; i < 2010; i++) listeners.log!({ data: JSON.stringify({ line: `l${i}` }) });
-    main.all("button").find((b: any) => b.attrs["data-tab"] === "log").click();
+    main.all("button").find((b: any) => b.attrs["data-tab"] === "details").click();
     const pre = one(main, "pre", { class: "log" });
     expect(spans(pre)).toHaveLength(2000);
     expect(notes(pre)[0].textContent).toBe("10 earlier lines are not shown");

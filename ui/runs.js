@@ -13,7 +13,7 @@ import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
 import { adminRunActions } from "./run-dialogs.js";
 import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
-import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
+import { changesPanel, createTabs, detailsPanel, evidencePanel, progressPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
 import { archivedSections, readDensity, renderSections, runSections, sectionOf, writeDensity } from "./runs-list.js";
@@ -434,13 +434,13 @@ export function actions(s, run = () => {}) {
     } }, h("option", { value: "" }, "Retry from step…"), s.flowDef.steps.map((st) => h("option", { value: st.id }, st.id))));
   }
   if (["running", "waiting"].includes(s.status) || (s.status === "stopped" && !s.refinement)) {
-    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => run("cancel") }, "■ Cancel"));
+    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => run("cancel") }, "■ Stop this change…"));
   }
   return b;
 }
 
 /** Live run page. Returns a cleanup function that closes the event stream. */
-export function renderRunDetail(main, runId, { admin = true } = {}) {
+export function renderRunDetail(main, runId, { admin = true, onName = null } = {}) {
   const log = createLog();
   const status = statusAnnouncer();
   const head = h("div");
@@ -460,18 +460,19 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   let open = true;
 
   const timeline = createTimeline({ runId, admin });
-  // The reader's tab is never moved by an update; a failed run opens on Steps once (see showFailedOnce).
+  // The reader's tab is never moved by an update; a failed run opens on Details › Steps once (see showFailedOnce).
+  const evidence = evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }), sources: contextSourcesSection({ load: () => api.context(runId), admin, runId }) });
   const tabs = createTabs([
-    { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
-    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update(s) },
-    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
-    { id: "evidence", label: "Evidence", ...evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }), sources: contextSourcesSection({ load: () => api.context(runId), admin, runId }) }) },
-    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin }) },
+    { id: "diff", label: "What changed", aliases: ["changes"], ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
+    {
+      id: "details", label: "Details", aliases: ["steps", "evidence", "skills", "log"],
+      ...detailsPanel({ steps: { el: timeline.el, update: (s) => timeline.update(s) }, evidence, skills: (s) => skillsCard(s.skillView, { admin, repo: s.vars?.github_repo, heading: false }), log }),
+    },
   ], { initial: "overview" });
   const tabsBox = tabs.el;
 
-  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to Runs" });
-  const skillsBox = h("div");
+  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to Runs" });
   let load;
   const stream = runStream({
     open: () => api.events(runId),
@@ -502,11 +503,10 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const showQueued = (found) => {
     if (dialogOpen()) { held = null; heldView = () => showQueued(found); arm(); return; }
     heldView = null;
-    if (mode === "state") mount(head, header.el, skillsBox);
+    if (mode === "state") mount(head, header.el);
     mode = "queued";
     job = found;
     stateKey = null;
-    mount(skillsBox);
     header.update(null, { job });
     tabsBox.hidden = true;
     stream.el.hidden = false;
@@ -553,7 +553,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     held = null;
     heldView = null;
     if (mode !== "page") {
-      if (mode === "state") mount(head, header.el, skillsBox);
+      if (mode === "state") mount(head, header.el);
       mode = "page";
       job = null;
       stateKey = null;
@@ -563,7 +563,6 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     const prev = summary;
     summary = s;
     header.update(s, { names });
-    mount(skillsBox, skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
     showFailedOnce(tabs, s, prev);
     tabs.update(s, prev);
   };
