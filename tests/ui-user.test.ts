@@ -111,7 +111,7 @@ describe("ui/user/app.js", () => {
   it("gives every renderer admin: false", () => {
     const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
     expect(calls).toHaveLength(2);
-    expect(app).toContain("renderMyRun(box, page.id, { readOnly })");
+    expect(app).toContain("renderMyRun(box, page.id, { readOnly, onName: (n) => { if (mine === generation) namePage(n); } })");
     expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query, go, filter: parseFilter(to.hash), alive: () => mine === generation && !stopped })");
     expect(app.indexOf('resolve("user", page.hash)')).toBeLessThan(app.indexOf('showPage("user", to)'));
     for (const c of calls) expect(c, c).toContain("readOnly");

@@ -994,3 +994,14 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
 @media (max-width: 767px) {
   .simple-big { width: 100%; }
 }
+.run-phases { margin-bottom: var(--space-md); }
+.run-now-line { margin: 0 0 var(--space-sm); font-weight: 550; }
+.run-tech { margin: var(--space-md) 0; }
+.run-tech > summary { cursor: pointer; color: var(--muted); font-size: var(--text-small); }
+.run-tech[hidden] { display: none; }
+.run-criteria h2 { margin: 0 0 8px; font-size: var(--text-section); }
+.run-criteria .checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.run-criteria .checklist li { display: flex; gap: var(--space-sm); align-items: baseline; overflow-wrap: anywhere; }
+.run-detail-section { margin-bottom: var(--space-md); }
+.run-detail-section > summary { cursor: pointer; font-weight: 600; font-size: var(--text-section); margin-bottom: var(--space-sm); }
+.run-detail-section[hidden] { display: none; }
