@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Hotfix: a run that failed at the step that closes its issue (such as `create_split`) kept showing as failed after the issue was closed by hand. Such a run did not close the issue itself, so it now shows "closed on GitHub — nothing to do" like any other run whose issue was closed.
 - Hotfix: with a watcher that takes its own recommendations (`auto_defaults`), a planner question that only the owner can act on (`Kind: owner_action`, such as editing the issue text) began with "Nothing needed from you". The recommendations cannot answer such a question, so its comment now begins with what you need to do, like the status comment.
 - Hotfix: "Build this as one change." was always refused on GitHub. The size gate asked GitHub for a field that does not exist (`lastEditedBy`, the right one is `editor`), and then checked the words of the error message as if they were user names. The gate now asks for the right field, and a failed lookup checks nobody ("could not check").
 - Getting started guide, part 1 (#610, part of #594). The Ask SCF help index lists chapter 15 of `docs/USER_GUIDE.md` ("Getting started without being a developer") for user accounts as well as admins: `userChapters` in `src/help/docs.ts` now includes 15, and `tests/help-docs.test.ts` checks it. The chapter itself, the website how-to pages, the home page section, the README link and the Simple-view screenshots are not written yet, so until chapter 15 exists Ask SCF has nothing to show for it.

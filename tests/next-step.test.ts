@@ -754,6 +754,14 @@ describe("runNextStep", () => {
       const own = run({ status: "failed", history: [{ id: "push_main", ok: true, output: "PUSHED: main abc" }] as never });
       expect(runNextStep(own, closed).kind).toBe("failed");
     });
+    it("a run that failed at the step that would close the issue did not close it (#607)", () => {
+      const at = (status: string) => run({ status, history: [{ id: "create_split", ok: false, output: "HTTP 502" }] as never, state: { next: "create_split", steps: {}, visits: {} } } as Partial<RunSummary>);
+      expect(runNextStep(at("failed"), closed).kind).toBe("issue_closed");
+      // A stopped run that goes on at create_split will close the issue itself: it keeps its record.
+      expect(runNextStep(at("stopped"), closed).kind).not.toBe("issue_closed");
+      expect(runClosedIssue(at("failed"), { finishedOnly: true })).toBe(false);
+      expect(runClosedIssue(at("failed"))).toBe(true);
+    });
     it("changes nothing when the issue is open or unknown", () => {
       expect(runNextStep(run({ status: "failed" }), { issueClosed: false }).kind).toBe("failed");
       expect(runNextStep(run({ status: "failed" })).kind).toBe("failed");

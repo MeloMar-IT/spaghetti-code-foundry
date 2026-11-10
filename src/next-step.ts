@@ -878,14 +878,16 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
   const base: NextBase = { repo: v.github_repo ?? run.repo, issue, title: o.title ?? (run.task ?? "").split("\n")[0] ?? "", runId: run.runId };
   const gh = v.github_repo && issue ? `https://github.com/${v.github_repo}/issues/${issue}` : undefined;
   // A closed issue wins over a retired flow: its record carries no flag.
-  const closed = !!o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !o.queued && !(o.superseded) && !runClosedIssue(run);
+  // A run that failed at the step that would close the issue did not close it: someone else did, so only a finished step counts.
+  const ownClose = runClosedIssue(run, { finishedOnly: run.status === "failed" });
+  const closed = !!o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !o.queued && !(o.superseded) && !ownClose;
   const d: NextData = { ...o, retired: o.retired && !closed ? true : undefined, issueUrl: o.issueUrl ?? (o.watched ? gh : undefined), reason: o.reason ?? run.reason, finishedAt: o.finishedAt ?? run.finishedAt ?? run.startedAt };
   const make = (k: NextKind, extra: NextData = {}) => nextStep(k, base, { ...d, ...extra });
   const reason = run.reason ?? "";
 
   if (o.queued) return o.queued.waitingFor ? make("one_at_a_time", { blockingRun: o.queued.waitingFor }) : o.queued.limit ? make("user_limit", { userLimit: o.queued.limit }) : make(o.queued.behindPriority ? "bug_first" : "queued");
   if (o.superseded && run.status !== "running" && run.status !== "succeeded") return make("superseded");
-  if (o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !runClosedIssue(run)) return make("issue_closed", { issueUrl: o.issueUrl ?? gh });
+  if (o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !ownClose) return make("issue_closed", { issueUrl: o.issueUrl ?? gh });
   switch (run.status) {
     case "succeeded": return o.releaseAt ? make("release") : make("done");
     case "running": {
@@ -987,11 +989,12 @@ function storyBlockers(run: RunSummary): BlockerInfo[] {
 
 /**
  * The run closed its issue itself (gitflow report, split, merge): a finished `report`, `merge` or
- * `create_split` step, or one of them as the step that runs next.
+ * `create_split` step, or one of them as the step that runs next. `finishedOnly`: only a finished step counts.
  */
-export function runClosedIssue(run: RunSummary | undefined): boolean {
+export function runClosedIssue(run: RunSummary | undefined, { finishedOnly = false }: { finishedOnly?: boolean } = {}): boolean {
   if (!run) return false;
   if ((run.history ?? []).some((x) => x.ok && (stepIs(x.id, ["merge", "create_split"]) || (stepIs(x.id, ["report"]) && /closed #\d+/.test(x.output ?? "")) || (stepIs(x.id, ["push_main"]) && /^PUSHED:/m.test(x.output ?? ""))))) return true;
+  if (finishedOnly) return false;
   const next = run.state?.next;
   if (stepIs(next, ["merge", "create_split"])) return true;
   if (stepIs(next, ["report"])) {
