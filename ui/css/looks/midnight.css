@@ -1,0 +1,56 @@
+/* Midnight (#852): dense and dark, lime accent, mono font. Only token values; imported after calm.css so it wins.
+   Light mode uses a deep lime with white text: black text on a lime that reads on white cannot reach 4.5:1. */
+
+html[data-look="midnight"] {
+  --color-bg: light-dark(#f3f4f1, #0a0a0b);
+  --color-surface: light-dark(#ffffff, #121214);
+  --color-surface-2: light-dark(#ebece8, #1a1a1d);
+  --color-border: light-dark(#d6d8d2, #26262b);
+  --color-border-strong: light-dark(#767a70, #6f6f78);
+  --color-text: light-dark(#0b0c0a, #f2f2f3);
+  --color-text-muted: light-dark(#53574e, #a3a3ad);
+  --color-neutral: light-dark(#53574e, #a3a3ad);
+  --color-neutral-soft: light-dark(#ebece8, #1c1c20);
+  --color-disabled-soft: light-dark(#ebece8, #1c1c20);
+  --color-accent: light-dark(#3f6212, #a3e635);
+  --color-accent-soft: light-dark(#f1f8e4, #1e2a0c);
+  --color-on-accent: light-dark(#ffffff, #0a0a0b);
+  --color-on-danger: light-dark(#ffffff, #0a0a0b);
+  --color-success-soft: light-dark(#e6f4ea, #10261a);
+  --color-warning-soft: light-dark(#fef3c7, #2c2410);
+  --color-danger-soft: light-dark(#fbeaea, #2e1416);
+  --color-info-soft: light-dark(#e0f2f7, #0d2730);
+  --color-running-soft: light-dark(#e8eefc, #161e36);
+  --color-waiting-soft: light-dark(#ede9fe, #211a3a);
+  --color-log-bg: #000000;
+  --color-log-step: #a3e635;
+
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-numeric: var(--font-mono);
+
+  --radius-sm: 10px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  --shadow-low: 0 1px 2px rgb(0 0 0 / .2), 0 4px 12px rgb(0 0 0 / .25);
+  --shadow-high: 0 16px 48px rgb(0 0 0 / .5);
+
+  --space-2xs: 2px;
+  --space-xs: 3px;
+  --space-sm: 5px;
+  --space-md: 6px;
+  --space-lg: 10px;
+  --space-xl: 12px;
+  --space-2xl: 16px;
+  --space-3xl: 20px;
+  --space-4xl: 26px;
+
+  --card-pad: 12px;
+  --stack-gap: 8px;
+  --cell-pad-y: 7px;
+  --page-pad-y: 16px;
+  --page-pad-x: 20px;
+}
