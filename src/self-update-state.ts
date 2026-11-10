@@ -162,7 +162,8 @@ const MIN = 60_000;
 export const DEFAULT_STEPS: UpdateStep[] = [
   { name: "install", cmd: "npm", args: ["ci", "--no-audit", "--no-fund"], timeoutMs: 10 * MIN },
   { name: "build", cmd: "npm", args: ["run", "build"], timeoutMs: 10 * MIN },
-  { name: "test", cmd: "npm", args: ["test"], timeoutMs: 15 * MIN },
+  // The whole suite takes about 13 minutes on a quiet machine: 15 left no room for a busy one.
+  { name: "test", cmd: "npm", args: ["test"], timeoutMs: 30 * MIN },
 ];
 
 const running = new Set<ChildProcess>();
@@ -176,7 +177,7 @@ function stepEnv(): NodeJS.ProcessEnv {
 }
 
 /** Runs a step in its own process group. Never throws. `output` is the tail of stdout and stderr. */
-export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; output: string; killed?: boolean }> {
+export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; output: string; killed?: boolean; timedOut?: true }> {
   return new Promise((done) => {
     const mark = killed;
     let output = "";
@@ -199,6 +200,7 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
     const finder = step.startMark ? markFinder(step.startMark) : undefined;
     // The time limit counts working time: the time test-slot paused the step is left out (its pause records in the run's folder).
     let timer: NodeJS.Timeout | undefined;
+    let timedOut = false;
     const deadline = (limitMs: number) => {
       const began = Date.now();
       const check = () => {
@@ -206,7 +208,10 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
         const pauses = runWaitDir ? readSlotWaits(runWaitDir, now).filter((w) => w.kind === "pause") : [];
         const next = slotClock(pauses, { began, limitMs, maxExtraMs: slotWaitLimitMs(step.env), now }).nextCheckMs;
         if (next > 0) timer = setTimeout(check, next);
-        else killGroup(child);
+        else {
+          timedOut = true;
+          killGroup(child);
+        }
       };
       timer = setTimeout(check, limitMs);
     };
@@ -232,7 +237,7 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
       clearTimeout(timer);
       running.delete(child);
       if (runWaitDir) rmSync(runWaitDir, { recursive: true, force: true });
-      done({ ok, output: output + extra, ...(killed !== mark ? { killed: true } : {}) });
+      done({ ok, output: output + extra, ...(killed !== mark ? { killed: true } : {}), ...(timedOut && !ok ? { timedOut: true as const } : {}) });
     };
     child.on("error", (e) => end(false, `\n${e.message}`));
     child.on("close", (code) => end(code === 0));
