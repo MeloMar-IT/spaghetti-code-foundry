@@ -79,6 +79,6 @@
   .work-col { scroll-snap-align: start; }
   .work-card a, .work-card button, .work-bar .seg button, .work-display summary { display: inline-flex; align-items: center; min-height: 44px; }
   .work-card[role="link"] { min-height: 44px; }
-  .work-panel { position: fixed; inset: 0; z-index: var(--layer-overlay); width: auto; max-width: none; max-height: none; margin: 0; border: 0; border-radius: unset; }
+  .work-panel { position: fixed; inset: 0; z-index: var(--layer-overlay); width: auto; max-width: none; max-height: none; margin: 0; border: 0; border-radius: var(--radius-none); }
   .work-panel a, .work-panel button { display: inline-flex; align-items: center; min-height: 44px; }
 }
