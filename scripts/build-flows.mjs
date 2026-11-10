@@ -727,7 +727,10 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         'if [ "$status" = NEEDS_INFO ]; then',
         // A retry of this send_back (a resume) runs after the last plan; a fresh replan has a newer plan than send_back.
         '  new=1; [ "${FACTORY_RAN_SEND_BACK:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ] && new=0',
-        '  body=$(printf \'%s\\n\' "$out" | sed \'/^PLAN_STATUS:/d\' | FACTORY_NEW_ROUND="$new" node "$FACTORY_TOOLS/decide-questions.mjs" post-plan "{{run.dir}}" 2>&1); code=$?',
+        // An owner_action question (only a person can do it, e.g. edit the issue text) is never answered by auto_defaults: its comment asks the person.
+        '  fq="$FACTORY_FIRST_PLANNER_QUESTIONS"; nq="$FACTORY_NEXT_PLANNER_QUESTIONS"',
+        '  if printf \'%s\\n\' "$out" | grep -qiE \'[*][*][[:space:]]*kind[^a-z]*owner[[:space:]_-]*action\'; then fq="$FACTORY_FIRST_PLANNER_QUESTIONS_PERSON"; nq="$FACTORY_NEXT_PLANNER_QUESTIONS_PERSON"; fi',
+        '  body=$(printf \'%s\\n\' "$out" | sed \'/^PLAN_STATUS:/d\' | FACTORY_NEW_ROUND="$new" FACTORY_FIRST_PLANNER_QUESTIONS="$fq" FACTORY_NEXT_PLANNER_QUESTIONS="$nq" node "$FACTORY_TOOLS/decide-questions.mjs" post-plan "{{run.dir}}" 2>&1); code=$?',
         '  if [ "$code" -eq 3 ]; then printf \'%s\\n\' "$body"; echo "DECIDED: went_on"; exit 0; fi',
         '  if [ "$code" -ne 0 ]; then printf \'%s\\n\' "$body"; exit "$code"; fi',
         "else",

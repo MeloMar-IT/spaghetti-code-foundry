@@ -846,7 +846,7 @@ export const PARK_HINT = "Reply **/park** to keep this issue open but out of the
 /**
  * Step environment: FACTORY_NEXT_<KIND> and FACTORY_FIRST_<KIND> for every comment kind, plus FACTORY_FIRST_<REPORT> for every report kind and FACTORY_FIRST_NOTHING.
  * `autoDefaults`: the run's watcher answers questions itself, so the question lines say that nothing is needed. The planner's
- * "not a coding task" stop is never answered that way: FACTORY_FIRST_PLANNER_QUESTIONS_PERSON and FACTORY_NEXT_PLANNER_QUESTIONS_PERSON always ask the person.
+ * "not a coding task" stop and owner_action questions are never answered that way: FACTORY_FIRST_PLANNER_QUESTIONS_PERSON and FACTORY_NEXT_PLANNER_QUESTIONS_PERSON always ask the person.
  */
 export function nextStepEnv({ autoDefaults = false }: { autoDefaults?: boolean } = {}): Record<string, string> {
   return {
