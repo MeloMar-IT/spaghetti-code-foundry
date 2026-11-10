@@ -129,7 +129,11 @@ export function criticalPathView(chains, stories) {
   return { summary: `The longest chain still to do has ${cp.remaining} ${plural(cp.remaining, "story", "stories")} left.`, path, now };
 }
 
-/** The list of stories in the order given: [{ issue, title, href, words, status, help, notes }]. */
+/** The status semantic of a story state (see ui/icons.js STATUS); an unknown state is neutral. */
+export const storySemantic = (state) => (Object.hasOwn(STORY_SEMANTIC, state) ? STORY_SEMANTIC[state] : "neutral");
+const STORY_SEMANTIC = { done: "success", working: "running", waiting: "neutral", your_turn: "waiting", failed: "danger", split: "disabled", dropped: "disabled" };
+
+/** The list of stories in the order given: [{ issue, title, href, words, semantic, status, help, notes }]. */
 export function storyItems(stories, chains, repo) {
   const nodeOf = new Map((chains?.nodes ?? []).map((n) => [n.issue, n]));
   return (Array.isArray(stories) ? stories : []).map((s) => {
@@ -138,7 +142,7 @@ export function storyItems(stories, chains, repo) {
     if (s.partOf != null) notes.push(`part of #${s.partOf}`);
     if (node?.dependsOn?.length) notes.push(`after ${issueList(node.dependsOn)}`);
     for (const n of node?.outside ?? []) notes.push(`also waits for #${n} (outside this epic)`);
-    return { issue: s.issue, title: s.title, href: repo ? `https://github.com/${repo}/issues/${s.issue}` : "", words: s.words ?? s.state ?? "", status: s.status ?? "", help: s.help ?? "", notes };
+    return { issue: s.issue, title: s.title, href: repo ? `https://github.com/${repo}/issues/${s.issue}` : "", words: s.words ?? s.state ?? "", semantic: storySemantic(s.state), status: s.status ?? "", help: s.help ?? "", notes };
   });
 }
 

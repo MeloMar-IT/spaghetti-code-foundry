@@ -15,14 +15,14 @@
 .epics-seg-your_turn { fill: var(--color-waiting); }
 .epics-seg-failed { fill: var(--color-danger); }
 .epics-table td { vertical-align: top; overflow-wrap: anywhere; }
-.epics-table td p { margin: 4px 0 0; }
+.epics-table td p { margin: var(--space-xs) 0 0; }
 .epics-blocks, .epics-holds { margin: 0; padding-left: 1em; }
 .epics-fresh { font-size: var(--text-meta); margin: 0; }
 .epic-section { margin-bottom: var(--space-md); min-width: 0; }
 .epic-section h2, .epic-section h3 { margin-top: 0; }
 .epic-stories, .epic-history { margin: 0; padding-left: 1.4em; }
 .epic-stories li, .epic-history li, .epic-path { overflow-wrap: anywhere; }
-.epic-stories li p { margin: 2px 0 0; }
+.epic-stories li p { margin: var(--space-2xs) 0 0; }
 .chain-graph { overflow-x: auto; max-width: 100%; }
 .chain-graph svg { display: block; max-width: none; }
 .chain-graph text { font-family: var(--sans); fill: var(--text); }

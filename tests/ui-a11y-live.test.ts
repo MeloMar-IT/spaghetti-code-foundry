@@ -573,7 +573,7 @@ describe("My runs", () => {
     const opener = named(list, "remove-q1");
     opener.focus();
     opener.fire("click");
-    runsNow = [myRun("r1", { flow: "Newest" })];
+    runsNow = [myRun("r1", { task: "Newest" })];
     await tick(30_000);
     expect(named(list, "remove-q1")).toBe(opener);
     answer(false);

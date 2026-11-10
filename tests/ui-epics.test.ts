@@ -66,7 +66,11 @@ describe("the table", () => {
     expect(bar.getAttribute("aria-hidden")).toBe("true");
     expect(bar.getAttribute("class")).toBe("epics-bar");
     expect(bar.all("rect").map((r) => r.getAttribute("class"))).toEqual(["epics-seg-done", "epics-seg-working", "epics-seg-waiting", "epics-seg-your_turn"]);
-    expect(text(row)).toContain("3 of 10 done; Working 2, Waiting 4, Your turn 1");
+    expect(text(row)).toContain("3 of 10 done");
+    // every other state is a status pill: an icon and a word
+    const pills = row.all("span").filter((s) => String(s.attrs.class).startsWith("pill sem-"));
+    expect(pills.map((p) => [p.attrs.class, p.textContent])).toEqual([["pill sem-running", "Working 2"], ["pill sem-neutral", "Waiting 4"], ["pill sem-waiting", "Your turn 1"]]);
+    for (const p of pills) expect(p.all("svg")).toHaveLength(1);
   });
 
   it("links an issue epic to GitHub and shows a label epic as plain text", async () => {

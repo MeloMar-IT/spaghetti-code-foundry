@@ -61,7 +61,13 @@ describe("the compact table", () => {
     const b = box();
     draw(b, sample());
     expect(b.all("table").map((t) => t.attrs["aria-label"])).toEqual(["Needs you", "Running", "Queued", "Failed", "Completed"]);
-    for (const t of b.all("table")) expect(t.attrs.class).toBe("table compact run-table");
+    for (const t of b.all("table")) expect(t.attrs.class).toBe("table compact run-table cards");
+    for (const t of b.all("table")) {
+      expect(t.attrs.role).toBe("table");
+      expect(t.all("thead")[0]!.attrs.role).toBe("rowgroup");
+      expect(t.all("tbody")[0]!.attrs.role).toBe("rowgroup");
+      expect(t.all("th").every((th) => th.attrs.role === "columnheader")).toBe(true);
+    }
     expect(b.all("div").filter((d) => d.attrs.class === "table-box")).toHaveLength(5);
     expect(b.all("ul")).toHaveLength(0);
     expect(b.all("li")).toHaveLength(0);
@@ -72,11 +78,23 @@ describe("the compact table", () => {
   it("has the columns for the user, the admin, select and Remove", () => {
     const b = box();
     draw(b, sample());
-    expect(heads(table(b, "Running"))).toEqual(["Status", "Run", "Next", "Task", "Repository", "Updated"]);
+    expect(heads(table(b, "Running"))).toEqual(["Status", "Change", "Phase", "Next", "Task", "Repository", "Updated"]);
     for (const th of b.all("th")) expect(th.attrs.scope).toBe("col");
     const c = box();
     draw(c, sample(), { admin: true, select: selection(), onRemove: vi.fn() });
-    expect(heads(table(c, "Running"))).toEqual(["Status", "Run", "Next", "Task", "Repository", "Updated", "Owner", "Steps", "Cost"]);
+    expect(heads(table(c, "Running"))).toEqual(["Status", "Change", "Phase", "Next", "Task", "Repository", "Updated", "Owner", "Cost"]);
+    // every data cell has its header as data-label and the cell role; Select and Actions have no label
+    for (const t of c.all("table")) {
+      const names = heads(t);
+      for (const tr of t.all("tr").slice(1)) {
+        expect(tr.attrs.role).toBe("row");
+        tr.all("td").forEach((td, i) => {
+          expect(td.attrs.role).toBe("cell");
+          if (names[i] === "Select" || names[i] === "Actions") expect(td.attrs["data-label"]).toBeUndefined();
+          else expect(td.attrs["data-label"]).toBe(names[i]);
+        });
+      }
+    }
     expect(heads(table(c, "Failed"))[0]).toBe("Select");
     expect(heads(table(c, "Queued")).slice(-1)).toEqual(["Actions"]);
     expect(heads(table(c, "Completed"))).not.toContain("Actions");
@@ -125,7 +143,7 @@ describe("the compact table", () => {
     named(b, "sec-failed").click();
     for (const density of ["compact", "comfortable", "compact"]) {
       rl.renderSections(b, secs, { select, density });
-      const rows = density === "compact" ? table(b, "Completed").all("tr").length - 1 : b.all("li").filter((l) => l.textContent.includes("flow-c")).length;
+      const rows = density === "compact" ? table(b, "Completed").all("tr").length - 1 : b.all("li").filter((l) => l.textContent.includes("task c")).length;
       expect(rows).toBe(12);
       expect(walk(b).some((x) => x.attrs["data-focus"] === "more-completed")).toBe(false);
       expect(named(b, "sec-failed").attrs["aria-expanded"]).toBe("false");
@@ -150,7 +168,7 @@ describe("the compact table", () => {
     const after = nodes(b);
     expect(after).toHaveLength(before.length);
     expect(after.every((n, i) => n === before[i])).toBe(true);
-    const row = (id: string) => b.all("tr").find((r) => r.textContent.includes(`flow-${id}`))!;
+    const row = (id: string) => b.all("tr").find((r) => r.all("a").some((a) => a.attrs["data-focus"] === `open-${id}`))!;
     const r1 = row("r1");
     const r2 = row("r2");
     draw(b, rl.runSections([run("r1", { next: rec("You", "approval") }), run("r2", { task: "other" }), run("r3", { status: "failed" }), run("r4", { status: "succeeded" })], [job("q1", { priority: true, ahead: 2 }), job("q2")]));

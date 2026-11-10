@@ -84,7 +84,7 @@ describe("the admin Runs list", () => {
     const stop = await runs.renderRunsList(m, { filter: archivedFilter() });
     expect(gets()).toEqual(["GET /api/runs?archived=1"]);
     expect(heads(m)).toEqual(["Archived (3)"]);
-    expect(titles(m)).toEqual(["flow-a1", "flow-a2", "flow-a3"]);
+    expect(titles(m)).toEqual(["task a1", "task a2", "task a3"]);
     expect(named(m, "runs-view-archived").attrs["aria-pressed"]).toBe("true");
     stop();
   });
@@ -100,7 +100,7 @@ describe("the admin Runs list", () => {
     answers["/api/run-filters"] = { repos: [], flows: [] };
     const n = connected();
     const stop2 = await runs.renderRunsList(n, { filter: archivedFilter({ repo: "other/x" }) });
-    expect(titles(n)).toEqual(["flow-a3"]);
+    expect(titles(n)).toEqual(["task a3"]);
     const pick = named(n, "select-a3");
     tick(true, pick);
     expect(bar(n).textContent).toContain("1 selected");
@@ -118,7 +118,7 @@ describe("the admin Runs list", () => {
     needs.fire("change", { target: needs });
     await flush();
     expect(heads(m)).toEqual(["Archived (1)"]);
-    expect(titles(m)).toEqual(["flow-a2"]);
+    expect(titles(m)).toEqual(["task a2"]);
     expect(bar(m).textContent).toContain("1 selected");
     expect(walk(m).find((e) => e.attrs.role === "status" && e.textContent === "1 run matches.")).toBeDefined();
     stop();
@@ -314,7 +314,7 @@ describe("My runs", () => {
     const m = connected();
     const stop = await mine.renderMyRuns(m, { a, ask: async () => true });
     expect(walk(m).filter((e) => e.attrs.class === "run-select" && !e.attrs["data-focus"]!.startsWith("select-all")).map((e) => e.attrs["data-focus"]).sort()).toEqual(["select-r1", "select-r2"]);
-    expect(named(m, "select-r1").attrs["aria-label"]).toBe("Select run flow-r1 acme/app#7");
+    expect(named(m, "select-r1").attrs["aria-label"]).toBe("Select run task r1 acme/app#7");
     stop();
     const ro = connected();
     const stopRo = await mine.renderMyRuns(ro, { a, readOnly: true });
@@ -413,11 +413,11 @@ describe("My runs", () => {
     const ask = vi.fn(async () => true);
     const m = connected();
     const stop = await mine.renderMyRuns(m, { a, ask, filter: { ...view("archived"), needs: true } });
-    expect(titles(m)).toEqual(["flow-a2"]);
+    expect(titles(m)).toEqual(["task a2"]);
     stop();
     const n = connected();
     const stop2 = await mine.renderMyRuns(n, { a, ask, filter: { ...view("archived"), repo: "other/x" } });
-    expect(titles(n)).toEqual(["flow-a3"]);
+    expect(titles(n)).toEqual(["task a3"]);
     tick(true, named(n, "select-a3"));
     named(n, "bulk-act").click();
     await flush();

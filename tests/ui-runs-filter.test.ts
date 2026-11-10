@@ -109,6 +109,13 @@ describe("jobMatches", () => {
   const now = new Date(2026, 5, 15, 13, 30).getTime();
   const job = { runId: "q9", githubRepo: "Acme/App", flow: "build", enqueuedAt: new Date(2026, 5, 15, 9).toISOString(), ownerName: "Ann", issue: "7", task: "fix login\nmore" };
   const ok = (f: object, o: object = { now }) => rf.jobMatches(job, { ...rf.emptyFilter(), ...f }, o);
+  it("searches the title a queued job shows, which can differ from its task", () => {
+    const titled = { ...job, task: "fix login\nmore", next: { title: "Add dark mode" } };
+    const hit = (q: string) => rf.jobMatches(titled, { ...rf.emptyFilter(), q: q.toLowerCase() }, { now });
+    expect(hit("dark mode")).toBe(true);
+    expect(hit("login")).toBe(true); // the task line is still searched
+    expect(rf.jobMatches(job, { ...rf.emptyFilter(), q: "dark mode" }, { now })).toBe(false);
+  });
   it("matches with no filter and with each key alone", () => {
     expect(ok({})).toBe(true);
     expect(ok({ view: "archived" })).toBe(false); // an archived run has no queued job

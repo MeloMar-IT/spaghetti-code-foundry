@@ -48,8 +48,9 @@ pre.diff .file { font-weight: 700; display: block; }
 .meta dd .muted { font-family: var(--sans); word-break: normal; }
 
 /* My runs and the run page of a user (ui/user/runs.js) */
-.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.run-card { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
+.run-card { display: grid; gap: var(--space-sm); min-width: 0; padding: var(--space-lg) var(--card-pad); border: var(--border-width) solid var(--border); border-radius: var(--card-radius); background: var(--panel); }
+.run-phase { font-weight: var(--weight-medium); }
 .run-card.who-you { border-color: var(--color-waiting); }
 .run-card .run-link { overflow-wrap: anywhere; }
 .run-card .run-next { margin: 0; }

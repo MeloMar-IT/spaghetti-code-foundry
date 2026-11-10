@@ -113,6 +113,18 @@ describe("pure functions", () => {
   it("has the five states", () => {
     expect(Object.keys(ui.STATE_LABELS)).toEqual(["exploring", "drafting", "ready", "published", "dropped"]);
   });
+  it("gives each state a status pill with an icon, a word and the old state class", () => {
+    const pill = (state: string) => ui.statePill({ state });
+    expect(ui.STATE_SEMANTIC).toEqual({ exploring: "running", drafting: "waiting", ready: "success", published: "success", dropped: "disabled" });
+    expect(pill("exploring").attrs.class).toBe("pill sem-running state-exploring");
+    expect(pill("dropped").attrs.class).toBe("pill sem-disabled state-dropped");
+    expect(pill("ready").textContent).toBe("Ready");
+    expect(pill("ready").all("svg")).toHaveLength(1);
+    expect(pill("strange").textContent).toBe("strange"); // an unknown state shows its raw word, neutral
+    expect(pill("strange").attrs.class).toBe("pill sem-neutral state-strange");
+    expect(pill("__proto__").attrs.class).toContain("sem-neutral");
+    expect(ui.statePill({}).textContent).toBe("Unknown");
+  });
   it("sessionProblem and sessionBody", () => {
     expect(ui.sessionProblem({ repo: "", idea: "x" })).toBe("Choose a repository.");
     expect(ui.sessionProblem({ repo: "a/b", idea: "  " })).toBe("Describe your idea.");

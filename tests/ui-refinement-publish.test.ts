@@ -347,7 +347,7 @@ describe("after publishing", () => {
     const all = walk(draftsBox());
     expect(all.some((e) => e.tag === "textarea" || e.attrs.name === "title")).toBe(false);
     expect(draftsBox().textContent).toContain("cannot be changed here");
-    expect(walk(main()).some((e) => e.attrs.class === "pill state-published" && e.textContent === "Published")).toBe(true);
+    expect(walk(main()).some((e) => String(e.attrs.class).startsWith("pill sem-success") && String(e.attrs.class).endsWith("state-published") && e.textContent === "Published" && e.all("svg").length > 0)).toBe(true);
     expect(button("New draft")).toBeUndefined();
     expect(publishButton()).toBeUndefined();
     expect(button("Set Epic")).toBeUndefined();

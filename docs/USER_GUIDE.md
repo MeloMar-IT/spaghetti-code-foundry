@@ -1094,6 +1094,8 @@ on Runs, Board (also the redesigned Work page), Refinement and My runs.
 
 A run of the architect has the mark **refinement**; click it to open its session.
 
+Each row is titled with the change's title (or its task, or the flow name when there is no title), and shows the change's phase (Understand, Plan, Build, Check or Deliver) and a status with an icon and a word. Rows have no "?" button and no step column; open a run to see its steps. Below 768 px the rows become cards, with each cell labelled.
+
 ![Runs](images/runs.png)
 
 Runs are grouped in sections, in this order, each with a count: **Needs you**, **Running**,

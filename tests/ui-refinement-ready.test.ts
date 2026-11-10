@@ -402,9 +402,11 @@ describe("Ready and Drafting", () => {
   it("is Ready when every item is met or accepted; the list row and the toolbar say so", async () => {
     over = { state: "ready" };
     await withDraft(readyDraft());
-    const pills = () => walk(section()).filter((e) => e.attrs.class === "pill state-ready").map((e) => e.textContent);
+    const isPill = (e: FakeElement, state: string) => String(e.attrs.class).startsWith("pill sem-") && String(e.attrs.class).endsWith(` state-${state}`);
+    const pills = () => walk(section()).filter((e) => isPill(e, "ready")).map((e) => e.textContent);
     expect(pills()).toEqual(["Ready", "Ready"]);
-    expect(walk(main()).filter((e) => e.attrs.class === "pill state-ready").map((e) => e.textContent)).toEqual(["Ready", "Ready", "Ready"]);
+    expect(walk(section()).filter((e) => isPill(e, "ready")).every((e) => e.all("svg").length === 1 && String(e.attrs.class).includes("sem-success"))).toBe(true);
+    expect(walk(main()).filter((e) => isPill(e, "ready")).map((e) => e.textContent)).toEqual(["Ready", "Ready", "Ready"]);
   });
   it("falls back to Drafting after an edit; the accepted reason stays", async () => {
     await withDraft(readyDraft());
@@ -414,7 +416,7 @@ describe("Ready and Drafting", () => {
     expect(box().textContent).toContain("Drafting");
     expect(items().every((e) => e.textContent.includes("Not checked yet"))).toBe(true);
     expect(itemOf("small enough").textContent).toContain("Accepted anyway: Fine");
-    expect(walk(section()).filter((e) => e.attrs.class === "pill state-drafting").length).toBe(2);
+    expect(walk(section()).filter((e) => String(e.attrs.class).startsWith("pill sem-waiting") && String(e.attrs.class).endsWith(" state-drafting")).length).toBe(2);
   });
   it("tells a list that changed", async () => {
     await withDraft({ readiness: { at: AT, items: [item("value", "met", "ok")], stale: true } });

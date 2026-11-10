@@ -533,7 +533,7 @@ describe("confirm", () => {
     const text = section().textContent;
     expect(text).toContain("Export a file");
     expect(text).toContain("Choose columns");
-    expect(walk(section()).some((e) => e.attrs.class === "pill state-split" && e.textContent === "Split")).toBe(true);
+    expect(walk(section()).some((e) => String(e.attrs.class) === "pill sem-disabled state-split" && e.textContent === "Split" && e.all("svg").length === 1)).toBe(true);
     expect(field("title").value).toBe("Export a file");
     expect(sp.splitLocal.size).toBe(0);
     expect(toastText()).toContain("The draft is split into 2 drafts.");
@@ -863,7 +863,7 @@ describe("parts: the state word", () => {
     family();
     over = { state: "ready" };
     await show();
-    const pills = walk(section()).filter((e) => e.attrs.class === "pill state-split");
+    const pills = walk(section()).filter((e) => String(e.attrs.class) === "pill sem-disabled state-split");
     expect(pills.map((e) => e.textContent)).toEqual(["Split"]);
     expect(main().textContent).toContain("Ready");
   });

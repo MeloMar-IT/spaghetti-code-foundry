@@ -349,7 +349,7 @@ describe("the admin Runs list", () => {
     const m = connected();
     const go = vi.fn();
     const stop = await runs.renderRunsList(m, { admin: true, query: { repo: "ACME/app" }, go });
-    expect(rows(m)).toEqual(["flow-r1", "flow-r3"]);
+    expect(rows(m)).toEqual(["task r1", "task r3"]);
     expect(queued(m)).toEqual(["q1"]);
     expect(val(m, "runs-repo")).toBe("ACME/app");
     expect(asked).toEqual(["/api/run-filters", "/api/run-owners", "/api/queue", "/api/runs"]);
@@ -393,7 +393,7 @@ describe("the admin Runs list", () => {
     pick(m, "u2");
     await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenLastCalledWith("#/runs?repo=acme%2Fapp&owner=u2");
-    expect(rows(m)).toEqual(["flow-r4"]);
+    expect(rows(m)).toEqual(["task r4"]);
     stop();
   });
 
@@ -401,7 +401,7 @@ describe("the admin Runs list", () => {
     const m = connected();
     const go = vi.fn();
     const stop = await runs.renderRunsList(m, { admin: true, query: { repo: "acme/app" }, go });
-    expect(rows(m)).toEqual(["flow-r1", "flow-r3"]);
+    expect(rows(m)).toEqual(["task r1", "task r3"]);
     pick(m, "", "runs-repo");
     await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenCalledWith("#/runs");
@@ -421,7 +421,7 @@ describe("the admin Runs list", () => {
     const m = connected();
     const stop = await start(m, "#/runs?repo=ACME/APP");
     expect(asked).toEqual(["/api/run-filters", "/api/run-owners", "/api/queue", "/api/runs?repo=Acme%2FApp"]);
-    expect(rows(m)).toEqual(["flow-far"]);
+    expect(rows(m)).toEqual(["task far"]);
     expect(val(m, "runs-repo")).toBe("Acme/App");
     stop();
   });
@@ -433,7 +433,7 @@ describe("the admin Runs list", () => {
     const m = connected();
     const stop = await start(m, "#/runs?repo=acme/app");
     expect(runsAsked().sort()).toEqual(["/api/runs?repo=Acme%2FApp", "/api/runs?repo=acme%2Fapp"]);
-    expect(rows(m)).toEqual(["flow-dup", "flow-b1", "flow-a1"]);
+    expect(rows(m)).toEqual(["task dup", "task b1", "task a1"]);
     stop();
   });
 
@@ -730,7 +730,7 @@ describe("the admin Runs list", () => {
     asked.length = 0;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(asked).toContain("/api/runs?owner=u2");
-    expect(rows(m)).toEqual(["flow-r4"]);
+    expect(rows(m)).toEqual(["task r4"]);
     expect(val(m, "runs-repo")).toBe("acme/app");
     expect(val(m, "owner-filter")).toBe("u2");
     stop();
@@ -780,7 +780,7 @@ describe("the admin Runs list", () => {
     await vi.advanceTimersByTimeAsync(0);
     delay["/api/runs?owner=u1"]![0]!();
     await vi.advanceTimersByTimeAsync(0);
-    expect(rows(m)).toEqual(["flow-r4", "flow-r5"]);
+    expect(rows(m)).toEqual(["task r4", "task r5"]);
     pick(m, "");
     await vi.advanceTimersByTimeAsync(0);
     stop();
@@ -854,9 +854,9 @@ describe("My runs", () => {
   it("shows only the matching runs and queued jobs for ?repo=", async () => {
     const { main, stop } = await open({ query: { repo: "O/R" }, go: vi.fn() });
     expect(cards(main)).toHaveLength(2);
-    expect(cards(main).join(" ")).toContain("flow-r1");
+    expect(cards(main).join(" ")).toContain("task r1");
     expect(cards(main).join(" ")).toContain("queued j1");
-    expect(cards(main).join(" ")).not.toContain("flow-r2");
+    expect(cards(main).join(" ")).not.toContain("task r2");
     expect(repoSelect(main).value).toBe("o/r");
     expect(a.runs).toHaveBeenCalledWith({ repo: "o/r" });
     stop();
@@ -1018,7 +1018,7 @@ describe("My runs", () => {
       first([run("r2", "x/y")]);
       await vi.advanceTimersByTimeAsync(0);
       expect(a.runs).toHaveBeenLastCalledWith({ flow: "flow-r1", status: "failed" });
-      expect(cards(main).join(" ")).not.toContain("flow-r2 ");
+      expect(cards(main).join(" ")).toContain("task r1");
       stop();
     });
 

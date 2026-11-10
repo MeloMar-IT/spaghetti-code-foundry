@@ -1,8 +1,9 @@
 import { api } from "./api.js";
 import { chartPoints, chartRows, chainNotes, criticalPathView, forecastView, historyLines, paceView, storyItems } from "./epic-page-model.js";
 import { h, mount, svg, table } from "./dom.js";
-import { progressBar } from "./epics.js";
-import { freshText, growthSentence, pickRepo, progressText, repoChoices } from "./epics-model.js";
+import { progressBar, progressNode } from "./epics.js";
+import { statusPill } from "./icons.js";
+import { freshText, growthSentence, pickRepo, repoChoices } from "./epics-model.js";
 import { withQuery } from "./filters.js";
 import { chainGraph } from "./graph.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
@@ -67,7 +68,7 @@ function storiesSection(d, repo) {
     items.length
       ? h("ol", { class: "epic-stories" }, items.map((s) => h("li", {},
         s.href ? h("a", { href: s.href, target: "_blank", rel: "noopener" }, `#${s.issue} ${s.title}`) : `#${s.issue} ${s.title}`,
-        h("span", { class: "epic-words" }, ` — ${s.words}`),
+        s.words ? [" ", statusPill(s.semantic, s.words, "epic-words")] : null,
         s.status ? h("p", { class: "muted" }, s.status) : null,
         s.help ? h("p", { class: "muted" }, s.help) : null,
         s.notes.length ? h("p", { class: "muted" }, s.notes.join("; ")) : null)))
@@ -129,7 +130,7 @@ export async function renderEpic(box, { id, admin = false, me, query = {}, a = a
       ],
       notices: notice,
       meta: epic ? [
-        progressBar(epic.counts, epic.total), h("p", {}, progressText(epic.counts, epic.total)),
+        progressBar(epic.counts, epic.total), progressNode(epic.counts, epic.total),
         growthSentence(epic) ? h("p", { class: "muted" }, growthSentence(epic)) : null,
         epic.issue != null && choice ? h("p", {}, h("a", { href: `https://github.com/${choice.name}/issues/${epic.issue}`, target: "_blank", rel: "noopener" }, "On GitHub")) : null,
       ] : null,

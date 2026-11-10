@@ -87,6 +87,24 @@ describe("stepPhase", () => {
     expect(Object.isFrozen(ph.PHASES)).toBe(true);
   });
 
+  it("runPhase: the phase of a run's current step", () => {
+    expect(ph.runPhase({ state: { next: "implement" } })).toMatchObject({ key: "build", word: "Build", source: "step" });
+    expect(ph.runPhase({ history: [{ id: "plan" }, { id: "run_tests" }] })).toMatchObject({ key: "check", word: "Check" });
+    expect(ph.runPhase({ state: { next: "plan" }, history: [{ id: "run_tests" }] }).key).toBe("plan"); // state.next wins
+    const steps = ["a1", "a2", "a3", "a4", "a5"].map((id) => ({ id }));
+    expect(ph.runPhase({ state: { next: "zz9" }, flowDef: { steps: [...steps, { id: "zz9" }] } })).toMatchObject({ source: "position", key: "deliver" });
+    expect(ph.runPhase({ state: { next: "zz9" } }).source).toBe("default");
+  });
+
+  it("runPhase: no step, no run or a bad step gives null and never throws", () => {
+    for (const r of [null, undefined, {}, { state: {} }, { history: [] }, { state: { next: 3 } }, { state: { next: "" } }, { history: [{}] }, { history: "x" }]) {
+      expect(() => ph.runPhase(r)).not.toThrow();
+      expect(ph.runPhase(r), JSON.stringify(r)).toBeNull();
+    }
+    expect(() => ph.runPhase({ state: { next: "__proto__" }, flowDef: { steps: "no" } })).not.toThrow();
+    expect(ph.runPhase({ state: { next: "constructor" } }).word).toBeTruthy();
+  });
+
   it("uses no forbidden term", () => {
     const all = [...ph.PHASES.flatMap((p: any) => [p.word, p.line, ph.phaseText(p)]), "Now", "Done"];
     for (const t of all) expect(words.forbiddenIn(t), t).toEqual([]);
