@@ -82,22 +82,25 @@ export const statusMark = (x, cls = "", busy = false, semantic = "neutral", focu
 /** The status of a record. */
 export const nextStatus = (n, focus) => statusMark(n, `${whoClass(n)} kind-${n.kind}`, n.kind === "running", semanticOf(n.kind), focus);
 
+/** The status pill of a record for list rows: the same pill as `nextStatus`, with no "?". */
+export const nextPill = (n) => statusMark({ status: n.status }, `${whoClass(n)} kind-${n.kind}`, n.kind === "running", semanticOf(n.kind))[0];
+
 /** "Continues: …" when the record says when it continues. */
 export const untilPart = (n) => (n.until ? h("span", { class: "muted" }, `Continues: ${n.until}`) : null);
 
 /** Progress, estimate and the slow hint of a record's `timing`. The texts come from the server. */
-export function timingParts(n) {
+export function timingParts(n, { progress = true } = {}) {
   const t = n.timing;
   if (!t) return [];
   return [
-    t.progress ? h("span", { class: "muted" }, t.progress) : null,
+    progress && t.progress ?h("span", { class: "muted" }, t.progress) : null,
     t.estimate ? h("span", { class: "muted estimate" }, t.estimate) : null,
     t.note ? h("span", { class: "slow-note" }, t.note) : null,
   ].filter(Boolean);
 }
 
-/** When it continues and how long it takes, for one-line lists. */
-export const whenParts = (n) => [untilPart(n), ...timingParts(n)].filter(Boolean);
+/** When it continues and how long it takes, for one-line lists. `progress: false` leaves out the step count ("Step 2 of 9"). */
+export const whenParts = (n, opts) => [untilPart(n), ...timingParts(n, opts)].filter(Boolean);
 
 /** The note on a record whose issue could not be checked on GitHub. */
 export const ISSUE_UNCHECKED = "The state of the issue on GitHub could not be checked";

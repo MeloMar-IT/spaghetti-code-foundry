@@ -2,7 +2,8 @@
 // The section of a run comes from the server's record only. `renderSections` updates the list row by row, so a
 // refresh keeps the focus, the scroll and the open sections. Relative imports, so a test can load them.
 import { h, tableBox, timeAgo } from "./dom.js";
-import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
+import { nextPill, whenParts, whereLink, whoClass } from "./next.js";
+import { runPhase } from "./phases.js";
 import { firstLine, workText } from "./run-header.js";
 // This module and ./runs.js import each other: neither uses the other at the top level, only inside functions.
 import { aheadText, money, ownerLabel, refinementMark } from "./runs.js";
@@ -134,27 +135,30 @@ function rowParts({ run, job, place }, { admin = false, onRemove = null, select 
   const work = workOf(run, job);
   const iso = run ? activityAt(run) : job?.enqueuedAt;
   const timeEl = iso ? h("span", { class: "muted run-when" }, `Updated ${timeAgo(iso)}`) : null;
+  const task = firstLine(run?.task ?? job?.task);
+  const title = n?.title?.trim?.() || task || run?.flow || job?.flow || "Queued run";
+  const phase = run ? runPhase(run) : null;
   const check = select && run
     ? h("input", {
-      type: "checkbox", class: "run-select", "data-focus": `select-${id}`, "aria-label": `Select run ${run.flow} ${work || id}`, checked: select.has(id),
+      type: "checkbox", class: "run-select", "data-focus": `select-${id}`, "aria-label": `Select run ${title} ${work || id}`, checked: select.has(id),
       onChange: (e) => select.toggle(id, e?.target?.checked ?? check.checked),
     })
     : null;
-  const parts = n ? whenParts(n) : [];
+  const parts = n ? whenParts(n, { progress: false }) : []; // the step count ("Step 2 of 9") gives way to the phase
   return {
     check, timeEl, iso, work,
     cls: n?.who === "You" ? whoClass(n) : "",
-    task: firstLine(run?.task ?? job?.task),
-    status: n ? nextStatus(n, `help-${id}`) : null,
+    task: task && task !== title ? task : "",
+    phase: phase ? h("span", { class: "run-phase" }, phase.word) : null,
+    status: n ? nextPill(n) : null,
     first: job?.priority ? h("span", { class: "pill first" }, "goes first") : null,
-    link: h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, run?.flow ?? job?.flow ?? "Queued run")),
+    link: h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, title)),
     mark: run?.refinement ?? job?.refinement ? refinementMark(run?.refinement ?? job?.refinement, `ref-${id}`) : null,
     next: n ? h("p", { class: "run-next muted", "data-label": "What happens next" }, n.text) : null,
     timing: parts.length ? h("div", { class: "next-parts timing" }, parts) : null,
     where: admin && job && n ? whereLink(n.where, `where-${id}`) : null,
     queue: job ? h("div", { class: "muted run-queue" }, h("span", {}, `${place?.n ?? "?"} of ${place?.of ?? "?"}${admin ? "" : " of your queued runs"}`), job.ahead > 0 ? h("span", {}, aheadText(job.ahead)) : null) : null,
     owner: admin ? ownerLabel(run?.ownerName ?? job?.ownerName) : null,
-    steps: admin && run ? run.history?.length ?? 0 : null,
     cost: admin && run ? money(run.totalCostUsd) : null,
     remove: job && onRemove ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null,
   };
@@ -166,37 +170,42 @@ function cardRow(p) {
     h("div", { class: "row" }, p.check, p.status, p.first, p.link, p.mark),
     p.next,
     p.timing,
+    p.phase ? field("Phase", p.phase) : null,
     p.where,
     p.task ? h("div", { "data-label": "Task" }, p.task) : null,
     p.work ? h("div", { class: "muted mono", "data-label": "Repository" }, p.work) : null,
     p.queue,
     p.timeEl,
     p.owner !== null ? field("Owner", p.owner) : null,
-    p.steps !== null ? field("Steps", p.steps, "mono") : null,
     p.cost !== null ? field("Cost", p.cost, "mono") : null,
     p.remove);
 }
 
-const HEADS = ["Status", "Run", "Next", "Task", "Repository", "Updated"];
+const HEADS = ["Status", "Change", "Phase", "Next", "Task", "Repository", "Updated"];
 const headOf = ({ admin, selectCol, removeCol }) => [
-  ...(selectCol ? ["Select"] : []), ...HEADS, ...(admin ? ["Owner", "Steps", "Cost"] : []), ...(removeCol ? ["Actions"] : []),
+  ...(selectCol ? ["Select"] : []), ...HEADS, ...(admin ? ["Owner", "Cost"] : []), ...(removeCol ? ["Actions"] : []),
 ];
 
-/** The compact row: a table row with the cells of `headOf(cols)`. */
+/** The compact row: a table row with the cells of `headOf(cols)`. Each cell has its header as `data-label` (none for Select and Actions). */
 function tableRow(p, cols) {
-  const td = (...nodes) => h("td", {}, ...nodes);
-  return h("tr", { class: `run-row${p.cls ? ` ${p.cls}` : ""}` },
-    cols.selectCol ? td(p.check) : null,
-    td(p.status, p.first),
-    td(p.link, p.mark),
-    td(p.next, p.timing, p.where, p.queue),
-    td(p.task),
-    td(p.work ? h("span", { class: "muted mono" }, p.work) : null),
-    td(p.timeEl),
-    cols.admin ? td(p.owner) : null,
-    cols.admin ? h("td", { class: "mono" }, p.steps) : null,
-    cols.admin ? h("td", { class: "mono" }, p.cost) : null,
-    cols.removeCol ? td(p.remove) : null);
+  const heads = headOf(cols);
+  let i = 0;
+  const cell = (cls, ...nodes) => {
+    const head = heads[i++];
+    return h("td", { role: "cell", ...(cls ? { class: cls } : {}), ...(head === "Select" || head === "Actions" ? {} : { "data-label": head }) }, ...nodes);
+  };
+  return h("tr", { class: `run-row${p.cls ? ` ${p.cls}` : ""}`, role: "row" },
+    cols.selectCol ? cell("", p.check) : null,
+    cell("", p.status, p.first),
+    cell("", p.link, p.mark),
+    cell("", p.phase),
+    cell("", p.next, p.timing, p.where, p.queue),
+    cell("", p.task),
+    cell("", p.work ? h("span", { class: "muted mono" }, p.work) : null),
+    cell("", p.timeEl),
+    cols.admin ? cell("", p.owner) : null,
+    cols.admin ? cell("mono", p.cost) : null,
+    cols.removeCol ? cell("", p.remove) : null);
 }
 
 /** A row and its time text node. `density` "compact" gives a table row; `selectCol` and `removeCol` say which columns its table has. */
@@ -270,8 +279,9 @@ function container(def, cols) {
     return { wrap: ul, list: ul };
   }
   const list = h("tbody", {});
-  const head = headOf(cols).map((x) => h("th", { scope: "col" }, x === "Select" || x === "Actions" ? h("span", { class: "sr-only" }, x) : x));
-  return { wrap: tableBox(h("table", { class: "table compact run-table", "aria-label": def.title }, h("thead", {}, h("tr", {}, head)), list)), list };
+  const head = headOf(cols).map((x) => h("th", { scope: "col", role: "columnheader" }, x === "Select" || x === "Actions" ? h("span", { class: "sr-only" }, x) : x));
+  list.setAttribute("role", "rowgroup");
+  return { wrap: tableBox(h("table", { class: "table compact run-table cards", role: "table", "aria-label": def.title }, h("thead", { role: "rowgroup" }, h("tr", { role: "row" }, head)), list)), list };
 }
 
 function showAll(box) {

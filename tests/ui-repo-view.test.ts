@@ -639,6 +639,10 @@ describe("the Preview section", () => {
     await settle();
     const s = section("preview");
     expect(s.textContent).toContain("failed");
+    const state = walk(s).find((e) => String(e.attrs.class).startsWith("pill sem-"))!;
+    expect(state.attrs.class).toBe("pill sem-danger fail");
+    expect(state.textContent).toBe("failed");
+    expect(state.all("svg")).toHaveLength(1);
     expect(s.textContent).toContain("exited: code 1");
     expect(walk(s).filter((e) => e.tag === "b")).toHaveLength(0);
     expect(walk(s).find((e) => e.tag === "pre")!.textContent).toBe("<b>bold</b> line\nERROR boom");

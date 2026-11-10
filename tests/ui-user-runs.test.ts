@@ -86,14 +86,19 @@ describe("helpers", () => {
 
 describe("runCard labels", () => {
   it("labels the task, repository and next text of a run; the link is first in the row", () => {
-    const card = ui.runCard({ run: run("a", { vars: { github_repo: "o/r", issue: 7 } }), job: null }, () => {});
+    const card = ui.runCard({ run: run("a", { vars: { github_repo: "o/r", issue: 7 }, next: { ...rec("running", "a"), title: "Add it" } }), job: null }, () => {});
     expect(find(card, "div", { "data-label": "Task" })[0]!.textContent).toBe("task a");
+    expect(one(card, "a", { class: "run-link" }).textContent).toBe("Add it");
+    // the task is the title here: it is not said twice
+    const same = ui.runCard({ run: run("a"), job: null }, () => {});
+    expect(find(same, "div", { "data-label": "Task" })).toHaveLength(0);
+    expect(one(same, "a", { class: "run-link" }).textContent).toBe("task a");
     expect(find(card, "div", { "data-label": "Repository" })).toHaveLength(1);
     expect(find(card, "p", { "data-label": "What happens next" })).toHaveLength(1);
     expect(one(card, "a", { class: "run-link" }).attrs.href).toBe("#/runs/a");
   });
   it("labels a queued card the same way and puts Remove last", () => {
-    const card = ui.runCard({ run: null, job: job("q", { githubRepo: "o/r", issue: 3 }) }, () => {});
+    const card = ui.runCard({ run: null, job: job("q", { githubRepo: "o/r", issue: 3, next: { ...rec("queued", "q"), title: "Add it" } }) }, () => {});
     expect(find(card, "div", { "data-label": "Task" })[0]!.textContent).toBe("queued q");
     expect(find(card, "div", { "data-label": "Repository" })).toHaveLength(1);
     expect(find(card, "p", { "data-label": "What happens next" })).toHaveLength(1);
@@ -215,8 +220,9 @@ describe("renderMyRuns", () => {
     const first = items[0]!;
     expect(first.attrs.class).toContain("who-you");
     expect(first.textContent).toContain(data.runs[0].next.status);
-    expect(find(first, "button", { "aria-label": "What does this mean?" })).toHaveLength(1);
-    expect(first.textContent).toContain("flow-r1");
+    expect(find(first, "button", { "aria-label": "What does this mean?" })).toHaveLength(0); // rows have no "?"
+    expect(find(first, "svg").length).toBeGreaterThan(0);
+    expect(first.textContent).not.toContain("flow-r1");
     expect(first.textContent).toContain("task r1");
     expect(first.textContent).not.toContain("second line");
     expect(first.textContent).toContain("o/r#7");
@@ -234,9 +240,9 @@ describe("renderMyRuns", () => {
     expect(main.textContent).toContain("2 runs ahead of you");
     expect(main.textContent).toContain("1 run ahead of you");
     expect(main.textContent).not.toContain("0 runs ahead");
-    expect(main.textContent).toContain("Queued run");
     expect(main.textContent).toContain("queued q3");
-    expect(main.textContent).toContain("named");
+    expect(main.textContent).toContain("queued q4"); // the task is the title, not the flow name
+    expect(main.textContent).not.toContain("named");
     const remove = (id: string) => one(main, "button", { "data-focus": `remove-${id}` });
 
     ask.mockResolvedValueOnce(false);

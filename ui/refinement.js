@@ -5,6 +5,7 @@ import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js"
 import { onWish, takeWish } from "./palette-data.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { dialogOpen } from "./live.js";
+import { statusPill } from "./icons.js";
 import { announcer, failState } from "./refinement-states.js";
 import { banner, emptyState, loadingState, staleNote } from "./states.js";
 import { renderBacklog } from "./refinement-backlog.js";
@@ -25,6 +26,12 @@ export const STATE_LABELS = {
   published: "Published",
   dropped: "Dropped",
 };
+
+/** The status semantic of a session state (see ui/icons.js STATUS); an unknown state is neutral. */
+export const STATE_SEMANTIC = { exploring: "running", drafting: "waiting", ready: "success", published: "success", dropped: "disabled" };
+
+/** The state of a session as a status pill (icon and word); the old `state-*` class stays for colour. */
+export const statePill = (s) => statusPill(Object.hasOwn(STATE_SEMANTIC, s.state) ? STATE_SEMANTIC[s.state] : "neutral", Object.hasOwn(STATE_LABELS, s.state) ? STATE_LABELS[s.state] : String(s.state || "") || "Unknown", `state-${s.state}`);
 
 export { sessionBody, sessionProblem } from "./refinement-new.js";
 
@@ -363,7 +370,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         mount(upper,
         h("a", { href: "#/refinement" }, "← All sessions"),
         pageHeader({ layout: "toolbar", title: s.title,
-          meta: [h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state), h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null],
+          meta: [statePill(s), h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null],
           actions: [h("span", { class: "spacer" }), buttons] }),
         nextBox,
         ...sourceSection(s, { send }), ...helpOrigin(s),
@@ -417,7 +424,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
     h("td", { class: "mono" }, s.repo),
-    h("td", { class: s.state === "dropped" && s.mine ? "actions" : null }, h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
+    h("td", { class: s.state === "dropped" && s.mine ? "actions" : null }, statePill(s),
       s.state === "dropped" ? [" ", h("span", { class: "muted" }, `removed on ${date(s.removedOn)}`)] : null,
       s.state === "dropped" && s.mine ? [" ", h("button", { class: "small", onClick: (e) => {
         e.stopPropagation();

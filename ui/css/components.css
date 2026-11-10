@@ -158,6 +158,12 @@ button.icon { justify-content: center; }
 .pill:is(.sem-info):not(:has(> .ico))::before { content: "i"; content: "i" / ""; }
 .pill:is(.sem-disabled, .state-dropped):not(:has(> .ico))::before { content: "–"; content: "–" / ""; }
 .check-row { display: flex; gap: 6px; align-items: center; }
+.setup-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
+.setup-row { min-width: 0; padding: var(--space-lg) var(--card-pad); border: var(--border-width) solid var(--border); border-radius: var(--card-radius); background: var(--panel); overflow-wrap: anywhere; }
+.setup-row p { margin: 0; }
+.setup-row code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.setup-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.check-mark { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 
 /* Filters in the address (chips above a list) */
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }

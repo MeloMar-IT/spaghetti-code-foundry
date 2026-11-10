@@ -91,6 +91,12 @@ describe("matchesRun", () => {
     expect(matchesRun(pr, filt({ q: "acme/app#7" }))).toBe(true);
     expect(matchesRun(pr, filt({ q: "#7" }))).toBe(true);
   });
+  it("finds the title a row shows when it differs from the task line", () => {
+    const b = brief({ taskLine: "Repair the login", issueTitle: "Add dark mode" });
+    expect(matchesRun(b, filt({ q: "dark mode" }))).toBe(true);
+    expect(matchesRun(b, filt({ q: "repair" }))).toBe(true); // the task is still searched
+    expect(matchesRun(brief({ taskLine: "Repair the login" }), filt({ q: "dark mode" }))).toBe(false);
+  });
   it("misses what is not searched", () => {
     expect(matchesRun(brief(), filt({ q: "#7" }))).toBe(false);
     expect(matchesRun(brief(), filt({ q: "#undefined" }))).toBe(false);

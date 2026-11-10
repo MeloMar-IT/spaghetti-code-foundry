@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { aiProps, confirmDialog, h, mount, toast } from "./dom.js";
 import { impactKey, impactNodes } from "./refinement-impact.js";
-import { draftStateText, readyKey, readyNodes } from "./refinement-ready.js";
+import { draftStatePill, readyKey, readyNodes } from "./refinement-ready.js";
 import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
 import { mayDependOn, mergeNodes, moveNodes, partsKey, partsNodes } from "./refinement-parts.js";
 import { splitKey, splitNodes } from "./refinement-split.js";
@@ -687,7 +687,7 @@ export function draftSection(ctx) {
   const listNodes = (drafts, mine) => {
     if (!drafts.length) return emptyState("No story drafts yet.");
     const openId = opened.get(sid);
-    return h("ul", {}, drafts.map((d) => h("li", { class: "entry" }, h("span", {}, draftTitle(d)), h("span", { class: `pill state-${d.state}` }, draftStateText(d)),
+    return h("ul", {}, drafts.map((d) => h("li", { class: "entry" }, h("span", {}, draftTitle(d)), draftStatePill(d),
       d.published ? h("span", { class: "muted" }, "On GitHub: ", issueLink(d)) : null,
       mine ? h("button", { "data-focus": `open-${d.id}`, onClick: () => open(openId === d.id ? null : d.id) }, openId === d.id ? "Close" : "Open") : null)));
   };

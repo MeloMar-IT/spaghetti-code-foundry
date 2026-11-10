@@ -154,6 +154,15 @@ describe("criticalPathView", () => {
   });
 });
 
+describe("storySemantic", () => {
+  it("maps every story state to a status semantic; an unknown one is neutral", () => {
+    const all = { done: "success", working: "running", waiting: "neutral", your_turn: "waiting", failed: "danger", split: "disabled", dropped: "disabled" };
+    for (const [state, sem] of Object.entries(all)) expect(m.storySemantic(state), state).toBe(sem);
+    for (const x of ["other", undefined, null, "__proto__", "constructor"]) expect(m.storySemantic(x), String(x)).toBe("neutral");
+    expect(m.storyItems([{ issue: 1, title: "A", state: "failed", words: "Failed" }], null, "")[0].semantic).toBe("danger");
+  });
+});
+
 describe("storyItems", () => {
   it("keeps the order and gives the link, the words and the notes", () => {
     const stories = [

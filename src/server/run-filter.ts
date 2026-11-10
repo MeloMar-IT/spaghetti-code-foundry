@@ -88,6 +88,8 @@ export function matchesRun(b: RunBrief, f: RunFilter): boolean {
       if (typeof b.githubRepo === "string") hay.push(`${b.githubRepo}#${n}`);
     }
     if (typeof b.taskLine === "string") hay.push(f.admin ? b.taskLine : [...userTask(b.flow, b.source, b.taskLine)].slice(0, TASK_LINE_MAX).join(""));
+    // the title a row shows (the issue title, else the task line): a search for it finds the change
+    if (typeof b.issueTitle === "string") hay.push(b.issueTitle);
     const q = f.q;
     if (!hay.some((h) => typeof h === "string" && h.toLowerCase().includes(q))) return false;
   }

@@ -10,9 +10,59 @@ const PAGES: [string, string, string | RegExp][] = [
   ["Start work", "#/start", "gate"],
   ["Repositories", "#/repos", /No repositories yet/],
   ["Autonomy", "#/autonomy", /Repositories/],
+  ["Epics", "#/epics", /Epics|epic/i],
+  ["Refinement", "#/refinement", /Refinement/i],
+  ["Setup check", "#/setup", /Setup check/],
+  ["Help", "#/help", /Help/i],
 ];
 
-const TARGETS = 'button, a.btn, a[data-nav], .brand, select, textarea, summary, input:not([type=checkbox]):not([type=radio]):not([type=hidden])';
+/** No table box scrolls inside itself: `expectNoSidewaysScroll` looks at the document only, and a `.table-box` can scroll on its own. */
+async function expectNoBoxScroll(page: Page): Promise<void> {
+  const wide = await page.evaluate(() => [...document.querySelectorAll(".table-box")]
+    .filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => `${e.className} ${e.scrollWidth}>${e.clientWidth}`));
+  expect(wide, "a table box scrolls sideways").toEqual([]);
+}
+
+test("no sideways scroll at 375 px in the Advanced view, also in the compact Changes table", async ({ browser }) => {
+  const PAGES_375: [string, string | RegExp][] = [
+    ["#/runs", "Seeded succeeded run"], ["#/epics", /Epics|epic/i], ["#/repos", "acme/app"],
+    ["#/refinement", /Refinement/i], ["#/setup", /Setup check/], ["#/help", /Help/i],
+  ];
+  for (const [hash, text] of PAGES_375) {
+    const page = await openAs(browser, "user", 375, hash);
+    try {
+      await expect(page.locator("#main"), hash).toContainText(text);
+      await expectNoSidewaysScroll(page);
+      await expectNoBoxScroll(page);
+      if (hash === "#/runs") {
+        await page.evaluate(() => localStorage.setItem("scf-runs-density", "compact"));
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("#main")).toContainText(text);
+        await expect(page.locator("#main table.run-table").first()).toBeVisible();
+        await expectNoSidewaysScroll(page);
+        await expectNoBoxScroll(page);
+      }
+    } finally {
+      await page.context().close();
+    }
+  }
+});
+
+test("the compact Changes table does not scroll sideways at 360 px for the admin", async ({ browser }) => {
+  const page = await openAs(browser, "admin", 360, "#/runs");
+  try {
+    await page.evaluate(() => localStorage.setItem("scf-runs-density", "compact"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#main")).toContainText("Seeded failed run");
+    await expect(page.locator("#main table.run-table").first()).toBeVisible();
+    await expectNoSidewaysScroll(page);
+    await expectNoBoxScroll(page);
+  } finally {
+    await page.context().close();
+  }
+});
+
+const TARGETS ='button, a.btn, a[data-nav], .brand, select, textarea, summary, input:not([type=checkbox]):not([type=radio]):not([type=hidden])';
 const ADD = '[data-focus="add-toolbar"]'; // the empty page also has an "+ Add repository" button in its empty state
 const dialog =(page: Page) => page.locator('[role="dialog"]');
 
@@ -28,6 +78,7 @@ for (const width of WIDTHS) {
       try {
         await expect(page.locator("#main"), name).toContainText(text);
         await expectNoSidewaysScroll(page);
+        if (width < 768) await expectNoBoxScroll(page);
         if (name === "Repositories") {
           await openAddDialog(page);
           await expectNoSidewaysScroll(page);

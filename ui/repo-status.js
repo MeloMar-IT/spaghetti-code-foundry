@@ -36,6 +36,13 @@ export function sortByAttention(repos, ctx = {}, attention = repoAttention) {
 }
 
 /** How many repositories have a level other than "ok". */
+/** The status semantic of an attention level ("ok", "warn", "bad"). */
+export const attentionSemantic = (level) => (Object.hasOwn(ATTENTION_SEMANTIC, level) ? ATTENTION_SEMANTIC[level] : "neutral");
+const ATTENTION_SEMANTIC = { ok: "success", warn: "warning", bad: "danger" };
+
+/** The status semantic of a repository's last connection test. */
+export const connectionSemantic = (c) => (!c ? "neutral" : c.ok ? "success" : "danger");
+
 export const attentionCount = (repos, ctx = {}, attention = repoAttention) => repos.filter((r) => attention(r, ctx).level !== "ok").length;
 
 export const attentionSummary = (count) =>

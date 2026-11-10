@@ -55,4 +55,16 @@ export function stepPhase(stepId, at) {
   return { key, index, word: PHASES[index].word, line: PHASES[index].line, source };
 }
 
-export const phaseText = (p) => `${p.word}: ${p.line}`;
+/**
+ * The phase a run is in: { key, index, word, line, source }, or null when it has no step yet. The step is `state.next`, else the
+ * last step of the history (the same choice as the Simple cards); its place in `flowDef.steps` helps for an id the table does not know.
+ */
+export function runPhase(run) {
+  const step = run?.state?.next ?? run?.history?.at?.(-1)?.id;
+  if (typeof step !== "string" || step === "") return null;
+  const steps = Array.isArray(run?.flowDef?.steps) ? run.flowDef.steps : [];
+  const index = steps.findIndex((s) => s?.id === step);
+  return stepPhase(step, index >= 0 ? { index, total: steps.length } : undefined);
+}
+
+export const phaseText =(p) => `${p.word}: ${p.line}`;

@@ -3,15 +3,15 @@ import { reposChanged } from "./context.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, without, withQuery } from "./filters.js";
 import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
 import { integrationBlock, integrationOf } from "./integration.js";
+import { statusPill } from "./icons.js";
 import { repoDialog } from "./repo-connect.js";
 import { MOVE_TITLE, moveDialog } from "./repo-move.js";
 import { onWish, takeWish } from "./palette-data.js";
-import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
+import { FILTER_FROM, activeRuns, attentionCount, attentionSemantic, attentionSummary, connectionSemantic, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
 import { guideReturnView } from "./onboarding-guide-model.js";
 import { backToGuide, guideReturnNode } from "./onboarding-project.js";
 import { safeStore } from "./shell.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
-
 export { repoDialog };
 
 /**
@@ -179,7 +179,7 @@ const integrationCell = (repo, admin, options) => {
 const connectionCell = (repo, extra = {}) => {
   const c = repo.connection;
   return h("td", {},
-    h("span", { class: c ? (c.ok ? "pill ok" : "pill fail") : "pill" }, connectionStatus(repo)),
+    statusPill(connectionSemantic(c), connectionStatus(repo), c ? (c.ok ? "ok" : "fail") : ""),
     c ? [" ", h("span", { class: "muted", title: new Date(c.at).toLocaleString() }, `tested ${timeAgo(c.at)}`)] : null,
     c?.ok ? connectionLines(repo).map((l) => h("div", { class: l.ok ? "status ok" : "status bad" }, l.text)) : null,
     connectionProblem(repo, extra));
@@ -517,7 +517,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       connectionCell(repo, { error: testError }),
       runs,
       h("td", { class: "next-step" },
-        h("span", { class: att.level === "ok" ? "pill ok" : att.level === "warn" ? "pill locked" : "pill fail" }, att.text),
+        statusPill(attentionSemantic(att.level), att.text, att.level === "ok" ? "ok" : att.level === "warn" ? "locked" : "fail"),
         att.detail ? h("div", { class: "muted", title: att.detail }, att.detail) : null,
         !readOnly && promoted ? h("div", {}, promoted) : null),
       h("td", {}, h("a", { class: "btn small", href: repoHref(repo) }, "Open"), moveBtn));

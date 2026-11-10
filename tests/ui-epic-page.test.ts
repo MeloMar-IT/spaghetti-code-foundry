@@ -148,6 +148,10 @@ describe("renderEpic", () => {
     expect(items.map((li) => li.all("a")[0]!.textContent)).toEqual(["#20 Schema", "#21 Login", "#22 Payments API with a very long title that keeps going"]);
     expect(items[0]!.all("a")[0]!.getAttribute("href")).toBe("https://github.com/acme/app/issues/20");
     expect(items[1]!.textContent).toContain("Working");
+    // each story's state is a status pill: an icon and a word
+    const pill = (li: FakeElement) => li.all("span").find((s) => String(s.attrs.class).startsWith("pill sem-"))!;
+    expect(items.map((li) => [pill(li).attrs.class, pill(li).textContent])).toEqual([["pill sem-success epic-words", "Done"], ["pill sem-running epic-words", "Working"], ["pill sem-neutral epic-words", "Waiting"]]);
+    for (const li of items) expect(pill(li).all("svg")).toHaveLength(1);
     expect(items[1]!.textContent).toContain("part of #12");
     expect(items[2]!.textContent).toContain("also waits for #77 (outside this epic)");
     expect(b.textContent).toContain("Stories outside this epic that stories here wait for: #77 Other");

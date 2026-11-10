@@ -482,8 +482,9 @@ button.icon { justify-content: center; }
 .start-review .start-notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: var(--text-small); }
 
 /* My runs and the run page of a user (ui/user/runs.js) */
-.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.run-card { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
+.run-card { display: grid; gap: var(--space-sm); min-width: 0; padding: var(--space-lg) var(--card-pad); border: var(--border-width) solid var(--border); border-radius: var(--card-radius); background: var(--panel); }
+.run-phase { font-weight: var(--weight-medium); }
 .run-card.who-you { border-color: var(--color-waiting); }
 .run-card .run-link { overflow-wrap: anywhere; }
 .run-card .run-next { margin: 0; }
@@ -578,6 +579,12 @@ button.icon { justify-content: center; }
 .pill:is(.sem-info):not(:has(> .ico))::before { content: "i"; content: "i" / ""; }
 .pill:is(.sem-disabled, .state-dropped):not(:has(> .ico))::before { content: "–"; content: "–" / ""; }
 .check-row { display: flex; gap: 6px; align-items: center; }
+.setup-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
+.setup-row { min-width: 0; padding: var(--space-lg) var(--card-pad); border: var(--border-width) solid var(--border); border-radius: var(--card-radius); background: var(--panel); overflow-wrap: anywhere; }
+.setup-row p { margin: 0; }
+.setup-row code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.setup-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.check-mark { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 .drafts .remark { font-size: var(--text-small); color: var(--muted); }
 .drafts .remark > small { margin-left: 6px; }
 .drafts li.entry { flex-wrap: wrap; }
@@ -747,14 +754,14 @@ button.icon { justify-content: center; }
 .epics-seg-your_turn { fill: var(--color-waiting); }
 .epics-seg-failed { fill: var(--color-danger); }
 .epics-table td { vertical-align: top; overflow-wrap: anywhere; }
-.epics-table td p { margin: 4px 0 0; }
+.epics-table td p { margin: var(--space-xs) 0 0; }
 .epics-blocks, .epics-holds { margin: 0; padding-left: 1em; }
 .epics-fresh { font-size: var(--text-meta); margin: 0; }
 .epic-section { margin-bottom: var(--space-md); min-width: 0; }
 .epic-section h2, .epic-section h3 { margin-top: 0; }
 .epic-stories, .epic-history { margin: 0; padding-left: 1.4em; }
 .epic-stories li, .epic-history li, .epic-path { overflow-wrap: anywhere; }
-.epic-stories li p { margin: 2px 0 0; }
+.epic-stories li p { margin: var(--space-2xs) 0 0; }
 .chain-graph { overflow-x: auto; max-width: 100%; }
 .chain-graph svg { display: block; max-width: none; }
 .chain-graph text { font-family: var(--sans); fill: var(--text); }

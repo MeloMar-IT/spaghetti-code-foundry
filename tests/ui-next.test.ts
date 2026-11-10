@@ -540,7 +540,7 @@ describe("the Runs pages for a user", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(asked.length).toBeGreaterThanOrEqual(3);
     expect(new Set(asked)).toEqual(new Set(["/api/runs", "/api/queue"]));
-    expect(main.textContent).toContain("walk");
+    expect(main.textContent).toContain("do it"); // the row is titled with the task, not the flow
     expect(main.textContent).not.toContain("running ·");
     expect(main.textContent).not.toContain("Owner");
     stop();

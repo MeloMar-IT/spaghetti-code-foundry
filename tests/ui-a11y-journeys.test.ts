@@ -198,14 +198,14 @@ const JOURNEYS: Journey[] = [
         answers["/api/queue"] = { pending: [], active: [], concurrency: 2 };
         answers["/api/run-owners"] = [{ id: "u1", name: "Ann", runs: 1 }];
         await stopper(m.runs.renderRunsList(s.main));
-        gate(s, "flow-r1");
+        gate(s, "do it"); // a row is titled with the task, not the flow
         s.main.replaceChildren();
         await stopper(m.runs.renderRunDetail(s.main, "r1"));
         esHandlers.update!({ data: JSON.stringify({ summary: RUN("r1", { status: "running", next: nextStep("running", { runId: "r1" }, {}) }) }) });
       } else {
-        const a = { runs: async () => [myRun("r1")], queue: async () => ({ pending: [] }) };
+        const a = { runs: async () => [myRun("r1", { task: "Open the door" })], queue: async () => ({ pending: [] }) };
         await stopper(m.mine.renderMyRuns(s.main, { a }));
-        gate(s, "flow-r1");
+        gate(s, "Open the door");
         s.main.replaceChildren();
         const b = { run: async () => myRun("r1"), queue: async () => ({ pending: [] }), events: () => ({ addEventListener: (t: string, f: any) => { esHandlers[t] = f; }, close() {}, readyState: 1 }) };
         await stopper(m.mine.renderMyRun(s.main, "r1", { a: b }));

@@ -118,22 +118,23 @@ describe("Runs list states", () => {
     stop();
   });
 
-  it("draws each run as a card with labelled parts: the admin adds Owner, Steps and Cost", async () => {
+  it("draws each run as a card with labelled parts: the admin adds Owner and Cost (no Steps), and the task is left out when it is the title", async () => {
     good([RUN("r1")]);
     const { main, stop } = await open();
     const li = main.all("li")[0]!;
     expect(li.parent!.attrs.class).toBe("run-cards");
     const labels = walk(li).map((c) => c.attrs["data-label"]).filter(Boolean);
-    expect(labels).toEqual(["What happens next", "Task", "Owner", "Steps", "Cost"]);
+    expect(labels).toEqual(["What happens next", "Owner", "Cost"]);
+    expect(li.all("a")[0]!.textContent).toBe("do it");
     expect(li.all("a")[0]!.attrs.href).toBe("#/runs/r1");
     stop();
   });
 
-  it("a user's card has no Owner, Steps or Cost", async () => {
+  it("a user's card has no Owner or Cost", async () => {
     good([RUN("r1")]);
     const { main, stop } = await open({ admin: false });
     const labels = walk(main.all("li")[0]!).map((c) => c.attrs["data-label"]).filter(Boolean);
-    expect(labels).toEqual(["What happens next", "Task"]);
+    expect(labels).toEqual(["What happens next"]);
     stop();
   });
 

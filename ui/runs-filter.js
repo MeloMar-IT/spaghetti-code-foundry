@@ -110,6 +110,8 @@ export function jobMatches(job, filter, { ownerName, now = Date.now() } = {}) {
       if (typeof job.githubRepo === "string") hay.push(`${job.githubRepo}#${job.issue}`);
     }
     if (typeof job?.task === "string") hay.push(job.task.split("\n")[0]);
+    // the title the row shows (next.title) is searched too, as the server does for a run
+    if (typeof job?.next?.title === "string") hay.push(job.next.title.trim());
     const q = filter.q.toLowerCase();
     if (!hay.some((t) => typeof t === "string" && t.toLowerCase().includes(q))) return false;
   }

@@ -1,4 +1,5 @@
 import { confirmDialog, h, modal } from "./dom.js";
+import { statusPill } from "./icons.js";
 import { REASON_MAX } from "./refinement-suggest.js";
 
 // The Definition of Ready on the draft page: the check, the results and "Accept anyway". Every text is set as text, never as HTML.
@@ -26,6 +27,9 @@ export const readyRun = (s, did) => {
 
 /** The state of a draft in words: "Ready", "Drafting" or "Split". */
 export const draftStateText = (d) => DRAFT_STATES[d?.state] ?? "Drafting";
+
+/** The state of a draft as a status pill (icon and word). The old `state-*` class stays for colour. */
+export const draftStatePill = (d) => statusPill(d?.state === "ready" ? "success" : d?.state === "split" ? "disabled" : "waiting", draftStateText(d), `state-${d?.state}`);
 
 /** What the check shows: { kind: "line" | "none" | "button", again? }. A brief is not needed here: code may decide every item alone. */
 export function readyState(s, d) {
@@ -118,7 +122,7 @@ function rowNode(row, act) {
  */
 export function readyNodes(s, d, act) {
   if (!act && !d.readiness && !d.acceptedAnyway) return [];
-  const out = [h("h4", {}, READY_TITLE), h("span", { class: `pill state-${d.state}` }, draftStateText(d))];
+  const out = [h("h4", {}, READY_TITLE), draftStatePill(d)];
   if (act) {
     const st = readyState(s, d);
     const ask = (label) => h("button", { class: "small", "data-focus": "ready-check", onClick: (e) => act.ask(e.currentTarget) }, label);
