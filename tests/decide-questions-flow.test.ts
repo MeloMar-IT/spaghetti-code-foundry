@@ -5,7 +5,7 @@ import { addRepo, reposPath, setRepoSettings } from "../src/auth/repos.js";
 import { ConfigSchema } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
-import { DECIDED_HEADING, reportFirst } from "../src/next-step.js";
+import { DECIDED_HEADING, commentFirst, commentText, reportFirst } from "../src/next-step.js";
 import { userRun } from "../src/server/user-view.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 
@@ -79,6 +79,22 @@ describe("the planner decides technical questions itself", () => {
     expect(q).not.toContain("Which store?");
     expect(q).not.toContain(DECIDED_HEADING);
     expect(outcomes()).toEqual(["asked"]);
+  });
+
+  it("with auto_defaults, asks the person on an owner_action question, and not on a product question", async () => {
+    const goAuto = (id: string) => {
+      RUN = id;
+      return runFlow(loadFlow("issue-plan", gh.tmp).flow, { task: "", repo: gh.tmp, runsDir: runsDir(), runId: id, claudeBin, config, vars: { github_repo: "acme/app", issue: "7", auto_defaults: "true" } });
+    };
+    process.env.FAKE_ISSUE_PLAN = "**Q1. Who edits the issue text?**\n**Kind:** owner_action\nOnly the owner can.\n**Recommendation:** edit it yourself" + NEEDS;
+    expect((await goAuto("20260101-000000-dq09")).status).toBe("stopped");
+    const owner = gh.comments()[0]!.body;
+    expect(owner.split("\n")[0]).toBe(commentFirst("planner_questions"));
+    expect(owner).not.toContain("Nothing needed from you");
+    expect(owner).toContain(`_${commentText("planner_questions")}_`);
+    process.env.FAKE_ISSUE_PLAN = product + NEEDS;
+    expect((await goAuto("20260101-000000-dq10")).status).toBe("stopped");
+    expect(gh.comments().at(-1)!.body.split("\n")[0]).toBe(commentFirst("planner_questions", { autoDefaults: true }));
   });
 
   it("decides a question of a revision and plans again", async () => {
