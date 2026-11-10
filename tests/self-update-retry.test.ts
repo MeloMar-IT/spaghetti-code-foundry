@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadUpdateState, saveUpdateState } from "../src/self-update-state.js";
+import { DEFAULT_STEPS, loadUpdateState, runStep, saveUpdateState } from "../src/self-update-state.js";
+import { tmpdir } from "node:os";
 import { fixture, removeFixtures, sha7, STEPS, updater } from "./helpers/self-update.js";
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -232,5 +233,27 @@ describe("self-update: the tests run in a test slot", () => {
     expect(f.state().retry?.tries).toBe(1);
     expect(f.state().tested).toBeUndefined();
     expect(existsSync(f.stage)).toBe(false);
+  });
+});
+
+describe("self-update: a test run that runs out of time", () => {
+  it("gives the whole suite 30 minutes", () => {
+    expect(DEFAULT_STEPS.find((s) => s.name === "test")?.timeoutMs).toBe(30 * MIN);
+  });
+
+  it("marks a step stopped at its limit, and only that one", async () => {
+    expect((await runStep({ name: "test", cmd: "sh", args: ["-c", "echo ok; sleep 30"], timeoutMs: 300 }, tmpdir())).timedOut).toBe(true);
+    expect((await runStep({ name: "test", cmd: "sh", args: ["-c", "exit 1"], timeoutMs: 5000 }, tmpdir())).timedOut).toBeUndefined();
+  });
+
+  it("says that the tests ran out of time, not only the last passing lines", async () => {
+    const f = fixture();
+    const v2 = f.publish({ "test.sh": 'echo " ✓ tests/a.test.ts (3 tests)"\nsleep 30\n' });
+    const steps = STEPS.map((s) => (s.name === "test" ? { ...s, timeoutMs: 2000 } : s));
+    const t = updater(f, { steps });
+    await t.u.tick(true);
+    expect(f.state().retry?.commit).toBe(v2);
+    const line = t.logs.find((l) => l.includes("failed at test"));
+    expect(line).toContain("the test step ran out of time after 2 seconds");
   });
 });

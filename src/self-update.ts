@@ -12,7 +12,12 @@ import {
 import { buildStamp, RESTART_CODE } from "./supervise.js";
 
 export const CHECK_EVERY_MS = 300_000;
-export const TEST_TRIES = 3;
+export /** A time limit in words: "30 minutes", "1 minute", "2 seconds". */
+const spell = (ms: number) => {
+  const [n, unit] = ms >= 60_000 ? [Math.round(ms / 60_000), "minute"] : [Math.max(1, Math.round(ms / 1000)), "second"];
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+};
+const TEST_TRIES = 3;
 const RETRY_WAIT_MS = 20 * 60_000;
 
 export type UpdateReason = "broken_state" | "needs_repair" | "not_git" | "unsupervised" | "wrong_repo" | "unreachable"
@@ -389,8 +394,9 @@ export class SelfUpdater {
         if (s.retry?.commit !== commit) s.retry = undefined;
       }, this.file);
       await this.cleanStage(); // a leftover of a server that was stopped while it built
-      const fail = (stage: FailStage, output: string): "failed" | "retry" => {
-        const lines = this.lines(output);
+      const fail = (stage: FailStage, output: string, outOfTime?: number): "failed" | "retry" => {
+        // A step stopped at its time limit: say so, the last lines of its output alone look like passing tests.
+        const lines = outOfTime ? [`the ${stage} step ran out of time after ${spell(outOfTime)}`, ...this.lines(output).slice(-2)] : this.lines(output);
         const tests = stage === "test" ? this.names(output) : [];
         const names = tests.length ? ` — failing tests: ${tests.join(", ")}` : "";
         if (stage === "test" && n < TEST_TRIES) {
@@ -428,7 +434,7 @@ export class SelfUpdater {
           : step;
         const r = await runStep(run, this.stageDir());
         if (r.killed || this.stopped) return "stopped";
-        if (!r.ok) return fail(name, r.output);
+        if (!r.ok) return fail(name, r.output, r.timedOut ? (run.timeoutMs ?? 10 * 60_000) : undefined);
       }
       updateState((s) => {
         s.tested = { commit, at: new Date().toISOString() };

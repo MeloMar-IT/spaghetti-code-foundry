@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Hotfix: self-update gives the test suite 30 minutes instead of 15. The suite takes about 13 minutes on a quiet machine, so a busy one ran out of time and the try counted as failed. A step stopped at its time limit now says so ("the test step ran out of time after 30 minutes") instead of showing only the last, passing test lines.
 - Hotfix (tests): the "list: stall" and "read: stall" cases of `tests/skill-import-limits.test.ts` failed on a busy machine, which stopped a self-update. Their time limit bounds every git command, also the ones that open the tree, and 2 seconds was too short for those under load; it is now 6 seconds.
 - Hotfix: a run that failed at the step that closes its issue (such as `create_split`) kept showing as failed after the issue was closed by hand. Such a run did not close the issue itself, so it now shows "closed on GitHub — nothing to do" like any other run whose issue was closed.
 - Hotfix: with a watcher that takes its own recommendations (`auto_defaults`), a planner question that only the owner can act on (`Kind: owner_action`, such as editing the issue text) began with "Nothing needed from you". The recommendations cannot answer such a question, so its comment now begins with what you need to do, like the status comment.
