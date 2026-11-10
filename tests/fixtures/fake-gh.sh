@@ -284,10 +284,14 @@ fi
 # $FAKE_GH_GRAPHQL_MISSING="7 9": those aliases are null with a NOT_FOUND error, as gh prints it (exit 1). $FAKE_GH_GRAPHQL_MAX=<n>: a query with more aliases is refused.
 # $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail. $FAKE_GH_GRAPHQL_LOG=<file>: every request body (query and variables) is appended there, one JSON per line.
 # "pr close <n|url>" appends its argument to $FAKE_GH_LOG.prclosed.
-# "api graphql … lastEditedBy …": the author and last editor of an issue, as "<author> <editor>".
-# $FAKE_GH_ISSUE_AUTHOR (default foundry-owner; "fail" = the call fails with HTTP 502), $FAKE_GH_ISSUE_EDITOR (default none).
+# "api graphql … editor{login} …": the author and last editor of an issue, as "<author> <editor>".
+# $FAKE_GH_ISSUE_AUTHOR (default foundry-owner; "fail" = the call prints an error on stdout and fails with HTTP 502), $FAKE_GH_ISSUE_EDITOR (default none).
+# An Issue has no field lastEditedBy: like GitHub, the fake answers it with the error (on stdout too) and exit 1.
 case "$all" in "api graphql"*lastEditedBy*)
-  if [ "$FAKE_GH_ISSUE_AUTHOR" = fail ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+  echo "Field 'lastEditedBy' doesn't exist on type 'Issue'"; echo "gh: Field 'lastEditedBy' doesn't exist on type 'Issue'" >&2; exit 1 ;;
+esac
+case "$all" in "api graphql"*"editor{login}"*)
+  if [ "$FAKE_GH_ISSUE_AUTHOR" = fail ]; then echo "Field does not exist on type"; echo "gh: HTTP 502" >&2; exit 1; fi
   echo "${FAKE_GH_ISSUE_AUTHOR-foundry-owner} ${FAKE_GH_ISSUE_EDITOR}"; exit 0 ;;
 esac
 case "$all" in "api graphql"*)

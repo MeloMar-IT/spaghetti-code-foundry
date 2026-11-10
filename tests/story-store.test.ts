@@ -345,8 +345,8 @@ describe("step methods send the arguments of the old flow steps and return gh's 
   const OLD_PLAIN =String.raw`
     "# #\(.number): \(.title)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body)\n"
     + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))`;
-  const OLD_QUERY = String.raw`query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} lastEditedBy{login}}}}`;
-  const OLD_AUTHORS = String.raw`.data.repository.issue | [(.author.login // ""), (.lastEditedBy.login // "")] | join(" ")`;
+  const OLD_QUERY = String.raw`query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} editor{login}}}}`;
+  const OLD_AUTHORS = String.raw`.data.repository.issue | [(.author.login // ""), (.editor.login // "")] | join(" ")`;
   const OLD_PR_TEXT = String.raw`"# PR #\(.number // "") \(.title)\n\(.body)\n"`;
   const OLD_LINES = String.raw`.[] | select(.body | (contains("claude-factory") or contains("spaghetti-code-foundry")) | not) | "--- \(.user.login) on \(.path):\(.line // .original_line):\n\(.body)\n"`;
   const OLD_REVIEWS = String.raw`

@@ -109,6 +109,9 @@ describe("size_gate", () => {
     const graphql = size(plan(OVER, OWNER), { FAKE_GH_ISSUE_AUTHOR: "fail" });
     expect(graphql.stdout).toContain("the owner's exception does not count");
     expect(graphql.stdout).toContain("SIZE: over");
+    // The words of gh's error are not logins: nothing is checked, and the reason says so.
+    expect(graphql.stdout).toContain("(could not check)");
+    expect(graphql.ghLog).not.toMatch(/collaborators\/(Field|does|exist)\//);
     expect(size(plan(OVER, OWNER), { FAKE_GH_ISSUE_AUTHOR: "app/bot" }).stdout).toContain("SIZE: over");
   });
 
