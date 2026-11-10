@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { chooseFlow } from "./helpers/start-flow.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -273,7 +274,9 @@ describe("renderers with readOnly", () => {
     // control
     const again = div();
     await start.renderStart(again, { a });
-    expect(texts(find(again, "form")[0]!)).toEqual(["Add repository", "Review", "Clear"]);
+    expect(texts(find(again, "form")[0]!)).toEqual(["Make a plan", "Clear"]);
+    await chooseFlow(again); // the flow, with its repository and Add repository, is under Advanced
+    expect(texts(find(again, "form")[0]!)).toEqual(["Make a plan", "Clear", "Add repository"]);
   });
 
   it("My runs: no Remove for a queued run", async () => {

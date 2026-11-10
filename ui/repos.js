@@ -2,7 +2,9 @@ import { api } from "./api.js";
 import { reposChanged } from "./context.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, without, withQuery } from "./filters.js";
 import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
+import { statusPill } from "./icons.js";
 import { integrationBlock, integrationOf } from "./integration.js";
+import { pageHeader } from "./kit/product.js";
 import { repoDialog } from "./repo-connect.js";
 import { MOVE_TITLE, moveDialog } from "./repo-move.js";
 import { onWish, takeWish } from "./palette-data.js";
@@ -179,7 +181,7 @@ const integrationCell = (repo, admin, options) => {
 const connectionCell = (repo, extra = {}) => {
   const c = repo.connection;
   return h("td", {},
-    h("span", { class: c ? (c.ok ? "pill ok" : "pill fail") : "pill" }, connectionStatus(repo)),
+    statusPill(c ? (c.ok ? "success" : "danger") : "neutral", connectionStatus(repo)),
     c ? [" ", h("span", { class: "muted", title: new Date(c.at).toLocaleString() }, `tested ${timeAgo(c.at)}`)] : null,
     c?.ok ? connectionLines(repo).map((l) => h("div", { class: l.ok ? "status ok" : "status bad" }, l.text)) : null,
     connectionProblem(repo, extra));
@@ -465,11 +467,11 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       loadRuns(n);
     }
   };
-  const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, scope.title),
-    h("span", { class: "muted" }, scope.hint),
-    switcher ? scopeSwitch(scope.id) : null,
-    guideReturnNode({ store, toGuide: () => backToGuide(store), notify: toast }),
-    h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null);
+  const head = (canAdd) => pageHeader({ layout: "toolbar", title: scope.title,
+    meta: [h("span", { class: "muted" }, scope.hint),
+      switcher ? scopeSwitch(scope.id) : null,
+      guideReturnNode({ store, toGuide: () => backToGuide(store), notify: toast })],
+    actions: [h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null] });
   const add = async () => {
     const created = await repoDialog({ admin, options: state.options });
     if (created?.id && !state.repos.some((r) => r.id === created.id)) state.repos = [...state.repos, created];
@@ -517,7 +519,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       connectionCell(repo, { error: testError }),
       runs,
       h("td", { class: "next-step" },
-        h("span", { class: att.level === "ok" ? "pill ok" : att.level === "warn" ? "pill locked" : "pill fail" }, att.text),
+        statusPill(att.level === "ok" ? "success" : att.level === "warn" ? "warning" : "danger", att.text),
         att.detail ? h("div", { class: "muted", title: att.detail }, att.detail) : null,
         !readOnly && promoted ? h("div", {}, promoted) : null),
       h("td", {}, h("a", { class: "btn small", href: repoHref(repo) }, "Open"), moveBtn));

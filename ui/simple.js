@@ -3,7 +3,8 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { changeRepoOf, changesOf } from "./simple-change-model.js";
-import { projectsModel } from "./simple-model.js";
+import { projectOfWork, projectsModel } from "./simple-model.js";
+import { greeting, todayModel, todayView } from "./today.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
 import { openAsk } from "./ask-handoff.js";
 import { askCard, checkCard, hasUnsentAnswers, stuckCard } from "./simple-turn.js";
@@ -25,11 +26,12 @@ function linkNode(l, cls, focus) {
 export function projectsView(projects) {
   const body = projects.length
     ? h("ul", { class: "simple-projects" }, projects.map((p) => h("li", { class: "simple-card" },
-      h("h2", {}, h("a", { href: `#/repos/${encodeURIComponent(p.id)}`, "data-focus": `simple-project-${p.id}` }, p.name)),
+      h("h3", {}, h("a", { href: `#/repos/${encodeURIComponent(p.id)}`, "data-focus": `simple-project-${p.id}` }, p.name)),
       h("p", { class: "simple-state" }, p.state),
       linkNode(p.next, "btn primary simple-big", `simple-next-${p.id}`))))
     : h("p", { class: "simple-empty" }, WORDS.empty);
-  return [h("h1", {}, WORDS.myProjects), h("p", {}, h("a", { href: "#/start-guide", "data-focus": "simple-get-started" }, GUIDE.getStarted)), body];
+  // The greeting of Today is the h1 of the page; My projects follows it.
+  return [h("h2", {}, WORDS.myProjects), h("p", {}, h("a", { href: "#/start-guide", "data-focus": "simple-get-started" }, GUIDE.getStarted)), body];
 }
 
 /** "Yes, build this" of a Planned request, by request id: "sending" | "failed". Kept here because the page is drawn again after a build. */
@@ -300,7 +302,7 @@ async function live(main, { a, draw, turns = false, changesFor }) {
   let poll;
   const states = liveStates({
     body: box,
-    heading: () => h("h1", {}, WORDS.myProjects),
+    heading: () => h("h1", {}, turns ? WORDS.myProjects : greeting()),
     label: WORDS.loading,
     what: WORDS.loadFailed,
     retry: () => poll.refresh(),
@@ -319,7 +321,7 @@ async function live(main, { a, draw, turns = false, changesFor }) {
       return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending, mineItems, changes };
     },
     draw: ({ repos, runs, pending, mineItems, changes }) => {
-      const nodes = draw(projectsModel(repos, runs, pending, changes), () => poll.refresh(), repos, mineItems);
+      const nodes = draw(projectsModel(repos, runs, pending, changes), () => poll.refresh(), repos, mineItems, { runs, pending });
       keepScroll(box, () => mount(box, ...nodes, states.alert, states.note));
     },
     every: REFRESH_MS,
@@ -364,11 +366,11 @@ export async function renderSimpleHelp(main, { a = api } = {}) {
  * My projects; never rejects; returns a cleanup. `openGuide()` is called once, when the first successful load shows no project and
  * `alive()` still says this page is the one on screen (a slow answer that arrives after the person left must not move them).
  */
-export function renderSimpleHome(main, { a = api, openGuide, alive = () => true } = {}) {
+export function renderSimpleHome(main, { a = api, openGuide, alive = () => true, list = "" } = {}) {
   let first = true;
   return live(main, {
     a,
-    draw: (projects) => {
+    draw: (projects, _refresh, repos, _turns, { runs, pending } = {}) => {
       const empty = first && projects.length === 0;
       first = false;
       if (empty && alive()) {
@@ -378,7 +380,9 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true 
           // the page stays as it is
         }
       }
-      return projectsView(projects);
+      // Today first (work of the person's projects only), then the project cards. A counter opens `list` on this page.
+      const model = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos) });
+      return [...todayView(model, { focus: "simple-today", simple: true, list }), ...projectsView(projects)];
     },
   });
 }

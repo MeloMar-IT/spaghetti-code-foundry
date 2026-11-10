@@ -18,7 +18,7 @@ test.setTimeout(120_000);
 const RUNS_READY: Ready = { selector: "#main", text: "Seeded failed run" };
 const HOME_READY: Ready = { selector: "#main", text: "Seeded gate run" };
 const BOARD_READY: Ready = { selector: "#main", text: "acme/app" };
-const HOME_MARKER: Marker = { selector: "#main .home > div > section.home-section", startsWith: "Active" };
+const HOME_MARKER: Marker = { selector: "#main .home .today-summary" };
 const RUNS_MARKER: Marker = { selector: "#main .toolbar" };
 const LOG_READY: Ready = { selector: "#main pre.log", children: 2000, visible: true, last: "line 5000 of the large log" };
 

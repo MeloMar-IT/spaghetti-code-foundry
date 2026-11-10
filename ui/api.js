@@ -10,9 +10,16 @@ export const setCsrf = (t) => {
 };
 
 let keepOnAuthFail = () => false;
-/** `fn()` true: typed text is waiting, so a 401 does not reload the page (the call still fails). Pass null to remove it. */
+/**
+ * `fn()` true: typed text is waiting, so a 401 does not reload the page (the call still fails). Pass null to remove it.
+ * Returns a release that removes only this guard, so a page that leaves late cannot remove a newer page's guard.
+ */
 export const keepPage = (fn) => {
-  keepOnAuthFail = fn || (() => false);
+  const guard = fn || (() => false);
+  keepOnAuthFail = guard;
+  return () => {
+    if (keepOnAuthFail === guard) keepOnAuthFail = () => false;
+  };
 };
 
 export const PREVIEW_TEXT = "This is a preview. Nothing can be changed here.";

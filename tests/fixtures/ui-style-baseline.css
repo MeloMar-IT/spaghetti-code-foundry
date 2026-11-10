@@ -396,6 +396,17 @@ a.btn.primary:hover { filter: brightness(1.06); }
 details.home-section > summary { cursor: pointer; font-weight: 600; }
 .home .since { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: var(--space-xl); }
 .home-ask { margin-bottom: var(--space-xl); }
+.today-summary { margin: 0 0 var(--space-lg); color: var(--muted); }
+.today-attention, .today-building, .today-finished, .today-list { margin-bottom: var(--space-xl); }
+.today-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-md); }
+.today-card { display: grid; gap: var(--space-sm); }
+.today-card h3 { margin: 0; }
+.today-cause > summary { cursor: pointer; color: var(--muted); }
+.today-counters ul { list-style: none; margin: 0 0 var(--space-xl); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.today-counter { display: flex; flex-direction: column; padding: var(--space-md); border: 1px solid var(--border); border-radius: var(--radius); text-decoration: none; }
+.today-count { font-size: var(--text-page); font-weight: 600; }
+.today-building ul, .today-finished ul, .today-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.today-building h3 { margin: 0; font-size: var(--text-body); }
 
 /* Status names with a "?" (ui/next.js) */
 .help { display: contents; }
@@ -474,8 +485,15 @@ button.icon { justify-content: center; }
 .start-form .start-note { margin: 0; color: var(--muted); font-size: var(--text-small); }
 .start-form .start-more { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; min-width: 0; }
 .start-form .start-more-body { display: grid; gap: 12px; }
-.start-entry { display: grid; gap: 8px; max-width: var(--size-form); margin-bottom: 16px; }
-.start-entry .start-label { font-weight: 600; margin: 0; }
+.composer { display: grid; gap: 6px; }
+.composer textarea { width: 100%; box-sizing: border-box; }
+.composer-advanced { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; min-width: 0; }
+.composer-advanced > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.composer-advanced > div { display: grid; gap: 16px; margin-top: 12px; }
+.start-form .start-points { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.start-form .start-points .choice { display: flex; align-items: center; }
+.start-repo-line p { margin: 0; }
+.start-conversations { display: grid; gap: 8px; }
 .start-review dl { margin: 0; }
 .start-review dt { font-weight: 600; }
 .start-review dd { margin: 0 0 8px; overflow-wrap: anywhere; }

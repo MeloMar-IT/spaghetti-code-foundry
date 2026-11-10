@@ -1,6 +1,7 @@
 import { api, configVersion } from "./api.js";
-import { h, mount, showError, tableBox, toast } from "./dom.js";
+import { h, mount, showError, table, toast } from "./dom.js";
 import { settingControl } from "./kit/forms.js";
+import { pageHeader } from "./kit/product.js";
 import { confirmUnreadable, mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 
@@ -236,6 +237,9 @@ function findingActions(f, m, reload) {
   return { story, mute };
 }
 
+const head = (title = "Problems") =>
+  pageHeader({ layout: "toolbar", title, meta: title === "Problems" ? h("span", { class: "muted" }, "What the monitor found") : undefined });
+
 function findingsTable(m, redraw) {
   const rows = m.findings.slice(0, shown);
   const body = rows.map((f) => h("tr", {},
@@ -247,9 +251,7 @@ function findingsTable(m, redraw) {
     h("td", {}, storyCell(f.story, f.needsYou))));
   const left = m.findings.length - rows.length;
   return h("div", {},
-    tableBox(h("table", { class: "table compact", "aria-label": "Findings" },
-      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story"].map((c) => h("th", { scope: "col" }, c)))),
-      h("tbody", {}, body))),
+    table(["Severity", "What", "Since", "How often", "State", "Story"], body, { label: "Findings", class: "compact" }),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
 
@@ -272,9 +274,8 @@ function detectorsTable(m, reload) {
         ? h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(mute.id), () => "Mute ended", reload) }, "End mute")
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
-  return tableBox(h("table", { class: "table compact", "aria-label": "Detectors" },
-    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
-    h("tbody", {}, rows)));
+  return table(["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")],
+    rows, { label: "Detectors", class: "compact" });
 }
 
 // The newest reload wins: an older answer that arrives later is dropped.
@@ -284,11 +285,11 @@ let reloads = 0;
 export async function renderProblems(main, { data } = {}) {
   let m = data;
   if (!m) {
-    mount(main, h("h1", {}, "Problems"), loadingState("Loading problems…", { rows: 5, shape: "table" }));
+    mount(main, head(), loadingState("Loading problems…", { rows: 5, shape: "table" }));
     try {
       m = await api.monitor();
     } catch (e) {
-      mount(main, h("h1", {}, "Problems"), errorState(explainError(e, { what: "The problems could not be loaded." }), { onRetry: () => renderProblems(main) }));
+      mount(main, head(), errorState(explainError(e, { what: "The problems could not be loaded." }), { onRetry: () => renderProblems(main) }));
       return;
     }
   }
@@ -312,7 +313,7 @@ export async function renderProblems(main, { data } = {}) {
     m.findings?.length ? findingsTable(m, redraw) : m.findingsUnreadable ? null : emptyState("No findings."));
   redraw();
   mount(main,
-    h("h1", {}, "Problems"),
+    head(),
     note,
     switchRow(m, reload),
     list,
@@ -331,16 +332,16 @@ export async function renderProblemDetail(main, id, { data } = {}) {
   let m;
   if (data) ({ d, m } = data);
   else {
-    mount(main, h("h1", {}, "Problem"), loadingState("Loading the problem…", { rows: 3, shape: "detail" }));
+    mount(main, head("Problem"), loadingState("Loading the problem…", { rows: 3, shape: "detail" }));
     const [one, list] = await Promise.allSettled([api.monitorFinding(id), api.monitor()]);
     if (one.status === "rejected") {
       const e = one.reason;
-      mount(main, h("h1", {}, "Problem"),
-        errorState(explainError(e, { what: "The problem could not be loaded." }), { back, onRetry: e?.status === 404 ? undefined : () => renderProblemDetail(main, id) }));
+      mount(main, head("Problem"),
+        errorState(explainError(e,{ what: "The problem could not be loaded." }), { back, onRetry: e?.status === 404 ? undefined : () => renderProblemDetail(main, id) }));
       return;
     }
     if (list.status === "rejected") {
-      mount(main, h("h1", {}, "Problem"),
+      mount(main, head("Problem"),
         errorState(explainError(list.reason, { what: "The problems could not be loaded." }), { back, onRetry: () => renderProblemDetail(main, id) }));
       return;
     }
@@ -365,7 +366,7 @@ export async function renderProblemDetail(main, id, { data } = {}) {
   const f = (m.findings ?? []).find((x) => x.id === id);
   const { story, mute } = f ? findingActions(f, m, reload) : { story: [], mute: [] };
   mount(main,
-    h("h1", {}, f?.summary ?? "Problem"),
+    head(f?.summary?.trim() ? f.summary : "Problem"),
     f
       ? h("div", { class: "muted text-sm" },
         [SEVERITY[f.severity] ?? f.severity, f.detector, `since ${when(f.firstSeen)}`, `seen in ${f.count} ${f.count === 1 ? "check" : "checks"}`, stateText(f)].join(" · "), " · ", storyCell(f.story, f.needsYou))

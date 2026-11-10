@@ -1,4 +1,5 @@
 import { api, keepPage } from "./api.js";
+import { composerBox } from "./composer.js";
 import { h, mount } from "./dom.js";
 import {
   PICTURE_ACCEPT, TEXT_MAX, answersBody, cardBody, cardEdit, cardItems, changeDraft, changeRepoOf, changesOf, clearChangeDraft, hasUnsentChange,
@@ -193,7 +194,11 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
   }
 
   function writeView() {
-    const text = h("textarea", { id: "change-text", rows: 8, "data-focus": "change-text", value: draft.text, disabled: busy ? true : undefined, onInput: () => { draft.text = String(text.value ?? ""); } });
+    const composer = composerBox({
+      id: "change-text", rows: 8, focus: "change-text", value: draft.text, hint: CHANGE.hint, disabled: busy,
+      onInput: () => { draft.text = String(text.value ?? ""); }, onSubmit: () => send(),
+    });
+    const text = composer.box;
     draft.text = String(text.value ?? draft.text);
     const send = () => {
       const t = String(text.value ?? "").trim();
@@ -215,8 +220,7 @@ export async function renderSimpleChange(main, { id, a = api, onName, every = 50
         });
     };
     return [
-      h("label", { for: "change-text" }, CHANGE.what), text,
-      h("p", { class: "muted" }, CHANGE.hint),
+      composer.field,
       picturesBlock(),
       status(),
       h("p", {}, h("button", { type: "button", class: "btn primary simple-big", disabled: busy || pending > 0 ? true : undefined, "data-focus": "change-send", onClick: send }, busy ? CHANGE.sending : CHANGE.send)),

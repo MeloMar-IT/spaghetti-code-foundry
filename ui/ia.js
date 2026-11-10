@@ -27,7 +27,7 @@ export const PAGES = [
   { id: "agents", path: "#/agents", title: "Claude and Codex", area: "home", dest: null, parent: null, nav: "secondary", label: { admin: "Claude and Codex", user: "Claude and Codex" }, roles: AU },
   { id: "start-guide", path: "#/start-guide", title: "Get started", area: "home", dest: null, parent: null, nav: "secondary", label: { user: "Get started" }, roles: ["user"] },
   { id: "help", path: "#/help", title: "Help", area: "home", dest: null, parent: null, nav: "secondary", label: { admin: "Help", user: "Help" }, roles: AU },
-  { id: "change", path: "#/change/:id", title: "Ask for a change", area: "home", dest: null, parent: null, nav: "detail", label: {}, roles: ["user"] },
+  { id: "change", path: "#/change/:id", title: "Ask for a change", area: "home", dest: null, parent: null, nav: "detail", label: {}, roles: AU },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
   { id: "epics", path: "#/epics", title: "Epics", area: "work", dest: "epics", parent: null, nav: "primary", label: { admin: "Epics", user: "Epics" }, roles: AU, scope: true },
@@ -199,6 +199,8 @@ const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 const OWNER_OK = /^[\w-]+$/;
 const VALID = { repo: (v) => v === ALL_REPOS || (v.length <= 200 && REPO_OK.test(v)), owner: (v) => v.length <= 64 && OWNER_OK.test(v),
   view: (v) => v === "simple",
+  // the list a Today counter opens on the Simple Home (see GROUPS in runs-filter.js)
+  list: (v) => ["waiting", "building", "check", "finished", "finished-today"].includes(v),
   method: (v) => ["none", "github-token", "https-token", "ssh-deploy-key", "github-app"].includes(v) };
 
 /** Splits an address into its path and the text after the first "?" ("" when there is none). */

@@ -2,13 +2,16 @@ import { api } from "./api.js";
 import { actorText, timeText } from "./audit.js";
 import { errorText } from "./auth.js";
 import { confirmDialog, h, modal, mount, table } from "./dom.js";
+import { statusPill } from "./icons.js";
+import { pageHeader } from "./kit/product.js";
 import { outcomeValueText } from "./outcomes.js";
 import { banner, emptyState, errorState, explainError, loadingState } from "./states.js";
 
 // The Autonomy page (#648): the level of every repository and flow, its gate, waiting requests and the history of changes.
 // The server decides who may do what; this page only hides the controls that would be refused.
 
-const SHARES = new Set(["evidence_completeness", "eval_pass_rate"]);
+const TONE_SEMANTIC = { ok: "success", fail: "danger", locked: "warning" };
+const SHARES =new Set(["evidence_completeness", "eval_pass_rate"]);
 const ACTION_TEXT = { "autonomy-promote-request": "Promotion requested", "autonomy-promote": "Promoted", "autonomy-demote": "Demoted" };
 const REASON_MAX = 200;
 
@@ -218,7 +221,7 @@ export function autonomySection({ load, history, calls, note = defaultNote, read
       const r = checkResult(k);
       return h("tr", {},
         h("td", {}, k.label),
-        h("td", {}, h("span", { class: `pill ${r.tone}` }, r.label)),
+        h("td", {}, statusPill(TONE_SEMANTIC[r.tone] ?? "neutral", r.label)),
         h("td", { class: "mono" }, gateValueText(k, k.value)),
         h("td", { class: "mono" }, gateValueText(k, k.threshold)),
         h("td", {}, k.detail));
@@ -233,7 +236,7 @@ export function autonomySection({ load, history, calls, note = defaultNote, read
       h("td", { class: "muted", title: e.time }, timeText(e.time)),
       h("td", {}, historyWho(e)),
       h("td", {}, actionText(e.action)),
-      h("td", {}, h("span", { class: e.result === "failed" ? "pill fail" : "pill ok" }, e.result)),
+      h("td", {}, statusPill(e.result === "failed" ? "danger" : "success", String(e.result || "ok"))),
       h("td", {}, e.detail ?? "")));
     return h("div", { class: "stack" }, h("h4", {}, "History"),
       failed.history ? h("p", { class: "muted" }, "The history is not available now.")
@@ -336,7 +339,7 @@ export function renderAutonomy(main, { readOnly = false } = {}) {
     readOnly,
   });
   mount(main,
-    h("div", { class: "toolbar page-head" }, h("h1", {}, "Autonomy"), h("span", { class: "muted" }, "How much each repository and flow may do on its own")),
+    pageHeader({ layout: "toolbar", title: "Autonomy", meta: h("span", { class: "muted" }, "How much each repository and flow may do on its own") }),
     h("p", { class: "muted" }, "A level is earned: ask for the next one when the gate passes, and the owner approves it. A demotion takes effect at once."),
     section.el);
   return () => section.stop();
