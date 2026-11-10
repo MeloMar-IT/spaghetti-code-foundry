@@ -243,10 +243,13 @@ describe("size check at the end of the fetch", { timeout: 15_000, retry: 0 }, ()
 
 describe("listing and reading bounds", { timeout: 15_000, retry: 0 }, () => {
   const open = (e: Record<string, string>, timeoutMs = 10_000) => openGitTree(SOURCE, C40, { timeoutMs, env: env(e) });
+  // timeoutMs bounds every git command, the ones that open the tree too: on a busy machine 2 s was too short for those
+  // (a self-update test run failed with a load of 11). This leaves them room and still ends well inside the test's 15 s.
+  const STALL = 6000;
 
   it.each([
     ["flood", { STUB_LIST: "flood" }, 10_000, "bad-listing"],
-    ["stall", { STUB_LIST: "stall" }, 2000, "timeout"],
+    ["stall", { STUB_LIST: "stall" }, STALL, "timeout"],
     ["junk", { STUB_LIST: "junk" }, 10_000, "bad-listing"],
   ])("list: %s", async (_n, e, t, expected) => {
     const tree = await open(e, t);
@@ -257,7 +260,7 @@ describe("listing and reading bounds", { timeout: 15_000, retry: 0 }, () => {
 
   it.each([
     ["flood", { STUB_READ: "flood" }, 10_000, "read-failed"],
-    ["stall", { STUB_READ: "stall" }, 2000, "timeout"],
+    ["stall", { STUB_READ: "stall" }, STALL, "timeout"],
     ["short", { STUB_READ: "short" }, 10_000, "read-failed"],
   ])("read: %s", async (_n, e, t, expected) => {
     const tree = await open(e, t);
