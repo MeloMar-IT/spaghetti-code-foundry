@@ -2,13 +2,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PAIRS, checkPairs, failures, lookCssImports, luminance, parseLook, parseTokens, ratio, readUiCss, resolve, tokenNames, withLook, type Decl } from "./helpers/ui-css.js";
 
-// The Calm and Midnight looks (#852) are token files. This test reads them as text and runs the contrast check once per look.
+// The Calm, Midnight (#852), Friendly and Bento (#853) looks are token files. This test reads them as text and runs the contrast check once per look.
 
 const read = (p: string) => readFileSync(p, "utf8");
 const base = parseTokens(read("ui/tokens.css"));
 const defined = tokenNames();
 const lookFile = (look: string) => read(`ui/css/looks/${look}.css`);
-const looks = { calm: parseLook(lookFile("calm"), "calm"), midnight: parseLook(lookFile("midnight"), "midnight") };
+const looks = { calm: parseLook(lookFile("calm"), "calm"), midnight: parseLook(lookFile("midnight"), "midnight"),
+  friendly: parseLook(lookFile("friendly"), "friendly"), bento: parseLook(lookFile("bento"), "bento") };
 const px = (m: Map<string, Decl>, n: string) => parseFloat(m.get(n)!.light);
 const SPACES = ["2xs", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"].map((n) => `--space-${n}`);
 const RADII = ["sm", "md", "lg", "xl"].map((n) => `--radius-${n}`);
@@ -24,9 +25,20 @@ function hue(hex: string): number {
   return (h * 60 + 360) % 360;
 }
 
-describe.each(["calm", "midnight"] as const)("look %s", (look) => {
+describe.each(["midnight", "friendly", "bento"] as const)("look %s", (look) => {
+  it("sets every token that Calm sets", () => {
+    for (const n of looks.calm.keys()) expect(looks[look].has(n), n).toBe(true);
+  });
+});
+
+describe.each(["calm", "midnight", "friendly", "bento"] as const)("look %s", (look) => {
   const l = looks[look];
   const tokens = withLook(base, l);
+
+  it("keeps the focus ring width and offset", () => {
+    expect(l.has("--focus-width")).toBe(false);
+    expect(l.has("--focus-offset")).toBe(false);
+  });
 
   it("sets only custom properties that ui/tokens.css defines, with no color-scheme", () => {
     for (const n of l.keys()) expect(defined.has(n), n).toBe(true);
@@ -102,8 +114,61 @@ describe("Midnight", () => {
       expect(parseFloat(d.light), n).toBeLessThanOrEqual(hi);
     }
   });
-  it("sets every token that Calm sets", () => {
-    for (const n of looks.calm.keys()) expect(m.has(n), n).toBe(true);
+});
+
+const between = (v: number, lo: number, hi: number, msg: string) => {
+  expect(v, msg).toBeGreaterThanOrEqual(lo);
+  expect(v, msg).toBeLessThanOrEqual(hi);
+};
+
+describe("Friendly", () => {
+  const f = looks.friendly;
+  const t = withLook(base, f);
+  it("has a cream ground, a teal accent and an apricot highlight", () => {
+    expect(luminance(resolve(t, "--color-bg", "light"))).toBeGreaterThanOrEqual(0.85);
+    for (const theme of ["light", "dark"] as const) {
+      between(hue(resolve(t, "--color-bg", theme)), 25, 60, `bg ${theme}`);
+      between(hue(resolve(t, "--color-accent", theme)), 160, 190, `accent ${theme}`);
+      between(hue(resolve(t, "--color-accent-soft", theme)), 20, 40, `accent-soft ${theme}`);
+    }
+  });
+  it("uses a rounded font, 20–28 px radii and pill buttons", () => {
+    expect(f.get("--font-body")!.light).toMatch(/^ui-rounded,.*sans-serif$/);
+    expect(f.get("--font-body")!.light).not.toContain("monospace");
+    for (const n of RADII) between(px(f, n), 20, 28, n);
+    expect(f.get("--button-radius")!.light).toBe("var(--radius-pill)");
+    expect(read("ui/css/components.css")).toContain("border-radius: var(--button-radius)");
+  });
+  it("has soft shadows", () => {
+    const alphas = [...f.get("--shadow-low")!.light.matchAll(/ \.(\d+)\)/g)].map((m) => parseFloat(`0.${m[1]}`));
+    expect(alphas.length).toBeGreaterThan(0);
+    for (const a of alphas) expect(a).toBeLessThanOrEqual(0.1);
+  });
+});
+
+describe("Bento", () => {
+  const b = looks.bento;
+  const t = withLook(base, b);
+  it("has a sage ground and a green accent", () => {
+    for (const theme of ["light", "dark"] as const) {
+      between(hue(resolve(t, "--color-bg", theme)), 80, 140, `bg ${theme}`);
+      between(hue(resolve(t, "--color-accent", theme)), 90, 150, `accent ${theme}`);
+    }
+  });
+  it("has yellow tiles in light and charcoal tiles in dark", () => {
+    for (const n of ["--color-surface", "--color-surface-2"]) between(hue(resolve(t, n, "light")), 45, 65, n);
+    const dark = resolve(t, "--color-surface", "dark");
+    expect(luminance(dark)).toBeLessThanOrEqual(0.03);
+    const ch = [1, 3, 5].map((i) => parseInt(dark.slice(i, i + 2), 16));
+    expect(Math.max(...ch) - Math.min(...ch)).toBeLessThanOrEqual(16);
+  });
+  it("uses 24 px tiles; the card and legacy radius follow --radius-lg", () => {
+    expect(px(b, "--radius-lg")).toBe(24);
+    expect(px(b, "--radius-xl")).toBe(24);
+    expect(base.base.get("--card-radius")!.light).toBe("var(--radius-lg)");
+    expect(base.base.get("--radius")!.light).toBe("var(--radius-lg)");
+    expect(b.has("--card-radius")).toBe(false);
+    expect(b.has("--radius")).toBe(false);
   });
 });
 
@@ -124,9 +189,9 @@ describe("numbers use the numeric font", () => {
 });
 
 describe("loading", () => {
-  it("imports calm first, then midnight, and every look file", () => {
-    expect(lookCssImports()).toEqual(["/css/looks/calm.css", "/css/looks/midnight.css"]);
-    expect(readdirSync("ui/css/looks").filter((f) => f.endsWith(".css")).sort()).toEqual(["calm.css", "midnight.css"]);
+  it("imports calm, midnight, friendly, then bento, and every look file", () => {
+    expect(lookCssImports()).toEqual(["calm", "midnight", "friendly", "bento"].map((n) => `/css/looks/${n}.css`));
+    expect(readdirSync("ui/css/looks").filter((f) => f.endsWith(".css")).sort()).toEqual(["bento.css", "calm.css", "friendly.css", "midnight.css"]);
   });
   it("links /tokens.css, /looks.css, /style.css in that order on every page", () => {
     for (const p of ["ui/index.html", "ui/user/index.html", "ui/accessibility.html"]) {
