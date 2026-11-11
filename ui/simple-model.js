@@ -1,6 +1,7 @@
 import { sameRepo } from "./filters.js";
 import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
+import { planPoints, plainPoints } from "./request-model.js";
 import { plannedCards } from "./simple-change-model.js";
 import { FINAL, HOME, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
 import { greeting, groupHref, summaryLine, todayModel } from "./today.js";
@@ -109,6 +110,11 @@ export function cardOf(entry) {
       card.approve = idOf(entry);
       // the server refuses approve and reject of a refinement run (409), so such a run is not the person's own
       if (run?.status === "waiting" && !n.watched && !run.refinement) card.own = true;
+      // "Your request": what the plan took from the request and what it assumed, on the card of a plan that waits for a decision
+      if (n.kind === "approve_plan" && run) {
+        const pts = plainPoints(planPoints(run));
+        if (pts.length) card.points = pts;
+      }
     }
     // A failed run: "stuck". `resume`: the run itself can be resumed; `stuckAt` tells one failure from the next.
     if (n.kind === "failed" && idOf(entry)) {

@@ -288,7 +288,7 @@ pre.diff .file { font-weight: 700; display: block; }
 .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 14px; }
 .tile { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--card-pad) var(--space-xl); }
 .tile-label { font-size: var(--text-meta); color: var(--muted); font-weight: 550; }
-.tile-value { font-size: var(--text-display); font-weight: 650; letter-spacing: -0.02em; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.tile-value { font-family: var(--font-numeric); font-size: var(--text-display); font-weight: 650; letter-spacing: -0.02em; margin: 2px 0; font-variant-numeric: tabular-nums; }
 .tile-sub { font-size: var(--text-meta); color: var(--muted); }
 .chart { position: relative; }
 .chart svg { width: 100%; height: auto; display: block; }
@@ -298,7 +298,7 @@ pre.diff .file { font-weight: 700; display: block; }
 .chart .cap-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .chart .grid-line { stroke: var(--border); stroke-width: 1; }
 .chart .base-line { stroke: var(--muted); stroke-width: 1; }
-.chart .axis { font-size: var(--text-micro); fill: var(--muted); font-family: var(--sans); }
+.chart .axis { font-size: var(--text-micro); fill: var(--muted); font-family: var(--font-numeric); }
 .chart-tip { position: absolute; transform: translate(-50%, -120%); background: var(--text); color: var(--bg); font-size: var(--text-meta); padding: 4px 8px; border-radius: var(--radius-sm); pointer-events: none; opacity: 0; white-space: nowrap; transition: opacity var(--motion-fast); }
 .chart-tip.show { opacity: 1; }
 .page { min-width: 0; }
@@ -404,7 +404,7 @@ details.home-section > summary { cursor: pointer; font-weight: 600; }
 .today-cause > summary { cursor: pointer; color: var(--muted); }
 .today-counters ul { list-style: none; margin: 0 0 var(--space-xl); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-md); }
 .today-counter { display: flex; flex-direction: column; padding: var(--space-md); border: 1px solid var(--border); border-radius: var(--radius); text-decoration: none; }
-.today-count { font-size: var(--text-page); font-weight: 600; }
+.today-count { font-family: var(--font-numeric); font-size: var(--text-page); font-weight: 600; }
 .today-building ul, .today-finished ul, .today-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
 .today-building h3 { margin: 0; font-size: var(--text-body); }
 
@@ -1012,3 +1012,10 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
 .run-detail-section { margin-bottom: var(--space-md); }
 .run-detail-section > summary { cursor: pointer; font-weight: 600; font-size: var(--text-section); margin-bottom: var(--space-sm); }
 .run-detail-section[hidden] { display: none; }
+
+/* Your request: what was asked and what was assumed (not by colour alone: a tag with an icon, a dashed edge, italic text) */
+.request-points { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.request-point { display: grid; gap: var(--space-xs); padding-left: var(--space-sm); border-left: 3px solid var(--border); overflow-wrap: anywhere; }
+.request-assumed { border-left-style: dashed; }
+.request-assumed .request-text { font-style: italic; }
+.request-tag { display: inline-flex; gap: var(--space-xs); align-items: center; font-weight: 600; font-size: var(--text-small); }

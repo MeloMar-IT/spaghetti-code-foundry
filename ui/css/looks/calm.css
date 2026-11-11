@@ -1,0 +1,43 @@
+/* Calm (#852): light and airy. Only token values. Also the default for every look without its own file;
+   a later look file overrides it (same specificity, imported later). */
+
+html[data-look="calm"], html[data-look] {
+  --color-bg: light-dark(#fbfbfd, #111118);
+  --color-surface: light-dark(#ffffff, #181820);
+  --color-surface-2: light-dark(#f4f4f9, #20202a);
+  --color-border: light-dark(#e7e7ef, #2b2b37);
+  --color-border-strong: light-dark(#8a8aa0, #787890);
+  --color-text: light-dark(#1b1b2f, #ececf3);
+  --color-text-muted: light-dark(#5c5c73, #a1a1b5);
+  --color-neutral: light-dark(#5c5c73, #a1a1b5);
+  --color-neutral-soft: light-dark(#f1f1f6, #23232e);
+  --color-disabled-soft: light-dark(#f1f1f6, #23232e);
+  --color-accent: light-dark(#4f46e5, #a5b4fc);
+  --color-accent-soft: light-dark(#eef0ff, #252750);
+  --color-on-accent: light-dark(#ffffff, #1b1b2f);
+  --color-on-danger: light-dark(#ffffff, #1b1b2f);
+  --color-log-step: #a5b4fc;
+
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-numeric: var(--font-body);
+
+  --radius-sm: 12px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+
+  --shadow-low: 0 1px 2px rgb(20 20 50 / .04), 0 6px 16px rgb(20 20 50 / .06);
+  --shadow-high: 0 24px 64px rgb(20 20 50 / .18);
+
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+  --space-2xl: 20px;
+  --space-3xl: 24px;
+  --space-4xl: 32px;
+}

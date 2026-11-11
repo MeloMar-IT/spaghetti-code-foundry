@@ -214,9 +214,10 @@ export function showFailedOnce(tabs, s, prev) {
 /**
  * The Progress panel: the acceptance criteria (read-only), the task, the questions and, for an administrator, what the
  * Foundry decided. `extra`: a node that is placed once and never touched again (the answer form of the user page).
+ * `request`: { el, update(s) }, the "Your request" box (ui/request-box.js), placed after the criteria and given every update; it hides itself.
  * The parts redraw only when their text changed. Run ID, flow and step count are in the header's technical details.
  */
-export function progressPanel({ admin = false, extra = null } = {}) {
+export function progressPanel({ admin = false, extra = null, request = null } = {}) {
   const criteria = h("section", { class: "card mb-16 run-criteria", "aria-label": "Acceptance criteria" });
   criteria.hidden = true;
   const card = h("div", { class: "card mb-16" });
@@ -228,8 +229,9 @@ export function progressPanel({ admin = false, extra = null } = {}) {
     mount(box, [nodes].flat(Infinity));
   };
   return {
-    build: () => h("div", {}, criteria, card, decided, extra),
+    build: () => h("div", {}, criteria, request?.el, card, decided, extra),
     update(raw) {
+      request?.update(raw);
       const s = withQuestions(raw) ?? {};
       const items = (Array.isArray(s.criteria) ? s.criteria : []).filter((c) => c && typeof c.text === "string" && c.text.trim() !== "");
       part("criteria", JSON.stringify(items), criteria, items.length ? [

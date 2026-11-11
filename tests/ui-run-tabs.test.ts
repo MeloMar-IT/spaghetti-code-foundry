@@ -547,3 +547,15 @@ describe("createLog restore in a tab set", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("progressPanel: request", () => {
+  it("places the request box after the criteria and gives it every summary", () => {
+    const request = { el: el(), update: vi.fn() };
+    const p = mod.progressPanel({ request });
+    const node = p.build();
+    expect(node.children).toContain(request.el);
+    const s = { task: "t", planPoints: [] };
+    p.update(s);
+    expect(request.update).toHaveBeenCalledWith(s);
+  });
+});

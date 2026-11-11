@@ -93,8 +93,10 @@ counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-s
 
 **Appearance: theme, density and look.** **Appearance** in the top bar, next to **Change password**, opens a
 dialog with three choices. **Theme** is System (follows your device), Light or Dark. **Density** is
-Comfortable or Compact. **Look** is Calm (the default), Midnight, Friendly, Editorial or Bento. For now
-every look shows the Calm style; the other looks are added in later releases. A choice applies at once,
+Comfortable or Compact. **Look** is Calm (the default), Midnight, Friendly, Editorial or Bento. **Calm** is
+light and airy, with an indigo accent and rounded corners. **Midnight** is dense and dark, with a lime accent
+and a mono font for numbers, ids and logs. Friendly, Editorial and Bento show the Calm style for now; they are
+added in later releases. A choice applies at once,
 with no reload. The chosen option has a check mark and is announced as pressed, so it does not depend on
 colour. The choice is kept in this browser, per account, and is not sent to the server: a second account
 in the same browser has its own, and another browser starts with System, Comfortable and Calm. The
@@ -1722,6 +1724,8 @@ sections cite no entry gets a policy **warning** (`context.uncited`): it shows i
 citations and no warning.
 
 **Asked and assumed.** The plan lists its points in two kinds of line. `ASKED:` is a point taken from the issue, its comments or the task. `ASSUMED:` is a choice the planner made itself that the issue does not settle, such as a file location, a default value or who may see something. Read the `ASSUMED:` lines first: a wrong guess is easier to catch before the work is built. The run record keeps them as `planPoints`, a list of `{ kind: "asked" | "assumed", text }`. A plan without these lines, and an older run, has no list.
+
+**Your request.** When a run has these points, its Progress tab shows a **Your request** box after the acceptance criteria. **You asked** and **Assumed** are marked with a word and an icon, and an assumption has a dashed edge, so the two are told apart without colour. The box is not shown when there are no points. **Change this** on an assumption opens a box for the correction in plain words; **Send correction** sends it as a reject of the plan on the issue, with the text `Assumed: <assumption> — Correction: <your words>`, so the planner makes the plan again with it. **Change this** is offered only while the plan waits for a decision and you may reject it (the same rule as **Approve** and **Reject**). Otherwise the box is read-only and says why. In Simple, the same box is on the check card of a plan that waits for a decision, under **What you need to do** on the project page; it sends the correction the same way as **Something is not right**.
 
 - **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
   - `max_sources` (default `200`): the most files in the bundle.
