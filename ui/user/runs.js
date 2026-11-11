@@ -13,6 +13,7 @@ import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
 import { decisionDialog } from "../run-dialogs.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
+import { createRequestBox } from "../request-box.js";
 import { changesPanel, createTabs, detailsPanel, evidencePanel, progressPanel, showFailedOnce, withQuestions } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
 import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
@@ -304,7 +305,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const timeline = createTimeline({ runId, admin: false, a });
   const evidence = evidencePanel({ record: evidenceRecordSection({ load: () => a.evidence(runId), admin: false, runId }), sources: contextSourcesSection({ load: () => a.context(runId), admin: false, runId }) });
   const tabs = createTabs([
-    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin: false, extra: answerBox }) },
+    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin: false, extra: answerBox, request: createRequestBox({ a, runId, readOnly }) }) },
     { id: "diff", label: "What changed", aliases: ["changes"], ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
     {
       id: "details", label: "Details", aliases: ["steps", "evidence", "skills", "log"],

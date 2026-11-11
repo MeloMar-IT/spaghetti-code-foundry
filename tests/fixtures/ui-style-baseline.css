@@ -1012,3 +1012,10 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
 .run-detail-section { margin-bottom: var(--space-md); }
 .run-detail-section > summary { cursor: pointer; font-weight: 600; font-size: var(--text-section); margin-bottom: var(--space-sm); }
 .run-detail-section[hidden] { display: none; }
+
+/* Your request: what was asked and what was assumed (not by colour alone: a tag with an icon, a dashed edge, italic text) */
+.request-points { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.request-point { display: grid; gap: var(--space-xs); padding-left: var(--space-sm); border-left: 3px solid var(--border); overflow-wrap: anywhere; }
+.request-assumed { border-left-style: dashed; }
+.request-assumed .request-text { font-style: italic; }
+.request-tag { display: inline-flex; gap: var(--space-xs); align-items: center; font-weight: 600; font-size: var(--text-small); }

@@ -7,7 +7,7 @@ import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import type { ServerOptions, startServer } from "../src/server/server.js";
 import { explanationLine } from "../src/policy/explain.js";
-import { USER_ERROR, adminRun, answerBlock, criteriaOf, hidePaths, movedText, refinementSessionOf, storyOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
+import { USER_ERROR, adminRun, answerBlock, criteriaOf, hidePaths, movedText, refinementSessionOf, storyOf, userError, userLogLine, userPlanPoints, userRecord, userRun, userTask } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -196,6 +196,23 @@ describe("userRun", () => {
   it("does not throw on an old run without history, flow definition or state", () => {
     const u = userRun({ runId: "old", flow: "f", task: "", status: "succeeded", startedAt: "x", vars: {} } as unknown as RunSummary);
     expect(u).toMatchObject({ history: [], state: { next: null }, flowDef: { name: "f", steps: [] }, vars: {} });
+  });
+});
+
+describe("plan points in the user view", () => {
+  const base = { runId: "r", flow: "f", task: "t", status: "waiting", startedAt: "2026-01-01T00:00:00.000Z", vars: {} } as any;
+  it("passes kind and text only", () => {
+    const u = userRun({ ...base, planPoints: [{ kind: "asked", text: "a", extra: 1 }, { kind: "assumed", text: "b" }] });
+    expect(u.planPoints).toEqual([{ kind: "asked", text: "a" }, { kind: "assumed", text: "b" }]);
+  });
+  it("drops a bad kind, an empty text and a non-object", () => {
+    expect(userPlanPoints({ planPoints: [{ kind: "x", text: "a" }, { kind: "asked", text: " " }, { kind: "asked", text: 3 }, null, "s", { kind: "asked", text: "ok" }] })).toEqual([{ kind: "asked", text: "ok" }]);
+  });
+  it("is absent for none, a missing field or a non-array", () => {
+    for (const planPoints of [[], undefined, "x", { kind: "asked" }]) expect("planPoints" in userRun({ ...base, planPoints } as any)).toBe(false);
+  });
+  it("keeps at most 100", () => {
+    expect(userPlanPoints({ planPoints: Array.from({ length: 150 }, () => ({ kind: "asked", text: "a" })) })).toHaveLength(100);
   });
 });
 

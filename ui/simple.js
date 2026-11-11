@@ -7,6 +7,8 @@ import { projectOfWork, projectsModel } from "./simple-model.js";
 import { greeting, todayModel, todayView } from "./today.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
 import { openAsk } from "./ask-handoff.js";
+import { requestView } from "./request-box.js";
+import { REQUEST } from "./request-model.js";
 import { askCard, checkCard, hasUnsentAnswers, stuckCard } from "./simple-turn.js";
 import { CHANGE, FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
@@ -282,6 +284,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
           || (c.approve && answer && checkCard(c, turns, answer)) || (c.stuck && answer && stuckCard(c, turns, answer)) || h("li", { class: "simple-card" },
           h("strong", {}, c.title),
           c.line ? h("p", { class: "muted" }, c.line) : null,
+          c.points ? requestView(c.points, { heading: "h3", note: REQUEST.notYours }) : null,
           c.link ? linkNode({ ...c.link, label: c.todo }, "btn primary simple-big", `simple-todo-${c.id}`) : null)))
         : h("p", {}, WORDS.nothingTodo)),
     h("section", { class: "simple-making" },
