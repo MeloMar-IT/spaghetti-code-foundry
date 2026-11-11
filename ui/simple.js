@@ -426,6 +426,8 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         detail: (k) => a.turnDetail(k), act: (b) => a.actTurn(b), done: () => refresh?.(),
         approveRun: (rid, note) => a.approveRun(rid, note), rejectRun: (rid, note) => a.rejectRun(rid, note), resumeRun: (rid) => a.resumeRun(rid),
         notNow: (rid) => a.notNowRun(rid),
+        markCheck: (rid, cid, mark, rev) => a.markCheck(rid, cid, mark, rev),
+        addCheck: (rid, t, e, rev) => a.addCheck(rid, t, e, rev),
         tryIt: local ? (runId) => ctl.tryRun(runId) : null,
         help: () => { if (!openAsk()) globalThis.location.hash = "#/help"; },
       };

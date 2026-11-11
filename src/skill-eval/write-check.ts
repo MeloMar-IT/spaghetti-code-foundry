@@ -32,9 +32,10 @@ function hostOf(authority: string): string {
   return (rest.startsWith("[") ? rest : rest.split(":")[0]!).toLowerCase();
 }
 
-/** True for a host that cannot reach a real machine: local, or a reserved example name. */
+/** True for a host that cannot reach a real machine: local, or a reserved example name or a name under one (api.example.com). */
 export function localOrExampleHost(host: string): boolean {
-  return LOCAL_HOSTS.has(host) || EXAMPLE_HOSTS.has(host) || EXAMPLE_SUFFIXES.some((s) => host.endsWith(s));
+  return LOCAL_HOSTS.has(host) || EXAMPLE_HOSTS.has(host) || EXAMPLE_SUFFIXES.some((s) => host.endsWith(s))
+    || [...EXAMPLE_HOSTS].some((h) => host.endsWith(`.${h}`));
 }
 
 /** Every path changed against the base commit must be inside `skills/<name>/` or a changelog the repository already has. */

@@ -1,0 +1,45 @@
+/* Bento (#853): tiles on a sage ground. Only token values; imported after calm.css so it wins.
+   Tokens give one tile colour per mode: yellow tiles in light mode, charcoal tiles in dark mode.
+   A layout that mixes both in one mode needs component rules and comes with the home layouts. */
+
+html[data-look="bento"] {
+  --color-bg: light-dark(#dde5d6, #151b16);
+  --color-surface: light-dark(#fff9db, #26282a);
+  --color-surface-2: light-dark(#f6edbd, #303336);
+  --color-border: light-dark(#d3d9c6, #3a3d40);
+  --color-border-strong: light-dark(#6f7866, #7c8279);
+  --color-text: light-dark(#232527, #eef0ea);
+  --color-text-muted: light-dark(#52584f, #a9b0a4);
+  --color-neutral: light-dark(#52584f, #a9b0a4);
+  --color-neutral-soft: light-dark(#eef0e6, #2c2f31);
+  --color-disabled-soft: light-dark(#eef0e6, #2c2f31);
+  --color-accent: light-dark(#2f6e2f, #8bd17c);
+  --color-accent-soft: light-dark(#e3efd6, #1f3320);
+  --color-on-accent: light-dark(#ffffff, #151b16);
+  --color-on-danger: light-dark(#ffffff, #232527);
+  --color-log-bg: #1a1c1e;
+  --color-log-step: #8bd17c;
+
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-numeric: var(--font-body);
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 24px;
+
+  --shadow-low: 0 1px 2px rgb(20 30 20 / .06);
+  --shadow-high: 0 20px 48px rgb(20 30 20 / .22);
+
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+  --space-2xl: 20px;
+  --space-3xl: 24px;
+  --space-4xl: 32px;
+}

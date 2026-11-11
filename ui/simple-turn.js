@@ -1,6 +1,7 @@
 import { h, mount } from "./dom.js";
 import { REQUEST, correctionText } from "./request-model.js";
 import { requestView } from "./request-box.js";
+import { approveLabel, createCheckList } from "./run-checks.js";
 import { ANSWER, CHECK, STUCK, WORDS, plainText, plainWords, safeText } from "./simple-words.js";
 import { FILLER } from "./turn-act.js";
 
@@ -285,7 +286,7 @@ async function decide(d, card, item, reject, given) {
   if (reject && !text) {
     d.note = CHECK.needsWhat;
     if (d.status) d.status.textContent = d.note;
-    return;
+    return false;
   }
   const id = card.approve;
   const detail = d.detail;
@@ -305,12 +306,12 @@ async function decide(d, card, item, reject, given) {
       d.fix = null;
       d.fixText = "";
       d.paint?.();
-      return;
+      return false;
     }
     d.phase = "ready";
     d.note = CHECK.failed;
     d.paint?.();
-    return;
+    return false;
   }
   d.phase = "sent";
   d.note = CHECK.sent;
@@ -320,10 +321,11 @@ async function decide(d, card, item, reject, given) {
   if (item) d.sent = { stamp: detail?.stamp, digest: detail?.digest }; else checks.delete(id);
   d.paint?.();
   d.answer.done?.();
+  return true;
 }
 
 /**
- * The card of a check the person may decide here. `answer`: { detail, act, done, approveRun, rejectRun, tryIt? }. Returns an `li`, or
+ * The card of a check the person may decide here. `answer`: { detail, act, done, approveRun, rejectRun, markCheck?, addCheck?, tryIt? }. Returns an `li`, or
  * null when the caller draws the link card (no item, not the person's own run, and nothing was sent).
  */
 export function checkCard(card, turns, answer) {
@@ -332,7 +334,9 @@ export function checkCard(card, turns, answer) {
   if (!item && !card.own && d?.phase !== "sent") return null;
   if (!d) { d = freshCheck(item?.key ?? ""); checks.set(card.approve, d); }
   d.answer = answer;
-  if (item && item.key !== d.key && d.phase !== "sending") Object.assign(d, freshCheck(item.key, { text: d.text, open: d.open, fix: d.fix, fixText: d.fixText, paint: d.paint, answer }));
+  d.card = card;
+  d.item = item;
+  if (item && item.key !== d.key && d.phase !== "sending") Object.assign(d, freshCheck(item.key, { text: d.text, open: d.open, fix: d.fix, fixText: d.fixText, paint: d.paint, answer, card, item, list: d.list, listMarks: d.listMarks }));
   if (item && d.phase === "ready" && !d.detail) void loadCheck(d);
   // A listed item does not prove a new check: a sent card goes back to ready only when the proposal read now is different.
   if (item && d.phase === "sent" && d.sent && !d.checking) {
@@ -345,6 +349,30 @@ export function checkCard(card, turns, answer) {
       }
     }, () => { d.checking = false; });
   }
+  // The checks to try, kept per card so a focused button survives a new draw. Marks need the person's own run.
+  if (card.checkRun) {
+    const canMark = !!(card.own && answer.markCheck);
+    const canAdd = !!(card.own && answer.addCheck);
+    const wires = `${canMark}|${canAdd}`;
+    if (!d.list || d.listMarks !== wires) {
+      d.listMarks = wires;
+      d.list = createCheckList({
+        // true when the change went back, false when nothing was sent (the list keeps the sentence and offers Send back again)
+        onSendBack: canMark ? async (note) => (d.phase === "sending" ? false : await decide(d, d.card, d.item, true, note)) : null,
+        onAdd: canAdd ? async (t, e, rev) => {
+          const r = await d.answer.addCheck(d.card.approve, t, e, rev);
+          d.answer.done?.();
+          return r;
+        } : null,
+        onMark: canMark ? async (cid, mark, rev) => {
+          const r = await d.answer.markCheck(card.approve, cid, mark, rev);
+          d.answer.done?.();
+          return r;
+        } : null,
+      });
+    }
+    d.list.update(card.checkRun);
+  }
   const li = h("li", { class: "simple-card" });
   const body = () => {
     const off = d.phase === "sending" ? true : undefined;
@@ -353,6 +381,7 @@ export function checkCard(card, turns, answer) {
     const parts = [h("strong", {}, card.title), card.line ? h("p", { class: "muted" }, card.line) : null];
     if (d.phase !== "sent") {
       parts.push(h("p", {}, d.phase === "loading" ? CHECK.loading : madeOf(d.detail, card)));
+      if (card.checkRun && d.list) parts.push(d.list.el);
       if (card.tryRun && answer.tryIt) {
         parts.push(h("button", { type: "button", disabled: off, "data-focus": `simple-check-try-${card.id}`, onClick: () => answer.tryIt(card.tryRun) }, WORDS.actions.tryIt));
       }
@@ -374,7 +403,7 @@ export function checkCard(card, turns, answer) {
         onInput: (e) => { d.text = String(e?.target?.value ?? box.value ?? ""); },
       });
       parts.push(
-        h("button", { type: "button", class: "btn primary simple-big", disabled: off, "data-focus": `simple-check-yes-${card.id}`, onClick: () => decide(d, card, item, false) }, CHECK.yes),
+        h("button", { type: "button", class: "btn primary simple-big", disabled: off, "data-focus": `simple-check-yes-${card.id}`, onClick: () => decide(d, card, item, false) }, approveLabel(card.checkRun, CHECK.yes)),
         h("details", { open: d.open ? true : undefined, onToggle: (e) => { d.open = e?.target?.open === true || e?.target?.hasAttribute?.("open") === true; } },
           h("summary", { "data-focus": `simple-check-no-${card.id}` }, CHECK.no),
           box,

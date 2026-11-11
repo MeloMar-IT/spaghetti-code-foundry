@@ -15,7 +15,8 @@ import { briefInScope, callerWorkspaces, findScopedRepo, inWorkspaces, runInScop
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
 import { AnswerRefused, effectiveVars } from "../engine/runner.js";
-import { ANSWER_MAX_CHARS, answerRoom, WORKSPACE_REMOVED, type RunSummary } from "../engine/state.js";
+import { ANSWER_MAX_CHARS, answerRoom, runDirOf, WORKSPACE_REMOVED, type RunSummary } from "../engine/state.js";
+import { CHECK_MARKS, addRunCheck, checkMarksOf, checksRevision, cleanCheckPart, publicChecks, setRunCheckMark, type CheckMarkValue } from "../engine/plan-checks.js";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { isPublished, userVars } from "../flow/publish.js";
 import { isVarName, type Flow } from "../flow/schema.js";
@@ -366,6 +367,40 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       unsubscribe();
     });
     return true;
+  }
+
+  if (action === "checks" && seg[3] === "add" && !seg[4] && method === "POST") {
+    const body = await readJson(req);
+    const found = scheduler.get(id);
+    if (!found) throw new HttpError(404, "run not found");
+    const text = { try: cleanCheckPart(body.try), expect: cleanCheckPart(body.expect) };
+    if (!text.try || !text.expect) throw new HttpError(400, "write what to try and what to expect");
+    const rev = body.rev;
+    if (rev !== undefined && typeof rev !== "string") throw new HttpError(400, "rev must be text");
+    if (found.status !== "waiting" || scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(409, "only a change that waits for your check can get a check");
+    const dir = runDirOf(opts.runsDir, id);
+    const r = dir ? addRunCheck(dir, text, { by: user.id, at: new Date().toISOString() }, rev) : "refused";
+    if (r === "full") throw new HttpError(409, "a change keeps at most 4 checks of your own");
+    if (r === "refused") throw new HttpError(409, "this change moved on; load it again");
+    const now = scheduler.get(id) ?? found;
+    return send(res, 200, { runId: id, id: r.id, checks: publicChecks(now.checks), checksRev: checksRevision(now.checks), checkMarks: checkMarksOf(now) }), true;
+  }
+
+  if (action === "checks" && !seg[3] && method === "POST") {
+    const body = await readJson(req);
+    const found = scheduler.get(id);
+    if (!found) throw new HttpError(404, "run not found");
+    const check = body.check;
+    if (typeof check !== "string" || !(found.checks ?? []).some((c) => c.id === check)) throw new HttpError(400, "there is no such check on this change");
+    const mark = body.mark;
+    if (mark !== null && !(CHECK_MARKS as readonly unknown[]).includes(mark)) throw new HttpError(400, 'mark must be "works", "not-quite" or null');
+    const rev = body.rev;
+    if (rev !== undefined && typeof rev !== "string") throw new HttpError(400, "rev must be text");
+    if (found.status !== "waiting" || scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(409, "only a change that waits for your check can be marked");
+    const dir = runDirOf(opts.runsDir, id);
+    const r = dir ? setRunCheckMark(dir, check, mark as CheckMarkValue | null, { by: user.id, at: new Date().toISOString() }, rev) : "refused";
+    if (r === "refused") throw new HttpError(409, "this change moved on; load it again");
+    return send(res, 200, { runId: id, checkMarks: checkMarksOf(scheduler.get(id) ?? found) }), true;
   }
 
   const s = scheduler.get(id);

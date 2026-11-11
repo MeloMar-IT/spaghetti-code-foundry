@@ -455,3 +455,95 @@ describe("Your request on the check card", () => {
     expect(p.textContent).not.toContain("Your request");
   });
 });
+
+describe("the checks to try on a check card", () => {
+  const checks = [{ id: "plan-1", try: "Open it", expect: "It opens" }, { id: "plan-2", try: "Click it", expect: "It clicks" }];
+  const withChecks = (id: string, extra: any = {}) => run(id, "approval", { checks, checksRev: "v1", ...extra });
+
+  it("puts the checks on the card of the model, only for a waiting run that has some", () => {
+    expect(model.cardOf({ run: withChecks("c1"), job: null }).checkRun.checks).toEqual(checks);
+    // a waiting run with none still gets the card data: the person may add the first check
+    expect(model.cardOf({ run: run("c2", "approval"), job: null }).checkRun).toMatchObject({ status: "waiting" });
+    expect(model.cardOf({ run: withChecks("c3", { status: "running" }), job: null }).checkRun).toBeUndefined();
+  });
+
+  const addButton = (out: FakeElement) => out.all("button").find((b) => b.attrs["data-focus"] === "check-add");
+  const named = (out: FakeElement) => [...out.all("button"), ...out.all("input")];
+  const focused = (out: FakeElement, name: string) => named(out).find((b) => b.attrs["data-focus"] === name)!;
+
+  it("sends one check back: marks it, rejects the run with the note, and keeps the sentence when the reject fails, until it works", async () => {
+    const p = page(withChecks("c7"));
+    p.answer.markCheck = vi.fn(async () => ({ checkMarks: { "plan-1": { mark: "not-quite", at: "t" } } }));
+    p.answer.rejectRun = vi.fn().mockRejectedValueOnce(new Error("no")).mockResolvedValueOnce({});
+    const out = p.draw();
+    focused(out, "check-not-quite-plan-1").click();
+    expect(p.answer.markCheck).not.toHaveBeenCalled();
+    (focused(out, "check-saw-plan-1") as any).value = "a grey button";
+    focused(out, "check-send-back-plan-1").click();
+    await tick();
+    expect(p.answer.markCheck).toHaveBeenCalledWith("c7", "plan-1", "not-quite", "v1");
+    expect(p.answer.rejectRun).toHaveBeenCalledWith("c7", "Not quite — Try: Open it — Expect: It opens — What I saw: a grey button");
+    // the reject failed: the form and the sentence stay, and the alert says so
+    expect(focused(out, "check-saw-plan-1").value).toBe("a grey button");
+    expect(out.all("p").some((q) => q.attrs.role === "alert" && q.textContent !== "")).toBe(true);
+    focused(out, "check-send-back-plan-1").click();
+    await tick();
+    expect(p.answer.markCheck).toHaveBeenCalledTimes(1);
+    expect(p.answer.rejectRun).toHaveBeenCalledTimes(2);
+    expect(p.answer.done).toHaveBeenCalled();
+  });
+
+  it("adds a check, also to a change that has none, through the answer", async () => {
+    const p = page(run("c8", "approval"));
+    p.answer.addCheck = vi.fn(async () => ({ id: "person-1", checks: [{ id: "person-1", try: "T", expect: "E", source: "person" }], checksRev: "v2", checkMarks: {} }));
+    const out = p.draw();
+    addButton(out)!.click();
+    (focused(out, "check-add-try") as any).value = "T";
+    (focused(out, "check-add-expect") as any).value = "E";
+    focused(out, "check-add-save").click();
+    await tick();
+    expect(p.answer.addCheck).toHaveBeenCalledWith("c8", "T", "E", undefined);
+    expect(p.answer.done).toHaveBeenCalled();
+  });
+
+  it("shows neither form on a card that is not the person's own, and the new words are plain", async () => {
+    const watched = withChecks("c9");
+    (watched.next as any).watched = true;
+    const out = page(watched, { turns: [item("c9")] }).draw();
+    expect(addButton(out)).toBeUndefined();
+    expect(named(out).some((b) => (b.attrs["data-focus"] ?? "").startsWith("check-saw-"))).toBe(false);
+    const rc: any = await import("../ui/run-checks.js" as string);
+    for (const v of Object.values(rc.CHECK_WORDS)) if (typeof v === "string") expect(words.forbiddenIn(v)).toEqual([]);
+  });
+
+  it("draws the rows with the count, and marks a check through the answer, then reads the page again", async () => {
+    const p = page(withChecks("c4", { checkMarks: { "plan-2": { mark: "works", at: "t" } } }));
+    p.answer.markCheck = vi.fn(async () => ({}));
+    const out = p.draw();
+    expect(out.textContent).toContain("Try: Open it");
+    expect(out.textContent).toContain("1 of 2 done");
+    out.all("button").find((b) => b.attrs["data-focus"] === "check-works-plan-1")!.click();
+    await tick();
+    expect(p.answer.markCheck).toHaveBeenCalledWith("c4", "plan-1", "works", "v1");
+    expect(p.answer.done).toHaveBeenCalled();
+  });
+
+  it("says in the approve button how many checks are not marked yet", () => {
+    const open = page(withChecks("c6")).draw();
+    const yes = (p: FakeElement) => p.all("button").find((b) => b.attrs["data-focus"] === "simple-check-yes-c6")!;
+    expect(yes(open).textContent).toBe("This is good — 2 checks not marked yet");
+    const half = page(withChecks("c6", { checkMarks: { "plan-1": { mark: "works", at: "t" } } })).draw();
+    expect(yes(half).textContent).toBe("This is good — 1 check not marked yet");
+    const all = page(withChecks("c6", { checkMarks: { "plan-1": { mark: "works", at: "t" }, "plan-2": { mark: "not-quite", at: "t" } } })).draw();
+    expect(yes(all).textContent).toBe("This is good");
+  });
+
+  it("shows no marking buttons for a run that is not the person's own", () => {
+    const watched = withChecks("c5");
+    (watched.next as any).watched = true;
+    const p = page(watched, { turns: [item("c5")] });
+    p.answer.markCheck = vi.fn();
+    const out = p.draw();
+    expect(out.all("button").some((b) => (b.attrs["data-focus"] ?? "").startsWith("check-works-"))).toBe(false);
+  });
+});

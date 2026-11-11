@@ -55,6 +55,19 @@ describe("titleText", () => {
   });
 });
 
+describe("showPage sets data-area on <html>", () => {
+  it("uses the area of the page and removes it for a page without one", () => {
+    const root = doc().documentElement as FakeElement;
+    shell.showPage("admin", ia.resolve("admin", "#/users"));
+    expect(root.attrs["data-area"]).toBe("administration");
+    shell.showPage("admin", ia.resolve("admin", "#/runs"));
+    expect(root.attrs["data-area"]).toBe("runs");
+    const to = ia.resolve("admin", "#/runs");
+    shell.showPage("admin", { ...to, page: { ...to.page, area: undefined } });
+    expect(root.attrs["data-area"]).toBeUndefined();
+  });
+});
+
 describe("showPage", () => {
   it("marks one link active and clears the previous one", () => {
     expect(active()).toEqual(["home"]);

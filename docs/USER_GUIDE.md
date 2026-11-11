@@ -95,8 +95,11 @@ counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-s
 dialog with three choices. **Theme** is System (follows your device), Light or Dark. **Density** is
 Comfortable or Compact. **Look** is Calm (the default), Midnight, Friendly, Editorial or Bento. **Calm** is
 light and airy, with an indigo accent and rounded corners. **Midnight** is dense and dark, with a lime accent
-and a mono font for numbers, ids and logs. Friendly, Editorial and Bento show the Calm style for now; they are
-added in later releases. A choice applies at once,
+and a mono font for numbers, ids and logs. **Friendly** is warm and rounded: a cream ground, teal buttons, apricot
+highlights, pill buttons and soft shadows. **Bento** is tiles on a sage ground, with a green accent and 24 px
+corners; its tiles are yellow in light mode and charcoal in dark mode. **Editorial** is black and white: square
+corners, black rules instead of shadows, a bold grotesk heading font and mono labels in capitals. Orange is used
+only for what needs you. The administration pages are inverted (black ground, white text). A choice applies at once,
 with no reload. The chosen option has a check mark and is announced as pressed, so it does not depend on
 colour. The choice is kept in this browser, per account, and is not sent to the server: a second account
 in the same browser has its own, and another browser starts with System, Comfortable and Calm. The
@@ -1292,6 +1295,24 @@ try (for example a refactor) says so in one line instead, with the reason. The r
 `checks` in its record (each with `id`, `try`, `expect` and `source: "plan"`) and the reason as `checksNone`.
 Text is cut to 300 characters per part; a plan with more than four checks keeps the first four. A plan with
 neither a check nor a reason gives a warning in the log. Runs from before this change have no `checks`.
+
+When a change waits for your check, its checks show as rows under **Checks to try**. Each row has **Try** and
+**Expect**, and two buttons, **Works** and **Not quite**. Press one to mark the check; press the same button again
+to take the mark back. The line under the list says how many are done ("1 of 3 done"). The marks are saved on the
+server with the run and are shown again after a reload; they belong to the check set of the plan, so a new plan
+starts with no marks. The approve button stays available and says how many checks are not marked yet
+("Approve — 2 checks not marked yet"). A change without checks looks as it did before. Marks are made on your own runs
+(`POST /api/runs/:id/checks`); a mark on a change that is no longer waiting is refused.
+
+**Not quite** asks one question, "What did you see?". Write one sentence and press **Send back**: the change goes
+back with a review answer that holds the check (Try and Expect) and your sentence, the same way a request for
+changes is handled. If the send fails, the sentence stays and you can press **Send back** again.
+
+**+ Add a check** lets you write your own check: **What to try** and **What you expect**. Both are needed. It is
+kept with the run as a check with `source: "person"` and is shown again in the next round, so a fix cannot
+silently break it. A change can have at most four checks of your own. Your checks are marked "Your check".
+When a fix is sent back, the checks marked **Works** before are shown again as "Worked before — try it again",
+so you can see that they still hold. The add is made with `POST /api/runs/:id/checks/add`.
 
 #### Text from outside the flow
 
@@ -5428,6 +5449,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note; 409 for a closed issue, as for resume |
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
+| `POST /api/runs/:id/checks/add` | yes | own runs | add a check of your own to a change that waits for your check (`try`, `expect`, at most 300 characters each, `rev` optional); it is kept for the next round; 400 for an empty part, 409 when the run does not wait, is queued or moved on, the checks changed since `rev`, or it has 4 checks of your own |
+| `POST /api/runs/:id/checks` | yes | own runs | mark a check of a change that waits for your check (`check`: the id of a check from the plan, `mark`: `works`, `not-quite`, or `null` to take the mark back, `rev`: the `checksRev` you read, optional); the marks are kept with the run and shown again on its page; 400 for an unknown check or mark, 409 when the run does not wait, is queued or moved on, or the checks changed since `rev` |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
 | `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |

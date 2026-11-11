@@ -25,7 +25,8 @@ const withoutTokens = (config: Config): Record<string, undefined> => Object.from
 /** The prompt: the reason, the tail of the failing output and the agent's last message. No folders. */
 export function explainPrompt(run: RunSummary): string {
   const h = Array.isArray(run.history) ? run.history : [];
-  const rec = h[failedIndex(h)];
+  // A step that ran out of tries failed nowhere itself: the last record (the step that sent it back) holds why.
+  const rec = h[failedIndex(h)] ?? (/exceeded max_visits/.test(run.reason ?? "") ? h[h.length - 1] : undefined);
   const out = (rec?.output || rec?.error || "").trim();
   const lastAgent = [...h].reverse().find((r) => r.type === "claude" && r.output.trim());
   const text = [
