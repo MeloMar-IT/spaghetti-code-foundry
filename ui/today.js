@@ -63,6 +63,26 @@ const startOfDay = (now) => {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 };
 const finishedMs = (e) => Date.parse(e.run?.finishedAt ?? e.run?.startedAt ?? "") || 0;
+const READY = new Set(["approval", "approve_plan", "approve_split", "release"]);
+/** Work that waits for a check (not a question, not stuck work): an approval, a plan, a split, a release, or a final version. */
+export const isReady = (n) => !!n && (READY.has(n.kind) || n.final === true);
+/** True when the entry finished on or after local midnight 6 days ago (today and the 6 days before). */
+export function inLastWeek(entry, now = Date.now()) {
+  const d = new Date(now);
+  return finishedMs(entry) >= new Date(d.getFullYear(), d.getMonth(), d.getDate() - 6).getTime();
+}
+const lastStep = (id) => String(id ?? "").split("/").at(-1);
+/**
+ * Confirmed publication: a finished record ("done", not a release that still waits, not a split that made its parts) whose run
+ * has delivery evidence in its history: a merge that worked, a push to main that worked, or for a daily release the final merge
+ * (a rejected final version also ends succeeded, but published nothing). A planning run that finished has none of these.
+ */
+export function isPublished(entry) {
+  if (recordOf(entry)?.kind !== "done" || groupOf(entry) !== "done") return false;
+  const history = entry.run?.history ?? [];
+  if (entry.run?.flow === "release-daily") return history.some((x) => lastStep(x?.id) === "final_merge" && x.ok);
+  return history.some((x) => x?.ok && (lastStep(x.id) === "merge" || (lastStep(x.id) === "push_main" && /^PUSHED:/m.test(x.output ?? ""))));
+}
 const GROUP_OF = { waiting: "planned", building: "building", check: "check", finished: "done", "finished-today": "done" };
 
 /**
@@ -108,8 +128,8 @@ export function droppedRuns(runs) {
 export function todayModel(runs, pending, { role = "user", simple = false, projectOf, now = Date.now(), exclude, extraNeeds = 0, needsUnknown = false } = {}) {
   const out = {
     total: 0, now, attention: [], building: [], finished: [], extraNeeds, needsUnknown,
-    counts: { waiting: 0, building: 0, check: 0, "finished-today": 0 },
-    lists: { waiting: [], building: [], check: [], finished: [], "finished-today": [] },
+    counts: { waiting: 0, building: 0, check: 0, ready: 0, "published-week": 0, "finished-today": 0 },
+    lists: { waiting: [], building: [], check: [], ready: [], "published-week": [], finished: [], "finished-today": [] },
   };
   const entries = [];
   for (const e of myRunsEntries(runs, pending)) {
@@ -133,12 +153,13 @@ export function todayModel(runs, pending, { role = "user", simple = false, proje
     if (g === "check") {
       out.counts.check++;
       out.lists.check.push(item);
+      if (isReady(n)) { out.counts.ready++; out.lists.ready.push(item); }
       if (!skip.has(id)) out.attention.push(attentionOf(e, n, { role, simple, title, pid }));
     }
     if (g === "building") {
       out.counts.building++;
       out.lists.building.push(item);
-      out.building.push(buildingOf(e, n, { role, simple, title, href }));
+      out.building.push(buildingOf(e, n, { role, simple, title, href, pid }));
     }
     if (g === "done") finished.push({ e, item });
   }
@@ -146,6 +167,7 @@ export function todayModel(runs, pending, { role = "user", simple = false, proje
   for (const { e, item } of finished) {
     out.finished.push(item);
     out.lists.finished.push(item);
+    if (isPublished(e) && inLastWeek(e, now)) { out.counts["published-week"]++; out.lists["published-week"].push(item); }
     if (inGroup("finished-today", e, now)) { out.counts["finished-today"]++; out.lists["finished-today"].push(item); }
   }
   return out;
@@ -168,6 +190,7 @@ function attentionOf(e, n, { role, simple, title, pid }) {
   else if (id) href = `#/runs/${enc(id)}`;
   const label = n.final ? FINAL.yes : words.todo;
   return {
+    ...(simple ? { project: pid } : {}),
     id,
     title,
     sentence: failed ? STUCK.line : n.final ? FINAL.line : words.line,
@@ -178,12 +201,15 @@ function attentionOf(e, n, { role, simple, title, pid }) {
   };
 }
 
-function buildingOf(e, n, { role, title, href }) {
+function buildingOf(e, n, { role, simple, title, href, pid }) {
   const phase = e.run ? runPhase(e.run) : null;
   const words = kindWords(n.kind, n.who).line;
   // Only work that runs is described by its phase; paused or waiting work says what it waits for.
   const line = n.kind === "running" ? phase?.line || words : words || phase?.line || "";
-  return { id: idOf(e), title, phase, line, href, owner: role === "admin" ? ownerLabel(e.run?.ownerName) : "" };
+  const owner = role === "admin" ? ownerLabel(e.run?.ownerName) : "";
+  // Simple also says which project, whether the work really runs (not paused) and when it started: the current project is picked from that.
+  const extra = simple ? { project: pid, running: n.kind === "running", startedMs: Date.parse(e.run?.startedAt ?? "") || 0 } : {};
+  return { id: idOf(e), title, phase, line, href, owner, ...extra };
 }
 
 /** The `details` that were opened by the person, by focus name and run: kept across redraws. */
@@ -193,7 +219,7 @@ const link = (cls, href, focus, external, ...kids) => (external
   ? h("a", { class: cls, href, target: "_blank", rel: "noopener noreferrer", "data-focus": focus }, ...kids)
   : h("a", { class: cls, href, "data-focus": focus }, ...kids));
 
-function cardView(c, focus) {
+export function attentionCard(c, focus) {
   const fid = c.id ?? "x";
   const key = `${focus}:${fid}`;
   return h("li", { class: "card today-card" },
@@ -214,7 +240,7 @@ function cardView(c, focus) {
       c.runHref ? h("a", { href: c.runHref, "data-focus": `${focus}-run-${fid}` }, TODAY.openRun) : null));
 }
 
-function buildingView(b, focus) {
+export function buildingItem(b, focus) {
   const fid = b.id ?? "x";
   return h("li", { class: "today-item" },
     h("h3", {}, h("a", { href: b.href, "data-focus": `${focus}-building-${fid}` }, b.title)),
@@ -245,7 +271,7 @@ export function todayView(model, { focus = "today", simple = false, list = "", o
     cards.length
       ? h("section", { class: "today-attention" },
         h("h2", {}, TODAY.needsTitle),
-        h("ul", { class: "today-cards" }, cards.slice(0, SHOWN).map((c) => cardView(c, focus))),
+        h("ul", { class: "today-cards" }, cards.slice(0, SHOWN).map((c) => attentionCard(c, focus))),
         more(cards.length - SHOWN, counters[2].href, "needs"))
       : null,
     h("nav", { class: "today-counters", "aria-label": TODAY.countersLabel },
@@ -263,7 +289,7 @@ export function todayView(model, { focus = "today", simple = false, list = "", o
     h("section", { class: "today-building" },
       h("h2", {}, TODAY.buildingTitle),
       model.building.length
-        ? h("ul", {}, model.building.slice(0, SHOWN).map((b) => buildingView(b, focus)))
+        ? h("ul", {}, model.building.slice(0, SHOWN).map((b) => buildingItem(b, focus)))
         : h("p", { class: "muted" }, TODAY.nothingBuilding),
       more(model.building.length - SHOWN, counters[1].href, "building")),
     h("section", { class: "today-finished" },

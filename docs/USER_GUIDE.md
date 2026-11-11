@@ -310,7 +310,9 @@ The account menu has a **View** box with three views. The view changes only what
 
 Simple shows your work per project, in plain words. Home is **My projects**. The sidebar has only the five main places, **Today**, **Changes**, **Ideas**, **Releases** and **Help**, and **+ New change** in the top bar; the divider and the extra pages are not shown in Simple.
 
-**My projects** (`#/home`) has one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
+**My projects** (`#/home`) starts with your Simple home, in the layout of your look. With the Calm and Friendly looks it is the cards layout: a greeting and one summary line, a **What do you want to build?** box with one **Start** button, four counters (**Needs you**, **Running**, **Ready to check** and **Published this week**, the last one for today and the 6 days before) that open their lists, then **Needs you** cards with one main button each, **Running now** with progress, and the current project with its five phases. The Midnight, Editorial and Bento looks are meant for a list and a tile layout; until those exist they show the cards layout too. Every layout shows the same items and buttons.
+
+Below the Simple home is one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
 
 **The project page** (`#/repos/<id>`) has three parts, top to bottom:
 
@@ -629,7 +631,7 @@ scf run release-build --repo owner/repo --ref v2.4.0
 
 ### Home
 
-**Home** is the first page, called **Today**. It has the same layout in Simple, Advanced and Admin. It starts with a greeting ("Good morning", "Good afternoon" or "Good evening") and one summary line, for example "1 thing needs you, 1 change is being built, 3 finished today". With nothing to say it reads "Nothing needs you".
+**Home** is the first page, called **Today**. In Advanced and Admin it has the same layout. (Simple has its own home, see [Simple: My projects](#simple-my-projects-and-the-project-page).) It starts with a greeting ("Good morning", "Good afternoon" or "Good evening") and one summary line, for example "1 thing needs you, 1 change is being built, 3 finished today". With nothing to say it reads "Nothing needs you".
 
 - **Attention cards:** at most one card for each item that needs you. The card shows the change's own title (the issue title), one sentence on what happened and what it means, and one main button. **See what happened** opens the technical cause. Items that are closed on GitHub, put aside with **Not now**, or finished as a split are not shown as needing you.
 - **Four counters:** **Waiting**, **Building**, **Needs your check** and **Finished today**. Each one opens its filtered list.
