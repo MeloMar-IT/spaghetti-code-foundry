@@ -130,6 +130,8 @@ describe("credentials and endpoints", () => {
     expect(endpointProblems(f("https://example.com.evil.io/x"))).toHaveLength(1);
     expect(endpointProblems(f("https://acme.example.io/x"))).toHaveLength(1);
     expect(endpointProblems(f("https://api.broker.example/x"))).toEqual([]);
+    expect(endpointProblems(f("https://api.example.com/x https://kv.vault.example.org wss://a.b.example.net"))).toEqual([]);
+    expect(endpointProblems(f("https://notexample.com/x"))).toHaveLength(1);
   });
 
   it("allows a documentation link only in https; plain http or ws in a link is a live endpoint", () => {
