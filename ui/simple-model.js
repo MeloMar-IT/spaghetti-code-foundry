@@ -115,7 +115,8 @@ export function cardOf(entry) {
         if (pts.length) card.points = pts;
       }
       // the checks the plan wrote for a person to try, with their marks (the card draws them)
-      if (run?.status === "waiting" && Array.isArray(run.checks) && run.checks.length) {
+      // (also when there are none yet: the person may add the first one)
+      if (run?.status === "waiting") {
         card.checkRun = { status: run.status, checks: run.checks, checkMarks: run.checkMarks, checksRev: run.checksRev };
       }
     }

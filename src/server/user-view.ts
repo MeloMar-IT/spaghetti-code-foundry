@@ -1,4 +1,4 @@
-import { checkMarksOf, checksRevision } from "../engine/plan-checks.js";
+import { checkMarksOf, checksRevision, publicChecks } from "../engine/plan-checks.js";
 import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
@@ -30,7 +30,7 @@ export interface UserRun {
   /** The title of the issue the run works on, and its acceptance criteria (plain issue text, capped). */
   issueTitle?: string; criteria?: Criterion[];
   /** Checks a person can try, their marks and the revision of the check set (sent back with a mark); no account ids. */
-  checks?: { id: string; try: string; expect: string }[]; checksRev?: string; checkMarks?: Record<string, { mark: "works" | "not-quite"; at: string }>;
+  checks?: { id: string; try: string; expect: string; source: "plan" | "person"; worked?: string }[]; checksRev?: string; checkMarks?: Record<string, { mark: "works" | "not-quite"; at: string }>;
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
   branch?: string; resumes?: number; owner?: string; superseded?: boolean;
   /** When the run was archived; absent when it is not. */
@@ -243,7 +243,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),
     ...(userPlanPoints(s) ? { planPoints: userPlanPoints(s) } : {}),
-    ...(Array.isArray(s.checks) && s.checks.length ? { checks: s.checks.map((c) => ({ id: c.id, try: c.try, expect: c.expect })), checksRev: checksRevision(s.checks) } : {}),
+    ...(Array.isArray(s.checks) && s.checks.length ? { checks: publicChecks(s.checks), checksRev: checksRevision(s.checks) } : {}),
     ...(Object.keys(checkMarksOf(s)).length ? { checkMarks: checkMarksOf(s) } : {}),
     ...(s.issueTitle ? { issueTitle: s.issueTitle } : {}),
     ...(s.criteria?.length ? { criteria: s.criteria.map((c) => ({ text: c.text, done: c.done })) } : {}),

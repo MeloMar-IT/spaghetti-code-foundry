@@ -168,7 +168,7 @@ export interface RunSummary {
   skillGap?: { topic: string; issue: number; url: string }[];
   /** The skill request carried from the plan record at plan_check. Absent on older runs and on runs without a plan record. */
   skillCarry?: RunSkillCarry;
-  /** Checks a person can try, from the plan's CHECK lines (`source: "plan"`), set after the plan gate; absent on older runs and when the plan gave none. */
+  /** Checks a person can try: the plan's CHECK lines (`source: "plan"`), set after the plan gate, and the person's own (`source: "person"`, kept for the next round). `worked`: marked Works in an earlier round. Absent on older runs and when there are none. */
   checks?: PersonCheck[];
   /** The plan's one line why there is nothing to try (NO_CHECKS); only with `checks: []`. */
   checksNone?: string;

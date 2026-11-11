@@ -124,6 +124,164 @@ describe("createCheckList", () => {
   });
 });
 
+describe("Not quite sends the change back", () => {
+  const form = (list: any, id = "plan-1") => list.el.all("div").find((d: FakeElement) => d.attrs["data-part"] === `check-saw-${id}`);
+  const input = (list: any, name: string) => list.el.all("input").find((i: FakeElement) => i.attrs["data-focus"] === name);
+  const alertOf = (list: any) => list.el.all("p").find((p: FakeElement) => p.attrs.role === "alert")?.textContent;
+  const setup = (over: Record<string, unknown> = {}) => {
+    const onMark = vi.fn(async () => ({ checkMarks: { "plan-1": { mark: "not-quite", at: "t" } } }));
+    const onSendBack = vi.fn(async () => undefined);
+    const list = rc.createCheckList({ onMark, onSendBack, ...over });
+    list.update(waiting());
+    return { list, onMark, onSendBack };
+  };
+
+  it("opens the form without marking, and Cancel closes it", () => {
+    const { list, onMark } = setup();
+    expect(form(list).hidden).toBe(true);
+    btn(list.el, "check-not-quite-plan-1").click();
+    expect(form(list).hidden).toBe(false);
+    expect(form(list).textContent).toContain("What did you see?");
+    expect(onMark).not.toHaveBeenCalled();
+    btn(list.el, "check-cancel-plan-1").click();
+    expect(form(list).hidden).toBe(true);
+  });
+  it("sends nothing for an empty sentence", async () => {
+    const { list, onMark, onSendBack } = setup();
+    btn(list.el, "check-not-quite-plan-1").click();
+    btn(list.el, "check-send-back-plan-1").click();
+    await flush();
+    expect(alertOf(list)).toBe("Write what you saw first.");
+    expect(onMark).not.toHaveBeenCalled();
+    expect(onSendBack).not.toHaveBeenCalled();
+  });
+  it("marks the check, then sends the note with the check and the sentence", async () => {
+    const { list, onMark, onSendBack } = setup();
+    btn(list.el, "check-not-quite-plan-1").click();
+    input(list, "check-saw-plan-1").value = "  a grey\nbutton ";
+    btn(list.el, "check-send-back-plan-1").click();
+    await flush();
+    expect(onMark).toHaveBeenCalledWith("plan-1", "not-quite", "rev1");
+    expect(onSendBack).toHaveBeenCalledWith("Not quite — Try: Open the page — Expect: A red button — What I saw: a grey button");
+    expect(onMark.mock.invocationCallOrder[0]).toBeLessThan(onSendBack.mock.invocationCallOrder[0]!);
+    expect(form(list).hidden).toBe(true);
+    expect(alertOf(list)).toBeFalsy();
+  });
+  it("shows an error and does not send when marking fails", async () => {
+    const { list, onSendBack } = setup({ onMark: vi.fn(async () => { throw new Error("this change moved on; load it again"); }) });
+    btn(list.el, "check-not-quite-plan-1").click();
+    input(list, "check-saw-plan-1").value = "x";
+    btn(list.el, "check-send-back-plan-1").click();
+    await flush();
+    expect(alertOf(list)).toBe("this change moved on; load it again");
+    expect(onSendBack).not.toHaveBeenCalled();
+    expect(form(list).hidden).toBe(false);
+  });
+  it("keeps the sentence when the send-back fails or answers false, and works again on retry", async () => {
+    const onSendBack = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(false).mockResolvedValueOnce(undefined);
+    const { list, onMark } = setup({ onSendBack });
+    btn(list.el, "check-not-quite-plan-1").click();
+    input(list, "check-saw-plan-1").value = "it broke";
+    btn(list.el, "check-send-back-plan-1").click();
+    await flush();
+    expect(alertOf(list)).toBe("boom");
+    expect(input(list, "check-saw-plan-1").value).toBe("it broke");
+    btn(list.el, "check-send-back-plan-1").click();
+    await flush();
+    expect(alertOf(list)).toBe("It could not be sent back. Try again.");
+    expect(form(list).hidden).toBe(false);
+    btn(list.el, "check-send-back-plan-1").click();
+    await flush();
+    expect(onSendBack).toHaveBeenCalledTimes(3);
+    expect(onMark).toHaveBeenCalledTimes(1); // the mark was already set
+    expect(form(list).hidden).toBe(true);
+    expect(alertOf(list)).toBeFalsy();
+  });
+  it("takes a Not quite mark back without the form, and is as before without onSendBack", async () => {
+    const { list, onMark } = setup();
+    list.update(waiting({ checkMarks: { "plan-1": { mark: "not-quite", at: "t" } } }));
+    btn(list.el, "check-not-quite-plan-1").click();
+    await flush();
+    expect(onMark).toHaveBeenLastCalledWith("plan-1", null, "rev1");
+    expect(form(list).hidden).toBe(true);
+    const plain = rc.createCheckList({ onMark });
+    plain.update(waiting());
+    expect(form(plain)).toBeUndefined();
+    btn(plain.el, "check-not-quite-plan-1").click();
+    await flush();
+    expect(onMark).toHaveBeenLastCalledWith("plan-1", "not-quite", "rev1");
+  });
+  it("notQuiteNote is one line and cuts the sentence", () => {
+    const note = rc.notQuiteNote({ try: "a\nb", expect: "c" }, `x\n${"y".repeat(400)}`);
+    expect(note).not.toContain("\n");
+    expect(note.startsWith("Not quite — Try: a b — Expect: c — What I saw: x yyy")).toBe(true);
+    expect(Array.from(note.split("What I saw: ")[1]!)).toHaveLength(300);
+  });
+});
+
+describe("+ Add a check, Your check and Worked before", () => {
+  const addB = (list: any) => btn(list.el, "check-add");
+  const field = (list: any, name: string) => list.el.all("input").find((i: FakeElement) => i.attrs["data-focus"] === name);
+  const alertOf = (list: any) => list.el.all("p").find((p: FakeElement) => p.attrs.role === "alert")?.textContent;
+  it("asks for both parts, then adds and draws the answer's checks", async () => {
+    const answer = { id: "person-1", checks: [...CHECKS, { id: "person-1", try: "T", expect: "E", source: "person" }], checksRev: "rev2", checkMarks: {} };
+    const onAdd = vi.fn(async () => answer);
+    const list = rc.createCheckList({ onMark: vi.fn(), onAdd });
+    list.update(waiting());
+    addB(list).click();
+    field(list, "check-add-try").value = "T";
+    btn(list.el, "check-add-save").click();
+    await flush();
+    expect(alertOf(list)).toBe("Write what to try and what to expect.");
+    expect(onAdd).not.toHaveBeenCalled();
+    field(list, "check-add-expect").value = "E";
+    btn(list.el, "check-add-save").click();
+    await flush();
+    expect(onAdd).toHaveBeenCalledWith("T", "E", "rev1");
+    expect(list.el.all("li")).toHaveLength(3);
+    expect(list.el.textContent).toContain("Your check");
+    expect(field(list, "check-add-try").getAttribute("maxlength")).toBe("300");
+    expect(alertOf(list)).toBeFalsy();
+  });
+  it("shows an error and keeps the text when adding fails", async () => {
+    const list = rc.createCheckList({ onMark: vi.fn(), onAdd: vi.fn(async () => { throw new Error("a change keeps at most 4 checks of your own"); }) });
+    list.update(waiting());
+    addB(list).click();
+    field(list, "check-add-try").value = "T";
+    field(list, "check-add-expect").value = "E";
+    btn(list.el, "check-add-save").click();
+    await flush();
+    expect(alertOf(list)).toBe("a change keeps at most 4 checks of your own");
+    expect(field(list, "check-add-try").value).toBe("T");
+  });
+  it("shows the section for a waiting change without checks, only with onAdd", () => {
+    const list = rc.createCheckList({ onMark: vi.fn(), onAdd: vi.fn() });
+    list.update(waiting({ checks: undefined }));
+    expect(list.el.hidden).toBe(false);
+    expect(list.el.all("li")).toHaveLength(0);
+    expect(addB(list)).toBeDefined();
+    list.update(waiting({ checks: undefined, status: "running" }));
+    expect(list.el.hidden).toBe(true);
+    const none = rc.createCheckList({ onMark: vi.fn() });
+    none.update(waiting({ checks: undefined }));
+    expect(none.el.hidden).toBe(true);
+  });
+  it("labels the person's own checks and the ones that worked before", () => {
+    const list = rc.createCheckList({ onMark: vi.fn() });
+    list.update(waiting({ checks: [{ ...CHECKS[0], worked: "t" }, { id: "person-1", try: "T", expect: "E", source: "person" }] }));
+    expect(list.el.textContent).toContain("Worked before — try it again");
+    expect(list.el.textContent).toContain("Your check");
+    expect(list.el.all("li")[0]!.textContent).not.toContain("Your check");
+    expect(rc.personChecks(waiting({ checks: [{ ...CHECKS[0], worked: "t" }] }))[0]).toMatchObject({ source: "plan", worked: "t" });
+  });
+  it("the run header passes the send-back and add handlers on", () => {
+    const head = rh.createRunHeader({ onAction: vi.fn(), onMark: vi.fn(), onSendBack: vi.fn(), onAddCheck: vi.fn() });
+    head.update(waiting());
+    expect(head.el.all("button").some((b: FakeElement) => b.attrs["data-focus"] === "check-add")).toBe(true);
+    expect(head.el.all("input").some((b: FakeElement) => b.attrs["data-focus"] === "check-saw-plan-1")).toBe(true);
+  });
+});
+
 describe("the run header", () => {
   const labels = (head: any) => head.el.all("div").find((d: FakeElement) => d.attrs.class === "run-actions").all("button").map((b: FakeElement) => b.textContent);
   const section = (head: any) => head.el.all("section").find((s: FakeElement) => s.attrs["aria-label"] === "Checks to try");

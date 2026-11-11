@@ -197,6 +197,7 @@ const EXAMPLES: Record<string, Example> = {
   "POST runs/:id/approve": { path: "runs/nope/approve", body: {}, user: 404, admin: 404 },
   "POST runs/:id/reject": { path: "runs/nope/reject", body: {}, user: 404, admin: 404 },
   "POST runs/:id/checks": { path: "runs/nope/checks", body: {}, user: 404, admin: 404 },
+  "POST runs/:id/checks/add": { path: "runs/nope/checks/add", body: {}, user: 404, admin: 404 },
   "GET runs/:id/events": { path: "runs/nope/events", user: 404, admin: 200 },
   "GET runs/:id/diff": { path: "runs/nope/diff", user: 404, admin: 404 },
   "GET runs/:id/evidence": { path: "runs/nope/evidence", user: 404, admin: 404 },
@@ -580,6 +581,7 @@ describe("own runs", () => {
     "POST runs/:id/approve": 202,
     "POST runs/:id/reject": 202,
     "POST runs/:id/checks": 400,
+    "POST runs/:id/checks/add": 400,
     "GET runs/:id/events": 200,
     "GET runs/:id/diff": 200,
     "GET runs/:id/evidence": 200,
@@ -620,7 +622,7 @@ describe("own runs", () => {
     writeFileSync(file, JSON.stringify({ ...runJson(mine), checks }, null, 2));
     const path = `/api/runs/${mine}/checks`;
     const first = (await call(ann, "GET", `/api/runs/${mine}`)).json() as { checks: unknown[]; checksRev: string; checkMarks?: unknown };
-    expect(first.checks).toEqual(checks.map(({ source: _s, ...c }) => c));
+    expect(first.checks).toEqual(checks);
     expect(first.checkMarks).toBeUndefined();
 
     const ok = await call(ann, "POST", path, { check: "plan-1", mark: "works" });
@@ -648,6 +650,44 @@ describe("own runs", () => {
     expect((await call(ann, "POST", `/api/runs/${mine}/approve`, {})).status).toBe(202);
     await ctx.scheduler.idle();
     expect((await call(ann, "POST", path, { check: "plan-1", mark: "works" })).status).toBe(409);
+  });
+
+  it("adds a check of the person's own, keeps it with what worked when the change is sent back", async () => {
+    const mine = await waitingRun(ann);
+    const file = join(runsDir, mine, "run.json");
+    const plan = [{ id: "plan-1", try: "try 1", expect: "expect 1", source: "plan" }];
+    writeFileSync(file, JSON.stringify({ ...runJson(mine), checks: plan }, null, 2));
+    const add = `/api/runs/${mine}/checks/add`;
+    const rev = ((await call(ann, "GET", `/api/runs/${mine}`)).json() as { checksRev: string }).checksRev;
+
+    expect((await call(ann, "POST", add, { try: "", expect: "x" })).status).toBe(400);
+    expect((await call(ann, "POST", add, { try: "x" })).status).toBe(400);
+    expect((await call(ann, "POST", add, { try: "x", expect: "y", rev: "old" })).status).toBe(409);
+    const ok = await call(ann, "POST", add, { try: "open  the\npage", expect: "it loads", rev });
+    expect(ok.status).toBe(200);
+    const body = ok.json() as { id: string; checks: Record<string, unknown>[]; checksRev: string; checkMarks: object };
+    expect(body.id).toBe("person-1");
+    expect(body.checks[1]).toEqual({ id: "person-1", try: "open the page", expect: "it loads", source: "person" });
+    expect(JSON.stringify(body)).not.toContain(ann.user.id);
+    expect(runJson(mine).checks[1]).toMatchObject({ id: "person-1", source: "person", by: ann.user.id });
+    const seen = (await call(ann, "GET", `/api/runs/${mine}`)).json() as { checks: Record<string, unknown>[] };
+    expect(seen.checks[1]).toEqual(body.checks[1]);
+    for (let n = 2; n <= 4; n++) expect((await call(ann, "POST", add, { try: `t${n}`, expect: `e${n}` })).status).toBe(200);
+    expect((await call(ann, "POST", add, { try: "t5", expect: "e5" })).status).toBe(409);
+
+    // an added check is marked like a plan check, and what worked comes back unmarked after a send-back
+    expect((await call(ann, "POST", `/api/runs/${mine}/checks`, { check: "person-1", mark: "works" })).status).toBe(200);
+    const note = "Not quite — Try: try 1 — Expect: expect 1 — What I saw: nothing";
+    expect((await call(ann, "POST", `/api/runs/${mine}/reject`, { note })).status).toBe(202);
+    await ctx.scheduler.idle();
+    const after = runJson(mine);
+    expect(after.checks.map((c: { id: string }) => c.id)).toEqual(["plan-1", "person-1", "person-2", "person-3", "person-4"]);
+    expect(after.checks[1].worked).toEqual(expect.any(String));
+    expect(after.checks[0].worked).toBeUndefined();
+    expect(after.checkMarks).toBeUndefined();
+    expect(after.history.map((h: { output: string }) => h.output).join("\n")).toContain(`rejected by ui: ${note}`);
+    // the run no longer waits
+    expect((await call(ann, "POST", add, { try: "late", expect: "late" })).status).toBe(409);
   });
 
   it("lets the user answer a run with a note, and the note reaches the run", async () => {
