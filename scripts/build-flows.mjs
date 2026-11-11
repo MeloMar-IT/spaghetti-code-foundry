@@ -3396,11 +3396,14 @@ const SKILL_FORMAT_LINES = [
   "- The skill is the folder skills/<name>/ and nothing else in the repository, except one added line in a CHANGELOG.md or docs/CHANGELOG.md the repository already has.",
   "- skills/<name>/SKILL.md starts with a frontmatter block. `name` is exactly <name>, the name of the folder (lower case letters, digits and single hyphens, at most 64).",
   '- `description` is one text of at most 1024 characters that says what the skill does and then when to use it: "Does X. Use when Y."',
-  "- The skill declares what it is about under `metadata:` with `capabilities: [..]` and/or `technologies: [..]` (lower-case slugs), so it is offered for the sample tasks.",
+  "- The skill declares what it is about under `metadata:` with `capabilities: [..]` and/or `technologies: [..]` (lower-case slugs, at most 32 of each).",
+  "  A sample task is offered the skill only when its `task:` text names the skill name or one of its `capabilities` word for word (a hyphen counts as a space; `technologies` do not count). So every `instructions` task names one, and the `not-offered` selection task names none.",
   "- The body of SKILL.md is under 64 KiB. Move long material to skills/<name>/references/*.md and link it.",
   "- Allowed at the top of the folder: SKILL.md, references/, scripts/, assets/, evals/ and a LICENSE file. No credentials, no live web addresses (use example.com or localhost); a documentation link in SKILL.md or references/ must be https.",
   "- skills/<name>/evals/suite.yaml holds 3 to 5 sample tasks under `instructions:`; fixtures are small folders under skills/<name>/evals/fixtures/.",
   "  Every task works offline, and its `check:` is one command that passes only when the work is right. The skill must be offered for every task.",
+  "  A scenario has only the keys of the example below. Every text value in suite.yaml is one line: no line breaks and no tabs, so write `task:` and `check:` as one quoted line, as in the example.",
+  "- Fixtures are scanned like the skill: no file named like a credential (.env, *.pem, *.key, *.p12, id_rsa; .env.example is fine), no encoded block of 200 or more base64 characters, no `../` path in a script, no download piped into a shell (curl ... | sh). A fake secret goes in a file such as config.example.",
 ].join("\n");
 const SKILL_SUITE_TEMPLATE = [
   "schema: 1",
@@ -3418,12 +3421,10 @@ const SKILL_SUITE_TEMPLATE = [
   "  scenarios:",
   "    - id: first-task            # lower-case slug",
   "      repo: fixtures/small      # a folder under evals/ that holds a tiny project",
-  "      task: >-",
-  "        In src/app.js do X. Keep the exports.",
+  '      task: "In src/app.js do X with <a capability>. Keep the exports."',
   "      policy: { shell: false, network: false, filesystem: write }",
   "      timeout_sec: 600",
-  "      check: >-",
-  "        node --input-type=module -e 'process.exitCode = 0'   # one line; exit 0 only when the work is right",
+  "      check: \"node --input-type=module -e 'process.exitCode = 0'\"   # one line; exit 0 only when the work is right",
 ].join("\n");
 
 write("skill-write", {
