@@ -253,6 +253,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET repos/:id/epics": { path: `repos/${UNKNOWN}/epics`, user: 404, admin: 404 },
   "GET repos/:id/epics/:issue": { path: `repos/${UNKNOWN}/epics/1`, user: 404, admin: 404 },
   "GET repos/:id/safe-points": { path: `repos/${UNKNOWN}/safe-points`, user: 404, admin: 404 },
+  "POST repos/:id/safe-points/restore": { path: `repos/${UNKNOWN}/safe-points/restore`, body: { commit: "a".repeat(40), dryRun: true }, user: 404, admin: 404 },
   "POST repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, body: { version: "develop" }, user: 404, admin: 404 },
   "GET repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
   "DELETE repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
@@ -389,6 +390,7 @@ describe("the table", () => {
     expect(findRule("GET", ["repos", "a", "epics"])?.path).toBe("repos/:id/epics");
     expect(findRule("GET", ["repos", "a", "epics", "1"])?.path).toBe("repos/:id/epics/:issue");
     expect(findRule("GET", ["repos", "a", "safe-points"])?.path).toBe("repos/:id/safe-points");
+    expect(findRule("POST", ["repos", "a", "safe-points", "restore"])?.path).toBe("repos/:id/safe-points/restore");
     expect(findRule("PUT", ["admin", "repos", "a", "ready"])?.path).toBe("admin/repos/:id/ready");
     expect(findRule("GET", ["admin", "repos"])?.path).toBe("admin/repos");
     expect(findRule("PUT", ["admin", "repos", "a", "settings"])?.path).toBe("admin/repos/:id/settings");

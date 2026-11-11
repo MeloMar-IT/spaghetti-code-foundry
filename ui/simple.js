@@ -293,7 +293,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
       h("h2", {}, WORDS.making),
       GROUPS.map(([key, title]) => groupView(key, title, model.groups[key], { doneOpen, onToggle, onBuild }))),
     // the versions that worked (#863); left out for a caller that reads none
-    safe ? h("section", { class: "simple-group simple-safe" }, h("h2", {}, SAFE.simpleTitle), ...safePointsView(safe.answer, { simple: true })) : null,
+    safe ? h("section", { class: "simple-group simple-safe" }, h("h2", {}, SAFE.simpleTitle), ...safePointsView(safe.answer, { simple: true, restore: { id: safe.id } })) : null,
     actions.length
       ? h("div", { class: "simple-actions" }, actions.filter((x) => WORDS.actions[x.id]).map((x) => x.node ? x.node : x.href
         ? h("a", { class: "btn simple-big", href: x.href, "data-focus": `simple-action-${x.id}` }, WORDS.actions[x.id])
