@@ -130,11 +130,66 @@ describe("todayModel", () => {
     expect(m.lists["finished-today"].map((i: any) => i.id)).toEqual(["a"]);
   });
 
+  it("counts Ready to check for approvals, plans, splits, releases and final versions, not for questions or stuck work", () => {
+    const m = today.todayModel([
+      run("a", "approval"), run("p", "approve_plan"), run("s", "approve_split"), run("rel", "release"),
+      { ...run("fin", "approval", {}, { final: true }) },
+      run("q", "questions"), failed("f"),
+    ], [], { now: NOON });
+    expect(m.lists.ready.map((i: any) => i.id).sort()).toEqual(["a", "fin", "p", "rel", "s"]);
+    expect(m.counts.ready).toBe(m.lists.ready.length);
+    expect(m.counts.ready).toBe(5);
+  });
+
+  it("counts Published this week from today to 6 days back, not 7, and only confirmed publications", () => {
+    const merged = [{ id: "merge", ok: true }];
+    const done = (id: string, day: number, over: any = {}) => run(id, "done", { status: "succeeded", finishedAt: at(day, 10), history: merged, ...over });
+    const m = today.todayModel([
+      done("today", 0), done("six", -6), done("seven", -7),
+      // a planning run that finished published nothing
+      run("plan", "done", { flow: "issue-plan", status: "succeeded", finishedAt: at(0, 10), history: [{ id: "plan", ok: true }] }),
+      // a merge that failed published nothing
+      run("nomerge", "done", { status: "succeeded", finishedAt: at(0, 10), history: [{ id: "merge", ok: false }] }),
+      // a daily release that was rejected ("Not yet") ends succeeded but published nothing
+      done("rejected", 0, { flow: "release-daily", history: [{ id: "final_merge", ok: false }] }),
+      done("merged", 0, { flow: "release-daily", history: [{ id: "final_merge", ok: true }] }),
+      done("pushed", 0, { history: [{ id: "push_main", ok: true, output: "PUSHED: main" }] }),
+      // a split that made all its parts is finished, not published
+      failed("split", { splitMade: "all" }, { finishedAt: at(0, 9) }),
+      // a scheduled release that waits is not published
+      run("waits", "release", { status: "succeeded", finishedAt: at(0, 9) }),
+    ], [], { now: NOON });
+    expect(m.lists["published-week"].map((i: any) => i.id).sort()).toEqual(["merged", "pushed", "six", "today"]);
+    expect(m.counts["published-week"]).toBe(4);
+  });
+
+  it("Simple puts the project on cards and running work, Advanced does not", () => {
+    const projectOf = () => "p1";
+    const runs = [run("a", "approval"), run("b", "running", { startedAt: at(0, 9) }), run("c", "dependency", { status: "waiting", history: [{ id: "implement" }] }, { blockers: [] })];
+    const s = today.todayModel(runs, [], { simple: true, projectOf, now: NOON });
+    expect(s.attention[0].project).toBe("p1");
+    expect(s.building.map((b: any) => [b.id, b.project, b.running]).sort()).toEqual([["b", "p1", true], ["c", "p1", false]]);
+    expect(s.building.find((b: any) => b.id === "b").startedMs).toBe(Date.parse(at(0, 9)));
+    const adv = today.todayModel(runs, [], { now: NOON });
+    expect(Object.hasOwn(adv.attention[0], "project")).toBe(false);
+    expect(Object.hasOwn(adv.building[0], "project")).toBe(false);
+  });
+
+  it("exports the card views and the predicates", () => {
+    expect(typeof today.attentionCard).toBe("function");
+    expect(typeof today.buildingItem).toBe("function");
+    expect(today.isReady(rec("approve_plan"))).toBe(true);
+    expect(today.isReady(rec("questions"))).toBe(false);
+    expect(today.isReady(undefined)).toBe(false);
+    expect(today.inLastWeek({ run: { finishedAt: at(-6, 0) } }, NOON)).toBe(true);
+    expect(today.inLastWeek({ run: { finishedAt: at(-7, 23) } }, NOON)).toBe(false);
+  });
+
   it("handles bad input", () => {
     for (const m of [today.todayModel(null, "x"), today.todayModel({}, undefined)]) {
       expect(m.total).toBe(0);
       expect(m.attention).toEqual([]);
-      expect(m.counts).toEqual({ waiting: 0, building: 0, check: 0, "finished-today": 0 });
+      expect(m.counts).toEqual({ waiting: 0, building: 0, check: 0, ready: 0, "published-week": 0, "finished-today": 0 });
     }
   });
 
@@ -345,6 +400,20 @@ describe("renderHome", () => {
     health: () => { throw new Error("health must not be called"); },
     clarity: () => { throw new Error("clarity must not be called"); },
     yourTurn: () => { throw new Error("yourTurn must not be called"); },
+  });
+
+  it("draws the Advanced Home the same under every look", async () => {
+    const root = (globalThis as any).document.documentElement;
+    const drawn: string[] = [];
+    for (const look of ["calm", "midnight", "friendly", "editorial", "bento"]) {
+      root.setAttribute("data-look", look);
+      const main = new FakeElement("main");
+      const off = await ui.renderHome(main, { a: api([run("a", "running"), run("b", "approval")]) });
+      drawn.push(JSON.stringify([main.all("h2").map((e) => e.textContent), main.all("a").map((e) => e.attrs.href)]));
+      off();
+    }
+    delete root.attrs["data-look"];
+    expect(new Set(drawn).size).toBe(1);
   });
 
   it("calls only runs and queue, and refreshes every 30 seconds", async () => {

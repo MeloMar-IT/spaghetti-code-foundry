@@ -448,6 +448,24 @@ export const ASK = {
   checkOutcomes: { read: "Read again", passed: "Works", failed: "Does not work" },
 };
 
+/** The words of the Simple home (Today) in every layout. Fixed text: a test keeps it free of forbidden terms. */
+export const HOME = {
+  buildTitle: "What do you want to build?",
+  buildText: "Say it in your own words. The Foundry plans it and asks when it needs you.",
+  start: "Start",
+  countersLabel: "Your work",
+  counters: { check: "Needs you", building: "Running", ready: "Ready to check", "published-week": "Published this week" },
+  lists: { check: "Needs you", building: "Running", ready: "Ready to check", "published-week": "Published this week", waiting: "Planned", finished: "Done", "finished-today": "Done today" },
+  needsTitle: "Needs you",
+  runningTitle: "Running now",
+  nothingRunning: "Nothing is running right now.",
+  projectTitle: "Your project",
+  steps: "Steps",
+  back: "Back to Today",
+  nothingInList: "Nothing here.",
+  more: (n) => `+${n} more`,
+};
+
 /** The first sentence of the first prose line after the title; "" when there is none. */
 export function summaryOf(task) {
   const lines = String(task ?? "").split(/\r?\n/).slice(1);

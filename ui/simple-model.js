@@ -3,7 +3,8 @@ import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
 import { planPoints, plainPoints } from "./request-model.js";
 import { plannedCards } from "./simple-change-model.js";
-import { FINAL, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { FINAL, HOME, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { greeting, groupHref, summaryLine, todayModel } from "./today.js";
 import { phaseText, stepPhase } from "./phases.js";
 
 // The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
@@ -166,6 +167,39 @@ export function projectModel(repo, all, runs, pending, changes = []) {
     todo: groups.check,
     groups,
     state: stateLine({ needs: groups.check.length, needsAnswer: answer, building: groups.building.length, planned: groups.planned.length, done: groups.done.length }),
+  };
+}
+
+/** The counters of the Simple home, in order; each is also the key of the list it opens. */
+export const HOME_COUNTERS = ["check", "building", "ready", "published-week"];
+
+/**
+ * The Simple home as plain data, the same for every layout (a layout only arranges it).
+ * `projects`: the output of projectsModel. `list`: the list a counter opened ("" or an unknown key shows none).
+ * The current project is the project of the newest work that really runs (paused work does not count), else of the first card
+ * that needs the person, else the first project; null when there is no project.
+ */
+export function homeModel(runs, pending, repos, projects, { now = Date.now(), list = "" } = {}) {
+  const today = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos), now });
+  const all = Array.isArray(projects) ? projects : [];
+  const newest = (items) => items.reduce((best, b) => (!best || b.startedMs > best.startedMs ? b : best), null);
+  const runningOf = (id) => newest(today.building.filter((b) => b.running && (id === undefined || String(b.project) === String(id))));
+  const candidates = [runningOf()?.project, today.attention[0]?.project, all[0]?.id];
+  const p = candidates.map((id) => (id === undefined || id === null ? undefined : all.find((x) => String(x.id) === String(id)))).find(Boolean);
+  const running = p ? runningOf(p.id) : null;
+  return {
+    now,
+    greeting: greeting(now),
+    summary: summaryLine({ check: today.attention.length, building: today.counts.building, finishedToday: today.counts["finished-today"] }),
+    counters: HOME_COUNTERS.map((key) => ({ key, label: HOME.counters[key], count: today.counts[key] ?? 0, href: groupHref(key, true) })),
+    lists: today.lists,
+    list: Object.hasOwn(today.lists, list) ? list : "",
+    listTitle: Object.hasOwn(HOME.lists, list) ? HOME.lists[list] : "",
+    attention: today.attention,
+    building: today.building,
+    project: p
+      ? { id: p.id, name: p.name, state: p.state, href: `#/repos/${encodeURIComponent(p.id)}`, phase: running?.phase?.index ?? null, line: running?.line ?? "" }
+      : null,
   };
 }
 

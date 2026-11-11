@@ -3,8 +3,9 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { changeRepoOf, changesOf } from "./simple-change-model.js";
-import { projectOfWork, projectsModel } from "./simple-model.js";
-import { greeting, todayModel, todayView } from "./today.js";
+import { homeModel, projectsModel } from "./simple-model.js";
+import { currentLook, homeLayout } from "./simple-home.js";
+import { greeting } from "./today.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
 import { openAsk } from "./ask-handoff.js";
 import { requestView } from "./request-box.js";
@@ -369,7 +370,7 @@ export async function renderSimpleHelp(main, { a = api } = {}) {
  * My projects; never rejects; returns a cleanup. `openGuide()` is called once, when the first successful load shows no project and
  * `alive()` still says this page is the one on screen (a slow answer that arrives after the person left must not move them).
  */
-export function renderSimpleHome(main, { a = api, openGuide, alive = () => true, list = "" } = {}) {
+export function renderSimpleHome(main, { a = api, openGuide, alive = () => true, list = "", look = currentLook } = {}) {
   let first = true;
   return live(main, {
     a,
@@ -383,9 +384,10 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true,
           // the page stays as it is
         }
       }
-      // Today first (work of the person's projects only), then the project cards. A counter opens `list` on this page.
-      const model = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos) });
-      return [...todayView(model, { focus: "simple-today", simple: true, list }), ...projectsView(projects)];
+      // Today first, drawn by the layout of the person's look (work of the person's projects only), then My projects.
+      // A counter opens `list` on this page.
+      const model = homeModel(runs, pending, repos, projects, { list });
+      return [...homeLayout(model, look(), { focus: "simple-today" }), ...projectsView(projects)];
     },
   });
 }
