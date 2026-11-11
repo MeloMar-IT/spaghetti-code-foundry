@@ -19,7 +19,9 @@ import type { RunSkillView } from "./skill-view.js";
  * to the run later stays hidden until it is added here: no costs, no tokens, no agent or model, no step output, no
  * transcripts, no settings, no folders. The log is rebuilt line by line from known shapes.
  */
-export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; slotWaitMs?: number; parent?: string }
+export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; slotWaitMs?: number; parent?: string;
+  /** True when this step is a push to main that worked (its output said PUSHED:); the output itself is never sent. */
+  pushed?: true }
 
 /** One line of an issue's acceptance criteria. */
 export interface Criterion { text: string; done: boolean }
@@ -231,6 +233,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
       startedAt: h.startedAt, durationMs: h.durationMs,
       ...(h.slotWaitMs ? { slotWaitMs: h.slotWaitMs } : {}),
       ...(h.parent !== undefined ? { parent: h.parent } : {}),
+      ...(h.ok && String(h.id ?? "").split("/").at(-1) === "push_main" && /^PUSHED:/m.test(h.output ?? "") ? { pushed: true as const } : {}),
     })),
     state: { next: s.state?.next ?? null },
     ...(s.waiting ? { waiting: { stepId: s.waiting.stepId, message: s.waiting.message, since: s.waiting.since } } : {}),

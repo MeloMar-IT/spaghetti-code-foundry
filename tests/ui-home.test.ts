@@ -163,6 +163,44 @@ describe("todayModel", () => {
     expect(m.counts["published-week"]).toBe(4);
   });
 
+  it("gives the newest confirmed publication as lastPublished, also from the flag a user payload keeps", () => {
+    const done = (id: string, day: number, history: any[], over: any = {}) => run(id, "done", { status: "succeeded", finishedAt: at(day, 10), history, ...over });
+    const m = today.todayModel([
+      done("old", -3, [{ id: "merge", ok: true }]),
+      done("new", -1, [{ id: "push_main", ok: true, pushed: true }]),
+      done("skipped", 0, [{ id: "push_main", ok: true }]),
+      done("nomerge", 0, [{ id: "merge", ok: false }]),
+    ], [], { now: NOON });
+    expect(m.lastPublished).toMatchObject({ id: "new", finishedMs: Date.parse(at(-1, 10)) });
+    expect(today.todayModel([done("x", 0, [{ id: "merge", ok: false }])], [], { now: NOON }).lastPublished).toBeNull();
+    // Simple only sees work of the person's own projects
+    const own = today.todayModel([done("mine", -2, [{ id: "merge", ok: true }]), done("theirs", 0, [{ id: "merge", ok: true }])], [], {
+      simple: true, now: NOON, projectOf: (e: any) => (e.run.runId === "mine" ? "p1" : null),
+    });
+    expect(own.lastPublished?.id).toBe("mine");
+    for (const bad of [today.todayModel(null, "x"), today.todayModel({}, undefined)]) expect(bad.lastPublished).toBeNull();
+  });
+
+  it("counts work held by today's limit: the raw kinds and the sanitized daily budget, not other limits", () => {
+    const waiting = (id: string, kind: any, over: any = {}) => run(id, kind, { status: "waiting", history: [{ id: "implement" }], ...over });
+    const userDaily = { ...rec("daily_budget"), kind: "usage_limit" };
+    const m = today.todayModel([
+      waiting("a", "daily_budget"), waiting("b", "project_limit"), waiting("c", "usage_limit", { next: userDaily }),
+      waiting("d", "user_limit"), waiting("e", "usage_limit"), run("f", "running"),
+    ], [], { now: NOON });
+    expect(m.limitedToday).toBe(3);
+    expect(today.todayModel([run("f", "running")], [], { now: NOON }).limitedToday).toBe(0);
+    for (const bad of [today.todayModel(null, "x"), today.todayModel({}, undefined)]) expect(bad.limitedToday).toBe(0);
+  });
+
+  it("counts whole calendar days with daysAgo", () => {
+    const now = new Date(2026, 0, 10, 12, 0).getTime();
+    expect(today.daysAgo(new Date(2026, 0, 10, 0, 5).getTime(), now)).toBe(0);
+    expect(today.daysAgo(new Date(2026, 0, 9, 23, 0).getTime(), now)).toBe(1);
+    expect(today.daysAgo(new Date(2026, 0, 5, 8, 0).getTime(), now)).toBe(5);
+    expect(today.daysAgo(now + 86_400_000, now)).toBe(0);
+  });
+
   it("Simple puts the project on cards and running work, Advanced does not", () => {
     const projectOf = () => "p1";
     const runs = [run("a", "approval"), run("b", "running", { startedAt: at(0, 9) }), run("c", "dependency", { status: "waiting", history: [{ id: "implement" }] }, { blockers: [] })];

@@ -14,6 +14,19 @@ import { signInAs, type TestSession } from "./helpers/session.js";
 
 const keys = (o: object) => Object.keys(o).sort();
 
+describe("the publication flag in the user view", () => {
+  const step = (id: string, ok: boolean, output: string) => ({ id, type: "shell", visit: 1, ok, output, startedAt: "2026-01-01T00:00:00.000Z", durationMs: 1 });
+  const view = (history: unknown[]) => userRun({ runId: "r", flow: "f", task: "t", status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z", vars: {}, history, state: { next: null } } as never).history;
+  it("keeps a push to main that worked as a flag, never its output", () => {
+    const [pushed, skipped, failed, merge] = view([step("push_main", true, "PUSHED: main"), step("push_main", true, "SKIPPED"), step("push_main", false, "PUSHED: main"), step("merge", true, "PUSHED: x")]);
+    expect(pushed).toMatchObject({ id: "push_main", pushed: true });
+    expect("pushed" in skipped!).toBe(false);
+    expect("pushed" in failed!).toBe(false);
+    expect("pushed" in merge!).toBe(false);
+    expect(JSON.stringify([pushed, skipped])).not.toContain("PUSHED");
+  });
+});
+
 describe("answers in the user view", () => {
   const base = {
     runId: "r", flow: "ask", task: "t", status: "stopped", reason: 'stopped at step "ask_for_info"', startedAt: "2026-01-01T00:00:00.000Z",

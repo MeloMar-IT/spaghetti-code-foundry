@@ -1,5 +1,5 @@
 /* pages/simple.css — the Simple view: My projects and the project page (ui/simple.js).
-   Belongs here: the project cards, the groups of work and the big buttons. Class names start with simple-.
+   Belongs here: the project cards, the home tiles, the groups of work and the big buttons. Class names start with simple-.
    Does not belong here: rules for other pages and shared component rules. */
 .simple { display: grid; gap: var(--stack-gap); }
 .simple-projects, .simple-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
@@ -29,9 +29,25 @@
 .simple-big { display: inline-flex; align-items: center; justify-content: center; min-height: var(--size-touch); padding: var(--space-md) var(--space-xl); text-align: center; }
 .simple-actions { display: flex; flex-wrap: wrap; gap: var(--space-md); }
 .simple-back { min-height: var(--size-touch); display: inline-flex; align-items: center; }
+.simple-home[data-layout="tiles"] { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--stack-gap); align-items: start; }
+.simple-tile { display: grid; gap: var(--space-md); align-content: start; min-width: 0; padding: var(--card-pad); background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); overflow-wrap: anywhere; }
+.simple-tile h1, .simple-tile h2, .simple-tile h3, .simple-tile p { margin: 0; }
+.simple-tile ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.simple-tile-large { grid-column: span 6; }
+.simple-tile-small { grid-column: span 3; }
+.simple-tile-wide { grid-column: 1 / -1; }
+.simple-tile-dark { color-scheme: dark; }
+.simple-tile-counts { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.simple-tile .simple-tile-link { border: none; padding: 0; }
+@media (max-width: 1023px) {
+  .simple-tile-large { grid-column: 1 / -1; }
+  .simple-tile-small { grid-column: span 6; }
+}
 @media (max-width: 767px) {
   .simple-big { width: 100%; }
   .simple-row { grid-template-columns: auto minmax(0, 1fr); }
   .simple-row > :not(.simple-row-num) { grid-column: 2; }
   .simple-columns { grid-template-columns: minmax(0, 1fr); }
+  .simple-home[data-layout="tiles"] { grid-template-columns: minmax(0, 1fr); }
+  .simple-tile { grid-column: 1 / -1; }
 }

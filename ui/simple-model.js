@@ -4,7 +4,7 @@ import { myRunsEntries } from "./runs-list.js";
 import { planPoints, plainPoints } from "./request-model.js";
 import { plannedCards } from "./simple-change-model.js";
 import { FINAL, HOME, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
-import { greeting, groupHref, summaryLine, todayModel } from "./today.js";
+import { daysAgo, greeting, groupHref, summaryLine, todayModel } from "./today.js";
 import { phaseText, stepPhase } from "./phases.js";
 
 // The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
@@ -176,6 +176,7 @@ export const HOME_COUNTERS = ["check", "building", "ready", "published-week"];
 /**
  * The Simple home as plain data, the same for every layout (a layout only arranges it).
  * `projects`: the output of projectsModel. `list`: the list a counter opened ("" or an unknown key shows none).
+ * `safePoint`: the newest published change ({ title, line }) or null. `limitReached`: some work waits on today's limit (never an amount).
  * The current project is the project of the newest work that really runs (paused work does not count), else of the first card
  * that needs the person, else the first project; null when there is no project.
  */
@@ -197,6 +198,8 @@ export function homeModel(runs, pending, repos, projects, { now = Date.now(), li
     listTitle: Object.hasOwn(HOME.lists, list) ? HOME.lists[list] : "",
     attention: today.attention,
     building: today.building,
+    safePoint: today.lastPublished ? { title: today.lastPublished.title, line: HOME.published(daysAgo(today.lastPublished.finishedMs, now)) } : null,
+    limitReached: today.limitedToday > 0,
     project: p
       ? { id: p.id, name: p.name, state: p.state, href: `#/repos/${encodeURIComponent(p.id)}`, phase: running?.phase?.index ?? null, line: running?.line ?? "" }
       : null,
