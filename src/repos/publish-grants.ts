@@ -10,7 +10,7 @@ export const PUBLISH_PER_OWNER = 5;
 export const PUBLISH_MAX = 1000;
 export const PUBLISH_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
-export type PublishKind = "move" | "push-remote";
+export type PublishKind = "move" | "push-remote" | "restore";
 
 /** What a token is bound to: the account, the project, what it publishes and the request that was checked. */
 export interface PublishBinding {

@@ -57,6 +57,7 @@ export const API_ONLY: Record<string, string> = {
   "GET repos/:id/epics":"the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/safe-points": "the safe points of a project (#863); the project pages and the Simple home read them, the command line has no command for it yet",
+  "POST repos/:id/safe-points/restore": "Restore on a safe point (#864): a preview, then Yes, open the change; the project pages use it, so there is no command line use yet",
   "POST repos/:id/preview": "starts a preview of the project (#789, part of #608); the Try it page that uses it comes in a later part",
   "GET repos/:id/preview": "the state of that preview (#789); no command line use yet",
   "DELETE repos/:id/preview": "stops that preview (#789); no command line use yet",

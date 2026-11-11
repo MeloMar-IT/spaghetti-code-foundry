@@ -1061,6 +1061,22 @@ A safe point is a recent version of a project that a successful run or a release
 - **Limits.** A project without gitflow gets points only from release builds and base checks; pull requests merged by hand on GitHub are not known to the Foundry. The Foundry reads at most 1500 runs. If that is not enough for 10 points, the section says the list is incomplete instead of "none known".
 - **Read only.** The list is read from the run records, with no call to GitHub, and nothing is restored. **Read again** loads it again. The same list is on the Simple project page as **Versions that worked**. The route is `GET /api/repos/:id/safe-points`; you can read the list for your repositories, and an admin for any repository.
 
+#### Restore a safe point
+
+Each point in the list has a **Restore** button (on the Advanced repository page and on the Simple project page). Restoring takes the code back to that version, but it is a normal change, not a direct reset. Nothing is pushed directly.
+
+1. **Look first.** **Restore** shows what would happen and changes nothing: the titles of the changes that are taken back, "and at least N more" when the list is cut short, and two fixed sentences. The first says that any later change is taken back, also one made outside the Foundry. The second says what a restore does not undo: data the app wrote, messages or e-mails that were already sent, and settings in outside services. If no change is known after the version, the preview says so.
+2. **Confirm.** **Yes, open the change** opens one issue with the project's build label and shows its number. The issue asks for the branch to be made the same as that commit again, using new commits (no reset, no force-push). The flow then builds it like any other change, with its tests and review. **Cancel** closes the preview.
+
+Rules:
+
+- **Who may restore.** Only the owner of the repository and an admin. Anyone else gets "not found".
+- **Confirmation.** The confirmation is valid for 10 minutes and works once. It is tied to your account, the project, the commit and the list of changes you saw. If the safe points changed since you looked, nothing is opened and you see the preview again.
+- **Refused, nothing opened.** A project with no enabled issues watcher is refused. On GitHub, the build label must also exist in the repository. A second confirm for the same project and version while one is still opening is refused.
+- **Red base branch.** When the base branch is red, the issue lists the failing tests under "Failing tests to fix", so the change works on them.
+- **Audit.** Each change that is opened writes one `safe-point-restore` line to the audit log.
+- **Route.** `POST /api/repos/:id/safe-points/restore`. With `{ "commit": "…", "dryRun": true }` it returns the preview and the confirmation; with `{ "commit": "…", "confirm": "…" }` it opens the change. See the route table above.
+
 ### Repository context
 
 The switcher sits at the top of the sidebar, on both displays. It shows your current repository
@@ -5515,6 +5531,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
 | `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
 | `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
+| `POST /api/repos/:id/safe-points/restore` | yes | yes | Restore a safe point of your repository (an admin: any repository): { commit, dryRun: true } answers the titles of the changes that would be taken back, what a restore does not undo and a single-use confirmation valid for 10 minutes, and changes nothing; { commit, confirm } opens one normal change (an issue with the build label, made with the owner's own GitHub sign-in) that takes the code back to that commit with new revert commits, with tests and review; nothing is pushed directly; 409 when the confirmation is used up or does not fit, the shown points changed, the commit is not a safe point or the project has no enabled issues watcher; writes one audit line |
 | `GET /api/repos/:id/safe-points` | yes | yes | the safe points of your repository: the last 10 commits of its develop branch (gitflow) or main branch that a successful run or a release left green, newest first, with the time, the change titles and who started them; read from the run records, no call to GitHub, changes nothing (an admin: any repository) |
 | `POST /api/repos/:id/preview` | yes | yes | start the develop version, or the version of a run that waits for your check (`version`, `runId`), of your repository (an admin: any repository) in a folder of its own; replaces a running one; answers 202 |
 | `GET /api/repos/:id/preview` | yes | yes | the state, URL, reason, version and redacted output of the preview of your repository (an admin: any repository) |

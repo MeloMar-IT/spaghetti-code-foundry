@@ -134,6 +134,7 @@ export const api = {
   repos: () => req("GET", "/api/repos"),
   epics: (id) => req("GET", `/api/repos/${enc(id)}/epics`),
   safePoints: (id) => req("GET", `/api/repos/${enc(id)}/safe-points`),
+  restoreSafePoint: (id, body) => req("POST", `/api/repos/${enc(id)}/safe-points/restore`, body),
   epic: (id, epicId) => req("GET", `/api/repos/${enc(id)}/epics/${enc(epicId)}`),
   repoMethods: () => req("GET", "/api/repos/methods"),
   addRepo: (body) => req("POST", "/api/repos", body),

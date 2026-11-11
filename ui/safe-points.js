@@ -18,6 +18,17 @@ export const SAFE = {
   today: "today",
   yesterday: "yesterday",
   reread: "Read again",
+  restore: "Restore",
+  restoreChecking: "Checking what would be taken back…",
+  takenBack: "These changes are taken back:",
+  nothingKnown: "No change of the Foundry is known after this version.",
+  atLeast: (n) => `and at least ${n} more`,
+  yesOpen: "Yes, open the change",
+  cancel: "Cancel",
+  opening: "Opening the change…",
+  opened: (n) => `Opened change #${n}`,
+  retry: "Try again",
+  restoreFailed: "Could not restore this version.",
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -54,8 +65,59 @@ export function pointLines(point, { simple = false, now = Date.now() } = {}) {
   return out;
 }
 
+/** The preview of a restore: the titles that are taken back and the two fixed sentences of the server. All text is drawn as text. */
+export function restorePreview(answer) {
+  const titles = (Array.isArray(answer?.takenBack) ? answer.takenBack : []).map((t) => String(t ?? "")).filter(Boolean);
+  const more = Number(answer?.more) > 0 ? [h("li", {}, SAFE.atLeast(answer.more))] : [];
+  const any = titles.length > 0 || more.length > 0;
+  return [
+    any ? h("p", {}, SAFE.takenBack) : h("p", { class: "muted" }, SAFE.nothingKnown),
+    any ? h("ul", {}, titles.map((t) => h("li", {}, t)), more) : null,
+    h("p", { class: "muted" }, String(answer?.others ?? "")),
+    h("p", { class: "muted" }, String(answer?.notUndone ?? "")),
+  ].filter(Boolean);
+}
+
+const controls = new Map();
+const MAX_CONTROLS = 40;
+
+/** The Restore button of one point, with its preview. One element per project and commit, so a redraw of the page keeps an open preview. */
+export function restoreControl(id, point, { a = api } = {}) {
+  const key = `${id}:${point?.commit}`;
+  const known = controls.get(key);
+  if (known) return known;
+  const el = h("div", { class: "safe-restore" });
+  let preview;
+  const show = (...nodes) => mount(el, ...nodes);
+  const idle = () => show(h("button", { type: "button", onClick: () => look() }, SAFE.restore));
+  const fail = (e, again) => show(h("p", { class: "error", role: "alert" }, e?.message || SAFE.restoreFailed), h("button", { type: "button", onClick: again }, SAFE.retry), h("button", { type: "button", onClick: idle }, SAFE.cancel));
+  async function look() {
+    show(h("p", { class: "muted" }, SAFE.restoreChecking));
+    try {
+      preview = await a.restoreSafePoint(id, { commit: point.commit, dryRun: true });
+    } catch (e) {
+      return fail(e, look);
+    }
+    show(...restorePreview(preview), h("button", { type: "button", onClick: () => open() }, SAFE.yesOpen), h("button", { type: "button", onClick: idle }, SAFE.cancel));
+  }
+  async function open() {
+    show(h("p", { class: "muted" }, SAFE.opening));
+    try {
+      const made = await a.restoreSafePoint(id, { commit: point.commit, confirm: preview?.confirm?.token });
+      const url = typeof made?.url === "string" && made.url.startsWith("https://") ? made.url : "";
+      show(h("p", {}, url ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, SAFE.opened(made.issue)) : SAFE.opened(made?.issue)));
+    } catch (e) {
+      fail(e, look);
+    }
+  }
+  idle();
+  controls.set(key, el);
+  while (controls.size > MAX_CONTROLS) controls.delete(controls.keys().next().value);
+  return el;
+}
+
 /** The nodes of the list. `answer` undefined: the read failed (a quiet note). All text is drawn as text. */
-export function safePointsView(answer, { simple = false, now = Date.now() } = {}) {
+export function safePointsView(answer, { simple = false, now = Date.now(), restore } = {}) {
   if (!answer || !Array.isArray(answer.points)) return [h("p", { class: "muted" }, SAFE.failed)];
   if (!answer.points.length) return [h("p", { class: "muted" }, answer.complete === false ? SAFE.partial : SAFE.none)];
   return [
@@ -64,7 +126,8 @@ export function safePointsView(answer, { simple = false, now = Date.now() } = {}
       const l = pointLines(p, { simple, now });
       return h("li", {},
         h("strong", {}, l.when), l.what ? ` — ${l.what}` : "", " ",
-        h("span", { class: "muted" }, l.commit ? `${l.who} · ${l.commit}` : l.who));
+        h("span", { class: "muted" }, l.commit ? `${l.who} · ${l.commit}` : l.who),
+        restore ? restoreControl(restore.id, p, restore.a ? { a: restore.a } : {}) : null);
     })),
   ];
 }
@@ -78,7 +141,7 @@ export function safePointsPart(id, { a = api } = {}) {
     const my = ++loads;
     mount(el, loadingState("Loading the safe points…", { rows: 2 }));
     Promise.resolve().then(() => a.safePoints(id)).then(
-      (answer) => { if (my === loads) mount(el, ...safePointsView(answer), reread); },
+      (answer) => { if (my === loads) mount(el, ...safePointsView(answer, { restore: { id, a } }), reread); },
       () => { if (my === loads) mount(el, ...safePointsView(undefined), reread); });
   }
   reload();

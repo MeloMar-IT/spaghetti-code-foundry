@@ -60,6 +60,7 @@ export const EVENT_ACTIONS = [
   "policy-break-glass-end",
   "skill-auto-approve",
   "skill-auto-update",
+  "safe-point-restore",
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;
