@@ -572,8 +572,8 @@ describe("the Simple home layouts", () => {
   });
 
   it("draws the cards layout, in order, for every look", () => {
-    for (const look of LOOKS) {
-      const page = box(homeMod.homeLayout(hm(), look));
+    const pages = [...["calm", "friendly", "bento"].map((look) => box(homeMod.homeLayout(hm(), look))), box(homeMod.drawLayout(hm(), "cards"))];
+    for (const page of pages) {
       const wrap = page.all("div")[0]!;
       expect(wrap.attrs.class).toBe("simple-home");
       expect(wrap.attrs["data-layout"]).toBe("cards");
@@ -589,33 +589,42 @@ describe("the Simple home layouts", () => {
   });
 
   it("dispatches by layout name, and falls back to cards where there is no view yet", () => {
-    for (const layout of ["cards", "list", "tiles", "nope", undefined, "constructor"]) {
+    expect(box(homeMod.drawLayout(hm(), "list")).all("div")[0]!.attrs["data-layout"]).toBe("list");
+    for (const layout of ["cards", "tiles", "nope", undefined, "constructor"]) {
       expect(box(homeMod.drawLayout(hm(), layout)).all("div")[0]!.attrs["data-layout"], String(layout)).toBe("cards");
     }
     // a view that is added later is used for its layout, and only for it
-    homeMod.VIEWS.list = (m: any) => [homeMod.cardsLayout(m)[0]];
+    homeMod.VIEWS.tiles = (m: any) => [homeMod.cardsLayout(m)[0]];
     try {
-      expect(box(homeMod.drawLayout(hm(), "list")).all("div")[0]!.attrs["data-layout"]).toBe("list");
+      expect(box(homeMod.drawLayout(hm(), "tiles")).all("div")[0]!.attrs["data-layout"]).toBe("tiles");
+      expect(box(homeMod.homeLayout(hm(), "bento")).all("div")[0]!.attrs["data-layout"]).toBe("tiles");
       expect(box(homeMod.homeLayout(hm(), "midnight")).all("div")[0]!.attrs["data-layout"]).toBe("list");
-      expect(box(homeMod.homeLayout(hm(), "bento")).all("div")[0]!.attrs["data-layout"]).toBe("cards");
+      expect(box(homeMod.homeLayout(hm(), "calm")).all("div")[0]!.attrs["data-layout"]).toBe("cards");
     } finally {
-      delete homeMod.VIEWS.list;
+      delete homeMod.VIEWS.tiles;
     }
   });
 
   it("has the same items and buttons under every look and every layout", async () => {
     const seen: any[] = [];
+    const expected: any = { calm: "cards", friendly: "cards", midnight: "list", editorial: "list", bento: "cards" };
     for (const look of LOOKS) {
       const main = new FakeElement("div");
       const a: any = { repos: async () => repos, runs: async () => rich, queue: async () => ({ active: [], pending: [] }), run: () => {} };
       (await view.renderSimpleHome(main, { a, openGuide: () => {}, look: () => look }))();
       seen.push(signature(main));
-      expect(main.all("div").find((d) => d.attrs["data-layout"])!.attrs["data-layout"]).toBe("cards");
+      expect(main.all("div").find((d) => d.attrs["data-layout"])!.attrs["data-layout"]).toBe(expected[look]);
     }
     for (const s of seen) expect(s).toEqual(seen[0]);
     expect(seen[0].controls.length).toBeGreaterThan(8);
     const direct = ["cards", "list", "tiles"].map((l) => signature(box(homeMod.drawLayout(hm(), l))));
     for (const s of direct) expect(s).toEqual(direct[0]);
+    // with an opened list, and with more items than are shown
+    const many = [...rich, ...["m1", "m2", "m3", "m4"].map((id) => run(id, "questions"))];
+    for (const m of [hm(rich, { list: "check" }), hm(many)]) {
+      const sigs = ["cards", "list", "tiles"].map((l) => signature(box(homeMod.drawLayout(m, l))));
+      for (const s of sigs) expect(s).toEqual(sigs[0]);
+    }
   });
 
   it("has no forbidden term, passes the audit and has unique focus names on the whole home", () => {

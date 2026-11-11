@@ -464,6 +464,9 @@ export const HOME = {
   back: "Back to Today",
   nothingInList: "Nothing here.",
   more: (n) => `+${n} more`,
+  buildingTitle: "Building now",
+  progress: "Progress",
+  tags: { question: "Question", check: "To check", stuck: "Stuck", todo: "To do" },
 };
 
 /** The first sentence of the first prose line after the title; "" when there is none. */

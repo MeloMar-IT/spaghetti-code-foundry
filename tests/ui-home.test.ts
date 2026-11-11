@@ -175,6 +175,23 @@ describe("todayModel", () => {
     expect(Object.hasOwn(adv.building[0], "project")).toBe(false);
   });
 
+  it("Simple tags each card with its state, Advanced does not", () => {
+    const projectOf = () => "p1";
+    const kinds: [string, any, string][] = [
+      ["approval", {}, "check"], ["approve_plan", {}, "check"], ["release", {}, "check"], ["approval", { final: true }, "check"],
+      ["questions", {}, "question"], ["planner_questions", {}, "question"], ["failed", { status: "failed" }, "stuck"], ["owner_action", {}, "todo"],
+    ];
+    for (const [kind, over, tag] of kinds) {
+      const r = kind === "approval" && over.final ? { ...run("x", kind), next: { ...rec(kind, "x"), final: true } } : run("x", kind, over);
+      const s = today.todayModel([r], [], { simple: true, projectOf, now: NOON });
+      expect(s.attention[0]?.tag, `${kind} ${JSON.stringify(over)}`).toBe(tag);
+      const adv = today.todayModel([r], [], { now: NOON });
+      expect(Object.hasOwn(adv.attention[0], "tag")).toBe(false);
+    }
+    expect(today.tagOf(undefined)).toBe("todo");
+    expect(today.tagOf({ kind: "stopped" })).toBe("stuck");
+  });
+
   it("exports the card views and the predicates", () => {
     expect(typeof today.attentionCard).toBe("function");
     expect(typeof today.buildingItem).toBe("function");
