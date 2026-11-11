@@ -81,8 +81,17 @@ export function isPublished(entry) {
   if (recordOf(entry)?.kind !== "done" || groupOf(entry) !== "done") return false;
   const history = entry.run?.history ?? [];
   if (entry.run?.flow === "release-daily") return history.some((x) => lastStep(x?.id) === "final_merge" && x.ok);
-  return history.some((x) => x?.ok && (lastStep(x.id) === "merge" || (lastStep(x.id) === "push_main" && /^PUSHED:/m.test(x.output ?? ""))));
+  return history.some((x) => x?.ok && (lastStep(x.id) === "merge" || (lastStep(x.id) === "push_main" && (x.pushed === true || /^PUSHED:/m.test(x.output ?? "")))));
 }
+/** Whole calendar days (local midnights) from `ms` to `now`; never below 0. */
+export function daysAgo(ms, now = Date.now()) {
+  const a = new Date(ms);
+  const b = new Date(now);
+  const day = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.max(0, Math.round((day(b) - day(a)) / 86400000));
+}
+/** A record that says work waits for today's limit. A user gets a daily budget as `usage_limit` that keeps `until: "tomorrow"` (see userRecord). */
+const dailyLimited = (n) => n.kind === "daily_budget" || n.kind === "project_limit" || (n.kind === "usage_limit" && n.until === "tomorrow");
 const GROUP_OF = { waiting: "planned", building: "building", check: "check", finished: "done", "finished-today": "done" };
 
 /**
@@ -130,6 +139,7 @@ export function todayModel(runs, pending, { role = "user", simple = false, proje
     total: 0, now, attention: [], building: [], finished: [], extraNeeds, needsUnknown,
     counts: { waiting: 0, building: 0, check: 0, ready: 0, "published-week": 0, "finished-today": 0 },
     lists: { waiting: [], building: [], check: [], ready: [], "published-week": [], finished: [], "finished-today": [] },
+    lastPublished: null, limitedToday: 0,
   };
   const entries = [];
   for (const e of myRunsEntries(runs, pending)) {
@@ -146,6 +156,7 @@ export function todayModel(runs, pending, { role = "user", simple = false, proje
     const id = idOf(e);
     const g = groupOf(e);
     if (!g) continue;
+    if ((g === "building" || g === "planned") && dailyLimited(n)) out.limitedToday++;
     const title = titleOf(e, n, simple);
     const href = simple ? `#/repos/${enc(pid)}` : `#/runs/${enc(id ?? "")}`;
     const item = { id, title, href };
@@ -167,7 +178,9 @@ export function todayModel(runs, pending, { role = "user", simple = false, proje
   for (const { e, item } of finished) {
     out.finished.push(item);
     out.lists.finished.push(item);
-    if (isPublished(e) && inLastWeek(e, now)) { out.counts["published-week"]++; out.lists["published-week"].push(item); }
+    const published = isPublished(e);
+    if (published && !out.lastPublished) out.lastPublished = { ...item, finishedMs: finishedMs(e) };
+    if (published && inLastWeek(e, now)) { out.counts["published-week"]++; out.lists["published-week"].push(item); }
     if (inGroup("finished-today", e, now)) { out.counts["finished-today"]++; out.lists["finished-today"].push(item); }
   }
   return out;

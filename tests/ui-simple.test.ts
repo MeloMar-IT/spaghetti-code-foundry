@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
+import { userRecord } from "../src/server/user-view.js";
 import { KINDS } from "../src/words.js";
 import { audit } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
@@ -571,8 +572,11 @@ describe("the Simple home layouts", () => {
     expect(hm([paused("p", "o/app"), on("q", "o/other", "approve_plan")]).project).toMatchObject({ id: "r2", phase: null });
   });
 
-  it("draws the cards layout, in order, for every look", () => {
-    for (const look of LOOKS) {
+  // the layout a look really gets: its own, or cards while it has no view yet
+  const drawnOf = (look: string) => (Object.hasOwn(homeMod.VIEWS, homeMod.layoutOf(look)) ? homeMod.layoutOf(look) : "cards");
+
+  it("draws the cards layout, in order, for every look that uses it", () => {
+    for (const look of LOOKS.filter((l) => drawnOf(l) === "cards")) {
       const page = box(homeMod.homeLayout(hm(), look));
       const wrap = page.all("div")[0]!;
       expect(wrap.attrs.class).toBe("simple-home");
@@ -589,17 +593,21 @@ describe("the Simple home layouts", () => {
   });
 
   it("dispatches by layout name, and falls back to cards where there is no view yet", () => {
-    for (const layout of ["cards", "list", "tiles", "nope", undefined, "constructor"]) {
-      expect(box(homeMod.drawLayout(hm(), layout)).all("div")[0]!.attrs["data-layout"], String(layout)).toBe("cards");
-    }
+    const layoutOfDrawn = (layout: any) => box(homeMod.drawLayout(hm(), layout)).all("div")[0]!.attrs["data-layout"];
+    for (const layout of ["cards", "nope", undefined, "constructor"]) expect(layoutOfDrawn(layout), String(layout)).toBe("cards");
+    expect(layoutOfDrawn("tiles")).toBe("tiles");
+    expect(layoutOfDrawn("list")).toBe(Object.hasOwn(homeMod.VIEWS, "list") ? "list" : "cards");
     // a view that is added later is used for its layout, and only for it
+    const had = Object.hasOwn(homeMod.VIEWS, "list");
+    const before = homeMod.VIEWS.list;
     homeMod.VIEWS.list = (m: any) => [homeMod.cardsLayout(m)[0]];
     try {
-      expect(box(homeMod.drawLayout(hm(), "list")).all("div")[0]!.attrs["data-layout"]).toBe("list");
+      expect(layoutOfDrawn("list")).toBe("list");
       expect(box(homeMod.homeLayout(hm(), "midnight")).all("div")[0]!.attrs["data-layout"]).toBe("list");
-      expect(box(homeMod.homeLayout(hm(), "bento")).all("div")[0]!.attrs["data-layout"]).toBe("cards");
+      expect(box(homeMod.homeLayout(hm(), "bento")).all("div")[0]!.attrs["data-layout"]).toBe("tiles");
     } finally {
-      delete homeMod.VIEWS.list;
+      if (had) homeMod.VIEWS.list = before;
+      else delete homeMod.VIEWS.list;
     }
   });
 
@@ -610,12 +618,99 @@ describe("the Simple home layouts", () => {
       const a: any = { repos: async () => repos, runs: async () => rich, queue: async () => ({ active: [], pending: [] }), run: () => {} };
       (await view.renderSimpleHome(main, { a, openGuide: () => {}, look: () => look }))();
       seen.push(signature(main));
-      expect(main.all("div").find((d) => d.attrs["data-layout"])!.attrs["data-layout"]).toBe("cards");
+      expect(main.all("div").find((d) => d.attrs["data-layout"])!.attrs["data-layout"]).toBe(drawnOf(look));
     }
     for (const s of seen) expect(s).toEqual(seen[0]);
     expect(seen[0].controls.length).toBeGreaterThan(8);
-    const direct = ["cards", "list", "tiles"].map((l) => signature(box(homeMod.drawLayout(hm(), l))));
-    for (const s of direct) expect(s).toEqual(direct[0]);
+    // seven approvals (the Needs you overflow) and seven running runs (the Running overflow)
+    const many = [
+      ...Array.from({ length: 7 }, (_, i) => on(`ap${i}`, "o/app", "approval")),
+      ...Array.from({ length: 7 }, (_, i) => on(`rn${i}`, "o/app", "running", { startedAt: iso(i + 1), state: { next: "implement" } })),
+    ];
+    const manyModel = hm(many);
+    const moreLinks = (m: any, l: string) => box(homeMod.drawLayout(m, l)).all("a").filter((a) => /^\+?\d+ more|more$/i.test(a.textContent ?? "")).map((a) => a.attrs.href);
+    expect(moreLinks(manyModel, "cards")).toEqual(["#/home?list=check", "#/home?list=building"]);
+    expect(moreLinks(manyModel, "tiles")).toEqual(["#/home?list=check", "#/home?list=building"]);
+    for (const m of [hm(), hm(rich, { list: "check" }), hm([]), manyModel]) {
+      expect(signature(box(homeMod.drawLayout(m, "tiles")))).toEqual(signature(box(homeMod.drawLayout(m, "cards"))));
+    }
+  });
+
+  it("draws the tiles layout in order", () => {
+    const page = box(homeMod.homeLayout(hm(), "bento"));
+    const wrap = page.all("div")[0]!;
+    expect(wrap.attrs["data-layout"]).toBe("tiles");
+    const kids = wrap.children.filter((c: any) => c instanceof FakeElement) as FakeElement[];
+    expect(kids.map((c) => c.tag + "." + c.attrs.class.split(" ").slice(1).join("."))).toEqual([
+      "section.simple-tile-large.simple-tile-dark", "section.simple-tile-large.simple-tile-needs", "div.simple-tile-small", "div.simple-tile-small",
+      "section.simple-tile-small", "section.simple-tile-small", "section.simple-tile-wide", "section.simple-tile-wide",
+    ]);
+    const [hero, needs, building, week] = kids;
+    expect(hero!.all("h1")).toHaveLength(1);
+    expect(hero!.all("p")[0]!.attrs.class).toBe("today-summary");
+    expect(hero!.all("a").map((a) => a.attrs.href)).toEqual(["#/start"]);
+    expect(needs!.all("a").map((a) => a.attrs.href).slice(0, 2)).toEqual(["#/home?list=check", "#/home?list=ready"]);
+    expect(needs!.all("a").filter((a) => a.attrs.class === "btn primary")).toHaveLength(3);
+    expect(building!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=building"]);
+    expect(week!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=published-week"]);
+    expect(kids[7]!.all("ol")[0]!.all("li")).toHaveLength(5);
+    expect(kids[6]!.all("ol")).toHaveLength(1);
+    // an opened list adds a wide tile with Back
+    const opened = box(homeMod.homeLayout(hm(rich, { list: "check" }), "bento")).all("div")[0]!.children.filter((c: any) => c instanceof FakeElement) as FakeElement[];
+    expect(opened).toHaveLength(9);
+    expect(opened[6]!.all("a").some((a) => a.attrs.href === "#/home" && a.textContent === words.HOME.back)).toBe(true);
+    // nothing needs the person
+    const none = box(homeMod.homeLayout(hm([]), "bento")).all("section").find((s) => s.attrs.class.includes("simple-tile-needs"))!;
+    expect(none.textContent).toContain(words.HOME.needsNone);
+  });
+
+  it("shows the last safe point and today's limit without an amount or a link", () => {
+    const tile = (m: any, title: string) => box(homeMod.homeLayout(m, "bento")).all("section").find((s) => s.all("h2")[0]?.textContent === title)!;
+    const safe = tile(hm(), words.HOME.safeTitle);
+    expect(safe.textContent).toContain("Show the weather");
+    expect(safe.textContent).toContain("Published today");
+    expect(tile(hm([]), words.HOME.safeTitle).textContent).toContain(words.HOME.safeNone);
+    // a push to main counts through the flag the user payload keeps (its output is removed)
+    const pushed = on("pu", "o/app", "done", { finishedAt: new Date().toISOString(), history: [{ id: "push_main", ok: true, pushed: true }] });
+    expect(hm([pushed]).safePoint).toMatchObject({ line: "Published today" });
+    const skipped = on("sk", "o/app", "done", { finishedAt: new Date().toISOString(), history: [{ id: "push_main", ok: true }] });
+    expect(hm([skipped]).safePoint).toBeNull();
+    // a daily budget as a user gets it (usage_limit that keeps "tomorrow"), as the raw kind, and a project cap
+    const userDaily = { ...userRecord(nextStep("daily_budget", { runId: "q", repo: "o/app", title: "T", forUser: true } as any)) };
+    const limited = [
+      on("l1", "o/app", "usage_limit", { status: "waiting", history: [{ id: "implement" }], next: userDaily }),
+      on("l2", "o/app", "daily_budget", { status: "waiting", history: [{ id: "implement" }] }),
+      on("l3", "o/app", "project_limit", { status: "waiting", history: [{ id: "implement" }] }),
+    ];
+    expect(userDaily.kind).toBe("usage_limit");
+    for (const r of limited) expect(hm([r]).limitReached, r.runId).toBe(true);
+    // an ordinary usage limit (it resets later) and no limit at all
+    const ordinary = on("o1", "o/app", "usage_limit", { status: "waiting", history: [{ id: "implement" }] });
+    expect(hm([ordinary]).limitReached).toBe(false);
+    expect(hm().limitReached).toBe(false);
+    const limitTile = tile(hm([limited[0]!]), words.HOME.limitTitle);
+    expect(limitTile.textContent).toContain(words.HOME.limitReached);
+    expect(tile(hm(), words.HOME.limitTitle).textContent).toContain(words.HOME.limitNormal);
+    for (const t of [safe, limitTile, tile(hm(), words.HOME.limitTitle)]) {
+      expect(t.all("a").length + t.all("button").length).toBe(0);
+      expect(words.forbiddenIn(t.textContent)).toEqual([]);
+      expect(t.textContent).not.toMatch(/\d+\s*\$|\$\s*\d/);
+    }
+  });
+
+  it("says how long ago the safe point was published", () => {
+    expect([0, 1, 5].map(words.HOME.published)).toEqual(["Published today", "Published yesterday", "Published 5 days ago"]);
+  });
+
+  it("stacks the tiles in one column on a phone", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync(new URL("../ui/css/pages/simple.css", import.meta.url), "utf8");
+    const flat = (s: string) => s.replace(/\s+/g, " ");
+    const phone = flat(css.slice(css.indexOf("@media (max-width: 767px)")));
+    expect(flat(css)).toContain('.simple-home[data-layout="tiles"] { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));');
+    expect(phone).toContain('.simple-home[data-layout="tiles"] { grid-template-columns: minmax(0, 1fr); }');
+    expect(phone).toContain(".simple-tile { grid-column: 1 / -1; }");
+    expect(flat(css)).toMatch(/\.simple-tile \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
   });
 
   it("has no forbidden term, passes the audit and has unique focus names on the whole home", () => {
