@@ -190,7 +190,7 @@ function attentionOf(e, n, { role, simple, title, pid }) {
   else if (id) href = `#/runs/${enc(id)}`;
   const label = n.final ? FINAL.yes : words.todo;
   return {
-    ...(simple ? { project: pid } : {}),
+    ...(simple ? { project: pid, tag: tagOf(n) } : {}),
     id,
     title,
     sentence: failed ? STUCK.line : n.final ? FINAL.line : words.line,
@@ -219,25 +219,39 @@ const link = (cls, href, focus, external, ...kids) => (external
   ? h("a", { class: cls, href, target: "_blank", rel: "noopener noreferrer", "data-focus": focus }, ...kids)
   : h("a", { class: cls, href, "data-focus": focus }, ...kids));
 
-export function attentionCard(c, focus) {
+/** The "See what happened" details of an attention item; the open state is kept by focus name and run. */
+export function causeDetails(c, focus) {
   const fid = c.id ?? "x";
   const key = `${focus}:${fid}`;
+  return h("details", {
+    class: "today-cause",
+    open: opened.has(key) ? true : undefined,
+    onToggle: (e) => {
+      const open = e?.target?.open === true || e?.target?.hasAttribute?.("open") === true;
+      if (open) opened.add(key); else opened.delete(key);
+    },
+  },
+    h("summary", { "data-focus": `${focus}-cause-${fid}` }, TODAY.seeWhat),
+    h("p", {}, c.cause),
+    c.runHref ? h("a", { href: c.runHref, "data-focus": `${focus}-run-${fid}` }, TODAY.openRun) : null);
+}
+
+/** The state tag of a Simple attention item, from the record kind. */
+export function tagOf(n) {
+  if (n?.kind === "failed" || n?.kind === "stopped") return "stuck";
+  if (isReady(n)) return "check";
+  if (n?.kind === "questions" || n?.kind === "planner_questions") return "question";
+  return "todo";
+}
+
+export function attentionCard(c, focus) {
+  const fid = c.id ?? "x";
   return h("li", { class: "card today-card" },
     h("h3", {}, c.title),
     h("p", {}, c.sentence),
     c.owner ? h("p", { class: "muted" }, `Owner: ${c.owner}`) : null,
     c.action ? link("btn primary", c.action.href, `${focus}-act-${fid}`, c.action.external, c.action.label) : null,
-    h("details", {
-      class: "today-cause",
-      open: opened.has(key) ? true : undefined,
-      onToggle: (e) => {
-        const open = e?.target?.open === true || e?.target?.hasAttribute?.("open") === true;
-        if (open) opened.add(key); else opened.delete(key);
-      },
-    },
-      h("summary", { "data-focus": `${focus}-cause-${fid}` }, TODAY.seeWhat),
-      h("p", {}, c.cause),
-      c.runHref ? h("a", { href: c.runHref, "data-focus": `${focus}-run-${fid}` }, TODAY.openRun) : null));
+    causeDetails(c, focus));
 }
 
 export function buildingItem(b, focus) {
