@@ -7,6 +7,7 @@ import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
 import { createRunHeader } from "./run-header.js";
+import { approveLabel } from "./run-checks.js";
 import { createLog, diffView } from "./run-output.js";
 import { evidenceRecordSection } from "./run-evidence.js";
 import { contextSourcesSection } from "./run-sources.js";
@@ -420,7 +421,7 @@ export function actions(s, run = () => {}) {
   // A split that already made new issues: a retry would make them twice.
   const closed = s.next?.kind === "issue_closed" || s.next?.retired === true || !!s.next?.splitMade;
   if (s.status === "waiting" && !closed) {
-    b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, "✔ Approve"));
+    b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, `✔ ${approveLabel(s)}`));
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => run("reject") }, "✘ Reject"));
   }
   if (s.status === "stopped" && /^the issue's spending limit /.test(s.reason ?? "") && !closed) {
@@ -476,7 +477,7 @@ export function renderRunDetail(main, runId, { admin = true, onName = null } = {
   ], { initial: "overview" });
   const tabsBox = tabs.el;
 
-  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to Runs" });
+  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onMark: async (cid, mark, rev) => { const r = await api.markCheck(runId, cid, mark, rev); load(); return r; }, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to Runs" });
   let load;
   const stream = runStream({
     open: () => api.events(runId),

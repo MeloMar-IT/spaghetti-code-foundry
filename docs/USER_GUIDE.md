@@ -1289,6 +1289,14 @@ try (for example a refactor) says so in one line instead, with the reason. The r
 Text is cut to 300 characters per part; a plan with more than four checks keeps the first four. A plan with
 neither a check nor a reason gives a warning in the log. Runs from before this change have no `checks`.
 
+When a change waits for your check, its checks show as rows under **Checks to try**. Each row has **Try** and
+**Expect**, and two buttons, **Works** and **Not quite**. Press one to mark the check; press the same button again
+to take the mark back. The line under the list says how many are done ("1 of 3 done"). The marks are saved on the
+server with the run and are shown again after a reload; they belong to the check set of the plan, so a new plan
+starts with no marks. The approve button stays available and says how many checks are not marked yet
+("Approve — 2 checks not marked yet"). A change without checks looks as it did before. Marks are made on your own runs
+(`POST /api/runs/:id/checks`); a mark on a change that is no longer waiting is refused.
+
 #### Text from outside the flow
 
 Text that comes from outside the flow is data, not instructions: an issue, a file in the repository,
@@ -5422,6 +5430,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note; 409 for a closed issue, as for resume |
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
+| `POST /api/runs/:id/checks` | yes | own runs | mark a check of a change that waits for your check (`check`: the id of a check from the plan, `mark`: `works`, `not-quite`, or `null` to take the mark back, `rev`: the `checksRev` you read, optional); the marks are kept with the run and shown again on its page; 400 for an unknown check or mark, 409 when the run does not wait, is queued or moved on, or the checks changed since `rev` |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
 | `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |

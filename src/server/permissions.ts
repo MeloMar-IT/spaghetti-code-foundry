@@ -126,6 +126,7 @@ export const RULES: Rule[] = [
   r("POST", "runs/:id/answer", "own", "answer the questions a run stopped with; the run continues with the answer"),
   r("POST", "runs/:id/approve", "own", "approve a run, with a note; 409 for a closed issue, as for resume"),
   r("POST", "runs/:id/reject", "own", "reject a run, with a note; 409 for a closed issue, as for resume"),
+  r("POST", "runs/:id/checks", "own", "mark a check of a change that waits for your check (`check`: the id of a check from the plan, `mark`: `works`, `not-quite`, or `null` to take the mark back, `rev`: the `checksRev` you read, optional); the marks are kept with the run and shown again on its page; 400 for an unknown check or mark, 409 when the run does not wait, is queued or moved on, or the checks changed since `rev`"),
   r("GET", "runs/:id/events", "own", "follow a run live (a user: without costs and setup)"),
   r("GET", "runs/:id/diff", "own", "the changes of a run"),
   r("GET", "runs/:id/evidence", "own", "the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest"),

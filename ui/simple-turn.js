@@ -1,4 +1,5 @@
 import { h, mount } from "./dom.js";
+import { approveLabel, createCheckList } from "./run-checks.js";
 import { ANSWER, CHECK, STUCK, WORDS, plainText, plainWords, safeText } from "./simple-words.js";
 import { FILLER } from "./turn-act.js";
 
@@ -328,6 +329,21 @@ export function checkCard(card, turns, answer) {
       }
     }, () => { d.checking = false; });
   }
+  // The checks to try, kept per card so a focused button survives a new draw. Marks need the person's own run.
+  if (card.checkRun) {
+    const canMark = !!(card.own && answer.markCheck);
+    if (!d.list || d.listMarks !== canMark) {
+      d.listMarks = canMark;
+      d.list = createCheckList({
+        onMark: canMark ? async (cid, mark, rev) => {
+          const r = await d.answer.markCheck(card.approve, cid, mark, rev);
+          d.answer.done?.();
+          return r;
+        } : null,
+      });
+    }
+    d.list.update(card.checkRun);
+  }
   const li = h("li", { class: "simple-card" });
   const body = () => {
     const off = d.phase === "sending" ? true : undefined;
@@ -336,6 +352,7 @@ export function checkCard(card, turns, answer) {
     const parts = [h("strong", {}, card.title), card.line ? h("p", { class: "muted" }, card.line) : null];
     if (d.phase !== "sent") {
       parts.push(h("p", {}, d.phase === "loading" ? CHECK.loading : madeOf(d.detail, card)));
+      if (card.checkRun && d.list) parts.push(d.list.el);
       if (card.tryRun && answer.tryIt) {
         parts.push(h("button", { type: "button", disabled: off, "data-focus": `simple-check-try-${card.id}`, onClick: () => answer.tryIt(card.tryRun) }, WORDS.actions.tryIt));
       }
@@ -348,7 +365,7 @@ export function checkCard(card, turns, answer) {
         onInput: (e) => { d.text = String(e?.target?.value ?? box.value ?? ""); },
       });
       parts.push(
-        h("button", { type: "button", class: "btn primary simple-big", disabled: off, "data-focus": `simple-check-yes-${card.id}`, onClick: () => decide(d, card, item, false) }, CHECK.yes),
+        h("button", { type: "button", class: "btn primary simple-big", disabled: off, "data-focus": `simple-check-yes-${card.id}`, onClick: () => decide(d, card, item, false) }, approveLabel(card.checkRun, CHECK.yes)),
         h("details", { open: d.open ? true : undefined, onToggle: (e) => { d.open = e?.target?.open === true || e?.target?.hasAttribute?.("open") === true; } },
           h("summary", { "data-focus": `simple-check-no-${card.id}` }, CHECK.no),
           box,

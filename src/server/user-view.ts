@@ -1,3 +1,4 @@
+import { checkMarksOf, checksRevision } from "../engine/plan-checks.js";
 import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
@@ -27,6 +28,8 @@ export const CRITERION_CHARS = 300;
 export interface UserRun {
   /** The title of the issue the run works on, and its acceptance criteria (plain issue text, capped). */
   issueTitle?: string; criteria?: Criterion[];
+  /** Checks a person can try, their marks and the revision of the check set (sent back with a mark); no account ids. */
+  checks?: { id: string; try: string; expect: string }[]; checksRev?: string; checkMarks?: Record<string, { mark: "works" | "not-quite"; at: string }>;
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
   branch?: string; resumes?: number; owner?: string; superseded?: boolean;
   /** When the run was archived; absent when it is not. */
@@ -132,7 +135,9 @@ export function userRecord(n: NextStep): NextStep {
 export function adminRun<T extends RunSummary>(r: T) {
   const refinement = refinementSessionOf(r.source);
   const retries = retriesOf(r);
-  return { ...r, ...(refinement ? { refinement } : {}), ...(retries ? { retries } : {}) };
+  // The revision the page sends back with a mark (see userRun): a stale administrator page is refused too.
+  const rev = Array.isArray(r.checks) && r.checks.length ? { checksRev: checksRevision(r.checks) } : {};
+  return { ...r, ...(refinement ? { refinement } : {}), ...(retries ? { retries } : {}), ...rev };
 }
 
 /**
@@ -220,6 +225,8 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(typeof s.paused?.since === "string" ? { paused: { since: s.paused.since } } : {}),
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),
+    ...(Array.isArray(s.checks) && s.checks.length ? { checks: s.checks.map((c) => ({ id: c.id, try: c.try, expect: c.expect })), checksRev: checksRevision(s.checks) } : {}),
+    ...(Object.keys(checkMarksOf(s)).length ? { checkMarks: checkMarksOf(s) } : {}),
     ...(s.issueTitle ? { issueTitle: s.issueTitle } : {}),
     ...(s.criteria?.length ? { criteria: s.criteria.map((c) => ({ text: c.text, done: c.done })) } : {}),
   };

@@ -364,6 +364,30 @@ describe("renderMyRun", () => {
   const box = () => one(main, "textarea");
   const send = async (text: string) => { box().value = text; form().fire("submit", { preventDefault() {} }); await flush(); };
 
+  it("marks a check of a waiting run, reads the run again, and offers no marks when read-only", async () => {
+    const checks = [{ id: "plan-1", try: "Open it", expect: "It opens" }];
+    state.summary = summaryOf({ status: "waiting", next: rec("approval"), checks, checksRev: "v1" });
+    a.markCheck = vi.fn(async () => ({ runId: "r1", checkMarks: { "plan-1": { mark: "works", at: "t" } } }));
+    const stop = await open();
+    expect(button("approve").textContent).toBe("Approve — 1 check not marked yet");
+    const runs = a.run.mock.calls.length;
+    one(main, "button", { "data-focus": "check-works-plan-1" }).click();
+    await flush();
+    expect(a.markCheck).toHaveBeenCalledWith("r1", "plan-1", "works", "v1");
+    expect(a.run.mock.calls.length).toBeGreaterThan(runs);
+    stop();
+  });
+
+  it("shows the checks as words, without marking buttons, when read-only", async () => {
+    state.summary = summaryOf({ status: "waiting", next: rec("approval"), checks: [{ id: "plan-1", try: "Open it", expect: "It opens" }] });
+    main = document.createElement("div") as unknown as FakeElement;
+    const off = ui.renderMyRun(main, "r1", { a, ask, go, readOnly: true }) as () => void;
+    await flush();
+    expect(find(main, "button", { "data-focus": "check-works-plan-1" })).toHaveLength(0);
+    expect(main.textContent).toContain("Try: Open it");
+    off();
+  });
+
   it("shows the Skills card from the skill view, without a digest, and none without it", async () => {
     const skillView = {
       lock: "ok", requested: [{ id: "a", version: "1.0.0", by: "plan", state: "selected" }],

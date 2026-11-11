@@ -4,6 +4,7 @@ import { h, mount, timeAgo } from "./dom.js";
 import { pageHeader, phaseStrip } from "./kit/product.js";
 import { nextBlock, nextStatus } from "./next.js";
 import { PHASES, stepPhase } from "./phases.js";
+import { approveLabel, createCheckList } from "./run-checks.js";
 import { stepCountText, withQuestions } from "./run-tabs.js";
 // This module and ./runs.js import each other: neither uses the other at the top level, only inside functions.
 import { aheadText, failedStepIndex, failureCard, money, ownerText, refinementMark, retiredLine } from "./runs.js";
@@ -186,7 +187,8 @@ const mainFirst = (list) => list.sort((a, b) => Number(b.cls === "primary") - Nu
  * The header of a run page. `onAction(kind)` makes the user buttons (Approve, Reject, Retry, Cancel); `actions(s)` gives
  * the administrator's DOM buttons instead. `onFailedStep(index)` makes "Show the failed step".
  */
-export function createRunHeader({ admin = false, onAction = null, actions = null, onFailedStep = null, onTitle = null, backLabel = "Back to Runs" } = {}) {
+export function createRunHeader({ admin = false, onAction = null, actions = null, onFailedStep = null, onTitle = null, onMark = null, backLabel = "Back to Runs" } = {}) {
+  const checks = createCheckList({ onMark });
   const pillBox = h("span");
   const helpBox = h("span");
   const refBox = h("span");
@@ -202,7 +204,7 @@ export function createRunHeader({ admin = false, onAction = null, actions = null
   const techBody = h("dl", { class: "meta" });
   const tech = h("details", { class: "run-tech", "data-part": "tech" }, h("summary", { "data-focus": "tech-details" }, "Technical details"), techBody);
   tech.hidden = true;
-  const el = h("div", { class: "run-header" }, bar, stripBox, below, box, facts, tech);
+  const el = h("div", { class: "run-header" }, bar, stripBox, below, checks.el, box, facts, tech);
 
   let titleText = null;
   let stripKey = null;
@@ -322,9 +324,10 @@ export function createRunHeader({ admin = false, onAction = null, actions = null
     const main = s && answerable(s, job) ? null : mainAction(kinds);
     return mainFirst(kinds.map((kind) => {
       const title = kind === "retry" ? (s?.state?.next ? `Continue at step "${s.state.next}"` : "Continue at the step where it stopped") : "";
+      const label = kind === "approve" && s ? approveLabel(s) : TEXT[kind];
       return {
-        key: `act-${kind}`, user: true, cls: kind === main ? "primary" : BASE[kind], sig: `${kind}|${title}`,
-        node: () => h("button", { type: "button", "data-focus": `act-${kind}`, title: title || null, onClick: () => onAction(kind) }, TEXT[kind]),
+        key: `act-${kind}`, user: true, cls: kind === main ? "primary" : BASE[kind], sig: `${kind}|${title}|${label}`,
+        node: () => h("button", { type: "button", "data-focus": `act-${kind}`, title: title || null, onClick: () => onAction(kind) }, label),
       };
     }));
   }
@@ -347,6 +350,7 @@ export function createRunHeader({ admin = false, onAction = null, actions = null
 
   function update(s, { job = null, names = null, busy = false } = {}) {
     if (!s && !job) return;
+    checks.update(s ?? null);
     if (s) {
       setTitle(runTitle(s));
       setStatus(s.next, s.status ?? MISSING);

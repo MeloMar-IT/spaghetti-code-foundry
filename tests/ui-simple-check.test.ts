@@ -381,3 +381,45 @@ describe("the project page", () => {
     off3();
   });
 });
+
+describe("the checks to try on a check card", () => {
+  const checks = [{ id: "plan-1", try: "Open it", expect: "It opens" }, { id: "plan-2", try: "Click it", expect: "It clicks" }];
+  const withChecks = (id: string, extra: any = {}) => run(id, "approval", { checks, checksRev: "v1", ...extra });
+
+  it("puts the checks on the card of the model, only for a waiting run that has some", () => {
+    expect(model.cardOf({ run: withChecks("c1"), job: null }).checkRun.checks).toEqual(checks);
+    expect(model.cardOf({ run: run("c2", "approval"), job: null }).checkRun).toBeUndefined();
+    expect(model.cardOf({ run: withChecks("c3", { status: "running" }), job: null }).checkRun).toBeUndefined();
+  });
+
+  it("draws the rows with the count, and marks a check through the answer, then reads the page again", async () => {
+    const p = page(withChecks("c4", { checkMarks: { "plan-2": { mark: "works", at: "t" } } }));
+    p.answer.markCheck = vi.fn(async () => ({}));
+    const out = p.draw();
+    expect(out.textContent).toContain("Try: Open it");
+    expect(out.textContent).toContain("1 of 2 done");
+    out.all("button").find((b) => b.attrs["data-focus"] === "check-works-plan-1")!.click();
+    await tick();
+    expect(p.answer.markCheck).toHaveBeenCalledWith("c4", "plan-1", "works", "v1");
+    expect(p.answer.done).toHaveBeenCalled();
+  });
+
+  it("says in the approve button how many checks are not marked yet", () => {
+    const open = page(withChecks("c6")).draw();
+    const yes = (p: FakeElement) => p.all("button").find((b) => b.attrs["data-focus"] === "simple-check-yes-c6")!;
+    expect(yes(open).textContent).toBe("This is good — 2 checks not marked yet");
+    const half = page(withChecks("c6", { checkMarks: { "plan-1": { mark: "works", at: "t" } } })).draw();
+    expect(yes(half).textContent).toBe("This is good — 1 check not marked yet");
+    const all = page(withChecks("c6", { checkMarks: { "plan-1": { mark: "works", at: "t" }, "plan-2": { mark: "not-quite", at: "t" } } })).draw();
+    expect(yes(all).textContent).toBe("This is good");
+  });
+
+  it("shows no marking buttons for a run that is not the person's own", () => {
+    const watched = withChecks("c5");
+    (watched.next as any).watched = true;
+    const p = page(watched, { turns: [item("c5")] });
+    p.answer.markCheck = vi.fn();
+    const out = p.draw();
+    expect(out.all("button").some((b) => (b.attrs["data-focus"] ?? "").startsWith("check-works-"))).toBe(false);
+  });
+});
