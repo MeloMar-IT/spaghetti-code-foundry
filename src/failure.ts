@@ -78,7 +78,8 @@ const lastFailed =(h: StepRecord[], before: number, ok: (r: StepRecord) => boole
 
 /** The failed step that explains the run: a failed `flow` or `parallel` record points at its failed child. */
 export function failedIndex(h: StepRecord[]): number {
-  let idx = lastFailed(h, h.length);
+  // A failure that a later try of the same step got past (a retry, or a resume after a fix) does not explain how the run ended.
+  let idx = lastFailed(h, h.length, (r) => !h.slice(h.indexOf(r) + 1).some((l) => l.ok && l.id === r.id && l.parent === r.parent));
   for (let depth = 0; idx >= 0 && depth < 8; depth++) {
     const rec = h[idx]!;
     let next = -1;

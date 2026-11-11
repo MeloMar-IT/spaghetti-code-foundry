@@ -7,6 +7,7 @@ import { type RunSummary } from "../src/engine/state.js";
 import { saveRun } from "../src/engine/state.js";
 import { explainFailure, explainPrompt, noteFrom, parseNote } from "../src/failure-explain.js";
 import { parseFlow } from "../src/flow/load.js";
+import { failedIndex } from "../src/failure.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 let tmp: string;
@@ -170,6 +171,29 @@ describe("explainPrompt", () => {
     for (const dir of [run.workdir!, run.runDir, run.repo]) expect(p).not.toContain(dir);
     expect(p).toContain("(folder)");
     expect(p).not.toContain("x".repeat(4001));
+  });
+
+  it("after a resume that got past a failure, a step that ran out of tries is explained by the last check, not the old failure", () => {
+    const rec = (id: string, type: string, ok: boolean, output: string, error?: string) => ({ id, type, visit: 1, ok, output, error, startedAt: "x", durationMs: 1, logFile: "l" });
+    const run = failed({
+      reason: 'step "write" exceeded max_visits (4)',
+      history: [
+        rec("plan", "claude", false, "", "Invalid auth token"),
+        rec("plan", "claude", true, "the plan"),
+        rec("write", "claude", true, "wrote it"),
+        rec("check", "shell", true, "PROBLEM the skill is not offered\nCHECK: failed"),
+      ] as never,
+    });
+    expect(failedIndex(run.history)).toBe(-1);
+    const p = explainPrompt(run);
+    expect(p).toContain("Failing step: check");
+    expect(p).toContain("PROBLEM the skill is not offered");
+    expect(p).not.toContain("Invalid auth token");
+  });
+
+  it("still finds a failure that no later try got past", () => {
+    const h = [{ id: "a", ok: false, error: "e1" }, { id: "b", ok: true }, { id: "a", ok: false, error: "e2" }, { id: "c", ok: true }] as never;
+    expect(failedIndex(h)).toBe(2);
   });
 });
 
