@@ -446,10 +446,11 @@ describe("ui/prefs-boot.js", () => {
     prefs.writePrefs("u1", MID, store);
     expect(boot(store.data!)).toEqual({ "data-theme": "dark", "data-density": "compact", "data-look": "midnight" });
   });
-  it("no stylesheet uses data-look yet: every look shows the Calm tokens (replaced by part B)", () => {
+  it("only the look files read data-look", () => {
     expect(readUiCss()).not.toContain("data-look");
     const tokens = readFileSync("ui/tokens.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(tokens).not.toContain("data-look");
+    for (const look of ["calm", "midnight"]) expect(readFileSync(`ui/css/looks/${look}.css`, "utf8")).toContain("data-look");
   });
   it("is loaded before the stylesheets on both displays", () => {
     for (const f of ["ui/index.html", "ui/user/index.html"]) {

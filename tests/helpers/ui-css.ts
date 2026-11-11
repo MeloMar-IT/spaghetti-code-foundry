@@ -36,7 +36,7 @@ function cssFilesUnder(dir: string): string[] {
 }
 
 /** The joined text of the imported modules ("\n" between files). Throws on an import with no file, and on a .css file
- *  under ui/css/ (recursive) that is not imported. */
+ *  under ui/css/ (recursive) that is not imported. Files under ui/css/looks/ are token files that ui/looks.css loads; they are skipped. */
 export function readUiCss(uiDir = "ui"): string {
   const imports = uiCssImports(uiDir);
   const parts: string[] = [];
@@ -48,7 +48,7 @@ export function readUiCss(uiDir = "ui"): string {
   const imported = new Set(imports.map((i) => join(uiDir, i)));
   const cssDir = join(uiDir, "css");
   if (existsSync(cssDir)) {
-    for (const f of cssFilesUnder(cssDir)) if (!imported.has(f)) throw new Error(`${relative(".", f)} is not imported by ui/style.css`);
+    for (const f of cssFilesUnder(cssDir)) if (!imported.has(f) && !relative(cssDir, f).startsWith("looks/")) throw new Error(`${relative(".", f)} is not imported by ui/style.css`);
   }
   return parts.join("\n");
 }
@@ -243,6 +243,135 @@ export function kitCssImports(uiDir = "ui"): string[] {
 /** Names of the custom properties that ui/tokens.css defines. */
 export function tokenNames(uiDir = "ui"): Set<string> {
   return new Set([...readFileSync(join(uiDir, "tokens.css"), "utf8").matchAll(/^\s*(--[\w-]+)\s*:/gm)].map((m) => m[1]!));
+}
+
+// Contrast helpers (#322, #852)
+
+export type Theme = "light" | "dark";
+export type Decl = { light: string; dark: string };
+export type Tokens = {
+  base: Map<string, Decl>;
+  compact: Map<string, string>;
+  reduced: Map<string, string>;
+  other: string[];
+  /** Every declaration in order, so a duplicate is not collapsed by the Maps. */
+  baseNames: string[];
+  compactNames: string[];
+};
+export type Pair = { fg: string; bg: string; min: number | "exempt" };
+export type PairResult = Pair & { light: number; dark: number; pass: boolean };
+
+/** "light-dark(a, b)" → {light:a, dark:b}; any other value → both. Throws on a malformed light-dark(. */
+export function splitValue(value: string): Decl {
+  const v = value.trim();
+  if (v.startsWith("light-dark(")) {
+    const m = /^light-dark\(([^,()]+), ([^,()]+)\)$/.exec(v);
+    if (!m) throw new Error(`malformed light-dark(): ${v}`);
+    return { light: m[1]!.trim(), dark: m[2]!.trim() };
+  }
+  return { light: v, dark: v };
+}
+
+const declarations = (body: string): [string, string][] => [...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1]!, m[2]!.trim()]);
+
+/** Parses tokens.css: the first `:root {}` block, the compact block, the reduced-motion block. */
+export function parseTokens(source: string): Tokens {
+  let css = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const take = (re: RegExp): string => {
+    const m = re.exec(css);
+    if (!m) return "";
+    css = css.replace(m[0], "");
+    return m[1]!;
+  };
+  const base = new Map<string, Decl>();
+  const baseDecls = declarations(take(/:root\s*\{([^}]*)\}/));
+  for (const [k, v] of baseDecls) base.set(k, splitValue(v));
+  const compactDecls = declarations(take(/:root\[data-density="compact"\]\s*\{([^}]*)\}/));
+  const compact = new Map<string, string>(compactDecls);
+  const reduced = new Map<string, string>(declarations(take(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*:root\s*\{([^}]*)\}\s*\}/)));
+  const other = declarations(css).map(([k]) => k);
+  return { base, compact, reduced, other, baseNames: baseDecls.map(([k]) => k), compactNames: compactDecls.map(([k]) => k) };
+}
+
+/** Follows var(--x) until a hex colour; throws when a name is unknown or the value is not #rgb/#rrggbb. */
+export function resolve(t: Tokens, name: string, theme: Theme): string {
+  const decl = t.base.get(name);
+  if (!decl) throw new Error(`unknown token ${name}`);
+  const value = decl[theme];
+  const ref = /^var\((--[\w-]+)\)$/.exec(value);
+  if (ref) return resolve(t, ref[1]!, theme);
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+  if (!hex) throw new Error(`${name} is not a hex colour: ${value}`);
+  const h = hex[1]!.length === 3 ? [...hex[1]!].map((c) => c + c).join("") : hex[1]!;
+  return `#${h.toLowerCase()}`;
+}
+
+export function luminance(hex: string): number {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!;
+}
+
+export function ratio(a: string, b: string): number {
+  const full = (h: string) => (h.length === 4 ? `#${[...h.slice(1)].map((c) => c + c).join("")}` : h);
+  const [l1, l2] = [luminance(full(a)), luminance(full(b))].sort((x, y) => y - x);
+  return (l1! + 0.05) / (l2! + 0.05);
+}
+
+export function checkPairs(t: Tokens, pairs: Pair[]): PairResult[] {
+  return pairs.map((p) => {
+    const light = ratio(resolve(t, p.fg, "light"), resolve(t, p.bg, "light"));
+    const dark = ratio(resolve(t, p.fg, "dark"), resolve(t, p.bg, "dark"));
+    return { ...p, light, dark, pass: p.min === "exempt" || (light >= p.min && dark >= p.min) };
+  });
+}
+export const failures = (rs: PairResult[]) => rs.filter((r) => !r.pass);
+
+export const SEMANTICS = ["neutral", "accent", "success", "warning", "danger", "info", "running", "waiting", "disabled"];
+const TEXT_ON = ["--color-bg", "--color-surface", "--color-surface-2"];
+export const PAIRS: Pair[] = [
+  ...["--color-text", "--color-text-muted"].flatMap((fg) => TEXT_ON.map((bg) => ({ fg, bg, min: 4.5 }))),
+  ...SEMANTICS.flatMap((s) => {
+    const min = s === "disabled" ? ("exempt" as const) : 4.5;
+    return [{ fg: `--color-${s}`, bg: `--color-${s}-soft`, min }, { fg: `--color-${s}`, bg: "--color-surface", min }];
+  }),
+  { fg: "--color-on-accent", bg: "--color-accent", min: 4.5 },
+  { fg: "--color-on-danger", bg: "--color-danger", min: 4.5 },
+  ...["--color-border-strong", "--color-focus"].flatMap((fg) => ["--color-bg", "--color-surface"].map((bg) => ({ fg, bg, min: 3 }))),
+  ...["text", "ok", "fail", "step", "dim"].map((s) => ({ fg: `--color-log-${s}`, bg: "--color-log-bg", min: 4.5 })),
+];
+
+/** The "/css/looks/…" paths of ui/looks.css, in order; throws on any other line. */
+export function lookCssImports(uiDir = "ui"): string[] {
+  const out: string[] = [];
+  for (const line of readFileSync(join(uiDir, "looks.css"), "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    const m = /^@import url\("(\/css\/looks\/[\w-]+\.css)"\);$/.exec(line);
+    if (!m) throw new Error(`ui/looks.css: not an @import line: ${line}`);
+    out.push(m[1]!);
+  }
+  return out;
+}
+
+/** The custom properties of a look file: exactly one block whose selector list has html[data-look="<look>"], holding only
+ *  custom-property declarations. Throws on anything else. */
+export function parseLook(source: string, look: string): Map<string, Decl> {
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  const m = /^([^{}]+)\{([^{}]*)\}$/.exec(css);
+  if (!m) throw new Error(`look ${look}: expected exactly one rule`);
+  const selectors = m[1]!.split(",").map((s) => s.trim());
+  if (!selectors.includes(`html[data-look="${look}"]`)) throw new Error(`look ${look}: no block for html[data-look="${look}"]`);
+  const out = new Map<string, Decl>();
+  for (const d of m[2]!.split(";").map((s) => s.trim()).filter(Boolean)) {
+    const k = /^(--[\w-]+)\s*:\s*([\s\S]+)$/.exec(d);
+    if (!k) throw new Error(`look ${look}: not a custom property: ${d}`);
+    out.set(k[1]!, splitValue(k[2]!.replace(/\s+/g, " ")));
+  }
+  return out;
+}
+
+/** A copy of the base tokens with the look's values on top. */
+export function withLook(t: Tokens, look: Map<string, Decl>): Tokens {
+  return { ...t, base: new Map([...t.base, ...look]) };
 }
 
 // Look tokens (#850): fonts, radii and shadows in ui/**/*.css come from tokens.
