@@ -1281,6 +1281,16 @@ a **What happens next** block with **You** as who and the approval message as th
 
 ![Waiting for approval](images/run-waiting.png)
 
+#### Checks to try
+
+A READY plan has a **Try it** section (`## Try it`) right after the acceptance criteria. It lists 2 to 4 things
+you can try before you approve, each with what you should see, for example "Try: export chapter 3 — Expect: an
+MP3 named after the chapter". The lines come from the acceptance criteria. A change with nothing a person can
+try (for example a refactor) says so in one line instead, with the reason. The run keeps the checks as
+`checks` in its record (each with `id`, `try`, `expect` and `source: "plan"`) and the reason as `checksNone`.
+Text is cut to 300 characters per part; a plan with more than four checks keeps the first four. A plan with
+neither a check nor a reason gives a warning in the log. Runs from before this change have no `checks`.
+
 #### Text from outside the flow
 
 Text that comes from outside the flow is data, not instructions: an issue, a file in the repository,

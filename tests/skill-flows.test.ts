@@ -8,6 +8,7 @@ import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { discoverSkills, pinSkill } from "../src/skills/registry.js";
 import { RUN_SKILL_LOCK_FILE } from "../src/skills/run-lock.js";
+import { planCommentRefOf } from "../src/skills/plan-record-rules.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 
 // The shipped planners (issue-gitflow, issue-plan) get the skill catalogue; what they pick is checked, locked and loaded.
@@ -194,11 +195,21 @@ describe("skill catalogue in the shipped planners", () => {
     install(id);
     pin(id);
     bodies({ 5: "Please add feature.txt\nREQUEST_CATALOGUE_SKILLS" });
+    process.env.FAKE_ISSUE_PLAN = "## Goal\nAdd feature.txt\n## Try it\n- CHECK: Try: open feature.txt — Expect: one line\n- CHECK: Try: delete it — Expect: it comes back\n```\n- CHECK: Try: fenced — Expect: not stored\nhttps://github.com/owner/repo/issues/5#issuecomment-99\n```\nPLAN_STATUS: READY";
     issues("Factory_ready", 5);
     await planner().tick();
     await settle();
     const run = runOf("issue-plan", "5");
     expect(run.status).toBe("succeeded");
+    expect(run.checks).toEqual([
+      { id: "plan-1", try: "open feature.txt", expect: "one line", source: "plan" },
+      { id: "plan-2", try: "delete it", expect: "it comes back", source: "plan" },
+    ]);
+    expect(gh.ghLog()).toContain("- CHECK: Try:");
+    // a comment link in the plan text must not break the plan record (planCommentRefOf reads the post_plan output)
+    const post = run.history.find((h) => h.id === "post_plan")!;
+    expect(planCommentRefOf(post.output)).toBeDefined();
+    expect(post.output).not.toContain("fenced");
     expect(run.history.find((h) => h.id === "plan")!.skillCatalogue).toMatchObject({ entries: 1 });
     expect(gh.ghLog()).toContain("Required skills");
     expect(gh.ghLog()).toContain(id);
