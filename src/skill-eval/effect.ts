@@ -14,6 +14,7 @@ import { discoverSkills, type RegisteredSkill } from "../skills/registry.js";
 import { buildRepoProfile, type RepoProfile } from "../skills/repo-profile.js";
 import type { SkillPackage } from "../skills/schema.js";
 import { hidden } from "../skills/staged-import.js";
+import { policyAllows, skillNeeds } from "../skills/tool-policy.js";
 import { snapshotFixtures } from "./fixture.js";
 import { copyBaselinePackage, loadLocalSkill, writeCandidatePackage } from "./package.js";
 import { agentPreflight, blockedReason, INTERRUPTED, type AgentScoreOptions } from "./score.js";
@@ -35,6 +36,24 @@ const stamp = (d: Date) => d.toISOString().replace(/\.\d+Z$/, "Z");
 /** The skill as the selection catalogue sees it: always active, approved and pinned (the caller has checked that). */
 export function effectEntry(pkg: SkillPackage): RegisteredSkill {
   return { key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: "admin", label: "effect", dir: "", active: true, trust: "approved", pin: "pinned", digest: pkg.digest, pkg };
+}
+
+const NEED_WORDS = { shell: "a shell", network: "network access", write: "write access" } as const;
+const NEED_KEYS = { shell: "shell: true", network: "network: true", write: "filesystem: write" } as const;
+
+/**
+ * Instructions scenarios whose policy denies a tool the skill needs (a skill with scripts/ needs a shell). The session leaves such a skill
+ * out, so the scenario can never load it: the "with" runs would be runs without the skill. Each entry is a sentence for a PROBLEM line.
+ */
+export function scenarioToolGaps(pkg: SkillPackage, ins: InstructionsSuite): { id: string; problem: string }[] {
+  const needs = skillNeeds(pkg).filter((n): n is keyof typeof NEED_WORDS => n in NEED_WORDS);
+  const scripts = pkg.tool_profile?.shell === true ? " (it has scripts/ or declares a shell)" : "";
+  return ins.scenarios.flatMap((s) => {
+    const missing = needs.filter((n) => !policyAllows(n, { ...s.policy, missing: "degrade" }));
+    if (!missing.length) return [];
+    const what = missing.map((n) => NEED_WORDS[n]).join(" and ");
+    return [{ id: s.id, problem: `scenario ${s.id}: the skill needs ${what}${missing.includes("shell") ? scripts : ""}, which its policy does not give, so it can never be loaded; set ${missing.map((n) => NEED_KEYS[n]).join(", ")} in its policy` }];
+  });
 }
 
 /**
@@ -199,6 +218,11 @@ export async function effectWithAgent(ops: EffectOperands, out: Out, opts: Agent
     out(`PROBLEM ${e instanceof RangeError ? e.message : "an instructions fixture cannot be profiled"}`);
     return 1;
   }
+  const gaps = scenarioToolGaps(skill.entry.pkg, ins);
+  for (const g of gaps) out(`PROBLEM ${g.problem}`);
+  const blocked = new Set(gaps.map((g) => g.id));
+  // Such a scenario counts as not offered: it is not run, and the record says so.
+  scenarios = scenarios.map((s) => (blocked.has(s.id) ? { ...s, offered: false } : s));
   const offeredIds = new Set(scenarios.filter((s) => s.offered).map((s) => s.id));
   const offered: InstructionsSuite = { ...ins, scenarios: ins.scenarios.filter((s) => offeredIds.has(s.id)) };
   const runs: { with: EffectRun[]; without: EffectRun[] } = { with: [], without: [] };

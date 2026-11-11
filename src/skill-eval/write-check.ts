@@ -4,7 +4,7 @@ import { credentialHits, riskyFileName } from "../skills/credential-scan.js";
 import { readEvaluationSuite } from "../skills/evaluation-suite.js";
 import { splitFrontmatter } from "../skills/package.js";
 import { compareSkillVersions, SKILL_ID_RE } from "../skills/schema.js";
-import { effectEntry, scenarioOffers } from "./effect.js";
+import { effectEntry, scenarioOffers, scenarioToolGaps } from "./effect.js";
 import { loadLocalSkill } from "./package.js";
 
 // The checks of the `skill-write` flow (tools/skill-check): what the writer agent may change, the format of the skill, credentials and
@@ -147,6 +147,7 @@ export function checkSkillFolder(dir: string, name: string, input: SkillCheckInp
     if (scenarios.length < lo || scenarios.length > hi) problems.push(`evals/suite.yaml must have ${lo} to ${hi} instructions scenarios, not ${scenarios.length}`);
     else if (loaded.skill) {
       try {
+        for (const g of scenarioToolGaps(loaded.skill.package, suite.suite.instructions!)) problems.push(`evals/suite.yaml: ${g.problem}`.slice(0, 300));
         for (const s of scenarioOffers(effectEntry(loaded.skill.package), join(dir, "evals"), suite.suite.instructions!)) {
           if (!s.offered) problems.push(`evals/suite.yaml: the skill is not offered for scenario ${s.id} (its capabilities or technologies do not match the fixture and task)`);
         }

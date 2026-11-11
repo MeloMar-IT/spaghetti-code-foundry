@@ -3438,6 +3438,7 @@ const SKILL_FORMAT_LINES = [
   "- Allowed at the top of the folder: SKILL.md, references/, scripts/, assets/, evals/ and a LICENSE file. No credentials, no live web addresses (use example.com or localhost); a documentation link in SKILL.md or references/ must be https.",
   "- skills/<name>/evals/suite.yaml holds 3 to 5 sample tasks under `instructions:`; fixtures are small folders under skills/<name>/evals/fixtures/.",
   "  Every task works offline, and its `check:` is one command that passes only when the work is right. The skill must be offered for every task.",
+  "  A skill with a scripts/ folder needs a shell: give every one of its `instructions` scenarios `shell: true` in its policy, or the skill is never loaded there. A skill without scripts/ may use `shell: false`.",
   "  A scenario has only the keys of the example below. Every text value in suite.yaml is one line: no line breaks and no tabs, so write `task:` and `check:` as one quoted line, as in the example.",
   "- Fixtures are scanned like the skill: no file named like a credential (.env, *.pem, *.key, *.p12, id_rsa; .env.example is fine), no encoded block of 200 or more base64 characters, no `../` path in a script, no download piped into a shell (curl ... | sh). A fake secret goes in a file such as config.example.",
 ].join("\n");
@@ -3458,7 +3459,7 @@ const SKILL_SUITE_TEMPLATE = [
   "    - id: first-task            # lower-case slug",
   "      repo: fixtures/small      # a folder under evals/ that holds a tiny project",
   '      task: "In src/app.js do X with <a capability>. Keep the exports."',
-  "      policy: { shell: false, network: false, filesystem: write }",
+  "      policy: { shell: true, network: false, filesystem: write }",
   "      timeout_sec: 600",
   "      check: \"node --input-type=module -e 'process.exitCode = 0'\"   # one line; exit 0 only when the work is right",
 ].join("\n");

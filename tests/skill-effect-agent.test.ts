@@ -70,11 +70,11 @@ const evalFolders = () => readdirSync(tmpdir()).filter((n) => n.startsWith("scf-
 let foldersBefore: string[];
 
 /** The gate example suite plus one instructions scenario `mark` of 4 repeats. */
-const writeSuite = (o: { repo?: string; check?: string; task?: string; repeat?: number } = {}) =>
+const writeSuite = (o: { repo?: string; check?: string; task?: string; repeat?: number; shell?: boolean } = {}) =>
   writeFileSync(
     join(cwd, "skill-evaluation.yaml"),
     readFileSync("evals/skill-gate/suite.yaml", "utf8") +
-      `instructions:\n  repeat: ${o.repeat ?? 4}\n  scenarios:\n    - { id: mark, repo: ${o.repo ?? "fixtures/kins"}, task: ${JSON.stringify(o.task ?? "Do the thing")}, check: ${JSON.stringify(o.check ?? "test -f marker.txt")}, policy: { shell: true, network: false, filesystem: write }, timeout_sec: 60 }\n`,
+      `instructions:\n  repeat: ${o.repeat ?? 4}\n  scenarios:\n    - { id: mark, repo: ${o.repo ?? "fixtures/kins"}, task: ${JSON.stringify(o.task ?? "Do the thing")}, check: ${JSON.stringify(o.check ?? "test -f marker.txt")}, policy: { shell: ${o.shell ?? true}, network: false, filesystem: write }, timeout_sec: 60 }\n`,
   );
 
 beforeEach(() => {
@@ -446,5 +446,20 @@ describe("a skill folder of the working tree", () => {
     writeFileSync(join(skillDir(), "SKILL.md"), readFileSync("tests/fixtures/skill-write/demo-skill/SKILL.md", "utf8"));
     rmSync(join(skillDir(), "evals", "suite.yaml"));
     await problem(/evaluation suite file does not exist/);
+  });
+});
+
+describe("tool needs of the skill", () => {
+  it("does not run a scenario whose policy gives no shell to a skill that needs one, and says why", async () => {
+    stage({ ...kafka("shelly"), "skills/shelly/skill.yaml": "version: 2.0.0\ncategory: interface\ncapabilities: [kafka]\nroles: [coder, reviewer]\nrisk: high\ntool_profile: { shell: true, network: false, filesystem: read }\n" });
+    writeSuite({ shell: false });
+    const fake = fakeRunner();
+    const r = await effect(staged("shelly"), { runArm: fake.runArm });
+    expect(r.code, r.text).toBe(0);
+    expect(r.lines).toContain("PROBLEM scenario mark: the skill needs a shell (it has scripts/ or declares a shell), which its policy does not give, so it can never be loaded; set shell: true in its policy");
+    expect(fake.calls).toHaveLength(0);
+    writeSuite({ shell: true });
+    const again = await effect(staged("shelly"), { runArm: fakeRunner().runArm });
+    expect(again.text).not.toMatch(/needs a shell/);
   });
 });
