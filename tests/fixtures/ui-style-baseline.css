@@ -3,9 +3,9 @@ html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--text); font: var(--text-body)/var(--leading-body) var(--sans); }
 a { color: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 600; }
-h1 { font-family: var(--font-display); font-size: var(--text-page); }
+h1 { font-family: var(--font-display); font-size: var(--text-heading); }
 h2 { font-family: var(--font-display); font-size: var(--text-section); }
-h3 { font-size: var(--text-small); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+h3 { font-family: var(--font-label); font-size: var(--text-small); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 code, pre, .mono { font-family: var(--mono); font-size: var(--text-code); }
 
 /* ── top bar ── */
@@ -30,7 +30,7 @@ body > * { flex: none; }
 .subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }
 .subnav a { text-decoration: none; padding: 4px 10px; border-radius: var(--radius-md); color: var(--muted); }
 .subnav a.active { background: var(--panel-2); color: var(--text); }
-.subnav-head { align-self: center; margin-left: 12px; font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.subnav-head { font-family: var(--font-label); align-self: center; margin-left: 12px; font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .subnav-head:first-child { margin-left: 0; }
 .crumbs { padding: 6px 24px 0; font-size: var(--text-small); color: var(--muted); }
 .crumbs a { color: var(--muted); }
@@ -70,7 +70,7 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--b
 textarea { resize: vertical; font-family: var(--mono); font-size: var(--text-code); line-height: 1.5; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
 .field { display: grid; gap: 4px; }
-.field > span { font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
+.field > span { font-family: var(--font-label); text-transform: var(--label-case); font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
 .field > small { color: var(--muted); font-size: var(--text-meta); }
 .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -199,7 +199,7 @@ button.problem-link { border: none; background: transparent; padding: 0; color: 
 /* ── runs ── */
 .table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--table-radius); overflow: hidden; }
 .table th, .table td { text-align: left; padding: var(--cell-pad-y) var(--cell-pad-x); font-size: var(--text-table); border-bottom: 1px solid var(--border); vertical-align: top; }
-.table th { font-size: var(--text-table-head); color: var(--muted); font-weight: 550; background: var(--panel-2); }
+.table th { font-family: var(--font-label); text-transform: var(--label-case); font-size: var(--text-table-head); color: var(--muted); font-weight: 550; background: var(--panel-2); }
 .table tr.link { cursor: pointer; }
 .table tr.link:hover td { background: var(--panel-2); }
 .table .task { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

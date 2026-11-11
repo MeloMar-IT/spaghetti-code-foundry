@@ -185,7 +185,7 @@ const COLOR_NAMES = new Set(("aliceblue antiquewhite aqua aquamarine azure beige
   "tomato turquoise violet wheat white whitesmoke yellow yellowgreen").split(" "));
 const COLOR_FN = /(?:^|[^\w-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(/i;
 const TOKEN_PREFIXES = ["--color-", "--font-", "--text-", "--leading-", "--weight-", "--space-", "--size-", "--border-", "--radius-", "--shadow-",
-  "--motion-", "--control-", "--cell-", "--card-", "--stack-", "--page-", "--layer-", "--pill-", "--button-", "--table-", "--focus-"];
+  "--motion-", "--control-", "--cell-", "--card-", "--stack-", "--page-", "--layer-", "--pill-", "--button-", "--table-", "--focus-", "--label-case"];
 const COMPOUND = /^(\.scf-[a-z0-9_-]+)+(\[[a-z-]+(="[^"]*")?\]|::?[a-z-]+)*$/;
 
 /** Problems in kit CSS: an id selector, a bare tag, a class not starting with scf-, a colour literal (hex, function or
@@ -330,9 +330,11 @@ export const SEMANTICS = ["neutral", "accent", "success", "warning", "danger", "
 const TEXT_ON = ["--color-bg", "--color-surface", "--color-surface-2"];
 export const PAIRS: Pair[] = [
   ...["--color-text", "--color-text-muted"].flatMap((fg) => TEXT_ON.map((bg) => ({ fg, bg, min: 4.5 }))),
+  // waiting is a fill role: it is text only on its own soft fill (black on orange), never on a surface.
   ...SEMANTICS.flatMap((s) => {
     const min = s === "disabled" ? ("exempt" as const) : 4.5;
-    return [{ fg: `--color-${s}`, bg: `--color-${s}-soft`, min }, { fg: `--color-${s}`, bg: "--color-surface", min }];
+    const onSurface = s === "waiting" ? [] : [{ fg: `--color-${s}`, bg: "--color-surface", min }];
+    return [{ fg: `--color-${s}`, bg: `--color-${s}-soft`, min }, ...onSurface];
   }),
   { fg: "--color-on-accent", bg: "--color-accent", min: 4.5 },
   { fg: "--color-on-danger", bg: "--color-danger", min: 4.5 },
@@ -352,10 +354,27 @@ export function lookCssImports(uiDir = "ui"): string[] {
   return out;
 }
 
+export type LookArea = { area: string; scheme: "dark" | "light" };
+const AREA_RULE = /html\[data-look="([\w-]+)"\]\[data-area="([\w-]+)"\]\s*\{\s*color-scheme:\s*(dark|light);?\s*\}/g;
+
+/** Rules `html[data-look="<look>"][data-area="<area>"] { color-scheme: dark|light; }` of a look file, in order. Throws on such a rule for another look. */
+export function lookAreaRules(source: string, look: string): LookArea[] {
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...css.matchAll(AREA_RULE)].map((m) => {
+    if (m[1] !== look) throw new Error(`look ${look}: area rule for another look: ${m[1]}`);
+    return { area: m[2]!, scheme: m[3] as "dark" | "light" };
+  });
+}
+
+/** The look file with comments and its area rules removed. */
+export function lookTokenCss(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(AREA_RULE, "").trim();
+}
+
 /** The custom properties of a look file: exactly one block whose selector list has html[data-look="<look>"], holding only
  *  custom-property declarations. Throws on anything else. */
 export function parseLook(source: string, look: string): Map<string, Decl> {
-  const css = source.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  const css = lookTokenCss(source);
   const m = /^([^{}]+)\{([^{}]*)\}$/.exec(css);
   if (!m) throw new Error(`look ${look}: expected exactly one rule`);
   const selectors = m[1]!.split(",").map((s) => s.trim());

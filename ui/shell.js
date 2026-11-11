@@ -164,6 +164,10 @@ export function showPage(role, to) {
       a.removeAttribute("aria-current");
     }
   }
+  // The area of the page on <html>; a look may style one area (Editorial inverts Administration).
+  const area = to.page?.area;
+  const root = document.documentElement;
+  if (typeof area === "string" && area) root?.setAttribute("data-area", area); else root?.removeAttribute("data-area");
   const subnav = document.getElementById("subnav");
   if (subnav) {
     const links = to.dest ? subnavFor(role, to.dest) : [];

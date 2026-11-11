@@ -66,6 +66,9 @@
   --text-table-head: 12px;
   --text-section: 15px;
   --text-page: 18px;
+  --text-heading: var(--text-page);
+  --font-label: var(--font-body);
+  --label-case: none;
   --text-display: 28px;
   --leading-body: 1.45;
   --leading-tight: 1.3;

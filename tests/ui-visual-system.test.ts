@@ -16,7 +16,7 @@ const GROUPS: Record<string, string[]> = {
   ].map((n) => `--color-${n}`),
   typography: [
     "--font-body", "--font-display", "--font-sans", "--font-mono", "--font-numeric", "--text-micro", "--text-meta", "--text-small", "--text-code", "--text-body", "--text-table", "--text-table-head",
-    "--text-section", "--text-page", "--text-display", "--leading-body", "--leading-tight", "--weight-regular", "--weight-medium", "--weight-bold",
+    "--text-section", "--text-page", "--text-heading", "--font-label", "--label-case","--text-display", "--leading-body", "--leading-tight", "--weight-regular", "--weight-medium", "--weight-bold",
   ],
   spacing: ["2xs", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"].map((n) => `--space-${n}`),
   sizing: ["--size-icon", "--size-icon-sm", "--size-sidebar", "--size-form", "--size-bar", "--size-touch", "--size-touch-min"],
@@ -129,7 +129,7 @@ describe("ui/tokens.css", () => {
 
   it("passes every contrast pair, in both themes", () => {
     const results = checkPairs(tokens, PAIRS);
-    expect(results).toHaveLength(35);
+    expect(results).toHaveLength(34);
     expect(failures(results).map((r) => `${r.fg} on ${r.bg}: ${r.light.toFixed(2)} / ${r.dark.toFixed(2)}`)).toEqual([]);
   });
 });
