@@ -272,7 +272,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   const head = h("div");
   // The header is built once; its buttons carry aria-disabled, not disabled, so a button keeps the focus while a call is out.
-  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to My runs" });
+  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onMark: readOnly ? null : async (cid, mark, rev) => { const r = await a.markCheck(runId, cid, mark, rev); refresh(); return r; }, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to My runs" });
   const taskBox = h("div");
   let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
   let stateKey = null; // the state drawn in `head`: an unchanged one is not drawn again

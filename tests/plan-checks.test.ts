@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import { parseFlow } from "../src/flow/load.js";
-import { parsePlanChecks, recordPlanChecks } from "../src/engine/plan-checks.js";
-import type { RunSummary, StepRecord } from "../src/engine/state.js";
+import { checkMarksOf, checksRevision, parsePlanChecks, recordPlanChecks, setRunCheckMark } from "../src/engine/plan-checks.js";
+import { rewriteRunMark, type RunSummary, type StepRecord } from "../src/engine/state.js";
 
 const C = (t: string, e: string) => `- CHECK: Try: ${t} — Expect: ${e}`;
 
@@ -106,6 +108,78 @@ describe("recordPlanChecks", () => {
     for (const out of ["", "\u0000\u0001�".repeat(1000), undefined as unknown as string]) {
       expect(() => recordPlanChecks(runOf("issue-gitflow", [rec("risk_gate", out)]), "risk_gate", () => {})).not.toThrow();
     }
+  });
+  it("drops the marks of an older plan, with checks and with NO_CHECKS", () => {
+    const marks = { "plan-1": { mark: "works" as const, at: "t", by: "u" } };
+    for (const out of [C("a", "b"), "NO_CHECKS: x"]) {
+      const run = runOf("issue-gitflow", [rec("risk_gate", out)], { checkMarks: marks });
+      recordPlanChecks(run, "risk_gate", () => {});
+      expect(run.checkMarks).toBeUndefined();
+    }
+  });
+});
+
+describe("check marks", () => {
+  const checks = [1, 2].map((n) => ({ id: `plan-${n}`, try: `t${n}`, expect: `e${n}`, source: "plan" as const }));
+  const meta = { by: "u1", at: "2026-01-01T00:00:00.000Z" };
+  const dirs: string[] = [];
+  const make = (over: Record<string, unknown> = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), "marks-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ runId: "r", status: "waiting", other: 1, checks, ...over }, null, 2));
+    return dir;
+  };
+  const read = (dir: string) => JSON.parse(readFileSync(join(dir, "run.json"), "utf8"));
+  afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+
+  it("sets, repeats, replaces and removes a mark", () => {
+    const dir = make();
+    expect(setRunCheckMark(dir, "plan-1", "works", meta)).toBe("done");
+    expect(read(dir)).toMatchObject({ other: 1, status: "waiting", checks, checkMarks: { "plan-1": { mark: "works", at: meta.at, by: "u1" } } });
+    const before = statSync(join(dir, "run.json")).ino;
+    expect(setRunCheckMark(dir, "plan-1", "works", { by: "u2", at: "later" })).toBe("same");
+    expect(statSync(join(dir, "run.json")).ino).toBe(before);
+    expect(read(dir).checkMarks["plan-1"].by).toBe("u1");
+    expect(setRunCheckMark(dir, "plan-1", "not-quite", meta)).toBe("done");
+    expect(read(dir).checkMarks["plan-1"].mark).toBe("not-quite");
+    expect(setRunCheckMark(dir, "plan-1", null, meta)).toBe("done");
+    expect("checkMarks" in read(dir)).toBe(false);
+    expect(setRunCheckMark(dir, "plan-1", null, meta)).toBe("same");
+  });
+  it("refuses what it must not change, and never throws", () => {
+    expect(setRunCheckMark(make({ status: "running" }), "plan-1", "works", meta)).toBe("refused");
+    expect(setRunCheckMark(make({ status: "succeeded" }), "plan-1", "works", meta)).toBe("refused");
+    expect(setRunCheckMark(make(), "plan-9", "works", meta)).toBe("refused");
+    expect(setRunCheckMark(make({ checks: undefined }), "plan-1", "works", meta)).toBe("refused");
+    const bad = make();
+    writeFileSync(join(bad, "run.json"), "{ nope");
+    expect(setRunCheckMark(bad, "plan-1", "works", meta)).toBe("refused");
+    expect(setRunCheckMark(join(bad, "missing"), "plan-1", "works", meta)).toBe("refused");
+  });
+  it("refuses a request made against another set of checks", () => {
+    const dir = make();
+    const rev = checksRevision(checks);
+    expect(setRunCheckMark(dir, "plan-1", "works", meta, "stale")).toBe("refused");
+    expect(setRunCheckMark(dir, "plan-1", "works", meta, rev)).toBe("done");
+    expect(checksRevision([{ ...checks[0]!, try: "other" }, checks[1]!])).not.toBe(rev);
+  });
+  it("does not replace run.json when it changes while the mark is written", () => {
+    const dir = make();
+    let changed = false;
+    const done = rewriteRunMark(dir, (s) => ({ ...s, checkMarks: { "plan-1": { mark: "works", at: "t" } } }), {
+      beforeSwap: () => { changed = true; writeFileSync(join(dir, "run.json"), JSON.stringify({ ...read(dir), engine: true })); },
+    });
+    expect(changed).toBe(true);
+    expect(done).toBe(false);
+    expect(read(dir)).toMatchObject({ engine: true });
+    expect("checkMarks" in read(dir)).toBe(false);
+  });
+  it("checkMarksOf keeps only valid marks of known checks, without who", () => {
+    const m = { "plan-1": { mark: "works", at: "t", by: "u" }, "plan-2": { mark: "bad", at: "t" }, "plan-9": { mark: "works", at: "t" }, constructor: { mark: "works", at: "t" } };
+    expect(checkMarksOf({ checks, checkMarks: m as never })).toEqual({ "plan-1": { mark: "works", at: "t" } });
+    expect(checkMarksOf({ checks, checkMarks: { "plan-1": { mark: "works" } } as never })).toEqual({});
+    expect(checkMarksOf({ checkMarks: m as never })).toEqual({});
+    expect(checkMarksOf({ checks })).toEqual({});
   });
 });
 

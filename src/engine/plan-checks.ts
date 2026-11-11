@@ -4,7 +4,16 @@
  * removed and every part is cut. Recording never stops a run.
  */
 import { planGateRecord, SKILL_REQUEST_GATES } from "../skills/request.js";
-import type { RunSummary } from "./state.js";
+import { createHash } from "node:crypto";
+import { rewriteRunMark, type RunSummary } from "./state.js";
+
+export const CHECK_MARKS = ["works", "not-quite"] as const;
+export type CheckMarkValue = (typeof CHECK_MARKS)[number];
+export interface CheckMark {
+  mark: CheckMarkValue;
+  at: string;
+  by?: string;
+}
 
 export interface PersonCheck {
   id: string;
@@ -96,6 +105,8 @@ export function recordPlanChecks(run: RunSummary, stepId: string, log: (m: strin
     const gate = planGateRecord(run);
     if (!gate || gate.id !== stepId) return;
     const r = parsePlanChecks(gate.output ?? "");
+    // A new plan reuses the ids (plan-1 …): marks of the old checks must not apply to the new ones.
+    delete run.checkMarks;
     for (const p of r.problems) log(`⚠ checks: ${p}`);
     if (r.checks.length > 0) {
       run.checks = r.checks;
@@ -113,4 +124,49 @@ export function recordPlanChecks(run: RunSummary, stepId: string, log: (m: strin
   } catch {
     /* recording checks never stops a run */
   }
+}
+
+/** Pure. A short fingerprint of the check set (ids and texts); a request made against an older set is refused. */
+export function checksRevision(checks: readonly { id: string; try: string; expect: string }[] | undefined): string {
+  const text = JSON.stringify((checks ?? []).map((c) => [c.id, c.try, c.expect]));
+  return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
+
+/** Pure. The valid marks of a run (ids that are in `checks`, a known mark and a time), without who set them. */
+export function checkMarksOf(s: Pick<RunSummary, "checks" | "checkMarks">): Record<string, { mark: CheckMarkValue; at: string }> {
+  const out: Record<string, { mark: CheckMarkValue; at: string }> = {};
+  const marks = s.checkMarks;
+  if (!marks || typeof marks !== "object" || !Array.isArray(s.checks)) return out;
+  for (const c of s.checks) {
+    const m = c && typeof c.id === "string" && Object.hasOwn(marks, c.id) ? marks[c.id] : undefined;
+    if (m && (CHECK_MARKS as readonly unknown[]).includes(m.mark) && typeof m.at === "string") out[c.id] = { mark: m.mark, at: m.at };
+  }
+  return out;
+}
+
+/**
+ * Sets (or, with null, removes) the person's mark on one check of a waiting run, in run.json, and changes nothing else.
+ * "same": the mark was already so; "refused": not waiting, no such check, `revision` is not the check set of the run,
+ * run.json changed meanwhile, or it cannot be read. Never throws.
+ */
+export function setRunCheckMark(runDir: string, checkId: string, mark: CheckMarkValue | null, meta: { by: string; at: string }, revision?: string): "done" | "same" | "refused" {
+  let same = false;
+  const done = rewriteRunMark(runDir, (s) => {
+    const checks = Array.isArray(s.checks) ? (s.checks as PersonCheck[]) : [];
+    if (s.status !== "waiting" || !checks.some((c) => c && c.id === checkId)) return undefined;
+    if (revision !== undefined && revision !== checksRevision(checks)) return undefined;
+    const marks = s.checkMarks && typeof s.checkMarks === "object" && !Array.isArray(s.checkMarks) ? (s.checkMarks as Record<string, CheckMark>) : {};
+    const current = Object.hasOwn(marks, checkId) ? marks[checkId]?.mark : undefined;
+    if ((current ?? null) === mark) {
+      same = true;
+      return undefined;
+    }
+    const next: Record<string, CheckMark> = { ...marks };
+    if (mark === null) delete next[checkId];
+    else next[checkId] = { mark, at: meta.at, by: meta.by };
+    const out: Record<string, unknown> = { ...s, checkMarks: next };
+    if (Object.keys(next).length === 0) delete out.checkMarks;
+    return out;
+  });
+  return done ? "done" : same ? "same" : "refused";
 }

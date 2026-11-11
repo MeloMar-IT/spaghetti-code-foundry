@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
-import type { PersonCheck } from "./plan-checks.js";
+import type { CheckMark, PersonCheck } from "./plan-checks.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunAutonomy } from "../governance/autonomy.js";
 import type { PromotionRecord } from "../promotion/gate.js";
@@ -172,6 +172,8 @@ export interface RunSummary {
   checks?: PersonCheck[];
   /** The plan's one line why there is nothing to try (NO_CHECKS); only with `checks: []`. */
   checksNone?: string;
+  /** The person's marks on `checks`, by check id (see plan-checks.ts); absent on older runs and before a mark. */
+  checkMarks?: Record<string, CheckMark>;
   /** What plan_check found (see plan-carry.ts). Absent on older runs and on runs with their own plan gate. */
   planCheck?: RunPlanCheck;
   /** Values a step handed on in `<run dir>/outputs.json` (see run-outputs.ts), e.g. `release_url` and `release_tag` of release-build. Absent on older runs. */
@@ -413,7 +415,7 @@ export const isStoppedCancel =(reason?: string): boolean => reason === STOPPED_C
  * content, or undefined to skip. Written beside the file and renamed over it; if run.json changed in between, nothing
  * is replaced. Returns true when the file was replaced. Never throws.
  */
-function rewriteRunMark(runDir: string, change: (s: Record<string, unknown>) => Record<string, unknown> | undefined, hooks: { beforeSwap?: () => void } = {}): boolean {
+export function rewriteRunMark(runDir: string, change: (s: Record<string, unknown>) => Record<string, unknown> | undefined, hooks: { beforeSwap?: () => void } = {}): boolean {
   const file = runFile(runDir);
   const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   try {

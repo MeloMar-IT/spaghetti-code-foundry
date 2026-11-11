@@ -114,6 +114,10 @@ export function cardOf(entry) {
         const pts = plainPoints(planPoints(run));
         if (pts.length) card.points = pts;
       }
+      // the checks the plan wrote for a person to try, with their marks (the card draws them)
+      if (run?.status === "waiting" && Array.isArray(run.checks) && run.checks.length) {
+        card.checkRun = { status: run.status, checks: run.checks, checkMarks: run.checkMarks, checksRev: run.checksRev };
+      }
     }
     // A failed run: "stuck". `resume`: the run itself can be resumed; `stuckAt` tells one failure from the next.
     if (n.kind === "failed" && idOf(entry)) {
