@@ -48,6 +48,7 @@ const projectParts = (project, focus) => [
   h("h2", {}, HOME.projectTitle),
   h("h3", {}, h("a", { href: project.href, "data-focus": `${focus}-project-${project.id}` }, project.name)),
   h("p", { class: "simple-state" }, project.state),
+  project.lastGood ? h("p", { class: "simple-last-good" }, project.lastGood) : null,
   phaseStrip({ label: `${HOME.steps}: ${project.name}`, phases: PHASES.map((p) => p.word), current: project.phase }),
   project.line ? h("p", { class: "muted" }, project.line) : null,
 ];

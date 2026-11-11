@@ -180,6 +180,7 @@ export const RULES: Rule[] = [
   r("GET", "repos/:id/ready", "yes", "the Definition of Ready of your repository (an admin: any repository)"),
   r("GET", "repos/:id/epics", "yes", "the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository)"),
   r("GET", "repos/:id/epics/:issue", "yes", "one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository)"),
+  r("GET", "repos/:id/safe-points", "yes", "the safe points of your repository: the last 10 commits of its develop branch (gitflow) or main branch that a successful run or a release left green, newest first, with the time, the change titles and who started them; read from the run records, no call to GitHub, changes nothing (an admin: any repository)"),
   r("POST", "repos/:id/preview", "yes", "start the develop version, or the version of a run that waits for your check (`version`, `runId`), of your repository (an admin: any repository) in a folder of its own; replaces a running one; answers 202"),
   r("GET", "repos/:id/preview", "yes", "the state, URL, reason, version and redacted output of the preview of your repository (an admin: any repository)"),
   r("DELETE", "repos/:id/preview", "yes", "stop the preview of your repository and remove its folder"),

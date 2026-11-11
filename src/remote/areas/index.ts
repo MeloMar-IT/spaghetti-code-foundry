@@ -56,6 +56,7 @@ export const API_ONLY: Record<string, string> = {
   "POST repos/:id/publish-remote": "the owner's Yes, publish for the plain push to the folder's remote (#796); the Run settings dialog under Advanced uses it, so there is no command line use yet",
   "GET repos/:id/epics":"the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
+  "GET repos/:id/safe-points": "the safe points of a project (#863); the project pages and the Simple home read them, the command line has no command for it yet",
   "POST repos/:id/preview": "starts a preview of the project (#789, part of #608); the Try it page that uses it comes in a later part",
   "GET repos/:id/preview": "the state of that preview (#789); no command line use yet",
   "DELETE repos/:id/preview": "stops that preview (#789); no command line use yet",

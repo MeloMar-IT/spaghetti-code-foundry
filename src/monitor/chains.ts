@@ -12,7 +12,7 @@ export type DeadReason = "no-label" | "not-planned" | "parked";
 export interface DeadEnd { issue: number; reason: DeadReason; chains: number[][] }
 
 /** Does the watcher's flow merge into a develop branch (its gitflow)? False when the flow cannot be read. */
-function gitflowOf(cfg: WatcherConfig, repo: string): boolean {
+export function gitflowOf(cfg: WatcherConfig, repo: string): boolean {
   try {
     const name = cfg.flow === "default" ? DEFAULT_FLOWS[cfg.source as keyof typeof DEFAULT_FLOWS] : cfg.flow;
     if (!name) return false;

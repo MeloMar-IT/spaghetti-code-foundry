@@ -133,6 +133,7 @@ export const api = {
   context: (id) => req("GET", `/api/runs/${enc(id)}/context`),
   repos: () => req("GET", "/api/repos"),
   epics: (id) => req("GET", `/api/repos/${enc(id)}/epics`),
+  safePoints: (id) => req("GET", `/api/repos/${enc(id)}/safe-points`),
   epic: (id, epicId) => req("GET", `/api/repos/${enc(id)}/epics/${enc(epicId)}`),
   repoMethods: () => req("GET", "/api/repos/methods"),
   addRepo: (body) => req("POST", "/api/repos", body),
