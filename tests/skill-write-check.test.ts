@@ -63,6 +63,8 @@ describe("the folder", () => {
     file("scripts/run.sh", "echo ok\n");
     file("assets/logo.txt", "logo\n");
     file("LICENSE.md", "MIT\n");
+    // A skill with scripts/ needs a shell, so its scenarios must give one.
+    file("evals/suite.yaml", readFileSync(join(dir, "evals/suite.yaml"), "utf8").replaceAll("shell: false, network: false, filesystem: write", "shell: true, network: false, filesystem: write"));
     expect(check().problems).toEqual([]);
   });
 
@@ -208,6 +210,21 @@ describe("the sample tasks", () => {
     expect(check().problems.join("\n")).toMatch(/evals\/suite\.yaml/);
     rmSync(join(dir, "evals/suite.yaml"));
     expect(check().problems.join("\n")).toMatch(/evals\/suite\.yaml is missing/);
+  });
+
+  it("names every scenario whose policy gives no shell when the skill has scripts/: the skill could never be loaded there", () => {
+    file("scripts/run.sh", "echo ok\n");
+    const problems = check().problems.join("\n");
+    for (const id of ["first-task", "second-task", "third-task"]) expect(problems).toContain(`scenario ${id}: the skill needs a shell (it has scripts/ or declares a shell)`);
+    expect(problems).toContain("set shell: true in its policy");
+    file("evals/suite.yaml", readFileSync(join(dir, "evals/suite.yaml"), "utf8").replace("shell: false, network: false, filesystem: write", "shell: true, network: false, filesystem: write"));
+    const after = check().problems.join("\n");
+    expect(after).not.toContain("scenario first-task: the skill needs");
+    expect(after).toContain("scenario second-task: the skill needs a shell");
+  });
+
+  it("does not ask for a shell when the skill has no scripts/", () => {
+    expect(check().problems.join("\n")).not.toMatch(/needs a shell/);
   });
 
   it("names a scenario the skill is not offered for", () => {
