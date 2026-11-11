@@ -381,3 +381,77 @@ describe("the project page", () => {
     off3();
   });
 });
+
+describe("Your request on the check card", () => {
+  const pts = [{ kind: "asked", text: "Show the weather" }, { kind: "assumed", text: "Use metric units" }];
+  const planRun = (id: string, planPoints: any = pts, over: any = {}) => run(id, "approve_plan", { planPoints, ...over });
+  const planItem = (id: string) => item(id, { kind: "approve_plan" });
+
+  it("puts points on a plan check card only", () => {
+    expect(model.cardOf({ run: planRun("q1"), job: null }).points).toHaveLength(2);
+    expect(model.cardOf({ run: run("q2", "approval", { planPoints: pts }), job: null }).points).toBeUndefined();
+    expect(model.cardOf({ run: planRun("q4", []), job: null }).points).toBeUndefined();
+    expect(model.cardOf({ run: run("q5", "approve_plan"), job: null }).points).toBeUndefined();
+  });
+
+  it("shows the box, with no forbidden word, and sends a correction as a reject", async () => {
+    const t = page(planRun("q6"), { turns: [planItem("q6")] });
+    const p = t.draw();
+    await tick();
+    expect(p.textContent).toContain("You asked");
+    expect(p.textContent).toContain("Assumed");
+    expect(forbidden(p)).toEqual([]);
+    expect(audit(p)).toEqual([]);
+    btn(p, "Change this")!.click();
+    type(p.all("textarea")[0]!, "Use miles");
+    expect(turn.hasUnsentAnswers()).toBe(true);
+    btn(p, "Send correction")!.click();
+    await tick();
+    expect(t.answer.act).toHaveBeenCalledWith({ key: "m-q6", action: "reject", stamp: "s1", digest: "d1", text: "Assumed: Use metric units — Correction: Use miles" });
+    expect(t.answer.done).toHaveBeenCalled();
+    expect(p.textContent).toContain(words.CHECK.sent);
+  });
+
+  it("does not send an empty correction", async () => {
+    const t = page(planRun("q7"), { turns: [planItem("q7")] });
+    const p = t.draw();
+    await tick();
+    btn(p, "Change this")!.click();
+    btn(p, "Send correction")!.click();
+    await tick();
+    expect(t.answer.act).not.toHaveBeenCalled();
+    expect(p.textContent).toContain("Write what is right instead first.");
+  });
+
+  it("keeps the draft and the focus names of the editor over a redraw", async () => {
+    const t = page(planRun("q8"), { turns: [planItem("q8")] });
+    const p = t.draw();
+    await tick();
+    btn(p, "Change this")!.click();
+    type(p.all("textarea")[0]!, "Use miles");
+    const again = t.draw();
+    const area = again.all("textarea").find((x) => x.attrs["data-focus"]?.startsWith("simple-request-"))!;
+    expect(area).toBeTruthy();
+    expect((area as any).value).toBe("Use miles");
+    expect(again.all("button").filter((b) => b.attrs["data-focus"]?.startsWith("simple-request-")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows the box read-only on a card that cannot be decided here", () => {
+    const p = page(planRun("q9"), { turns: [] }).draw();
+    expect(p.textContent).toContain("Assumed");
+    expect(p.textContent).toContain("Only someone who may decide");
+    expect(btn(p, "Change this")).toBeUndefined();
+  });
+
+  it("keeps a point with technical words whole", () => {
+    const c = model.cardOf({ run: planRun("q10", [{ kind: "assumed", text: "Keep audit logs for 30 days." }]), job: null });
+    expect(c.points).toHaveLength(1);
+    expect(c.points[0].text).toContain("audit logs for 30 days");
+  });
+
+  it("has no box without points", async () => {
+    const p = page(run("q11", "approve_plan"), { turns: [planItem("q11")] }).draw();
+    await tick();
+    expect(p.textContent).not.toContain("Your request");
+  });
+});

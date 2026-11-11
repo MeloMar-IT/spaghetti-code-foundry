@@ -2,6 +2,7 @@ import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
 import { retriesOf, type RunRetries } from "../engine/auto-retry.js";
+import { PLAN_POINT_LIMITS, type PlanPoint } from "../engine/plan-points.js";
 import { TASK_LINE_MAX, ticketTitleOf, type RunStatus, type RunSummary } from "../engine/state.js";
 import { isExplanationLine, LOG_NOTES } from "../policy/explain.js";
 import { REASON_CODES } from "../policy/reasons.js";
@@ -39,6 +40,8 @@ export interface UserRun {
   flowDef: { name: string; steps: { id: string; type: string; description?: string }[]; publish?: { enabled: boolean; version: number } };
   history: UserStep[]; state: { next: string | null };
   waiting?: { stepId: string; message: string; since: string }; next?: NextStep;
+  /** What the plan took from the request (`asked`) and what it assumed (`assumed`): only the kind and the text. Absent when there are none. */
+  planPoints?: PlanPoint[];
   /** What a step handed on in outputs.json (release-build: release_url, release_tag, release_files). Already limited and redacted. */
   outputs?: Record<string, string>;
   /** The questions of a run that stopped to ask them: the output of that one step, nothing else. */
@@ -65,6 +68,20 @@ export function userSkills(s: Pick<RunSummary, "skillPlan">): UserRun["skills"] 
     warnings: (Array.isArray(p.warnings) ? p.warnings : []).filter((w) => typeof w === "string"),
     unresolved: (Array.isArray(p.unresolved) ? p.unresolved : []).map((u) => ({ id: u.id, code: u.code, message: u.message })),
   };
+}
+
+/** The plan points of a run for a user: well-formed entries only, `kind` and `text` copied, at most the limit; undefined when none are left. */
+export function userPlanPoints(s: { planPoints?: unknown }): PlanPoint[] | undefined {
+  if (!Array.isArray(s.planPoints)) return undefined;
+  const out: PlanPoint[] = [];
+  for (const p of s.planPoints as unknown[]) {
+    const q = p as { kind?: unknown; text?: unknown } | null;
+    if (!q || typeof q !== "object") continue;
+    if ((q.kind !== "asked" && q.kind !== "assumed") || typeof q.text !== "string" || q.text.trim() === "") continue;
+    out.push({ kind: q.kind, text: q.text });
+    if (out.length >= PLAN_POINT_LIMITS.points) break;
+  }
+  return out.length ? out : undefined;
 }
 
 const QUESTION_STEPS = ["send_back", "ask_for_info"];
@@ -220,6 +237,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(typeof s.paused?.since === "string" ? { paused: { since: s.paused.since } } : {}),
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),
+    ...(userPlanPoints(s) ? { planPoints: userPlanPoints(s) } : {}),
     ...(s.issueTitle ? { issueTitle: s.issueTitle } : {}),
     ...(s.criteria?.length ? { criteria: s.criteria.map((c) => ({ text: c.text, done: c.done })) } : {}),
   };

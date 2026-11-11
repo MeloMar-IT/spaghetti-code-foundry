@@ -175,3 +175,10 @@ button.icon { justify-content: center; }
 .table td.integration, .table td.fingerprint { overflow-wrap: anywhere; }
 .table td.next-step .muted { max-width: 36ch; overflow-wrap: anywhere; font-size: var(--text-small); }
 .table.compact .field small { display: none; }
+
+/* Your request: what was asked and what was assumed (not by colour alone: a tag with an icon, a dashed edge, italic text) */
+.request-points { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.request-point { display: grid; gap: var(--space-xs); padding-left: var(--space-sm); border-left: 3px solid var(--border); overflow-wrap: anywhere; }
+.request-assumed { border-left-style: dashed; }
+.request-assumed .request-text { font-style: italic; }
+.request-tag { display: inline-flex; gap: var(--space-xs); align-items: center; font-weight: 600; font-size: var(--text-small); }

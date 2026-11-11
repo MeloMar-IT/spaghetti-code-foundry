@@ -1,4 +1,6 @@
 import { h, mount } from "./dom.js";
+import { REQUEST, correctionText } from "./request-model.js";
+import { requestView } from "./request-box.js";
 import { ANSWER, CHECK, STUCK, WORDS, plainText, plainWords, safeText } from "./simple-words.js";
 import { FILLER } from "./turn-act.js";
 
@@ -28,7 +30,7 @@ export function hasUnsentAnswers() {
   }
   for (const d of checks.values()) {
     if (d.phase === "sending") return true;
-    if (d.phase !== "sent" && d.text.trim()) return true;
+    if (d.phase !== "sent" && (d.text.trim() || d.fixText.trim())) return true;
   }
   return false;
 }
@@ -249,7 +251,7 @@ const checks = new Map();
 /** The same for stuck cards: phase idle, sending, sent; `at` is the failure the draft belongs to. */
 const stuck = new Map();
 
-const freshCheck = (key, old = {}) => ({ key, phase: "ready", detail: null, open: false, text: "", note: "", sent: null, checking: false, answer: null, paint: null, status: null, ...old });
+const freshCheck = (key, old = {}) => ({ key, phase: "ready", detail: null, open: false, fix: null, fixText: "", text: "", note: "", sent: null, checking: false, answer: null, paint: null, status: null, ...old });
 
 async function loadCheck(d) {
   d.phase = "loading";
@@ -267,8 +269,19 @@ async function loadCheck(d) {
   d.paint?.();
 }
 
-async function decide(d, card, item, reject) {
-  const text = d.text.trim();
+/** The correction of one assumption: its own text, sent as the reason of the reject. */
+function sendFix(d, card, item) {
+  const text = correctionText(d.fix, d.fixText);
+  if (!text) {
+    d.note = REQUEST.needsWords;
+    if (d.status) d.status.textContent = d.note;
+    return Promise.resolve();
+  }
+  return decide(d, card, item, true, text);
+}
+
+async function decide(d, card, item, reject, given) {
+  const text = (given ?? d.text).trim();
   if (reject && !text) {
     d.note = CHECK.needsWhat;
     if (d.status) d.status.textContent = d.note;
@@ -289,6 +302,8 @@ async function decide(d, card, item, reject) {
     if (item && e?.status === 409) {
       await loadCheck(d);
       d.note = CHECK.changed;
+      d.fix = null;
+      d.fixText = "";
       d.paint?.();
       return;
     }
@@ -299,7 +314,9 @@ async function decide(d, card, item, reject) {
   }
   d.phase = "sent";
   d.note = CHECK.sent;
-  d.text = "";
+  if (given === undefined) d.text = "";
+  d.fix = null;
+  d.fixText = "";
   if (item) d.sent = { stamp: detail?.stamp, digest: detail?.digest }; else checks.delete(id);
   d.paint?.();
   d.answer.done?.();
@@ -315,7 +332,7 @@ export function checkCard(card, turns, answer) {
   if (!item && !card.own && d?.phase !== "sent") return null;
   if (!d) { d = freshCheck(item?.key ?? ""); checks.set(card.approve, d); }
   d.answer = answer;
-  if (item && item.key !== d.key && d.phase !== "sending") Object.assign(d, freshCheck(item.key, { text: d.text, open: d.open, paint: d.paint, answer }));
+  if (item && item.key !== d.key && d.phase !== "sending") Object.assign(d, freshCheck(item.key, { text: d.text, open: d.open, fix: d.fix, fixText: d.fixText, paint: d.paint, answer }));
   if (item && d.phase === "ready" && !d.detail) void loadCheck(d);
   // A listed item does not prove a new check: a sent card goes back to ready only when the proposal read now is different.
   if (item && d.phase === "sent" && d.sent && !d.checking) {
@@ -339,6 +356,15 @@ export function checkCard(card, turns, answer) {
       if (card.tryRun && answer.tryIt) {
         parts.push(h("button", { type: "button", disabled: off, "data-focus": `simple-check-try-${card.id}`, onClick: () => answer.tryIt(card.tryRun) }, WORDS.actions.tryIt));
       }
+    }
+    // the assumption being corrected is gone (the plan was made again): the draft does not move to another one
+    if (d.fix !== null && !(card.points ?? []).some((p) => p.kind === "assumed" && p.raw === d.fix)) { d.fix = null; d.fixText = ""; }
+    if (d.phase !== "sent" && card.points?.length) {
+      const live = item && (d.phase === "ready" || d.phase === "sending");
+      parts.push(requestView(card.points, {
+        heading: "h3", focus: `simple-request-${card.id}`, note: item ? "" : REQUEST.notYours,
+        fix: live ? { open: d.fix, text: d.fixText, off: d.phase === "sending", onOpen: (raw) => { d.fix = raw; d.fixText = ""; d.paint?.(); }, onInput: (t) => { d.fixText = t; }, onSend: () => sendFix(d, card, item), onCancel: () => { d.fix = null; d.fixText = ""; d.paint?.(); } } : null,
+      }));
     }
     if (d.phase === "loadFailed") {
       parts.push(h("button", { type: "button", "data-focus": `simple-check-reload-${card.id}`, onClick: () => loadCheck(d) }, CHECK.reload));

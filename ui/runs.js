@@ -14,6 +14,7 @@ import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
 import { adminRunActions } from "./run-dialogs.js";
 import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
+import { createRequestBox } from "./request-box.js";
 import { changesPanel, createTabs, detailsPanel, evidencePanel, progressPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
@@ -467,7 +468,7 @@ export function renderRunDetail(main, runId, { admin = true, onName = null } = {
   // The reader's tab is never moved by an update; a failed run opens on Details › Steps once (see showFailedOnce).
   const evidence = evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }), sources: contextSourcesSection({ load: () => api.context(runId), admin, runId }) });
   const tabs = createTabs([
-    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin }) },
+    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin, request: createRequestBox({ a: api, runId }) }) },
     { id: "diff", label: "What changed", aliases: ["changes"], ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
     {
       id: "details", label: "Details", aliases: ["steps", "evidence", "skills", "log"],

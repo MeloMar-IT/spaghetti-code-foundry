@@ -1710,6 +1710,8 @@ citations and no warning.
 
 **Asked and assumed.** The plan lists its points in two kinds of line. `ASKED:` is a point taken from the issue, its comments or the task. `ASSUMED:` is a choice the planner made itself that the issue does not settle, such as a file location, a default value or who may see something. Read the `ASSUMED:` lines first: a wrong guess is easier to catch before the work is built. The run record keeps them as `planPoints`, a list of `{ kind: "asked" | "assumed", text }`. A plan without these lines, and an older run, has no list.
 
+**Your request.** When a run has these points, its Progress tab shows a **Your request** box after the acceptance criteria. **You asked** and **Assumed** are marked with a word and an icon, and an assumption has a dashed edge, so the two are told apart without colour. The box is not shown when there are no points. **Change this** on an assumption opens a box for the correction in plain words; **Send correction** sends it as a reject of the plan on the issue, with the text `Assumed: <assumption> — Correction: <your words>`, so the planner makes the plan again with it. **Change this** is offered only while the plan waits for a decision and you may reject it (the same rule as **Approve** and **Reject**). Otherwise the box is read-only and says why. In Simple, the same box is on the check card of a plan that waits for a decision, under **What you need to do** on the project page; it sends the correction the same way as **Something is not right**.
+
 - **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
   - `max_sources` (default `200`): the most files in the bundle.
   - `max_source_bytes` (`262144`): the most bytes of one file.
