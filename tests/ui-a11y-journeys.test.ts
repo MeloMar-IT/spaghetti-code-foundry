@@ -369,7 +369,7 @@ describe("the accessibility page", () => {
     expect(auditHtml(page)).toEqual([]);
     expect(page.match(/<h1\b/g)).toHaveLength(1);
     const refs = [...page.matchAll(/<(?:link|script)\b[^>]*\b(?:href|src)="([^"]+)"/g)].map((r) => r[1]!);
-    expect(refs).toHaveLength(3);
+    expect(refs).toHaveLength(4); // prefs-boot.js, tokens.css, looks.css, style.css
     for (const r of refs) expect(r.startsWith("/")).toBe(true);
   });
   it("names WCAG 2.2 AA and the reporting address from package.json", () => {

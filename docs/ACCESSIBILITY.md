@@ -20,6 +20,7 @@ The tests:
 | `tests/ui-a11y-editor.test.ts` | The flow editor. |
 | `tests/ui-a11y-equivalents.test.ts` | The form editor and the YAML editor as the equivalent of the flow graph. |
 | `tests/ui-a11y-live.test.ts` | Live updates and what is announced. |
+| `tests/ui-a11y-looks.test.ts` | The contrast of every colour pair in the Calm and Midnight looks, in light and dark. |
 | `tests/ui-a11y-redesign.test.ts` | The sidebar in all three views, the phase strip, the box for a change, and dark-mode colours of their styles. |
 
 The journeys are: sign in; start work; follow a run and read its log; approve or reject; answer planner questions; open a board card (admin only); edit and save a flow (admin only); add a repository; add a user (admin only).
