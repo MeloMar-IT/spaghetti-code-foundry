@@ -7,6 +7,7 @@
 //                                                   git worktree; the release files end up in <run-dir>/release/out
 // Every release also gets scf-delivery-validate-<version>.mjs and its .sha256 (both are in SHA256SUMS when the Foundry writes it).
 // Build commands get a short environment and no tokens (see src/release/host.ts). The upload is tools/release-upload.
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,8 +30,26 @@ try {
     const { expandVersion, expandTag, loadReleaseRecipe, RECIPE_SOURCE_TEXT } = await lib("recipe");
     const commit = resolveCommit(process.cwd(), process.env.FACTORY_VAR_REF || "main");
     const { recipe, source } = loadReleaseRecipe(process.env.FACTORY_VAR_GITHUB_REPO ?? "", process.cwd(), commit.sha);
+    // The titles of the changes in this release (safe points, #863): the "Merge #n: title" lines since the last tag. Best effort.
+    let changes = [];
+    try {
+      const git = (...a) => execFileSync("git", a, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20000, maxBuffer: 1 << 20 }).trim();
+      let range = commit.sha;
+      try {
+        range = `${git("describe", "--tags", "--abbrev=0", `${commit.sha}^`)}..${commit.sha}`;
+      } catch {
+        // no earlier tag: the whole history is cut at 200 lines below
+      }
+      changes = git("log", "--first-parent", "-n", "200", "--format=%s", range)
+        .split("\n")
+        .filter((l) => /^(Merge|Resolve) #\d+: /.test(l))
+        .slice(0, 20);
+    } catch {
+      // no titles: the point shows its tag only
+    }
     const plan = {
       sha: commit.sha,
+      changes,
       recipeSource: source,
       version: expandVersion(recipe, commit),
       tag: expandTag(recipe, commit),

@@ -11,6 +11,7 @@ import {
   newKey, readyView, remove, repoDialog, repoWebUrl, test,
 } from "./repos.js";
 import { outcomesSection } from "./outcomes.js";
+import { SAFE, safePointsPart } from "./safe-points.js";
 import { errorState, explainError, loadingState, staleNote } from "./states.js";
 
 export const NO_REPO = "No such repository.";
@@ -181,6 +182,7 @@ export const SECTIONS = [
   { id: "connection", title: "Connection", show: () => true, draw: connection },
   { id: "outcomes", title: "Outcomes", show: () => true, draw: outcomes },
   { id: "preview", title: "Preview", show: () => true, draw: (ctx) => ctx.part(`preview:${ctx.repo.id}`, () => previewPart(ctx.repo.id)).el },
+  { id: "safe-points", title: SAFE.title, show: () => true, draw: (ctx) => ctx.part(`safe:${ctx.repo.id}`, () => safePointsPart(ctx.repo.id)).el },
   { id: "danger", title: "Dangerous actions", tone: "fail", show: () => true, draw: danger },
 ];
 

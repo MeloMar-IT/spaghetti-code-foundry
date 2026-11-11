@@ -88,6 +88,7 @@ beforeEach(() => {
       return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
     }
     if (init.method === "GET" && url.endsWith("/preview")) return reply({ state: "stopped" });
+    if (init.method === "GET" && url.endsWith("/safe-points")) return reply({ branch: "main", gitflow: false, complete: true, points: [] });
     if (init.method === "GET") {
       gets++;
       const snapshot = [...repos];

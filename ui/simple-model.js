@@ -3,6 +3,7 @@ import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
 import { planPoints, plainPoints } from "./request-model.js";
 import { plannedCards } from "./simple-change-model.js";
+import { lastGoodText } from "./safe-points.js";
 import { FINAL, HOME, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
 import { greeting, groupHref, summaryLine, todayModel } from "./today.js";
 import { phaseText, stepPhase } from "./phases.js";
@@ -179,7 +180,7 @@ export const HOME_COUNTERS = ["check", "building", "ready", "published-week"];
  * The current project is the project of the newest work that really runs (paused work does not count), else of the first card
  * that needs the person, else the first project; null when there is no project.
  */
-export function homeModel(runs, pending, repos, projects, { now = Date.now(), list = "" } = {}) {
+export function homeModel(runs, pending, repos, projects, { now = Date.now(), list = "", safe } = {}) {
   const today = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos), now });
   const all = Array.isArray(projects) ? projects : [];
   const newest = (items) => items.reduce((best, b) => (!best || b.startedMs > best.startedMs ? b : best), null);
@@ -198,7 +199,7 @@ export function homeModel(runs, pending, repos, projects, { now = Date.now(), li
     attention: today.attention,
     building: today.building,
     project: p
-      ? { id: p.id, name: p.name, state: p.state, href: `#/repos/${encodeURIComponent(p.id)}`, phase: running?.phase?.index ?? null, line: running?.line ?? "" }
+      ? { id: p.id, name: p.name, state: p.state, href: `#/repos/${encodeURIComponent(p.id)}`, phase: running?.phase?.index ?? null, line: running?.line ?? "", lastGood: String(safe?.id) === String(p.id) ? lastGoodText(safe?.answer, now) : "" }
       : null,
   };
 }

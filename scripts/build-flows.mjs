@@ -2504,6 +2504,8 @@ write("release-daily", {
         // the build, so the build cannot hide what the tests left behind; the record itself is written after the build, and only
         // when no check timed out (a time-out writes no record). A record that fails changes nothing.
         'tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi',
+        // The commit that is tested, taken before the tests (safe points, #863): TESTED is printed only for a clean tree.
+        'sha0=""; if [ -n "$tree" ]; then sha0=$(git rev-parse HEAD 2>/dev/null) || sha0=""; fi',
         // Reuse (reuse_test_results): a record in tested/ under the key of this clean tree and this command, from a story
         // ("run <id>, <time>") or a release check ("run <id>, <time>, tree <sha>"), means these tests already passed on this
         // exact code. Only the matched "run <id>, <time>" text is shown, and a hit writes no record, so a story record never
@@ -2531,7 +2533,11 @@ write("release-daily", {
         '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; if [ -n "$hit" ]; then echo "not run again: this exact code already passed these tests ($hit)"; else "$FACTORY_TOOLS/test-summary" "$marker"; fi',
         CHECK_BUILD_LINE,
         "  echo '```'; " + CHECK_TIMED_LINE + '; } > "{{run.dir}}/checks.md"',
-        'cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"',
+        'cat "{{run.dir}}/checks.md"',
+        // TESTED: the commit that passed. Only when the tree was clean before the tests (and after them, or a reuse hit),
+        // HEAD did not move and nothing timed out.
+        'if [ "$ok" = yes ] && [ -z "$timed" ] && [ -n "$sha0" ] && { [ -n "$hit" ] || [ "$record" = yes ]; } && now=$(git rev-parse HEAD 2>/dev/null) && [ "$now" = "$sha0" ]; then echo "TESTED: $sha0"; fi',
+        'echo "CHECKS: $ok"',
       ].join("\n"),
     },
     {
