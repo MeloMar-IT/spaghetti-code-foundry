@@ -47,8 +47,8 @@
 .scf-table__caption { caption-side: top; text-align: start; padding: var(--cell-pad-y) var(--cell-pad-x); font-weight: var(--weight-medium); }
 .scf-table__th {
   text-align: start; white-space: nowrap;
-  font-size: var(--text-table-head); color: var(--color-text-muted); font-weight: var(--weight-medium);
-  text-transform: none; letter-spacing: normal;
+  font-family: var(--font-label); font-size: var(--text-table-head); color: var(--color-text-muted); font-weight: var(--weight-medium);
+  text-transform: var(--label-case); letter-spacing: normal;
   padding: var(--cell-pad-y) var(--cell-pad-x);
   border-bottom: var(--border-width) solid var(--color-border);
 }

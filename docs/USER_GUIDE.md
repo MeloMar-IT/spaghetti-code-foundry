@@ -97,8 +97,9 @@ Comfortable or Compact. **Look** is Calm (the default), Midnight, Friendly, Edit
 light and airy, with an indigo accent and rounded corners. **Midnight** is dense and dark, with a lime accent
 and a mono font for numbers, ids and logs. **Friendly** is warm and rounded: a cream ground, teal buttons, apricot
 highlights, pill buttons and soft shadows. **Bento** is tiles on a sage ground, with a green accent and 24 px
-corners; its tiles are yellow in light mode and charcoal in dark mode. **Editorial** shows the Calm style for now;
-it is added in a later release. A choice applies at once,
+corners; its tiles are yellow in light mode and charcoal in dark mode. **Editorial** is black and white: square
+corners, black rules instead of shadows, a bold grotesk heading font and mono labels in capitals. Orange is used
+only for what needs you. The administration pages are inverted (black ground, white text). A choice applies at once,
 with no reload. The chosen option has a check mark and is announced as pressed, so it does not depend on
 colour. The choice is kept in this browser, per account, and is not sent to the server: a second account
 in the same browser has its own, and another browser starts with System, Comfortable and Calm. The
