@@ -478,7 +478,7 @@ export function renderRunDetail(main, runId, { admin = true, onName = null } = {
   ], { initial: "overview" });
   const tabsBox = tabs.el;
 
-  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onMark: async (cid, mark, rev) => { const r = await api.markCheck(runId, cid, mark, rev); load(); return r; }, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to Runs" });
+  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onMark: async (cid, mark, rev) => { const r = await api.markCheck(runId, cid, mark, rev); load(); return r; }, onSendBack: async (note) => { await api.rejectRun(runId, note); load(); }, onAddCheck: async (t, e, rev) => { const r = await api.addCheck(runId, t, e, rev); load(); return r; }, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to Runs" });
   let load;
   const stream = runStream({
     open: () => api.events(runId),

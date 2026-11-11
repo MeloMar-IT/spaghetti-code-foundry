@@ -1302,6 +1302,16 @@ starts with no marks. The approve button stays available and says how many check
 ("Approve — 2 checks not marked yet"). A change without checks looks as it did before. Marks are made on your own runs
 (`POST /api/runs/:id/checks`); a mark on a change that is no longer waiting is refused.
 
+**Not quite** asks one question, "What did you see?". Write one sentence and press **Send back**: the change goes
+back with a review answer that holds the check (Try and Expect) and your sentence, the same way a request for
+changes is handled. If the send fails, the sentence stays and you can press **Send back** again.
+
+**+ Add a check** lets you write your own check: **What to try** and **What you expect**. Both are needed. It is
+kept with the run as a check with `source: "person"` and is shown again in the next round, so a fix cannot
+silently break it. A change can have at most four checks of your own. Your checks are marked "Your check".
+When a fix is sent back, the checks marked **Works** before are shown again as "Worked before — try it again",
+so you can see that they still hold. The add is made with `POST /api/runs/:id/checks/add`.
+
 #### Text from outside the flow
 
 Text that comes from outside the flow is data, not instructions: an issue, a file in the repository,
@@ -5437,6 +5447,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note; 409 for a closed issue, as for resume |
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
+| `POST /api/runs/:id/checks/add` | yes | own runs | add a check of your own to a change that waits for your check (`try`, `expect`, at most 300 characters each, `rev` optional); it is kept for the next round; 400 for an empty part, 409 when the run does not wait, is queued or moved on, the checks changed since `rev`, or it has 4 checks of your own |
 | `POST /api/runs/:id/checks` | yes | own runs | mark a check of a change that waits for your check (`check`: the id of a check from the plan, `mark`: `works`, `not-quite`, or `null` to take the mark back, `rev`: the `checksRev` you read, optional); the marks are kept with the run and shown again on its page; 400 for an unknown check or mark, 409 when the run does not wait, is queued or moved on, or the checks changed since `rev` |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |

@@ -19,10 +19,16 @@ export interface PersonCheck {
   id: string;
   try: string;
   expect: string;
-  source: "plan";
+  source: "plan" | "person";
+  /** When the person marked it Works in an earlier round; it comes back unmarked. */
+  worked?: string;
+  by?: string;
+  at?: string;
 }
 
 export const PLAN_CHECK_LIMITS = { checks: 4, partChars: 300 } as const;
+/** A change keeps at most this many checks written by the person. */
+export const PERSON_CHECK_LIMITS = { person: 4 } as const;
 
 export interface PlanChecks {
   checks: PersonCheck[];
@@ -37,6 +43,11 @@ const NO_CHECKS_LINE = /^(?:- )?NO_CHECKS:(.*)$/i;
 const CHECK_PARTS = /^(?:- )?CHECK:\s*Try:\s*(.*?)\s*(?:—|–|--|-)?\s*Expect:\s*(.*?)\s*$/i;
 // The gate prints the review notes of Codex after the plan; they are not the plan.
 const NOTES_HEADING = /^## Review notes to work in\s*$/;
+
+/** Text from a person or an agent, made safe: control characters out, one line, cut. "" for anything that is not text. */
+export function cleanCheckPart(s: unknown): string {
+  return typeof s === "string" ? clean(s) : "";
+}
 
 function clean(s: string): string {
   let t = s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
@@ -105,13 +116,19 @@ export function recordPlanChecks(run: RunSummary, stepId: string, log: (m: strin
     const gate = planGateRecord(run);
     if (!gate || gate.id !== stepId) return;
     const r = parsePlanChecks(gate.output ?? "");
-    // A new plan reuses the ids (plan-1 …): marks of the old checks must not apply to the new ones.
+    // A new plan reuses the ids (plan-1 …): marks of the old checks must not apply to the new ones. What was marked
+    // Works moves into `worked`; the person's own checks stay.
+    const next = nextRoundChecks(run.checks, run.checkMarks, r.checks);
+    const kept = next.length - r.checks.length;
+    const keptText = kept > 0 ? `, ${kept} kept` : "";
     delete run.checkMarks;
     for (const p of r.problems) log(`⚠ checks: ${p}`);
-    if (r.checks.length > 0) {
-      run.checks = r.checks;
+    if (next.length > 0) {
+      run.checks = next;
       delete run.checksNone;
-      log(`    · checks a person can try: ${r.checks.length} from the plan`);
+      if (r.checks.length > 0) log(`    · checks a person can try: ${r.checks.length} from the plan${keptText}`);
+      else if (r.none !== undefined) log(`    · checks a person can try: none — ${r.none}${keptText}`);
+      else log(`⚠ the plan lists no checks a person can try and does not say why${keptText}`);
     } else if (r.none !== undefined) {
       run.checks = [];
       run.checksNone = r.none;
@@ -124,6 +141,93 @@ export function recordPlanChecks(run: RunSummary, stepId: string, log: (m: strin
   } catch {
     /* recording checks never stops a run */
   }
+}
+
+const validCheck = (c: unknown): c is PersonCheck => !!c && typeof c === "object" && typeof (c as PersonCheck).id === "string" && typeof (c as PersonCheck).try === "string" && typeof (c as PersonCheck).expect === "string";
+const textKey = (c: { try: string; expect: string }) => JSON.stringify([c.try, c.expect]);
+
+/**
+ * Pure. The checks of the next round. A check marked Works gets `worked` (the time of the mark); one marked Not quite
+ * loses it. Without `plan` the checks stay as they are. With `plan` (a new plan): the plan's checks (one with the same
+ * text as an earlier one inherits `worked`), then every earlier plan check that worked and is not in the plan (`kept-N`),
+ * then the person's own checks with their ids.
+ */
+export function nextRoundChecks(checks: readonly PersonCheck[] | undefined, marks: Record<string, CheckMark> | undefined, plan?: readonly PersonCheck[]): PersonCheck[] {
+  const cur = (Array.isArray(checks) ? checks : []).filter(validCheck).map((c): PersonCheck => {
+    const m = marks && typeof marks === "object" && Object.hasOwn(marks, c.id) ? marks[c.id] : undefined;
+    const { worked: old, ...rest } = c;
+    let worked = old;
+    if (m?.mark === "works" && typeof m.at === "string") worked = m.at;
+    else if (m?.mark === "not-quite") worked = undefined;
+    return typeof worked === "string" ? { ...rest, worked } : { ...rest };
+  });
+  if (!plan) return cur;
+  const before = new Map<string, string>();
+  for (const c of cur) if (c.worked !== undefined && !before.has(textKey(c))) before.set(textKey(c), c.worked);
+  const out: PersonCheck[] = plan.map((p) => {
+    const w = before.get(textKey(p));
+    return w !== undefined ? { ...p, worked: w } : { ...p };
+  });
+  const seen = new Set(out.map(textKey));
+  let n = 0;
+  for (const c of cur) {
+    if (c.source === "person" || c.worked === undefined || seen.has(textKey(c))) continue;
+    seen.add(textKey(c));
+    out.push({ ...c, id: `kept-${++n}`, source: "plan" });
+  }
+  for (const c of cur) if (c.source === "person") out.push(c);
+  return out;
+}
+
+/** A round ends (the change is sent back): checks marked Works get `worked`, the marks go. Never throws. */
+export function endCheckRound(run: RunSummary): void {
+  try {
+    if (Array.isArray(run.checks) && run.checks.length > 0) run.checks = nextRoundChecks(run.checks, run.checkMarks);
+    delete run.checkMarks;
+  } catch {
+    /* a round never stops a run */
+  }
+}
+
+/** Pure. The checks as a person sees them: no `by`, no `at`; an unknown source reads as "plan". */
+export function publicChecks(checks: readonly PersonCheck[] | undefined): { id: string; try: string; expect: string; source: "plan" | "person"; worked?: string }[] {
+  return (Array.isArray(checks) ? checks : []).filter(validCheck).map((c) => ({
+    id: c.id,
+    try: c.try,
+    expect: c.expect,
+    source: c.source === "person" ? "person" : "plan",
+    ...(typeof c.worked === "string" ? { worked: c.worked } : {}),
+  }));
+}
+
+/**
+ * Adds a check written by the person to a waiting run, in run.json. "full": the run has all the checks of its own it may
+ * keep; "refused": not waiting, `revision` is not the check set of the run, run.json changed meanwhile, or it cannot be read.
+ * Never throws.
+ */
+export function addRunCheck(runDir: string, text: { try: string; expect: string }, meta: { by: string; at: string }, revision?: string): { id: string } | "full" | "refused" {
+  let id = "";
+  let full = false;
+  const done = rewriteRunMark(runDir, (s) => {
+    const checks = Array.isArray(s.checks) ? (s.checks as PersonCheck[]) : [];
+    if (s.status !== "waiting") return undefined;
+    if (revision !== undefined && revision !== checksRevision(checks)) return undefined;
+    const own = checks.filter((c) => c && c.source === "person");
+    if (own.length >= PERSON_CHECK_LIMITS.person) {
+      full = true;
+      return undefined;
+    }
+    let top = 0;
+    for (const c of own) {
+      const n = /^person-(\d+)$/.exec(String(c.id))?.[1];
+      if (n) top = Math.max(top, Number(n));
+    }
+    id = `person-${top + 1}`;
+    const out: Record<string, unknown> = { ...s, checks: [...checks, { id, try: text.try, expect: text.expect, source: "person", by: meta.by, at: meta.at }] };
+    delete out.checksNone;
+    return out;
+  });
+  return done ? { id } : full ? "full" : "refused";
 }
 
 /** Pure. A short fingerprint of the check set (ids and texts); a request made against an older set is refused. */

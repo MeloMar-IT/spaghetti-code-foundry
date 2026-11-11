@@ -43,7 +43,7 @@ import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isSto
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
-import { recordPlanChecks } from "./plan-checks.js";
+import { endCheckRound, recordPlanChecks } from "./plan-checks.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
@@ -856,6 +856,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
           engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
           res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
           if (!d.approved) res.error = "rejected";
+          if (!d.approved && top) endCheckRound(summary); // the round ends: what worked is kept as "worked", the marks go
         }
       } else {
         visits[step.id] = visit - 1; // waiting is not a visit

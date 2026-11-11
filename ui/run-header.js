@@ -187,8 +187,8 @@ const mainFirst = (list) => list.sort((a, b) => Number(b.cls === "primary") - Nu
  * The header of a run page. `onAction(kind)` makes the user buttons (Approve, Reject, Retry, Cancel); `actions(s)` gives
  * the administrator's DOM buttons instead. `onFailedStep(index)` makes "Show the failed step".
  */
-export function createRunHeader({ admin = false, onAction = null, actions = null, onFailedStep = null, onTitle = null, onMark = null, backLabel = "Back to Runs" } = {}) {
-  const checks = createCheckList({ onMark });
+export function createRunHeader({ admin = false, onAction = null, actions = null, onFailedStep = null, onTitle = null, onMark = null, onSendBack = null, onAddCheck = null, backLabel = "Back to Runs" } = {}) {
+  const checks = createCheckList({ onMark, onSendBack, onAdd: onAddCheck });
   const pillBox = h("span");
   const helpBox = h("span");
   const refBox = h("span");
