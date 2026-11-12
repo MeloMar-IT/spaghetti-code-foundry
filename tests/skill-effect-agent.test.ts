@@ -159,7 +159,7 @@ async function approved(id: string, version: string, over: { md?: string; pin?: 
 }
 
 /** A runner that does not start anything: it records the arms it gets and returns runs of the given kind. */
-function fakeRunner(over: { loaded?: boolean; throws?: boolean } = {}) {
+function fakeRunner(over: { loaded?: boolean; throws?: boolean; passed?: boolean } = {}) {
   const calls: { skillId?: string; key: string; hasWrite: boolean; scenarios: string[]; repeat: number }[] = [];
   const runArm = async (arm: Arm, ctx: ArmContext) => {
     calls.push({ skillId: arm.skillId, key: arm.key, hasWrite: arm.write !== undefined, scenarios: ctx.suite.scenarios.map((s) => s.id), repeat: ctx.suite.repeat });
@@ -167,7 +167,7 @@ function fakeRunner(over: { loaded?: boolean; throws?: boolean } = {}) {
     const runs: ArmRun[] = [];
     for (const s of ctx.suite.scenarios) {
       for (let attempt = 1; attempt <= ctx.suite.repeat; attempt++) {
-        runs.push({ scenario: s.id, attempt, runId: `${arm.key.replace("@", "-")}-${s.id}-${attempt}`, score: 1, passed: true, loaded: arm.skillId !== undefined && (over.loaded ?? true), tokens: 10, durationMs: 100 });
+        runs.push({ scenario: s.id, attempt, runId: `${arm.key.replace("@", "-")}-${s.id}-${attempt}`, score: 1, passed: over.passed ?? true, loaded: arm.skillId !== undefined && (over.loaded ?? true), tokens: 10, durationMs: 100, costUsd: 0.25 });
       }
     }
     return { runs };
@@ -211,6 +211,46 @@ describe("without an agent run", () => {
     expect(parseEffectRecord(JSON.parse(readFileSync(join(home, "skill-effects", idOf("kafka"), readdirSync(join(home, "skill-effects", idOf("kafka")))[0]!, "effect--0000000001.json"), "utf8")))).toHaveProperty("record");
     noFolders();
     expect(process.env.FACTORY_HOME).toBe(home);
+  });
+
+  it("prints what its agent runs cost, as the line a flow step counts", async () => {
+    const fake = fakeRunner();
+    const r = await effect(staged("kafka"), { runArm: fake.runArm });
+    expect(r.code, r.text).toBe(0);
+    expect(r.lines).toContain("FACTORY_STEP_COST_USD: 2.0000");
+  });
+
+  describe("--screen", () => {
+    it("runs each offered task once without the skill, stores nothing, and sends a task that passes back", async () => {
+      const fake = fakeRunner();
+      const r = await effect(staged("kafka"), { runArm: fake.runArm, screen: true });
+      expect(r.code, r.text).toBe(0);
+      expect(fake.calls).toEqual([{ skillId: undefined, key: "no-skill", hasWrite: false, scenarios: ["mark"], repeat: 1 }]);
+      expect(r.lines).toContain("SCREEN mark: passes without the skill: too easy, it tests nothing the skill teaches");
+      expect(r.lines).toContain("FACTORY_STEP_COST_USD: 0.2500");
+      expect(r.lines.at(-1)).toBe("SCREEN: retask");
+      expect(r.lines.some((l) => l.startsWith("EFFECT ") || l.startsWith("STORED "))).toBe(false);
+      noRecords();
+      noFolders();
+    });
+
+    it("says ok when every task fails without the skill", async () => {
+      const r = await effect(staged("kafka"), { runArm: fakeRunner({ passed: false }).runArm, screen: true });
+      expect(r.code, r.text).toBe(0);
+      expect(r.lines).toContain("SCREEN mark: fails without the skill");
+      expect(r.lines.at(-1)).toBe("SCREEN: ok");
+      noRecords();
+    });
+
+    it("stores nothing and starts nothing when no task offers the skill", async () => {
+      writeSuite({ repo: "fixtures/ins", task: "Tidy the README." });
+      const fake = fakeRunner();
+      const r = await effect(staged("kafka"), { runArm: fake.runArm, screen: true });
+      expect(r.code).toBe(1);
+      expect(r.text).toMatch(/no sample task offers the skill/);
+      expect(fake.calls).toEqual([]);
+      noRecords();
+    });
   });
 
   it("prints INTERRUPTED, stores nothing and removes the temporary folder when an arm is interrupted", async () => {
@@ -301,7 +341,7 @@ describe.skipIf(!basic)("runs in the OS sandbox", () => {
     expect(first.code, first.text).toBe(0);
     expect(first.lines.filter((l) => l.startsWith("RUN "))).toHaveLength(8);
     expect(first.lines.filter((l) => l.startsWith("NOTE network: "))).toHaveLength(1);
-    expect(first.lines.find((l) => l.startsWith("EFFECT "))).toMatch(/helps \(pass-rate-higher\): with 4\/4, without 0\/4, difference \+1\.00, p 0\.0286;/);
+    expect(first.lines.find((l) => l.startsWith("EFFECT "))).toMatch(/helps \(pass-rate-higher\): with 4\/4, without 0\/4, difference \+1\.00, p 0\.0143 \(one-sided\);/);
     expect(first.lines.at(-1)).toMatch(/^STORED skill-effects\/.+\/effect--0000000001\.json$/);
     expect(bytes()).toEqual(before);
     restored();

@@ -19,7 +19,9 @@ const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["
 const lines = (s) => s.split("\n").filter(Boolean);
 
 try {
-  const { checkSkillFolder, CHANGELOG_PATHS } = await import(new URL("../dist/skill-eval/write-check.js", import.meta.url).href);
+  const { checkSkillFolder, fillSuiteDefaults, CHANGELOG_PATHS } = await import(new URL("../dist/skill-eval/write-check.js", import.meta.url).href);
+  // the sections every suite of a skill library has the same are filled in first, so the writer need not write them
+  const filled = fillSuiteDefaults(join(process.cwd(), "skills", name, "evals", "suite.yaml"));
   // `--no-renames`: a rename is a delete and an add, so the old path outside the folder counts too
   const changed = new Set(git("diff", "--name-only", "--no-renames", base).split("\n").filter(Boolean));
   for (const p of lines(git("ls-files", "--others", "--exclude-standard"))) changed.add(p);
@@ -50,6 +52,7 @@ try {
   }
   const { problems, notes } = checkSkillFolder(join(process.cwd(), "skills", name), name, { changed: [...changed].sort(), changelogs, ignored, ...(baseVersion ? { baseVersion } : {}) });
   for (const p of problems) console.log(`PROBLEM ${p.replace(/\s+/g, " ")}`);
+  for (const k of filled) console.log(`NOTE evals/suite.yaml: added the default ${k}: section`);
   for (const n of notes) console.log(`NOTE ${n.replace(/\s+/g, " ")}`);
   console.log(problems.length ? "CHECK: failed" : "CHECK: ok");
 } catch (e) {

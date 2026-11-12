@@ -79,6 +79,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills effect <source-id> <skill-id> [<suite-file>]   Run the skill's sample tasks with and without a staged skill and store the verdict
        scf skills effect <id@version> [<suite-file>]            The same for an approved, pinned skill
        scf skills effect <skill-folder> [<suite-file>]          The same for a skill folder in the working tree (skills/<name>)
+       scf skills effect … --screen                             Run each sample task once without the skill; a task that passes is too easy (stores nothing)
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
        scf skills release sign <catalogue>@<version> --key <file>  Sign a stored release with a PEM Ed25519 private key (chmod 600); prints the approved entry to paste into the config
@@ -91,7 +92,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills allow-run <run-id> <id@version> --reason <text> [--runs-dir <dir>]  Let one run go on with a quarantined version (then resume the run)
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo", "workspace"], pin: ["repo", "replace", "builtin", "workspace"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: [], gate: [], release: ["key"], releases: [], lifecycle: ["reason", "replacement", "runs-dir", "workspace"], "allow-run": ["reason", "runs-dir"] };
+const ALLOWED: Record<string, string[]> = { list: ["repo", "workspace"], pin: ["repo", "replace", "builtin", "workspace"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: ["screen"], gate: [], release: ["key"], releases: [], lifecycle: ["reason", "replacement", "runs-dir", "workspace"], "allow-run": ["reason", "runs-dir"] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -106,7 +107,7 @@ export interface SkillsCommandOptions extends DiscoverOptions {
   /** `score --agent`: runs the instructions scenarios in the sandbox. Given by the program's entry point, so this file starts no process. */
   agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
   /** `effect`: runs the sample tasks with and without a skill in the sandbox. Given by the program's entry point, like `agentScore`. */
-  agentEffect?: (ops: EffectOperands, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
+  agentEffect?: (ops: EffectOperands, out: (line: string) => void, opts: EvaluateCliOptions & { screen?: boolean }) => Promise<number>;
 }
 
 /** `scf skills overrides check` and `scf skills project-pins check`: offline; prints checked fields and the entry digest only. */
@@ -761,7 +762,8 @@ export async function skillsCommand(
     if ("problem" in ops) throw syntax(ops.problem);
     if (!agentEffect) throw syntax("scf skills effect: not available here");
     const today = opts.today ?? new Date().toISOString().slice(0, 10);
-    return agentEffect(ops, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+    const screen = args.values.screen === true ? { screen: true } : {};
+    return agentEffect(ops, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover, ...screen });
   }
   if (sub === "unpin") {
     const key = operands[0]!;

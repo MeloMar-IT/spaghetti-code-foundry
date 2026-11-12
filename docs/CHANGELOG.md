@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Hotfix: the skill-write flow failed far too often (50 runs in three days, none published). A review of every run found six causes, all fixed:
+  - **A reply threw the skill away.** A resumed run cleaned the clone, so every answer on an issue started the skill from nothing. The clone step now keeps the draft of the skill (`DRAFT:` line), the writer builds on it, and `pick` checks new/change against `main` instead of the working tree.
+  - **The reviewer never approved.** It sorts its points under Blocking, Worth fixing later and For a person, and approves when nothing blocks. The closing comment of a published skill lists the other points. Requests outside the skill folder (a README index) are never blocking.
+  - **The measurement tested two-sided.** `helps` is now a one-sided Fisher test (a lower pass rate stays two-sided). Records stored before keep the rule they were made with (`test` field).
+  - **Too-easy sample tasks were found only after a full measurement.** A new `screen` step runs each task once without the skill (`scf skills effect --screen`); a task that passes goes back to the writer, at most twice.
+  - **Most check failures were boilerplate.** The writer runs the check itself (`sh .git/scf-check`, written by `pick`), the check fills the `conflicts:`, `context:` and `tools:` sections of `evals/suite.yaml`, the writer is told the path depth limit, and in the Markdown of a local skill dangerous commands, system paths and installs are notes for the reviewer (scripts, fixtures and the never-allowed rules stay strict). https links in prose and internal host names (`otel-collector`, `*.svc`) are no longer live endpoints.
+  - **The cost of measuring was not counted.** A shell step's `FACTORY_STEP_COST_USD:` lines (printed by `scf skills effect`) add to the run's cost and budget; the flow's budget is now $40.
+
 - Skills: when a written skill does not help, scores lower than the old version, or the review asks for changes, the stop comment asks the owner (an `owner_action` question) instead of saying "Nothing needed from you … the Foundry takes its own recommendations". A watcher with `auto_defaults` no longer answers it with `/defaults`, which only ran the whole write and measurement again at full cost.
 - Watchers: a job that is queued for an issue counts as working, also when it has no run file yet. Before, a new run that waited for a slot next to an older parked run lost its working label ("a new run replaces …" a second time), and when it ended without a status label the watcher started yet another run for the same issue.
 - Skills: a review that asks for changes sends the skill back to the writer once, with the review notes (new step `after_review`); the second review with changes asks the owner as before. The writer may run 8 times, the check 9.

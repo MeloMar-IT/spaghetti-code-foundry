@@ -28,7 +28,16 @@ import { EvaluationInterrupted, runArm, type Arm, type ArmContext, type ArmRun }
 export interface AgentEffectOptions extends AgentScoreOptions {
   /** Tests: replaces the arm runner. */
   runArm?: typeof runArm;
+  /**
+   * Only the arm without the skill, each offered scenario once, and no record: a scenario that passes without the skill is too easy
+   * to tell the arms apart. Prints `SCREEN <id>: …` lines and `SCREEN: retask` or `SCREEN: ok`.
+   */
+  screen?: boolean;
 }
+
+/** The line a shell step of a flow prints so that the agent runs it started count toward the run's cost (src/engine/execute.ts). */
+export const STEP_COST_PREFIX = "FACTORY_STEP_COST_USD:";
+const costLine = (usd: number) => `${STEP_COST_PREFIX} ${(Math.round(usd * 1e4) / 1e4).toFixed(4)}`;
 type Out = (line: string) => void;
 
 const stamp = (d: Date) => d.toISOString().replace(/\.\d+Z$/, "Z");
@@ -258,6 +267,22 @@ export async function effectWithAgent(ops: EffectOperands, out: Out, opts: Agent
         onRunStarted: opts.onRunStarted,
       };
       const run = opts.runArm ?? runArm;
+      if (opts.screen) {
+        const once = await run({ key: "no-skill" }, { ...ctx, suite: { ...offered, repeat: 1 } });
+        if ("problem" in once) {
+          out(`PROBLEM ${label}: ${once.problem}`);
+          return 1;
+        }
+        let easy = 0;
+        for (const s of offered.scenarios) {
+          const passed = once.runs.filter((r) => r.scenario === s.id && r.passed).length > 0;
+          if (passed) easy++;
+          out(`SCREEN ${s.id}: ${passed ? "passes without the skill: too easy, it tests nothing the skill teaches" : "fails without the skill"}`);
+        }
+        out(costLine(once.runs.reduce((n, r) => n + r.costUsd, 0)));
+        out(`SCREEN: ${easy > 0 ? "retask" : "ok"}`);
+        return 0;
+      }
       const withSkill = await run({ skillId: skill.id, key: label, write: skill.write }, ctx);
       if ("problem" in withSkill) {
         out(`PROBLEM ${label}: ${withSkill.problem}; no record`);
@@ -270,6 +295,7 @@ export async function effectWithAgent(ops: EffectOperands, out: Out, opts: Agent
       }
       runs.with = withSkill.runs.map(toRun);
       runs.without = without.runs.map(toRun);
+      out(costLine([...withSkill.runs, ...without.runs].reduce((n, r) => n + r.costUsd, 0)));
     } catch (e) {
       if (!(e instanceof EvaluationInterrupted)) out(`PROBLEM ${hidden(e instanceof Error ? e.message : "error")}`);
       out(INTERRUPTED);
@@ -282,6 +308,10 @@ export async function effectWithAgent(ops: EffectOperands, out: Out, opts: Agent
     }
   }
 
+  if (opts.screen) {
+    out(`PROBLEM ${label}: no sample task offers the skill; nothing to screen`);
+    return 1;
+  }
   const raw: EffectRecord = {
     schema: 1,
     skill: { id: skill.id, version: skill.version, digest: skill.digest, ...(skill.origin ?? {}) },

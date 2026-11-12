@@ -136,9 +136,11 @@ export interface RunOutcome {
   loaded: boolean;
   tokens: number;
   durationMs: number;
+  /** What the run cost in dollars (0 when it is not known). */
+  costUsd: number;
 }
 
-type Summary = Pick<RunSummary, "status" | "history" | "reason" | "skillLock" | "skillPlan">;
+type Summary = Pick<RunSummary, "status" | "history" | "reason" | "skillLock" | "skillPlan"> & { totalCostUsd?: number };
 
 /** What one finished run did. A broken fixture, an access failure or a run that did not end is a `problem`. */
 export function runOutcome(s: Summary, skillId: string | undefined): RunOutcome | { problem: string } {
@@ -155,7 +157,8 @@ export function runOutcome(s: Summary, skillId: string | undefined): RunOutcome 
       : evaluateSkillRun(s, SkillExpectSchema.parse({ selected: [skillId] })).activation.status === "loaded";
   const tokens = s.history.reduce((n, h) => n + (h.tokens ? h.tokens.input + h.tokens.output : 0), 0);
   const durationMs = s.history.filter((h) => h.id === "work").reduce((n, h) => n + h.durationMs, 0);
-  return { passed: failure === undefined && s.status === "succeeded", ...(failure ? { failure } : {}), loaded, tokens, durationMs };
+  const costUsd = Number.isFinite(s.totalCostUsd) && (s.totalCostUsd ?? 0) > 0 ? s.totalCostUsd! : 0;
+  return { passed: failure === undefined && s.status === "succeeded", ...(failure ? { failure } : {}), loaded, tokens, durationMs, costUsd };
 }
 
 /** 1 only when fixture, work and check succeeded and the skill was loaded. A broken fixture, an access failure or a run that did not end is a `problem`. */
@@ -177,6 +180,7 @@ export interface ArmRun {
   loaded: boolean;
   tokens: number;
   durationMs: number;
+  costUsd: number;
 }
 export interface ArmContext {
   /** The temporary root of the evaluation: the arm folders are made inside it. */
@@ -254,7 +258,7 @@ export async function runArm(arm: Arm, ctx: ArmContext): Promise<{ runs: ArmRun[
         if (!s) return { problem: `scenario ${scenario.id}: run ${m.id} cannot be read` };
         const o = runOutcome(s, arm.skillId);
         if ("problem" in o) return { problem: `scenario ${scenario.id}: ${o.problem}` };
-        const seen = { passed: o.passed, loaded: o.loaded, tokens: o.tokens, durationMs: o.durationMs };
+        const seen = { passed: o.passed, loaded: o.loaded, tokens: o.tokens, durationMs: o.durationMs, costUsd: o.costUsd };
         if (arm.skillId === undefined) {
           if (o.loaded) return { problem: `scenario ${scenario.id}: a run without the skill loaded a skill` };
           runs.push({ scenario: scenario.id, attempt: i + 1, runId: m.id, score: o.passed ? 1 : 0, ...seen });

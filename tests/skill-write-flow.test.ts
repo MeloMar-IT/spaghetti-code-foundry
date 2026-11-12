@@ -13,7 +13,7 @@ import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 const REPO = "acme/app";
 const DEMO = resolve("tests/fixtures/skill-write/demo-skill");
 const LABELS = { working: "Factory_working", done: "Factory_done", needs_info: "Factory_needs_info", waiting: "Factory_waiting", failed: "Factory_ERROR" };
-const FAKES = ["FAKE_SKILL_PLAN", "FAKE_SKILL_SRC", "FAKE_SKILL_NAME", "FAKE_SKILL_REVIEW", "FAKE_SKILL_BAD_ONCE", "FAKE_SCF_EFFECT", "FAKE_SCF_WITH", "FAKE_SCF_WITH_OLD", "FAKE_SCF_EFFECT_OLD", "FAKE_SCF_LIFECYCLE_FAIL", "FAKE_SCF_HISTORY", "FAKE_GH_ISSUE_BODIES", "FAKE_SCF_LOG", "FAKE_GH_COMMENTS", "FACTORY_CLI_BIN"];
+const FAKES = ["FAKE_SKILL_PLAN", "FAKE_SKILL_SRC", "FAKE_SKILL_NAME", "FAKE_SKILL_REVIEW", "FAKE_SKILL_BAD_ONCE", "FAKE_SCF_EFFECT", "FAKE_SCF_WITH", "FAKE_SCF_WITH_OLD", "FAKE_SCF_EFFECT_OLD", "FAKE_SCF_LIFECYCLE_FAIL", "FAKE_SCF_HISTORY", "FAKE_GH_ISSUE_BODIES", "FAKE_SCF_LOG", "FAKE_GH_COMMENTS", "FAKE_SCF_SCREEN_EASY", "FACTORY_CLI_BIN"];
 const flowOf = () => parseFlow(readFileSync("flows/skill-write.yaml", "utf8"), "flows/skill-write.yaml");
 
 describe("skill-write flow", () => {
@@ -91,12 +91,14 @@ describe("skill-write flow", () => {
   it("is shaped as planned: no issue text in shell commands, a bounded writer, a read-only reviewer, one stop step", () => {
     const flow = flowOf();
     expect(flow.one_per_repo).toBe(true);
-    expect(flow.steps.map((s) => s.id)).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "review", "after_review", "publish", "report", "ask_for_info"]);
+    expect(flow.steps.map((s) => s.id)).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "screen", "measure", "review", "after_review", "publish", "report", "ask_for_info"]);
     for (const s of flow.steps) if (s.type === "shell") expect(s.run, s.id).not.toMatch(/\{\{\s*(task|steps\.)/);
     const write = flow.steps.find((s) => s.id === "write") as { max_visits: number; allowed_tools: string[] };
-    expect(write.max_visits).toBe(8);
-    expect((flow.steps.find((s) => s.id === "check") as { max_visits: number }).max_visits).toBe(9);
-    expect(write.allowed_tools.join(" ")).not.toMatch(/node|git/);
+    expect(write.max_visits).toBe(10);
+    expect((flow.steps.find((s) => s.id === "check") as { max_visits: number }).max_visits).toBe(11);
+    // the writer runs one fixed command (the check pick wrote) and ls; never node, git or a shell of its own choice
+    expect(write.allowed_tools).toEqual(["Read", "Edit", "Write", "Glob", "Grep", "Bash(ls*)", "Bash(sh .git/scf-check)"]);
+    expect(flow.limits?.max_cost_usd).toBe(40);
     for (const id of ["plan", "review"]) expect((flow.steps.find((s) => s.id === id) as { allowed_tools: string[] }).allowed_tools).toEqual(["Read", "Glob", "Grep"]);
     expect(flow.steps.filter((s) => s.on_success === "stop").map((s) => s.id)).toEqual(["ask_for_info"]);
     expect(flow.steps.find((s) => s.id === "ask_for_info")).toMatchObject({ jump_only: true, resume_from: "clone" });
@@ -109,13 +111,19 @@ describe("skill-write flow", () => {
     const run = runOf("5")!;
     expect(run.reason).toBeUndefined();
     expect(run.status).toBe("succeeded");
-    expect(ids("5")).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "review", "publish", "report"]);
+    expect(ids("5")).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "screen", "measure", "review", "publish", "report"]);
     expect(mainLog()[0]).toBe("Add skill demo-skill (#5)");
     const files = gh.remoteGit("show", "--name-only", "--format=", "main").trim().split("\n");
     expect(files.length).toBeGreaterThan(3);
     expect(files.every((f) => f.startsWith("skills/demo-skill/"))).toBe(true);
     expect(files).toContain("skills/demo-skill/evals/suite.yaml");
-    expect(readFileSync(scfLog(), "utf8").trim().split("\n").map((l) => JSON.parse(l))).toEqual([["skills", "effect", "skills/demo-skill"]]);
+    expect(readFileSync(scfLog(), "utf8").trim().split("\n").map((l) => JSON.parse(l))).toEqual([["skills", "effect", "skills/demo-skill", "--screen"], ["skills", "effect", "skills/demo-skill"]]);
+    // the agent runs of screen and measure count toward the run
+    expect(run.history.find((h) => h.id === "screen")!.costUsd).toBeCloseTo(0.25);
+    expect(run.history.find((h) => h.id === "measure")!.costUsd).toBeCloseTo(1.5);
+    expect(run.totalCostUsd).toBeGreaterThanOrEqual(1.75);
+    // the writer's own check command, written by pick
+    expect(readFileSync(join(run.workdir!, ".git", "scf-check"), "utf8")).toMatch(/^#!\/bin\/sh\nexec node '.+\/tools\/skill-check' demo-skill [0-9a-f]{40}\n$/);
     const comment = gh.comments().find((c) => c.body.includes("wrote the skill"))!;
     expect(comment.body).toMatch(/\nEFFECT demo@1\.0\.0 helps /);
     expect(comment.body).toContain(`<!-- claude-factory run=${run.runId} -->`);
@@ -132,12 +140,14 @@ describe("skill-write flow", () => {
     expect(mainLog()[0]).toBe("Change skill demo-skill (#6)");
     expect(gh.remoteGit("show", "main:skills/demo-skill/SKILL.md")).not.toContain("Old:");
     // a change is measured twice: the new folder and the old one, on the new suite
-    const calls = scfCalls();
+    const calls = scfCalls().filter((c) => !c.includes("--screen"));
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual(["skills", "effect", "skills/demo-skill"]);
     expect(calls[1]![2]).toMatch(/^\/.*\/skills\/demo-skill$/);
     expect(calls[1]![3]).toBe("skills/demo-skill/evals/suite.yaml");
     expect(gh.comments().find((c) => c.body.includes("wrote the skill"))!.body).toContain("COMPARE: better");
+    // both measurements count toward the run: the new version and the old one
+    expect(runOf("6")!.history.find((h) => h.id === "measure")!.costUsd).toBeCloseTo(3);
   }, 120_000);
 
   it("does not publish a change that scores lower than the old version, and stops with both scores", async () => {
@@ -279,7 +289,7 @@ describe("skill-write flow", () => {
     expect(run.status).toBe("stopped");
     expect(run.reason).toContain('stopped at step "ask_for_info"');
     // the first measurement without effect sends the sample tasks back to the writer once; the second one asks
-    expect(ids("8")).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "write", "check", "measure", "ask_for_info"]);
+    expect(ids("8")).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "screen", "measure", "write", "check", "screen", "measure", "ask_for_info"]);
     const measures = run.history.filter((h) => h.id === "measure").map((h) => h.output);
     expect(measures[0]).toMatch(/^MEASURE: retask$/m);
     expect(measures[1]).toMatch(/^MEASURE: no-help$/m);
@@ -306,7 +316,12 @@ describe("skill-write flow", () => {
     await settle();
     const again = runOf("8")!;
     expect(again.status).toBe("succeeded");
-    expect(again.history.filter((h) => h.id === "clone").length).toBe(2);
+    const clones = again.history.filter((h) => h.id === "clone");
+    expect(clones.length).toBe(2);
+    // the resumed run keeps the draft it wrote, and pick still sees a new skill (main does not have it)
+    expect(clones[0]!.output).not.toContain("DRAFT:");
+    expect(clones[1]!.output).toContain("DRAFT: skills/demo-skill holds the draft of the last try");
+    expect(clones[1]!.output).toMatch(/Skills in this repository:\n\(none\)/);
     expect(mainLog()[0]).toBe("Add skill demo-skill (#8)");
   }, 180_000);
 
@@ -317,7 +332,7 @@ describe("skill-write flow", () => {
     await watcher().tick();
     await settle();
     expect(runOf("9")!.status).toBe("stopped");
-    expect(ids("9").slice(4)).toEqual(["write", "check", "measure", "review", "after_review", "write", "check", "measure", "review", "after_review", "ask_for_info"]);
+    expect(ids("9").slice(4)).toEqual(["write", "check", "screen", "measure", "review", "after_review", "write", "check", "screen", "measure", "review", "after_review", "ask_for_info"]);
     expect(runOf("9")!.history.filter((h) => h.id === "after_review").map((h) => h.output?.trim())).toEqual(["REVIEW: rewrite", "REVIEW: ask"]);
     const asked = gh.comments().find((c) => c.body.includes("the review asks for changes"))!;
     expect(asked.body).toContain("overlaps the java skill");
@@ -337,6 +352,34 @@ describe("skill-write flow", () => {
     expect(runOf("9")!.status).toBe("stopped");
     expect(auto.status.holds?.find((h) => h.issue === 9)?.next.kind).toBe("owner_action");
     expect(mainLog()).toEqual(before);
+  }, 120_000);
+
+  it("sends a task the screen finds too easy back to the writer before measuring", async () => {
+    process.env.FAKE_SCF_SCREEN_EASY = join(gh.tmp, "easy-once");
+    issues(20);
+    await watcher().tick();
+    await settle();
+    const run = runOf("20")!;
+    expect(run.status).toBe("succeeded");
+    expect(ids("20").slice(4, 10)).toEqual(["write", "check", "screen", "write", "check", "screen"]);
+    const screens = run.history.filter((h) => h.id === "screen").map((h) => h.output);
+    expect(screens[0]).toMatch(/^SCREEN first-task: passes without the skill/m);
+    expect(screens[0]).toMatch(/^SCREEN_ROUND: 1\nSCREEN: retask$/m);
+    expect(screens[1]).toMatch(/^SCREEN_ROUND: 1\nSCREEN: ok$/m);
+    expect(scfCalls().filter((c) => !c.includes("--screen"))).toHaveLength(1);
+  }, 120_000);
+
+  it("publishes when the review has no blocking point, and puts its other notes in the closing comment", async () => {
+    process.env.FAKE_SKILL_REVIEW = "## Blocking\nnone\n## Worth fixing later\n- references/a.md: add the Kafka 4 default.\n## For a person\n- README: add the skill to the index.\nVERDICT: APPROVE";
+    issues(21);
+    await watcher().tick();
+    await settle();
+    expect(runOf("21")!.status).toBe("succeeded");
+    const c = gh.comments().find((x) => x.body.includes("wrote the skill"))!;
+    expect(c.body).toContain("Review notes that did not block publishing");
+    expect(c.body).toContain("add the Kafka 4 default");
+    expect(c.body).toContain("README: add the skill to the index");
+    expect(c.body.match(/VERDICT: APPROVE/g)).toHaveLength(1);
   }, 120_000);
 
   it("cannot push main when the repository is not marked as a skill library", async () => {

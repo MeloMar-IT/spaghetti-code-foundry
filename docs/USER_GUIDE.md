@@ -5929,6 +5929,22 @@ The `skill-write` flow handles an improve issue as a change to the existing skil
 
 A skill that fails to improve twice is set to `deprecated`, with the reason `did not improve in 2 tries (issue #<n>)`. Only an `active` skill is deprecated; a quarantined, retired or revoked one keeps its state, and the owner decides. The issue then gets the label `Factory_needs_info`. A failed try counts only when it is a Foundry comment on that issue, so a reply that resumes the same run does not count twice.
 
+#### How the skill-write flow works
+
+The `skill-write` flow turns an issue of a skill library into a skill on `main`:
+
+1. **Plan.** A planner decides the skill, its name and 3 to 5 sample tasks, or asks questions on the issue.
+2. **Write.** A writer writes `skills/<name>/`. It runs the check itself (`sh .git/scf-check`, the only command it may run besides `ls`) until it passes. The check adds the `conflicts:`, `context:` and `tools:` sections of `evals/suite.yaml`, which are the same for every skill.
+3. **Check.** The same check runs again: only the skill folder changed, the format, the size, credentials, live endpoints, the scan and the sample tasks. A failed check goes back to the writer.
+   - In the Markdown of the skill (`SKILL.md`, `references/`), a dangerous command, a system path or an install is a note, not a problem: a runbook has to say when `DROP TABLE` is wrong. The reviewer judges these notes. In scripts, data files and fixtures they stay problems, and so do secrets, prompt injection, skipping a safety check and a download run in a shell.
+   - An https link in the prose of the Markdown is fine; in code, and in any other file, an address must be local, under `example.com`, or an internal name (`otel-collector`, `*.svc`, `*.internal`).
+4. **Screen.** Each sample task runs once without the skill. A task that passes is too easy and goes back to the writer, at most twice.
+5. **Measure.** The sample tasks run with and without the skill (see [Measure the effect of a skill](#measure-the-effect-of-a-skill)). The first result without effect sends the tasks back to the writer once; the second asks the owner on the issue.
+6. **Review.** A reviewer sorts its points under **Blocking**, **Worth fixing later** and **For a person**. It approves when nothing blocks. The first review with blocking points goes back to the writer; the second asks the owner.
+7. **Publish.** The measured folder is committed to `main`, and the issue gets the scores and the review notes that did not block, then is closed.
+
+A reply on the issue resumes the run at the start, and the run keeps the draft it wrote: the writer builds on it with the answer instead of starting over. The agent runs of the screen and the measurement count toward the run's cost; the flow's budget is $40.
+
 Not yet in the Foundry: an improve signal for a gate that blocks an automatic update of a library skill. It waits for the automatic update part of the skill library (#775).
 
 #### Write a skill
@@ -6984,13 +7000,16 @@ scf skills effect kafka-x@1.0.0
 The first form is for a staged skill of an import. The second is for an approved, pinned skill of the registry. A skill that is not staged, not approved, not active or not pinned is refused with a `PROBLEM` line, and nothing runs.
 
 - **What runs.** Only the scenarios where the skill is offered: the skill catalogue, built from the scenario's fixture and task, lists the skill with evidence. This is the same choice the agent would see in a normal session. A scenario where the skill is not offered prints `SKIPPED <key> <scenario>: not offered; not run`. Each offered scenario runs `repeat` times in each arm (the `instructions.repeat` of the suite). The without arm runs the same tasks with skills off.
-- **Verdict.** The pass rates of the two arms are compared with a two-sided Fisher exact test. The verdict is:
-  - `helps` when p ≤ 0.05 and the with-arm pass rate is at least 0.2 higher (`pass-rate-higher`);
-  - `harms` when p ≤ 0.05 and it is at least 0.2 lower (`pass-rate-lower`);
+- **Verdict.** The pass rates of the two arms are compared with a Fisher exact test. A higher pass rate is tested one-sided, because the question is whether the skill helps; a lower one two-sided. The verdict is:
+  - `helps` when the one-sided p ≤ 0.05 and the with-arm pass rate is at least 0.2 higher (`pass-rate-higher`); the `EFFECT` line then says `p … (one-sided)`;
+  - `harms` when the two-sided p ≤ 0.05 and it is at least 0.2 lower (`pass-rate-lower`);
   - `no-measurable-effect` otherwise (`not-significant`).
 
   If no scenario is offered, nothing runs and the verdict is `no-measurable-effect` (`never-selected`). If scenarios are offered but the skill never loads in the with arm, both arms still run, and the verdict is `never-selected` as well.
 - **Tokens and time.** They are reported only. They do not change the verdict.
+- **Cost.** A `FACTORY_STEP_COST_USD: <dollars>` line says what the agent runs cost. A shell step of a flow that prints such lines adds them to the run's cost, so the run budget counts them (a shell step can only add cost this way, never lower it).
+- **Screen.** `--screen` runs each offered scenario once, only without the skill, and stores no record. A scenario that passes is too easy to tell the arms apart: `SCREEN <scenario>: passes without the skill …`, and the last line is `SCREEN: retask`; otherwise `SCREEN: ok`. It is a cheap check before a full measurement.
+- **Older records.** A record stored before the one-sided rule has no `test` field and is read with the two-sided rule it was made with.
 - **Output.** One `RUN` line per run, one `SKIPPED` line per scenario that is not offered, then one `EFFECT` line. Illustrative output (the numbers are made up):
 
   ```

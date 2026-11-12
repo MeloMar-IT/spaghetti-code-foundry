@@ -57,7 +57,14 @@ describe("effectVerdict", () => {
     const v = effectVerdict({ scenarios: one, with: arm(18, 20), without: arm(10, 20, false) });
     expect(v).toMatchObject({ verdict: "helps", reason: "pass-rate-higher", with: { passed: 18, runs: 20 }, without: { passed: 10, runs: 20 } });
     expect(v.difference).toBeCloseTo(0.4, 6);
-    expect(v.p).toBeCloseTo(0.0138, 3);
+    expect(v.p).toBeCloseTo(0.0069, 3);
+    expect(v.test).toBe("one-sided");
+  });
+  it("tests a higher pass rate one-sided: 14 of 16 against 8 of 16 helps (p 0.027; two-sided it would be 0.054)", () => {
+    const v = effectVerdict({ scenarios: one, with: arm(14, 16), without: arm(8, 16, false) });
+    expect(v).toMatchObject({ verdict: "helps", reason: "pass-rate-higher", test: "one-sided" });
+    expect(v.p).toBeCloseTo(0.0269, 3);
+    expect(effectVerdict({ scenarios: one, with: arm(14, 16), without: arm(8, 16, false), twoSided: true })).toMatchObject({ verdict: "no-measurable-effect", p: 0.053802 });
   });
   it("harms in the mirror case", () => {
     const v = effectVerdict({ scenarios: one, with: arm(10, 20), without: arm(18, 20, false) });
@@ -65,9 +72,10 @@ describe("effectVerdict", () => {
     expect(v.difference).toBeCloseTo(-0.4, 6);
   });
   it("needs a p value of 0.05 or less", () => {
-    const v = effectVerdict({ scenarios: one, with: arm(16, 20), without: arm(10, 20, false) });
+    const v = effectVerdict({ scenarios: one, with: arm(15, 20), without: arm(10, 20, false) });
     expect(v).toMatchObject({ verdict: "no-measurable-effect", reason: "not-significant" });
-    expect(v.difference).toBeCloseTo(0.3, 6);
+    expect(v.difference).toBeCloseTo(0.25, 6);
+    expect(v.p).toBeCloseTo(0.0954, 3);
   });
   it("needs a difference of 0.2 or more", () => {
     const v = effectVerdict({ scenarios: one, with: arm(120, 200), without: arm(90, 200, false) });
@@ -77,7 +85,7 @@ describe("effectVerdict", () => {
   });
   it("is never-selected when nothing is offered", () => {
     expect(effectVerdict({ scenarios: [sc("a", false)], with: [], without: [] })).toEqual({
-      verdict: "no-measurable-effect", reason: "never-selected", with: { passed: 0, runs: 0 }, without: { passed: 0, runs: 0 }, difference: 0, p: 1,
+      verdict: "no-measurable-effect", reason: "never-selected", with: { passed: 0, runs: 0 }, without: { passed: 0, runs: 0 }, difference: 0, p: 1, test: "one-sided",
     });
   });
   it("is never-selected when no run loaded the skill", () => {
@@ -127,6 +135,17 @@ describe("parseEffectRecord", () => {
     expect(r.verdict.verdict).toBe("helps");
     const parsed = parseEffectRecord(clone(r));
     expect("record" in parsed && parsed.record).toEqual(r);
+  });
+
+  it("reads an older record, whose verdict was tested two-sided, by its own rule", () => {
+    const r = clone(record());
+    const old = effectVerdict({ scenarios: r.scenarios, with: r.runs.with, without: r.runs.without, twoSided: true });
+    expect(old.test).toBeUndefined();
+    r.verdict = old;
+    expect("record" in parseEffectRecord(clone(r))).toBe(true);
+    const mixed = clone(r);
+    mixed.verdict = { ...old, test: "one-sided" };
+    expect(problemOf(mixed)).toMatch(/stored verdict differs/);
   });
 
   it("refuses a verdict that its runs do not give", () => {
@@ -217,7 +236,7 @@ describe("effectLines", () => {
     expect(lines[1]).toBe("RUN lib-kafka@1.0.0 with a 1/3 run w-a-1: 1");
     expect(lines).toContain("RUN lib-kafka@1.0.0 without b 3/3 run n-b-3: 0");
     expect(lines.at(-1)).toBe(
-      "EFFECT lib-kafka@1.0.0 helps (pass-rate-higher): with 6/6, without 0/6, difference +1.00, p 0.0022; tokens 606 vs 606; time 9 s vs 9 s",
+      "EFFECT lib-kafka@1.0.0 helps (pass-rate-higher): with 6/6, without 0/6, difference +1.00, p 0.0011 (one-sided); tokens 606 vs 606; time 9 s vs 9 s",
     );
   });
 

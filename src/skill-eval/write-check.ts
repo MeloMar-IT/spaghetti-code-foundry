@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { credentialHits, riskyFileName } from "../skills/credential-scan.js";
 import { readEvaluationSuite } from "../skills/evaluation-suite.js";
@@ -32,10 +32,17 @@ function hostOf(authority: string): string {
   return (rest.startsWith("[") ? rest : rest.split(":")[0]!).toLowerCase();
 }
 
-/** True for a host that cannot reach a real machine: local, or a reserved example name or a name under one (api.example.com). */
+// Names that only resolve inside a cluster or a private network: a Kubernetes service, mDNS, and the private-use suffixes.
+const INTERNAL_SUFFIXES: readonly string[] = [".svc", ".svc.cluster.local", ".cluster.local", ".local", ".internal", ".lan", ".home.arpa"];
+
+/**
+ * True for a host that cannot reach a real machine on the internet: local, a reserved example name or a name under one
+ * (api.example.com), a single-label name (otel-collector, a service in a compose file), or a cluster or private-network name.
+ */
 export function localOrExampleHost(host: string): boolean {
+  if (host !== "" && !host.startsWith("[") && !host.includes(".")) return true;
   return LOCAL_HOSTS.has(host) || EXAMPLE_HOSTS.has(host) || EXAMPLE_SUFFIXES.some((s) => host.endsWith(s))
-    || [...EXAMPLE_HOSTS].some((h) => host.endsWith(`.${h}`));
+    || [...EXAMPLE_HOSTS].some((h) => host.endsWith(`.${h}`)) || INTERNAL_SUFFIXES.some((s) => host.endsWith(s));
 }
 
 /** Every path changed against the base commit must be inside `skills/<name>/` or a changelog the repository already has. */
@@ -92,10 +99,19 @@ export function credentialProblems(files: readonly { path: string; content: Uint
 /** At most this many live endpoints are listed per file: enough to fix them all in one go. */
 const ENDPOINTS_PER_FILE = 20;
 const lineAt = (t: string, i: number): number => t.slice(0, i).split("\n").length;
+/** True inside a fenced code block (``` or ~~~) or inline code of Markdown: there an address is a command to run, not a link to read. */
+function inCode(t: string, i: number): boolean {
+  const before = t.slice(0, i);
+  const fences = before.split("\n").filter((l) => /^\s{0,3}(```|~~~)/.test(l)).length;
+  if (fences % 2 === 1) return true;
+  const line = before.slice(before.lastIndexOf("\n") + 1);
+  return (line.match(/`/g)?.length ?? 0) % 2 === 1;
+}
 
 /**
- * Live endpoints of any of http, https, ws, wss and ftp. Allowed: local and reserved example hosts everywhere, and an https Markdown
- * link target in SKILL.md and references/*.md (a plain http link is not a documentation exception). Every hit is listed with its line
+ * Live endpoints of any of http, https, ws, wss and ftp. Allowed: local, example and internal hosts everywhere, and an https address
+ * in the prose of SKILL.md and references/*.md, a documentation link (not in code, and a plain http link is not a documentation
+ * exception). Every hit is listed with its line
  * (up to ENDPOINTS_PER_FILE per file), so a writer can fix them all at once.
  */
 export function endpointProblems(files: readonly { path: string; content: Uint8Array }[]): string[] {
@@ -109,13 +125,33 @@ export function endpointProblems(files: readonly { path: string; content: Uint8A
     while ((m = ENDPOINT_RE.exec(t))) {
       const scheme = m[1]!.toLowerCase();
       const host = hostOf(m[2]!);
-      if (doc && scheme === "https" && t.slice(Math.max(0, m.index - 2), m.index) === "](") continue;
+      if (doc && scheme === "https" && !inCode(t, m.index)) continue;
       if (localOrExampleHost(host)) continue;
       if (++hits > ENDPOINTS_PER_FILE) { out.push(`${f.path}: more live endpoints after line ${lineAt(t, m.index)}`); break; }
-      out.push(`${f.path} line ${lineAt(t, m.index)}: a live endpoint (${scheme}://${host.slice(0, 60)})${doc && scheme === "https" ? "; write it as a Markdown link [text](https://…) or remove it" : "; use a host under example.com or localhost, or remove it"}`);
+      out.push(`${f.path} line ${lineAt(t, m.index)}: a live endpoint (${scheme}://${host.slice(0, 60)})${doc && scheme === "http" && !inCode(t, m.index) ? "; a documentation link must be https" : "; use a host under example.com or localhost, or remove it"}`);
     }
   }
   return out;
+}
+
+/**
+ * The sections of evals/suite.yaml that are the same for every skill of a skill library. A suite that lacks one gets it from here, so
+ * the writer only writes what is about the skill (selection and instructions).
+ */
+export const SUITE_DEFAULT_SECTIONS: readonly { key: string; text: string }[] = [
+  { key: "conflicts", text: "conflicts:\n  - { id: against-approved, with: all }" },
+  { key: "context", text: "context:\n  - { id: coder-budget, max_instruction_tokens: 3000, max_description_chars: 160 }" },
+  { key: "tools", text: "tools:\n  - { id: read-only, policy: { shell: false, network: false, filesystem: read } }" },
+];
+
+/** Adds the missing default sections to the suite file (top-level keys only). Returns the keys it added; a missing file is left alone. */
+export function fillSuiteDefaults(file: string): string[] {
+  if (!existsSync(file)) return [];
+  const t = readFileSync(file, "utf8");
+  const missing = SUITE_DEFAULT_SECTIONS.filter((d) => !new RegExp(`^${d.key}:`, "m").test(t));
+  if (missing.length === 0) return [];
+  writeFileSync(file, `${t.replace(/\s*$/, "")}\n${missing.map((d) => d.text).join("\n")}\n`);
+  return missing.map((d) => d.key);
 }
 
 export interface SkillCheckInput {

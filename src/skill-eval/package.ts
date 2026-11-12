@@ -122,7 +122,24 @@ export function readSkillFolder(dir: string): { files: Files; problems: string[]
 }
 
 /**
- * readSkillFolder, then the scanner over ALL files (high and medium findings are problems, low ones are notes; never the matched text),
+ * Operations knowledge names dangerous commands, system paths and installs: a runbook says when `DROP TABLE` or `rm -rf` is wrong.
+ * In the Markdown of a local skill (written and reviewed in the skill library) such findings are notes. Scripts, data files and
+ * fixtures stay strict, and so do the rules that never belong in a skill: secrets, prompt injection, telling the agent to skip a
+ * safety check, obfuscation, payloads, a download run in a shell, a reverse shell and the upload of a credential file. The notes go
+ * to the reviewer of the skill-write flow, who judges them.
+ */
+const DOCS_RULE_FAMILIES: readonly string[] = ["destructive-action", "path-escape", "hidden-dependency", "unsafe-network"];
+const DOCS_STRICT_RULES: ReadonlySet<string> = new Set([
+  "hidden-dependency.download-run", "unsafe-network.reverse-shell", "unsafe-network.upload-secret-file", "path-escape.file-path",
+]);
+export function describedInDocs(rule: string, path: string): boolean {
+  if (!/\.md$/i.test(path) || path.startsWith("evals/")) return false;
+  return DOCS_RULE_FAMILIES.includes(rule.split(".")[0]!) && !DOCS_STRICT_RULES.has(rule);
+}
+
+/**
+ * readSkillFolder, then the scanner over ALL files (high and medium findings are problems, low ones and describedInDocs ones are notes;
+ * never the matched text),
  * then `evals/**` is dropped and the rest normalized. The returned `files` are the complete folder.
  */
 export function loadLocalSkill(dir: string, origin: NormalizeOrigin = LOCAL_SKILL_ORIGIN): { skill?: NormalizedSkill; files: Files; problems: string[]; notes: string[] } {
@@ -132,7 +149,7 @@ export function loadLocalSkill(dir: string, origin: NormalizeOrigin = LOCAL_SKIL
   if (problems.length > 0) return { files: read.files, problems, notes };
   for (const f of scanSkill({ root: "skill", files: read.files }).findings) {
     const where = f.line ? `${f.path} line ${f.line}` : f.path;
-    if (f.severity === "low") notes.push(`scan: ${f.rule} in ${where}`);
+    if (f.severity === "low" || describedInDocs(f.rule, f.path)) notes.push(`scan: ${f.rule} in ${where}`);
     else problems.push(`scan: ${f.rule} in ${where}`);
   }
   const kept = read.files.filter((f) => f.path !== "evals" && !f.path.startsWith("evals/"));

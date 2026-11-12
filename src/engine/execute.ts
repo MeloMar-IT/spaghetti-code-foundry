@@ -149,6 +149,21 @@ export function ranOrder(history: Pick<StepRecord, "id" | "parent">[], prefix: s
   return out;
 }
 
+/**
+ * What the agent runs a shell step started cost, from its `FACTORY_STEP_COST_USD: <dollars>` lines (summed; `scf skills effect` prints
+ * them). A shell step can only add to the run's cost this way, never lower it: other values are ignored, and one line counts at most
+ * STEP_COST_LINE_MAX.
+ */
+export const STEP_COST_LINE_MAX = 1000;
+export function shellStepCost(output: string | undefined): number {
+  let usd = 0;
+  for (const m of String(output ?? "").matchAll(/^FACTORY_STEP_COST_USD: ([0-9]{1,6}(?:\.[0-9]{1,8})?)\s*$/gm)) {
+    const v = Number(m[1]);
+    if (Number.isFinite(v) && v > 0) usd += Math.min(v, STEP_COST_LINE_MAX);
+  }
+  return usd;
+}
+
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o: { bound?: (env: Record<string, string>) => Record<string, string> } = {}): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
@@ -560,7 +575,8 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         engine.accessFailed = true;
         return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
       }
-      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
+      const spent = shellStepCost(r.output);
+      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(spent > 0 ? { costUsd: spent } : {}), ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
     }
 
     case "parallel": {

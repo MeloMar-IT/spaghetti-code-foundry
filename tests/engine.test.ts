@@ -912,3 +912,17 @@ describe("the failure note", () => {
     }
   });
 });
+
+describe("the cost a shell step reports", () => {
+  it("adds the FACTORY_STEP_COST_USD lines of a shell step to the run, and the run budget sees it", async () => {
+    const run = "echo 'FACTORY_STEP_COST_USD: 1.25'; echo 'FACTORY_STEP_COST_USD: 0.75'; echo 'FACTORY_STEP_COST_USD: -5'; echo '  FACTORY_STEP_COST_USD: 9'; echo 'FACTORY_STEP_COST_USD: abc'";
+    const yaml = `name: t\nworkspace: empty\nlimits:\n  max_cost_usd: 1.5\nsteps:\n  - id: measure\n    type: shell\n    run: ${JSON.stringify(run)}\n  - id: review\n    type: claude\n    prompt: review it`;
+    const s = await start(yaml);
+    expect(s.history[0]!.costUsd).toBeCloseTo(2);
+    expect(s.totalCostUsd).toBeCloseTo(2);
+    // the next agent step is not started: the run budget is used up
+    expect(s.status).toBe("failed");
+    expect(s.reason).toMatch(/run budget of \$1\.5 reached/);
+    expect(s.history.map((h) => h.id)).toEqual(["measure"]);
+  });
+});

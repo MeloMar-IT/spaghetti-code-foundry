@@ -31,6 +31,8 @@ export interface EffectVerdict {
   /** Both are rounded to 6 decimals; the rule uses the unrounded values. */
   difference: number;
   p: number;
+  /** "one-sided": a higher pass rate is tested one-sided (a skill is measured to see whether it helps); absent in older records (two-sided). */
+  test?: "one-sided";
 }
 export interface EffectRecord {
   schema: 1;
@@ -76,22 +78,41 @@ export function fisherExact(a: number, n1: number, b: number, n2: number): numbe
   return Math.min(1, p);
 }
 
+/**
+ * The one-sided exact p-value (Fisher) that arm 1 (`a` of `n1` passes) passes more often than arm 2 (`b` of `n2`): the probability of
+ * `a` or more passes in arm 1 with the same totals. Throws RangeError like fisherExact.
+ */
+export function fisherGreater(a: number, n1: number, b: number, n2: number): number {
+  fisherExact(a, n1, b, n2); // the same checks of the counts
+  const total = n1 + n2;
+  const k = a + b;
+  const hi = Math.min(n1, k);
+  let p = 0;
+  for (let x = a; x <= hi; x++) p += Math.exp(logChoose(k, x) + logChoose(total - k, n1 - x) - logChoose(total, n1));
+  return Math.min(1, p);
+}
+
 const round6 = (v: number) => Math.round(v * 1e6) / 1e6;
 
-/** Pure. The verdict of the two arms. Tokens and time are not looked at. */
+/**
+ * Pure. The verdict of the two arms. Tokens and time are not looked at. A higher pass rate is tested one-sided (the question is whether
+ * the skill helps); a lower one two-sided. `twoSided` gives the rule of older records, which tested both two-sided.
+ */
 export function effectVerdict(input: {
   scenarios: readonly EffectScenario[];
   with: readonly Pick<EffectRun, "pass" | "loaded">[];
   without: readonly Pick<EffectRun, "pass">[];
+  twoSided?: boolean;
 }): EffectVerdict {
   const tally = (runs: readonly { pass: boolean }[]) => ({ passed: runs.filter((r) => r.pass).length, runs: runs.length });
   const w = tally(input.with);
   const wo = tally(input.without);
   const rate = (c: { passed: number; runs: number }) => (c.runs === 0 ? 0 : c.passed / c.runs);
   const diff = rate(w) - rate(wo);
+  const test = input.twoSided ? {} : { test: "one-sided" as const };
   const never = !input.scenarios.some((s) => s.offered) || !input.with.some((r) => r.loaded);
-  if (never) return { verdict: "no-measurable-effect", reason: "never-selected", with: w, without: wo, difference: round6(diff), p: 1 };
-  const p = fisherExact(w.passed, w.runs, wo.passed, wo.runs);
+  if (never) return { verdict: "no-measurable-effect", reason: "never-selected", with: w, without: wo, difference: round6(diff), p: 1, ...test };
+  const p = !input.twoSided && diff > 0 ? fisherGreater(w.passed, w.runs, wo.passed, wo.runs) : fisherExact(w.passed, w.runs, wo.passed, wo.runs);
   const significant = p <= EFFECT_RULE.alpha + EVALUATION_EPSILON;
   const big = Math.abs(diff) >= EFFECT_RULE.minDifference - EVALUATION_EPSILON;
   let verdict: EffectVerdict["verdict"] = "no-measurable-effect";
@@ -100,7 +121,7 @@ export function effectVerdict(input: {
     verdict = diff > 0 ? "helps" : "harms";
     reason = diff > 0 ? "pass-rate-higher" : "pass-rate-lower";
   }
-  return { verdict, reason, with: w, without: wo, difference: round6(diff), p: round6(p) };
+  return { verdict, reason, with: w, without: wo, difference: round6(diff), p: round6(p), ...test };
 }
 
 // ---- the record ----
@@ -170,6 +191,7 @@ const RecordSchema = z
         without: armCount,
         difference: z.number().min(-1).max(1),
         p: z.number().min(0).max(1),
+        test: z.literal("one-sided").optional(),
       })
       .strict(),
   })
@@ -216,10 +238,10 @@ export function parseEffectRecord(raw: unknown): { record: EffectRecord } | { pr
   const record = parsed.data as EffectRecord;
   const why = semanticProblem(record);
   if (why) return { problem: why };
-  const again = effectVerdict({ scenarios: record.scenarios, with: record.runs.with, without: record.runs.without });
   const v = record.verdict;
+  const again = effectVerdict({ scenarios: record.scenarios, with: record.runs.with, without: record.runs.without, twoSided: v.test === undefined });
   const same =
-    again.verdict === v.verdict && again.reason === v.reason && again.difference === v.difference && again.p === v.p &&
+    again.test === v.test && again.verdict === v.verdict && again.reason === v.reason && again.difference === v.difference && again.p === v.p &&
     again.with.passed === v.with.passed && again.with.runs === v.with.runs && again.without.passed === v.without.passed && again.without.runs === v.without.runs;
   if (!same) return { problem: "the stored verdict differs from its runs" };
   return { record };
@@ -240,7 +262,7 @@ export function effectLines(r: EffectRecord): string[] {
   const secs = (runs: EffectRun[]) => `${Math.round(sum(runs, (x) => x.durationMs) / 1000)} s`;
   const sign = v.difference >= 0 ? "+" : "-";
   lines.push(
-    `EFFECT ${key} ${v.verdict} (${v.reason}): with ${v.with.passed}/${v.with.runs}, without ${v.without.passed}/${v.without.runs}, difference ${sign}${Math.abs(v.difference).toFixed(2)}, p ${v.p.toFixed(4)}; ` +
+    `EFFECT ${key} ${v.verdict} (${v.reason}): with ${v.with.passed}/${v.with.runs}, without ${v.without.passed}/${v.without.runs}, difference ${sign}${Math.abs(v.difference).toFixed(2)}, p ${v.p.toFixed(4)}${v.test && v.difference > 0 ? ` (${v.test})` : ""}; ` +
       `tokens ${sum(r.runs.with, (x) => x.tokens)} vs ${sum(r.runs.without, (x) => x.tokens)}; time ${secs(r.runs.with)} vs ${secs(r.runs.without)}`,
   );
   return lines;

@@ -13,7 +13,7 @@ const LISTS = {
   understand: "pull_ticket clone feature_branch daily_branch plan_check baseline_tests baseline_failed fetch_main baseline_main hotfix_branch read_issues read_issue list_issues lock resolve find_branch changes check_repo pull_repo",
   plan: "plan plan_review revise_gate revise_plan wait_for_story send_back split_gate approve_split create_split size_gate force_split risk_gate approve_plan close_parts claim_areas wait_for_area wait_for_merge ask ask_for_info brief round pick triage split_ticket",
   build: "implement guard fix_guard write build",
-  check: "run_tests fix_tests review_1 address_review_1 run_tests_1 fix_tests_1 review_gate review_2 address_review_2 run_tests_2 fix_tests_2 verify check measure review after_review check_brief check_round",
+  check: "run_tests fix_tests review_1 address_review_1 run_tests_1 fix_tests_1 review_gate review_2 address_review_2 run_tests_2 fix_tests_2 verify check screen measure review after_review check_brief check_round",
   deliver: "docs final_guard fixed_tests fix_fixed_tests commit push push_feature pretest_merge pretest_tests merge_develop resolve_conflicts finish_merge test_develop red_develop fix_develop commit_develop_fix push_develop wait_local_tree merge_main test_main red_main push_main merge_back resolve_back finish_back test_back red_back fix_back commit_back_fix push_back hotfix_done report post post_plan push_plan push_result open_pr wait_ci upload publish release_pr handoff final_ask make_final final_merge final_close final_files final_report final_rejected",
 };
 
