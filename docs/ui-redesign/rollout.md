@@ -13,7 +13,12 @@ If the switch is built later, that change updates this page and "Old and new int
 
 | Address | Before | Now |
 |---|---|---|
-| `#/your-turn` | Your turn | Home (Needs you) |
+| `#/home` | Home | Today |
+| `#/your-turn` | Your turn | Today (Needs you) |
+| `#/runs` | Runs, My runs | Changes |
+| `#/refinement` | Refinement | Ideas |
+| `#/epics` | Epics | Releases |
+| `#/start` | Start work (button) | + New change (button in the top bar) |
 | `#/library` | Library | Flows → Library |
 | `#/repos` | My repositories | Repositories → My repositories |
 | `#/all-repos` | All repositories | Administration → All repositories |
@@ -26,8 +31,10 @@ If the switch is built later, that change updates this page and "Old and new int
 | `#/audit` | Audit | Administration → Audit |
 | `#/settings` | Settings | Administration → Settings |
 
-Start work (`#/start`) is now a button in the top bar. Home, Board, Refinement, Runs and Flows kept their names and addresses.
+"Now" is the name in the sidebar (`SIDEBAR_MAIN` and `SIDEBAR_EXTRA` in `ui/ia.js`) or the top bar (`NEW_CHANGE`).
+The pages keep their names (`DESTINATIONS` and `PAGES`), which show in the top bar, the breadcrumbs and Search.
+Every address above is unchanged. Board and Flows kept their names and addresses.
 
 ## Old addresses
 
-All old addresses resolve to a page. `#/your-turn` opens Home. The source is `ui/ia.js`.
+All old addresses resolve to a page. `#/your-turn` opens Home (Today in the sidebar). The source is `ui/ia.js`.

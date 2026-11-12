@@ -29,27 +29,47 @@ The four widths sit on both sides of 1100 and 760, so each width tests a differe
 
 ## Existing screenshots
 
-All 19 files in `docs/images/`, one per entry of `SHOTS` in `scripts/screenshots/shots.ts`. They are made by `npm run test:ui -- --grep @guide` from a seeded server (`tests/browser/seed.ts`): 1440 px wide, light theme, default density. They are desktop only.
+All 39 files in `docs/images/`, one per entry of `SHOTS` in `scripts/screenshots/shots.ts`. They are made by `npm run test:ui -- --grep @guide` from a seeded server (`tests/browser/seed.ts`): 1440 px wide, light theme, default density. They are desktop only.
 
 | File | Route shown | Used in | Status |
 |---|---|---|---|
+| `ask.png` | Ask SCF drawer, opened from Ask Foundry (user display) | `docs/USER_GUIDE.md` | captured from the redesign |
+| `audit.png` | `#/audit` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `autonomy.png` | `#/autonomy` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `board.png` | `#/board` | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
+| `credentials.png` | `#/credentials` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `dashboard.png` | `#/dashboard` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `epic.png` | `#/epics/:id` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `flow-yaml.png` | `#/flows/:name`, YAML view | `docs/USER_GUIDE.md` | captured from the redesign |
 | `flows.png` | `#/flows/:name`, editor | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
+| `help.png` | `/user/#/help` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `home.png` | `#/home` (admin) | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
+| `ideas.png` | `/user/#/refinement` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `library.png` | `#/library` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `looks.png` | `/user/#/home`, Simple view, in the five looks | `docs/USER_GUIDE.md` | captured from the redesign |
 | `models.png` | `#/models` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `new-change.png` | `/user/#/start` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `operations.png` | `#/operations` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `preferences.png` | account menu and the Appearance dialog (user display) | `docs/USER_GUIDE.md` | captured from the redesign |
+| `problems.png` | `#/problems` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `refinement-session.png` | `/user/#/refinement/:id` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `releases.png` | `#/epics` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `repo.png` | `#/repos/:id` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `repos.png` | `/user/#/repos` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `run-dialog.png` | the "Run <flow>" dialog | `docs/USER_GUIDE.md` | captured from the redesign |
-| `run-diff.png` | `#/runs/:id`, Changes tab | `docs/USER_GUIDE.md` | captured from the redesign |
-| `run-log.png` | `#/runs/:id`, Live log tab | `docs/USER_GUIDE.md` | captured from the redesign |
-| `run-steps.png` | `#/runs/:id`, Steps tab | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-diff.png` | `#/runs/:id`, What changed tab | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-log.png` | `#/runs/:id`, Details tab, Log | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-steps.png` | `#/runs/:id`, Details tab, Steps | `docs/USER_GUIDE.md` | captured from the redesign |
 | `run-waiting.png` | `#/runs/:id`, waiting for approval | `docs/USER_GUIDE.md`, `docs/DESIGN.md` | captured from the redesign |
 | `runs.png` | `#/runs` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `settings.png` | `#/settings` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `setup-check.png` | `#/setup` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `sign-in.png` | the sign-in page | `docs/USER_GUIDE.md` | captured from the redesign |
-| `user-home.png` | `/user/#/home` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `user-change.png` | `/user/#/runs/:id`, a finished change | `docs/USER_GUIDE.md` | captured from the redesign |
+| `user-changes.png` | `/user/#/runs` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `user-home.png` | `/user/#/home`, Simple view | `docs/USER_GUIDE.md` | captured from the redesign |
+| `user-questions.png` | `/user/#/runs/:id`, questions and the answer box | `docs/USER_GUIDE.md` | captured from the redesign |
+| `users.png` | `#/users` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `watcher-form.png` | the "Add a watcher" dialog | `docs/USER_GUIDE.md` | captured from the redesign |
 | `watchers.png` | `#/watchers` | `docs/USER_GUIDE.md`, `docs/DESIGN.md` | captured from the redesign |
 
@@ -57,7 +77,7 @@ This is not a baseline for the four widths: there is no tablet or mobile image, 
 
 ## Capture list (open)
 
-Every row at 1440, 1280, 768 and 390. The guide images cover 1440 only: `tests/browser/guide-shots.spec.ts` captures the 19 entries of `SHOTS` (`scripts/screenshots/shots.ts`). The other widths and the rows below are open.
+Every row at 1440, 1280, 768 and 390. The guide images cover 1440 only: `tests/browser/guide-shots.spec.ts` captures the 39 entries of `SHOTS` (`scripts/screenshots/shots.ts`). The other widths and the rows below are open.
 
 | Shot | Route | Fixture state |
 |---|---|---|

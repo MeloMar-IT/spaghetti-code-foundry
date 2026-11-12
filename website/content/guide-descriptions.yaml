@@ -18,6 +18,6 @@
 9-command-line: "The scf command line: run, resume, approve and reject runs, manage users, flows, skills and the service, and the environment variables it reads."
 10-troubleshooting: "Troubleshooting Spaghetti Code Foundry: common problems with runs, watchers, sign-in, tests and releases, what each message means and how to fix it."
 11-upgrading-from-claude-factory: "Upgrade from claude-factory to Spaghetti Code Foundry: the new scf command, the new data folder and repository address, and what keeps its old name."
-12-refinement: "Refinement: turn an idea or an issue into ready stories with an AI architect that reads your code, asks questions, suggests drafts and checks readiness."
+12-ideas-refinement: "Refinement: turn an idea or an issue into ready stories with an AI architect that reads your code, asks questions, suggests drafts and checks readiness."
 13-self-repair-for-admins: "Self-repair for admins: how the monitor finds problems in the Foundry, turns them into bug stories and hotfixes, and the guard rails around it."
 14-ask-scf: "Ask SCF, the help assistant in the app: what it knows, what a reply holds, how sure it is, what it does not do, and how admins switch it on."

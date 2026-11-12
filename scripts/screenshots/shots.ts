@@ -9,6 +9,8 @@ export type Shot = {
   /** Visible text or selector that must be on the page before the shot (never "network idle":
    *  run pages keep an event stream open). */
   expect: string;
+  /** "simple": the page is opened in the Simple view (user role only). Without it, a role's default view (Admin or Advanced). */
+  view?: "simple";
 };
 
 export type Prepare = Record<string, unknown>;
@@ -28,6 +30,7 @@ export function validateManifest(shots: readonly Shot[], prepare: Prepare = {}):
     if (!/^[a-z0-9-]+$/.test(s.name)) problems.push(`bad shot name: ${s.name}`);
     if (!s.expect.trim()) problems.push(`shot without an expected locator: ${s.name}`);
     if (!pathFits(s)) problems.push(`shot path does not fit its role: ${s.name}`);
+    if (s.view !== undefined && (s.view !== "simple" || s.role !== "user")) problems.push(`the Simple view needs the user role: ${s.name}`);
   }
   for (const key of Object.keys(prepare)) {
     if (!seen.has(key)) problems.push(`prepare step for unknown shot: ${key}`);
@@ -78,8 +81,8 @@ export const SHOTS: readonly Shot[] = [
   { name: "library", guide: "admin", role: "admin", path: "/#/library", expect: "Block library" },
   { name: "models", guide: "admin", role: "admin", path: "/#/models", expect: "Agents, providers and which model runs which step" },
   { name: "run-dialog", guide: "admin", role: "admin", path: "/#/flows/gate", expect: "Run gate" },
-  { name: "run-log", guide: "admin", role: "admin", path: "/#/runs/{waiting}", expect: "Live log" },
-  { name: "run-steps", guide: "admin", role: "admin", path: "/#/runs/{waiting}", expect: "Steps & transcripts" },
+  { name: "run-log", guide: "admin", role: "admin", path: "/#/runs/{waiting}", expect: "waiting for approval: Go?" },
+  { name: "run-steps", guide: "admin", role: "admin", path: "/#/runs/{waiting}", expect: "Run started" },
   { name: "run-diff", guide: "admin", role: "admin", path: "/#/runs/{diffRun}", expect: "big.txt" },
   { name: "run-waiting", guide: "admin", role: "admin", path: "/#/runs/{waiting}", expect: "Seeded gate run" },
   { name: "settings", guide: "admin", role: "admin", path: "/#/settings", expect: "Settings" },
@@ -88,5 +91,25 @@ export const SHOTS: readonly Shot[] = [
   { name: "watchers", guide: "admin", role: "admin", path: "/#/watchers", expect: "+ Add watcher" },
   { name: "watcher-form", guide: "admin", role: "admin", path: "/#/watchers", expect: "Add a watcher" },
   { name: "home", guide: "admin", role: "admin", path: "/#/home", expect: "Seeded gate run" },
-  { name: "user-home", guide: "user", role: "user", path: "/user/#/home", expect: "Seeded failed run" },
+  { name: "user-home", guide: "user", role: "user", path: "/user/#/home", expect: "My projects", view: "simple" },
+  { name: "user-changes", guide: "user", role: "user", path: "/user/#/runs", expect: "Seeded failed run" },
+  { name: "user-change", guide: "user", role: "user", path: "/user/#/runs/{userChange}", expect: "Show a status badge on each card" },
+  { name: "user-questions", guide: "user", role: "user", path: "/user/#/runs/{userQuestions}", expect: "Your answer" },
+  { name: "new-change", guide: "user", role: "user", path: "/user/#/start", expect: "What would you like to change?" },
+  { name: "ideas", guide: "user", role: "user", path: "/user/#/refinement", expect: "Show the build status on the board" },
+  { name: "refinement-session", guide: "user", role: "user", path: "/user/#/refinement/{sessionId}", expect: "Ask the architect to look at the code" },
+  { name: "releases", guide: "admin", role: "admin", path: "/#/epics", expect: "Build status on the board" },
+  { name: "epic", guide: "admin", role: "admin", path: "/#/epics/{epic}?repo=acme%2Fapp", expect: "Read the build status from GitHub Actions" },
+  { name: "help", guide: "user", role: "user", path: "/user/#/help", expect: "What the words mean" },
+  { name: "ask", guide: "user", role: "user", path: "/user/#/home", expect: "Ask SCF explains how the Foundry works" },
+  { name: "preferences", guide: "user", role: "user", path: "/user/#/home", expect: "Look" },
+  { name: "looks", guide: "user", role: "user", path: "/user/#/home", expect: "Bento", view: "simple" },
+  { name: "repo", guide: "admin", role: "admin", path: "/#/repos/{repoId}", expect: "Test connection" },
+  { name: "operations", guide: "admin", role: "admin", path: "/#/operations", expect: "What needs attention" },
+  { name: "problems", guide: "admin", role: "admin", path: "/#/problems", expect: "Problems" },
+  { name: "users", guide: "admin", role: "admin", path: "/#/users", expect: "ann@example.com" },
+  { name: "credentials", guide: "admin", role: "admin", path: "/#/credentials", expect: "Credentials" },
+  { name: "audit", guide: "admin", role: "admin", path: "/#/audit", expect: "Audit" },
+  { name: "autonomy", guide: "admin", role: "admin", path: "/#/autonomy", expect: "Autonomy" },
+  { name: "setup-check", guide: "admin", role: "admin", path: "/#/setup", expect: "Claude Code sign-in" },
 ];

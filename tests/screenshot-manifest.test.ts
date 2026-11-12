@@ -23,19 +23,22 @@ describe("screenshot manifest", () => {
     expect(validateManifest(SHOTS)).toEqual([]);
     expect(validateManifest(SHOTS, PREPARE)).toEqual([]);
     expect(SHOTS.map((s) => s.name)).toEqual(["sign-in", "board", "runs", "flows", "flow-yaml", "library", "models",
-      "run-dialog", "run-log", "run-steps", "run-diff", "run-waiting", "settings", "dashboard", "repos", "watchers", "watcher-form", "home", "user-home"]);
-    expect(Object.keys(PREPARE)).toEqual(["flow-yaml", "run-dialog", "run-log", "run-steps", "run-diff", "watcher-form", "home"]);
+      "run-dialog", "run-log", "run-steps", "run-diff", "run-waiting", "settings", "dashboard", "repos", "watchers", "watcher-form", "home", "user-home",
+      "user-changes", "user-change", "user-questions", "new-change", "ideas", "refinement-session", "releases", "epic", "help", "ask", "preferences",
+      "looks", "repo", "operations", "problems", "users", "credentials", "audit", "autonomy", "setup-check"]);
+    expect(Object.keys(PREPARE)).toEqual(["flow-yaml", "run-dialog", "run-log", "run-steps", "run-diff", "watcher-form", "home",
+      "user-questions", "releases", "ask", "preferences", "looks", "setup-check"]);
   });
   it("the Home shots have the agreed fields", () => {
-    expect(SHOTS.slice(-2)).toEqual([
+    expect(SHOTS.filter((s) => s.name === "home" || s.name === "user-home")).toEqual([
       { name: "home", guide: "admin", role: "admin", path: "/#/home", expect: "Seeded gate run" },
-      { name: "user-home", guide: "user", role: "user", path: "/user/#/home", expect: "Seeded failed run" },
+      { name: "user-home", guide: "user", role: "user", path: "/user/#/home", expect: "My projects", view: "simple" },
     ]);
   });
   it("uses only known placeholders", () => {
     for (const s of SHOTS) {
       for (const m of s.path.matchAll(/\{([^}]+)\}/g)) {
-        expect(["waiting", "diffRun"], `${s.name} uses {${m[1]}}`).toContain(m[1]);
+        expect(["waiting", "diffRun", "repoId", "sessionId", "userChange", "userQuestions", "epic"], `${s.name} uses {${m[1]}}`).toContain(m[1]);
       }
     }
   });
@@ -65,6 +68,10 @@ describe("screenshot manifest", () => {
     ] as const) {
       expect(validateManifest([shot("a", over)])).toEqual(["shot path does not fit its role: a"]);
     }
+  });
+  it("allows the Simple view for the user role only", () => {
+    expect(validateManifest([shot("a", { view: "simple" })])).toEqual([]);
+    expect(validateManifest([shot("a", { role: "admin", path: "/#/home", view: "simple" })])).toEqual(["the Simple view needs the user role: a"]);
   });
   it("accepts paths that fit", () => {
     expect(validateManifest([shot("a", { role: "none", path: "/" })])).toEqual([]);

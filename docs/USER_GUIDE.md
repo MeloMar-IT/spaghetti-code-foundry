@@ -9,7 +9,7 @@ This guide walks through the web UI, writing your own flows, automating work fro
 choosing models, and keeping it all safe. How it is built is in [DESIGN.md](DESIGN.md); what we
 learned building it is in [LESSONS_LEARNED.md](LESSONS_LEARNED.md).
 
-![Home: what needs you, what is running, what finished](images/home.png)
+![Today in the Admin view: what needs you, what is running, what finished](images/home.png)
 
 *The pictures in this guide are made from test data: the repository `acme/app`, the accounts Test Admin and Ann, and runs named "Seeded … run".*
 
@@ -28,7 +28,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [9. Command line](#9-command-line)
 - [10. Troubleshooting](#10-troubleshooting)
 - [11. Upgrading from claude-factory](#11-upgrading-from-claude-factory)
-- [12. Refinement](#12-refinement)
+- [12. Ideas (refinement)](#12-ideas-refinement)
 - [13. Self-repair (for admins)](#13-self-repair-for-admins)
 - [14. Ask SCF](#14-ask-scf)
 
@@ -45,8 +45,8 @@ scf ui
 ```
 
 The UI opens at **http://localhost:4777**. By default it only listens on your own machine; see
-[Access from other computers](#access-from-other-computers). The path in the
-top-right corner is the repository runs work on by default.
+[Access from other computers](#access-from-other-computers). In the Admin view, the path at the
+bottom of the sidebar is the repository runs work on by default.
 
 **First start.** The first time you open the UI there is no account yet, so it shows
 **Create the admin account**: enter a name, an e-mail and a password (12 to 200 characters, not a common one,
@@ -55,10 +55,10 @@ twice). That signs you in. You can also create the admin in a terminal with
 an upgrade from a version without sign-in, do this once; nothing else changes. The CLI, the
 watchers and runs that are already going do not need an account.
 
-![Sign in](images/sign-in.png)
+![The sign-in form](images/sign-in.png)
 
-**Sign in and out.** After that, the UI shows a sign-in form. Your name and a **Sign out**
-button are in the top bar. You stay signed in for 7 days, or until you sign out. A password
+**Sign in and out.** After that, the UI shows a sign-in form. Your name is on the account button
+at the right of the top bar; **Sign out** is in the account menu it opens. You stay signed in for 7 days, or until you sign out. A password
 change or a block (`scf user password`, `scf user block`) signs that account out at once. If you
 are blocked, you cannot sign in. If the session ends while a page is open, the next action
 brings you back to the sign-in form.
@@ -70,7 +70,7 @@ and need no password here. The Foundry's own password sign-in is switched off: a
 answer "wrong e-mail or password", and first-account setup is not offered. Your role and workspace are
 re-read on every action, so a change in the account system applies at once. A blocked or removed
 account cannot use the Foundry, and a provider that does not answer stops your session for that call (the page shows that sign-in is not working for now). Passwords,
-links and profile edits of such accounts are changed in the account system only.
+links and profile edits of such accounts are changed in the account system only. Such an account has no **Change password** in its account menu.
 
 **Emergency sign-in.** One local admin can still sign in with a password while a provider is active,
 for when the account system is down. The sign-in page then says "Emergency sign-in (local admin)" and
@@ -86,12 +86,78 @@ reachable, provider or not.
 **Forgot password.** The sign-in form says so: ask an admin for a new set-password link (the admin
 uses **Reset password** on the Users page), or run `scf user password <e-mail>` on the machine.
 
-**Change password.** **Change password** in the top bar asks for your current password and the new
+**Change password.** **Change password** in the account menu asks for your current password and the new
 one (twice). The new password follows the same rules (12 to 200 characters, not a common one).
 Your session stays; every other session of your account is signed out. A wrong current password
 counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
 
-**Appearance: theme, density and look.** **Appearance** in the top bar, next to **Change password**, opens a
+**Set-password link.** A new account may get a link instead of a password. Open it in the
+browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
+The link works once and for 24 hours. If the page says "this link is not valid any more", ask your
+admin for a new one.
+
+### Your first tour
+
+After you sign in, every page has the same frame: a **top bar**, a **sidebar** on the left and the page in the
+middle. What the sidebar lists depends on your **view**: Simple, Advanced or Admin. Your account menu has the
+**View** box; see [Simple, Advanced and Admin view](#simple-advanced-and-admin-view) for the rules.
+
+**The sidebar.** It starts with the repository switcher. Then come five places that every view has: **Today**,
+**Changes**, **Ideas**, **Releases** and **Help**. Below a divider come the extra pages of your view: none in
+Simple, **My repositories** in Advanced, and **Board**, **Repositories**, **Flows** and **Administration** in Admin.
+A place opens a page, and the page keeps its own name. That name is what the top bar, the breadcrumbs, the tab
+title and **Search** show: **Today** opens **Home**, **Changes** opens **Runs** (**My runs** on the user display),
+**Ideas** opens **Refinement**, **Releases** opens **Epics**, and **+ New change** opens **Start work**. The table
+lists every place of the Admin view and the pages in it:
+
+| Place | Pages in it | What it is for |
+|---|---|---|
+| **Today** | Home | `#/home`. What needs you, what is running and what finished, with one button for each thing that waits. The app opens here. The old address `#/your-turn` still works. See [Home](#home) |
+| **Changes** | Runs | `#/runs`. Every run, the ones that need you on top. On the user display the page is called **My runs** |
+| **Ideas** | Refinement | `#/refinement`. Where a rough idea grows into a change before it goes to the backlog. See [Refinement](#12-ideas-refinement) |
+| **Releases** | Epics | `#/epics`. How far each epic is and when it will be finished |
+| **Help** | Help | `#/help`. The Foundry's words in plain language, short how-tos and who to ask. See [Simple: the Help page](#simple-the-help-page) |
+| **Board** | Board | `#/board`. Admin view only. Where every change is, in columns per repository |
+| **Repositories** | My repositories | `#/repos`. The repositories you work in, and how the Foundry signs in to them. In the Advanced view the place itself is called **My repositories** |
+| **Flows** | Flows, Library | Admin view only. Flows: your flows and the built-in ones: edit, create, run. Library: reusable blocks of steps to drop into flows |
+| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | `#/operations`. Admin view only. Overview: what needs attention, on one page; the Problems page lists what the monitor found. Watchers: automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: which agents and models are available, and which model runs which step. Dashboard: spend, success rate, where runs fail, eval results. Users: the accounts: add, edit, block and delete them. All repositories: the repositories of all accounts, their settings, and transfer to another account. Credentials: the stored credentials of all accounts, without any secret. Audit: who did what, with filters and a CSV export. Autonomy: the autonomy level of every repository and flow, and the requests that wait. Settings: budget, safety, notifications, bot identity. Maintenance: clean up old run workspaces |
+
+Which of these places you see depends on your view:
+
+| View | For whom | What you see |
+|---|---|---|
+| **Simple** | Anyone who wants plain words | Today with your projects, one page per project, Help, and **+ New change**. No logs, costs, models, branches or flow names. |
+| **Advanced** | Users (the default for the role `user`) | The user display at `/user/`: Today, Changes, Ideas, Releases, Help and **My repositories**. |
+| **Admin** | Admins (the default for the role `admin`) | The admin display at `/`: the same five places plus **Board**, **Repositories**, **Flows** and **Administration**. |
+
+![Today in the Simple view of a user](images/user-home.png)
+
+Under the top bar of the Admin view, a second row groups the pages of one place: Repositories (My repositories),
+Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview,
+Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit,
+Autonomy) and **System** (Settings, Maintenance).
+
+**The repository switcher.** At the top of the sidebar you choose the repository you are working on, or
+**All repositories**. Pages that follow it (such as Changes, Ideas, Releases and the Board) then show only that
+repository, and the choice is in the address (`?repo=owner/name`; `repo=all` for all of them). It is kept in
+this browser for your account.
+
+**The top bar.** From left to right: the menu button (narrow screens only), the name **Spaghetti Code Foundry**
+(a link to Today), the name of the page, then:
+
+- **Search** — find a page, a run, a repository, a refinement session or a flow (see **Search** below). Ctrl/⌘+K opens it too.
+- **Ask Foundry** — opens the **Ask SCF** panel, where you ask how the Foundry works in your own words. It reads and explains; nothing changes unless you review and confirm an action. The button is there only when an admin has switched Ask SCF on. See [Ask SCF](#14-ask-scf).
+- **+ New change** — the one primary button. It opens the **Start work** page, where you describe a change in your own words (see **+ New change** below).
+- The health chip (Admin view only) — press it to open or close the full health line. It opens by itself when something is wrong with the Foundry itself.
+- Your **account menu**: your name, **Appearance**, **Change password**, **Sign out**, the **View** box, the switch **Pause the Foundry while I work** (Off, 1 h or 2 h; admins only) and a link to the **Accessibility** statement. While the pause is on, a **Paused** flag shows in the top bar.
+
+![The Ask SCF panel, opened with Ask Foundry](images/ask.png)
+
+The number of items waiting for you shows on **Today** (Admin view) and on the menu button. The words in the interface
+say **change** where older versions said **story** (a story and a change are the same thing); the word **issue**
+stays where it names the GitHub issue itself.
+
+**Appearance: theme, density and look.** **Appearance** in the account menu opens a
 dialog with three choices. **Theme** is System (follows your device), Light or Dark. **Density** is
 Comfortable or Compact. **Look** is Calm (the default), Midnight, Friendly, Editorial or Bento. **Calm** is
 light and airy, with an indigo accent and rounded corners. **Midnight** is dense and dark, with a lime accent
@@ -99,42 +165,47 @@ and a mono font for numbers, ids and logs. **Friendly** is warm and rounded: a c
 highlights, pill buttons and soft shadows. **Bento** is tiles on a sage ground, with a green accent and 24 px
 corners; its tiles are yellow in light mode and charcoal in dark mode. **Editorial** is black and white: square
 corners, black rules instead of shadows, a bold grotesk heading font and mono labels in capitals. Orange is used
-only for what needs you. The administration pages are inverted (black ground, white text). A choice applies at once,
+only for what needs you. The administration pages are inverted (black ground, white text). The look also picks the layout
+of Today in the Simple view (see [Simple: My projects](#simple-my-projects-and-the-project-page)). A choice applies at once,
 with no reload. The chosen option has a check mark and is announced as pressed, so it does not depend on
 colour. The choice is kept in this browser, per account, and is not sent to the server: a second account
 in the same browser has its own, and another browser starts with System, Comfortable and Calm. The
 sign-in form uses the last choice. Other open tabs of the same browser pick up a change at once, without
 a reload. If the browser blocks storage, the page still works with System, Comfortable and Calm.
 
-**Set-password link.** A new account may get a link instead of a password. Open it in the
-browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
-The link works once and for 24 hours. If the page says "this link is not valid any more", ask your
-admin for a new one.
+![The Appearance dialog: theme, density and look](images/preferences.png)
 
-| Place | Pages in it | What it is for |
-|---|---|---|
-| **Home** | — | What needs you, what is running, what finished, and the best next step; the app opens here when something waits. The old address `#/your-turn` still works. See [Home](#home) |
-| **Board** | — | Where every change is, in columns per repository |
-| **Epics** | — | How far each epic is and when it will be finished |
-| **Refinement** | — | Where a rough idea grows into a change before it goes to the backlog |
-| **Runs** | — | Everything that ran or is running; the ones that need you on top |
-| **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
-| **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
-| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
+![The five looks side by side: Calm, Midnight, Friendly, Editorial and Bento](images/looks.png)
 
-**Navigation (admin display).** One sidebar on the left is always shown on wide screens. It starts with the project switcher, then the five main places: **Today** (`#/home`), **Changes** (`#/runs`), **Ideas** (`#/refinement`), **Releases** (`#/epics`) and **Help**. Below a divider it has the extra pages of your view; for an admin these are **Board**, **Repositories**, **Flows** and **Administration**. The sidebar does not collapse. **+ New change** is the one primary button of the top bar, not a place. The top bar also has the name of the page, **Search**, **Ask Foundry** (when it is on), the health chip and your account menu. The account menu has the **View** box (once; there is no second one), the switch **Pause the Foundry while I work** (Off, 1 h or 2 h; admins only), **Change password** and **Sign out**. While the pause is on, a **Paused** flag shows in the top bar. Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Today** and on the menu button. The words in the interface say **change** where older versions said **story** (a story and a change are the same thing); the word **issue** stays where it names the GitHub issue itself. On a narrow screen (below 768 px wide) the sidebar is a menu over the page, opened from the menu button: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit, Autonomy) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation details.** On wide screens the sidebar is always shown and does not collapse. The current place is
+marked, also for screen readers; the main area is named after the page, focus moves to it after each page change,
+and the new page is announced. **Skip to content** is the first control. A line of breadcrumbs shows where you are
+on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page.
+An address that is empty or unknown opens Today. All old addresses keep working. On a narrow screen (below 768 px
+wide) the sidebar is a menu over the page, opened from the menu button: **Close menu**, Escape, pressing outside it
+or choosing a link closes it, and Tab stays inside it while it is open.
 
-**Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
+**Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (Changes and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
-An account with the role `user` works on its own display at `/user/`, with **Home**, **Epics**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` in the Admin view is sent to `/`; in Simple or Advanced the admin stays on `/user/` (see [Simple, Advanced and Admin view](#simple-advanced-and-admin-view)). With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
+**The user display.** An account with the role `user` works on its own display at `/user/`, with **Today**, **Changes**, **Ideas**, **Releases**, **Help** and **My repositories** in the sidebar (Advanced view; Simple shows the first five only) and **+ New change** in the top bar. It has no Board, Flows, Administration, folder name, health line or "since you last looked" line.
+If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run,
+Epics or one epic, Refinement or one session, My repositories or one repository, Help, Setup check, Get started,
+Claude and Codex, Ask for a change or a plugin page, and dropped otherwise. An admin keeps the address when sent to
+the other display. An admin who opens `/user/` in the Admin view is sent to `/`; in Simple or Advanced the admin
+stays on `/user/` (see [Simple, Advanced and Admin view](#simple-advanced-and-admin-view)). With no address, a user
+lands on [Today](#home), which offers **Start work** when there is nothing yet.
 
-![Home of a user](images/user-home.png)
+**+ New change.** **+ New change** in the top bar opens the **Start work** page (`#/start`) in every view. In the Advanced and Admin views the page has one box, "What would you like to change?", a choice of starting point and one primary button, **Make a plan**. Ctrl/⌘+Enter in the box does the same. The starting points are **A new idea** (Make a plan sends a change request and opens its page, where the Foundry asks its questions and then shows its plan; no flow is needed), **An existing change** (give its issue number, for example `#12`; Make a plan opens a refinement session for that GitHub issue) and **A conversation** (the box is replaced by your open refinement sessions; choose one to open it). The repository is one line, "In owner/name", and **Change** opens **Advanced**. It is the repository of the project you have open, else your only or first GitHub repository or connected local project. With none, Make a plan says "Add the repository you work in." and offers **Add repository**; the page never shows that before you can type. The flow, the repository choice and the flow's fields are under the closed **Advanced**. A flow chosen there is started in three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. While the flows load, a grey placeholder shows under the heading. With none, the page says "No flows yet. Ask your administrator to publish one." (an admin sees "No published flows yet. Publish one in the flow editor." with a link to the editor). If the flows cannot be loaded, the page says what happened and has **Retry**; without permission it says so. (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. While the list loads, step 2 shows a placeholder and **Start** is off. With no repository the page says so and offers **Add repository**. If the list cannot be loaded, step 2 says so with **Retry**; flows that need no repository still work. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Review** checks the form and shows a review page; **Start** on that page starts the run and opens its page (see [Review before start](#review-before-start)). An empty required field shows a message and nothing is sent; if the server refuses, an alert under the form explains what happened, what is safe and what to do. What you typed stays, **Start** is on again, and a second **Start** sends the same values. If the server did not answer or failed, the run may have started: check **My runs** first. The read-only preview shows no **Review**, **Start** or **Add repository**. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
-**Start work.** The page has one box, "What would you like to change?", a choice of starting point and one primary button, **Make a plan**. Ctrl/⌘+Enter in the box does the same. The starting points are **A new idea** (Make a plan sends a change request and opens its page, where the Foundry asks its questions and then shows its plan; no flow is needed), **An existing change** (give its issue number, for example `#12`; Make a plan opens a refinement session for that GitHub issue) and **A conversation** (the box is replaced by your open refinement sessions; choose one to open it). The repository is one line, "In owner/name", and **Change** opens **Advanced**. It is the repository of the project you have open, else your only or first GitHub repository or connected local project. With none, Make a plan says "Add the repository you work in." and offers **Add repository**; the page never shows that before you can type. The flow, the repository choice and the flow's fields are under the closed **Advanced**. A flow chosen there is started in three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. While the flows load, a grey placeholder shows under the heading. With none, the page says "No flows yet. Ask your administrator to publish one." (an admin sees "No published flows yet. Publish one in the flow editor." with a link to the editor). If the flows cannot be loaded, the page says what happened and has **Retry**; without permission it says so. (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. While the list loads, step 2 shows a placeholder and **Start** is off. With no repository the page says so and offers **Add repository**. If the list cannot be loaded, step 2 says so with **Retry**; flows that need no repository still work. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Review** checks the form and shows a review page; **Start** on that page starts the run and opens its page (see [Review before start](#review-before-start)). An empty required field shows a message and nothing is sent; if the server refuses, an alert under the form explains what happened, what is safe and what to do. What you typed stays, **Start** is on again, and a second **Start** sends the same values. If the server did not answer or failed, the run may have started: check **My runs** first. The read-only preview shows no **Review**, **Start** or **Add repository**. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
+In the Simple view the page is shorter: the box and **Make a plan** only, with no starting points and no **Advanced**. The plan always starts from a new idea, and the project is one line ("In <project>") or, with more than one project, a **Project** select.
 
-**My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes by itself every 30 seconds and only redraws when something changed. While it loads you see placeholder cards. If a refresh fails, the cards stay and a note says "Could not refresh. Showing data from …" with **Retry**. If the list cannot be loaded at all, you see the reason with **Retry**. With no runs it says "No runs yet." and offers **Start work**. Above the cards a bar lets you search and filter your runs, as on the admin Runs list but without the Owner select: a search box, Repository, Flow, Status and Time, "Only what needs me", **Show** buttons (with **Archived**) and **Clear filters**. Failed, Completed and Archived runs can be selected and archived in one go (see [The runs list](#the-runs-list)). The filter is kept in the address (`#/runs?q=…`); `owner` there is ignored. Search, repository, flow, status and time are asked from the server, so older runs are found; when 200 runs match, the list says "Only the newest 200 matches are shown." With no match it says "No runs match your search and filters." The preview opened with **View as user** can filter too.
+![The Start work page, opened with + New change](images/new-change.png)
 
-**The run page.** A header at the top stays in place when the run updates. Its title is the change's title: the issue's title, else the first line of the task, else "Issue #N". It is never the flow name, the run ID or a step count. Under the title is the five-phase strip (**Understand**, **Plan**, **Build**, **Check**, **Deliver**): the phases already done are marked, the current one is marked **Now**, and a succeeded change shows all five done. Below the strip is one sentence on what is happening now. The header also shows the status with its "?", the repository and issue or PR, the branch, when the run started and how long it ran (or has been running), and "resumed N×". The run ID, the flow, the flow version, the step count (such as "3 of 5 steps done, 1 failed") and the reason are under **Technical details**, which is collapsed. An administrator also finds the workspace there. A run that had automatic retries after a time limit (see "When something goes wrong") adds a fact such as "2 automatic retries after a time limit — it finished": how many started, and how the run ended (it finished, it was split, it failed, it was cancelled or it is still open). A retry that waits in the queue reads "the next one is waiting", and a retry that was cancelled while it waited is not counted. Users see the same fact. Without retries the header is as before. Under it come the failure card or **Now** (what happens next, and the step the run is at, with what that step does), and, when the issue has an "Acceptance criteria" list, that list as a checklist. Below it are three tabs: **Progress**, **What changed** and **Details**. Progress is the default; a failed run opens on **Details** once, unless you already chose a tab. Old links to the tabs **Overview**, **Steps**, **Changes**, **Evidence** and **Logs** open the tab that holds them now (Steps, Evidence, Skills and Logs are in Details; Changes is **What changed**). The tabs work with the mouse and with Left and Right arrow keys. A live update never changes the tab you are on, closes what you opened or moves your scroll position, and text you are typing in the answer form stays. **Progress** shows the acceptance criteria (read-only), the whole task and the questions of a run that stopped. On the user display the answer form and **Answers given** are here. **Details** holds four sections, each opened and closed on its own: **Steps** (open at first), **Evidence**, **Skills** and **Logs**. **Steps** is a timeline in time order: run started, each finished step (passed or failed, visit number, how long), "Waiting for approval" with its message, "Running <step>", each answer given and the end of the run. Sub-steps are indented under their step, and each row has a plain label, not just a step id. An administrator can open a step for its error under **Details** and its output or transcript, which load when first opened (tool calls stay closed until clicked); a user sees plain rows with a one-sentence error. Open steps stay open and loaded when the run goes on, and the scroll position does not move. A failed run opens its failing step once. It says "No steps finished yet." while the run is going and "No steps recorded." for a finished run with none. **What changed** shows what the run changed, or a line that there is nothing; it loads when you first open it, when you press **Refresh**, and when the run finishes, and open files stay open. **Evidence** shows only what the run already has: the questions asked and the answers given, with their time; the result of each finished shell or approval step (passed or failed, how long, and the error in one sentence); the link of the next step (the issue or pull request); and, for a failed run, **Already tried**. With none of these it says "No evidence recorded yet." **Logs** is the live log: the full log for an administrator, the filtered log for a user. Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry from the failing step** is for a run that failed, stopped or was cancelled and has a step to continue at; it is the one filled button, except while the answer form is shown (then **Send answer** is the main action). **Stop this change…** is for a run that is running, waiting or queued, and asks first: "Stop this change?", with **Keep it running** (nothing changes) and **Stop the change**. A run that is queued can only be stopped this way. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. A run that stopped because the planner has questions shows them as text under **Questions**: the planner's own text, the same as in the comment on the issue. The page shows the first 4,000 characters; a longer text is cut, and the whole text is in the comment. "Retry from step…", the owner, costs and raw details belong to the admin display. The admin display's **Overview** also has a card **Decided by the Foundry** for the questions the Foundry decided itself, by round: each round shows its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and asked the owner), then each question with its decision; the full question text is under **Full question**. The card is hidden when a run has no such rounds, and no flow writes them yet. While the run loads you see a placeholder page. If the run does not exist (or was removed) you see "This run was not found. It may have been removed." with a link back; if you may not see it, you see that, with a link back; any other failure shows the reason with **Retry**. If the live connection to the run is lost for good, a red banner says "Lost connection to the run stream" with **Reconnect**. The page keeps showing the last head, steps and log; **Reconnect** opens the stream again, and the banner goes when the next update arrives. If the changes cannot be loaded, the reason shows in that place with **Retry**.
+**Changes (My runs).** **Changes** in the sidebar opens the list of runs. On the user display (Advanced view) the page is called **My runs** and shows your runs as cards in sections: **Needs you**, **Running**, **Queued**, **Failed** and **Completed**, newest first. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes by itself every 30 seconds and only redraws when something changed. While it loads you see placeholder cards. If a refresh fails, the cards stay and a note says "Could not refresh. Showing data from …" with **Retry**. If the list cannot be loaded at all, you see the reason with **Retry**. With no runs it says "No runs yet."; the **Start work** button at the top of the page is always there. Above the cards a bar lets you search and filter your runs, as on the admin Runs list but without the Owner select: a search box, Repository, Flow, Status and Time, "Only what needs me", **Show** buttons (with **Archived**) and **Clear filters**. Failed, Completed and Archived runs can be selected and archived in one go (see [The runs list](#the-runs-list)). The filter is kept in the address (`#/runs?q=…`); `owner` there is ignored. Search, repository, flow, status and time are asked from the server, so older runs are found; when 200 runs match, the list says "Only the newest 200 matches are shown." With no match it says "No runs match your search and filters." The preview opened with **View as user** can filter too.
+
+![Changes on the user display: your runs in sections, the ones that need you on top](images/user-changes.png)
+
+**The run page.** Open a run from **Changes** (or from Today) to see its page. A header at the top stays in place when the run updates. Its title is the change's title: the issue's title, else the first line of the task, else "Issue #N". It is never the flow name, the run ID or a step count. Under the title is the five-phase strip (**Understand**, **Plan**, **Build**, **Check**, **Deliver**): the phases already done are marked, the current one is marked **Now**, and a succeeded change shows all five done. Below the strip is one sentence on what is happening now. The header also shows the status with its "?", the repository and issue or PR, the branch, when the run started and how long it ran (or has been running), and "resumed N×". The run ID, the flow, the flow version, the step count (such as "3 of 5 steps done, 1 failed") and the reason are under **Technical details**, which is collapsed. An administrator also finds the workspace there. A run that had automatic retries after a time limit (see "When something goes wrong") adds a fact such as "2 automatic retries after a time limit — it finished": how many started, and how the run ended (it finished, it was split, it failed, it was cancelled or it is still open). A retry that waits in the queue reads "the next one is waiting", and a retry that was cancelled while it waited is not counted. Users see the same fact. Without retries the header is as before. Under it come the failure card or **Now** (what happens next, and the step the run is at, with what that step does), and, when the issue has an "Acceptance criteria" list, that list as a checklist. Below it are three tabs: **Progress**, **What changed** and **Details**. Progress is the default; a failed run opens on **Details** once, unless you already chose a tab. Old links to the tabs **Overview**, **Steps**, **Changes**, **Evidence** and **Logs** open the tab that holds them now (Steps, Evidence, Skills and Logs are in Details, where the log section is called **Log**; Changes is **What changed**). The tabs work with the mouse and with Left and Right arrow keys. A live update never changes the tab you are on, closes what you opened or moves your scroll position, and text you are typing in the answer form stays. **Progress** shows the acceptance criteria (read-only), the whole task and the questions of a run that stopped. On the user display the answer form and **Answers given** are here. **Details** holds four sections, each opened and closed on its own: **Steps** (open at first), **Evidence**, **Skills** and **Log**. **Steps** is a timeline in time order: run started, each finished step (passed or failed, visit number, how long), "Waiting for approval" with its message, "Running <step>", each answer given and the end of the run. Sub-steps are indented under their step, and each row has a plain label, not just a step id. An administrator can open a step for its error under **Details** and its output or transcript, which load when first opened (tool calls stay closed until clicked); a user sees plain rows with a one-sentence error. Open steps stay open and loaded when the run goes on, and the scroll position does not move. A failed run opens its failing step once. It says "No steps finished yet." while the run is going and "No steps recorded." for a finished run with none. **What changed** shows what the run changed, or a line that there is nothing; it loads when you first open it, when you press **Refresh**, and when the run finishes, and open files stay open. **Evidence** shows only what the run already has: the questions asked and the answers given, with their time; the result of each finished shell or approval step (passed or failed, how long, and the error in one sentence); the link of the next step (the issue or pull request); and, for a failed run, **Already tried**. With none of these it says "No evidence recorded yet." **Log** is the live log: the full log for an administrator, the filtered log for a user. Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry from the failing step** is for a run that failed, stopped or was cancelled and has a step to continue at; it is the one filled button, except while the answer form is shown (then **Send answer** is the main action). **Stop this change…** is for a run that is running, waiting or queued, and asks first: "Stop this change?", with **Keep it running** (nothing changes) and **Stop the change**. A run that is queued can only be stopped this way. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. A run that stopped because the planner has questions shows them as text under **Questions**: the planner's own text, the same as in the comment on the issue. The page shows the first 4,000 characters; a longer text is cut, and the whole text is in the comment. "Retry from step…", the owner, costs and raw details belong to the admin display. The admin display's **Overview** also has a card **Decided by the Foundry** for the questions the Foundry decided itself, by round: each round shows its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and asked the owner), then each question with its decision; the full question text is under **Full question**. The card is hidden when a run has no such rounds, and no flow writes them yet. While the run loads you see a placeholder page. If the run does not exist (or was removed) you see "This run was not found. It may have been removed." with a link back; if you may not see it, you see that, with a link back; any other failure shows the reason with **Retry**. If the live connection to the run is lost for good, a red banner says "Lost connection to the run stream" with **Reconnect**. The page keeps showing the last head, steps and log; **Reconnect** opens the stream again, and the banner goes when the next update arrives. If the changes cannot be loaded, the reason shows in that place with **Retry**.
 
 **Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box. In the flow editor, the library and the Start work forms, every field has a name for screen readers. In the graph, Tab moves between steps and Enter or Space selects one. If a required field is empty on Start work, the message is announced, the field is marked invalid and the focus moves to it.
 
@@ -142,28 +213,28 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 |---|---|
 | Whole page | Tab and Shift+Tab move between controls. Enter opens a link or presses a button; Space presses a button. Ctrl/⌘+K opens Search, also from a form field. Single-key shortcuts (below) work only outside form fields and can be switched off. |
 | Search | Up and Down arrows move (and wrap), Enter opens, Ctrl/⌘+Enter opens in a new tab and keeps Search open, Escape closes. Tab stays inside. |
-| Single keys | `/` opens Search. `g` then a letter, within 1 second, opens a page: `h` Home, `b` Board, `r` Runs, `e` Refinement, `p` Repositories, `f` Flows, `a` Administration, `s` Start work. Only pages your role has. |
+| Single keys | `/` opens Search. `g` then a letter, within 1 second, opens a page: `h` Today, `b` Board, `r` Changes, `e` Ideas, `p` Repositories, `f` Flows, `a` Users (in Administration), `s` Start work (**+ New change**). Only pages your role has. |
 | Dialogs | Escape closes. Tab stays inside. Focus returns to the button that opened it. |
 | Help mark (**?**) | Enter or Space opens, Escape closes. |
 | Board | Tab to a card, Enter opens it. |
-| Runs table | Tab to the status link in the first cell, Enter opens the run. |
+| Changes table | Tab to the status link in the first cell, Enter opens the run. |
 | Run log | Tab to the log, then the arrow keys, Page Up/Down, Home and End scroll it. |
 | Editor | Tab moves between fields. Escape closes its dialogs. |
 | Forms | Tab moves between fields. The arrow keys change a select. Enter sends the form. |
 
 **Search.** The **Search** button in the top bar, Ctrl/⌘+K (also from a form field) or `/` opens a box with a list under it. With no text it shows **Recent**, **Go to** (pages) and **Actions**. With text it also shows what the server finds: runs, repositories, refinement sessions and flows, and for admins issues. A user sees only their own things and the flows they can start; an admin sees all accounts. A result shows its title and, when known, its status, repository, owner and last activity. Search only opens things: a page, a run, **Start work**, **New refinement session**. It changes nothing. A flow result on the user display opens Start work with that flow chosen (what you typed is kept); a repository result opens the list with that row selected. Recent items are kept in this browser, for each account, as ids only (no titles, 8 at most), and are shown only if the server still lets you see them. In a view-as preview there are no recent items and no "New refinement session". If search is not available, the box says so and pages still work. The single-key shortcuts never act inside form fields or while a dialog or the menu is open. A checkbox in Search switches them off for this browser; Ctrl/⌘+K always works.
 
-**Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive. The Board also keeps its scroll, up and down and sideways, when it redraws, and shows "Updated HH:MM". If a refresh fails, the cards stay and a message says "Could not refresh. Showing data from …" with a Retry button; the next good refresh removes it. A hidden browser tab makes no requests; when you come back, the Board refreshes once. On the admin Home, Your turn (Needs you) and Today refresh on their own, so one failing does not stop the other, and each has its own Retry. If only the health request fails, Problems keep the last answer and show "Problems could not be refreshed. Showing the last answer." until the next good answer.
+**Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive. The Board also keeps its scroll, up and down and sideways, when it redraws, and shows "Updated HH:MM". If a refresh fails, the cards stay and a message says "Could not refresh. Showing data from …" with a Retry button; the next good refresh removes it. A hidden browser tab makes no requests; when you come back, the Board refreshes once. On **Today** in the Admin view, Needs you and the rest of the page refresh on their own, so one failing does not stop the other, and each has its own Retry. If only the health request fails, Problems keep the last answer and show "Problems could not be refreshed. Showing the last answer." until the next good answer.
 
-**Under the top bar of the admin page** (not on the user display) is the health line. It says "All good", or names what is wrong with the
+**The health line** (Admin view only, not on the user display) opens under the top bar when you press the health chip, and by itself when something is wrong. It says "All good", or names what is wrong with the
 Foundry itself, and on the right when each repository was last checked.
 
 #### The day in four steps
 
 1. Put the build label on your issues on GitHub (or let a watcher's schedule do the work).
-2. Open **Home**. Answer questions and approve risky plans; one button each.
-3. Look at **Board** when you want to know where a change is and why.
-4. Merge the daily release pull request when it shows up under **Needs you** on Home.
+2. Open **Today**. Answer questions and approve risky plans; one button each.
+3. Open **Board** (Admin view) when you want to know where a change is and why.
+4. Merge the daily release pull request when it shows up under **Needs you** on Today.
 
 Everything else continues by itself.
 
@@ -171,8 +242,11 @@ Everything the UI does is also available from the command line (see [section 9](
 
 ### Setup check
 
+![The Setup check: what this computer still needs](images/setup-check.png)
+
 **Setup check** (`#/setup`) tells you what is missing on this computer and how to fix it. It is the first step of
-onboarding, and you can open it later from the admin Home page ("Setup check" link). It checks:
+onboarding. Open it later with **Search** (type "Setup"), at `#/setup`, or, as an admin in the Advanced view, from the
+**Setup check** link at the bottom of **Today**. It checks:
 
 - **Git**, which keeps every change to your project;
 - **Claude Code** (the AI helper) and whether it is **signed in**;
@@ -205,7 +279,7 @@ with the same body makes one tiny call (no tools, a fixed prompt) and answers `o
 
 ### Claude and Codex in plain words
 
-**Claude and Codex** (`#/agents`) is a guided page with six plain questions. It is the next step after the Setup check (its "Next: Claude and Codex" button), and you can open it at any time from the admin Home page, next to "Setup check". In the Simple view it is linked from **Help** under "Claude and Codex". The questions are:
+**Claude and Codex** (`#/agents`) is a guided page with six plain questions. It is the next step after the Setup check (its "Next: Claude and Codex" button). You can open it at any time from **Help** ("Set up Claude and Codex", in every view), with **Search**, or at `#/agents`. The questions are:
 
 1. **Which do you have?** Claude Code (made by Anthropic; a Claude Pro or Max plan, or an API key), Codex (made by OpenAI; a ChatGPT Plus or Pro plan, or an API key), **Both**, or **Neither yet**. Each choice has a short note and, for the two tools, a link to the official plans page.
 2. **Which plan?** Asked for each tool you have. The plan is shown in the summary and helps choose the settings; choose **I don't know** when you are not sure.
@@ -260,13 +334,18 @@ The answer is 201 with `repo` and `connection`. If any step fails, the folder is
 
 ### Old and new interface
 
-**How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
+**How to switch.** There is nothing to switch. After the update every account sees the new interface: one frame with a sidebar on the left and a top bar, the same on both displays. A setting to go back is not built.
 
 **What moved where.**
 
 | Before | Now | Address |
 |---|---|---|
-| Your turn | Home (Needs you) | `#/your-turn` |
+| Home | Today | `#/home` |
+| Your turn | Today (Needs you) | `#/your-turn` |
+| Runs, My runs | Changes | `#/runs` |
+| Refinement | Ideas | `#/refinement` |
+| Epics | Releases | `#/epics` |
+| Start work (button) | **+ New change** (button in the top bar) | `#/start` |
 | Library | Flows → Library | `#/library` |
 | My repositories | Repositories → My repositories | `#/repos` |
 | All repositories | Administration → All repositories | `#/all-repos` |
@@ -279,7 +358,7 @@ The answer is 201 with `repo` and `connection`. If any step fails, the folder is
 | Audit | Administration → Audit | `#/audit` |
 | Settings | Administration → Settings | `#/settings` |
 
-**Start work** is now a button in the top bar.
+The pages themselves keep their names, which show in the top bar and in **Search**: **Today** opens **Home**, **Changes** opens **Runs** (Admin view) or **My runs** (user display), **Ideas** opens **Refinement**, **Releases** opens **Epics**, and **+ New change** opens **Start work**. **Help** is now in the sidebar of every view, not only in Simple.
 
 **When the old one goes away.** It already has. The old menu was replaced in place, and all old addresses keep working.
 
@@ -291,33 +370,35 @@ The account menu has a **View** box with three views. The view changes only what
 
 | View | Display | What it shows |
 |---|---|---|
-| **Simple** | `/user/` | My projects (Home), one page per project and the Help page. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
-| **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
-| **Admin** | `/` | The admin display |
+| **Simple** | `/user/` | Today with My projects, one page per project, Ask for a change, the Help page and **+ New change**. The sidebar shows the five places, but Changes, Ideas and Releases are not in Simple: they show a card that offers the Advanced view (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
+| **Advanced** | `/user/` | Everything of the user display: Today, Changes (My runs), Ideas, Releases, Help, My repositories and **+ New change** |
+| **Admin** | `/` | The admin display: the five places plus Board, Repositories, Flows and Administration |
 
 **Who may choose which.** A user chooses Simple or Advanced. An admin chooses Simple, Advanced or Admin. With no choice made, a user has Advanced and an admin has Admin.
 
 **Where the switch is.** The **View** box is in the account menu, the only one on the page. It is the same on wide screens and on phones. The choice is kept on the server with your account, so every device and browser shows the same view after you sign in. Opening `/` in Simple or Advanced sends you to `/user/`; opening `/user/` in Admin sends you to `/`.
 
-**Pages of another view.** A page that the current view does not have shows a card: "This page is not in the Advanced view." with **Open this in the Advanced view**. The button switches your view. The address stays when the new view has that page.
+**Pages of another view.** A page that the current view does not have shows a card, for example "This page is not in the Simple view." with **Open this in the Advanced view**. The button switches your view; the card says you can switch back with **View** in the account menu. The address stays when the new view has that page.
 
 **Switching.** The page reloads in the new view and keeps the address when the new view has that page. Before the switch:
 
 - Unsaved changes stop it. The page says "You have unsaved changes. Save them first, then switch view." and nothing changes.
-- Text that is not sent asks first with "Switch view?": a Start work draft, the text of a closed new-refinement dialog, or text typed in a field. If you confirm, that text is lost. If you cancel, nothing changes.
+- Text that is not sent asks first with "Switch view?": a Start work (**+ New change**) draft, the text of a closed new-refinement dialog, or text typed in a field. If you confirm, that text is lost. If you cancel, nothing changes.
 - If the server does not answer, the page reads your stored view back. If the choice was saved, the switch goes on. If not, the page shows the error and stays. If the outcome is not known, the page says so: reload it to see your view.
 
 **Preview.** An admin's preview of a user (**View as user** on the Users page) has no **View** box. It stays in the Advanced display.
 
-**My runs.** An admin in Simple or Advanced sees the runs of all accounts on My runs, as in the admin display. The view does not filter them.
+**Changes.** An admin in Advanced sees the runs of all accounts on My runs, as in the admin display. The view does not filter them.
 
 ### Simple: My projects and the project page
 
-Simple shows your work per project, in plain words. Home is **My projects**. The sidebar has only the five main places, **Today**, **Changes**, **Ideas**, **Releases** and **Help**, and **+ New change** in the top bar; the divider and the extra pages are not shown in Simple.
+Simple shows your work per project, in plain words. The sidebar has only the five main places, **Today**, **Changes**, **Ideas**, **Releases** and **Help**, and **+ New change** in the top bar; the divider and the extra pages are not shown in Simple. **Today** is your Simple home with **My projects** under it, and **Help** opens the Help page. **Changes**, **Ideas** and **Releases** are not pages of Simple: they show the card "This page is not in the Simple view." with **Open this in the Advanced view**. In Simple, Today's counters open their own lists instead.
 
-**My projects** (`#/home`) starts with your Simple home, in the layout of your look. With the Calm and Friendly looks it is the cards layout: a greeting and one summary line, a **What do you want to build?** box with one **Start** button, four counters (**Needs you**, **Running**, **Ready to check** and **Published this week**, the last one for today and the 6 days before) that open their lists, then **Needs you** cards with one main button each, **Running now** with progress, and the current project with its five phases. With the Bento look it is the tiles layout: a large dark tile with the greeting and the Start box, a large **Needs you** tile with its two counters, small tiles for **Running**, **Published this week**, **Last safe point** (the newest published change, or "Nothing published yet.") and **Today's limit** (it says the Foundry continues tomorrow when work waits on a daily limit, and no amount is shown), then a wide **Running now** tile and the current project. On a phone the tiles stack in one column. With the Midnight and Editorial looks it is the list layout: one large heading that says how many things need you, then numbered rows (title, one sentence, a state tag **Question**, **To check**, **Stuck** or **To do**, and one button), then the four counters, then **Building now** in three columns, each with a thin progress bar, then the current project and the build box. On a phone the list becomes one column. Every layout shows the same items and buttons.
+**My projects** (`#/home`) starts with your Simple home, in the layout of your look. With the Calm and Friendly looks it is the cards layout: a greeting and one summary line, **What do you want to build?** with one **Start** button (it opens the Start work page of **+ New change**), four counters (**Needs you**, **Running**, **Ready to check** and **Published this week**, the last one for today and the 6 days before) that open their lists on Today (`#/home?list=…`, with **Back to Today**), then **Needs you** cards with one main button each, **Running now** with progress, and the current project with its five phases. With the Bento look it is the tiles layout: a large dark tile with the greeting and **Start**, a large **Needs you** tile with its two counters, small tiles for **Running**, **Published this week**, **Last safe point** (the newest published change, or "Nothing published yet.") and **Today's limit** (it says the Foundry continues tomorrow when work waits on a daily limit, and no amount is shown), then a wide **Running now** tile and the current project. On a phone the tiles stack in one column. With the Midnight and Editorial looks it is the list layout: one large heading that says how many things need you, then numbered rows (title, one sentence, a state tag **Question**, **To check**, **Stuck** or **To do**, and one button), then the four counters, then **Building now** in three columns, each with a thin progress bar, then the current project and **What do you want to build?**. On a phone the list becomes one column. Every layout shows the same items and buttons.
 
 Below the Simple home is one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet. The current project's card also shows its newest safe point, "Last good version: today 13:19" (see **Safe points** below).
+
+![Answering the Foundry's questions in the Simple view](images/user-questions.png)
 
 **The project page** (`#/repos/<id>`) has three parts, top to bottom:
 
@@ -326,6 +407,8 @@ Below the Simple home is one card per project: its name, a one-line state ("Buil
 3. **Try it** starts your project so you can see it (see **Try it on the project page** below). The button **Ask for a change** opens the page described under **Ask for a change** below. The button **Make this version final** comes with a later part; the page does not show it yet.
 
 **Versions that worked.** Between **What is being made** and the buttons, the page lists the project's recent versions that passed the checks, newest first, each with its time, its change titles and who started it (see **Safe points** below). Nothing is restored from this list. A line says so when no such version is known yet.
+
+![One change in the Simple view](images/user-change.png)
 
 **Ask for a change.** Press **Ask for a change** on the project page to open a page with the box "What should change?" and a **Send** button. Write the change in your own words. While the Foundry works, the page says "The Foundry is thinking about your change. This page updates by itself." and refreshes by itself. When the Foundry has questions, each comes with its choices (one is marked **Suggested**) and a box for your own answer. When it is done, the page shows one card per part of the change, each with "This is what I understood: …" and the points that say when it is done. A large change is a list of cards, never one big item. **Change** on a card opens its title and points for editing; **Save** keeps them and **Cancel** drops them. Two buttons end the page: **Yes, build this** starts building all the cards ("Your change is on its way. The Foundry builds it now."), and **Not now** keeps them ("Your change is kept for later. You find it under Planned on the project page."). A change that the Foundry could not finish says "The Foundry could not go on by itself." with **Try again**. After **Yes, build this** or **Not now**, **Ask for another change** starts a new request. The page keeps what you typed and did not send when it refreshes; if you switch view while it holds unsent text, the Foundry asks before it switches. The page is the same for GitHub and local projects.
 
@@ -375,13 +458,16 @@ The guide starts by itself the first time you open **My projects** when you have
 
 ### Simple: the Help page
 
-The **Help** link in the sidebar opens `#/help`. It is written in plain words and has three parts:
+The **Help** link in the sidebar opens `#/help` in every view. It is written in plain words and has these parts:
 
-1. **The words**: the Foundry's words for Simple, each with its plain meaning (the same list the rest of Simple uses).
+1. **What the words mean**: the Foundry's words for Simple, each with its plain meaning (the same list the rest of Simple uses).
 2. **How do I …**: short how-tos, for example "How do I change the colours?" and "How do I make it public?".
-3. **Who to ask**: the contact line for your project, from the setting `simple.help_contact` (see [Settings and safety](#7-settings-and-safety)). The line is hidden while the setting is empty, and the section with it is left out.
+3. **Claude and Codex**: a link, **Set up Claude and Codex**, to [Claude and Codex in plain words](#claude-and-codex-in-plain-words).
+4. **Who to ask**: the contact line for your project, from the setting `simple.help_contact` (see [Settings and safety](#7-settings-and-safety)). The line is hidden while the setting is empty, and the section with it is left out.
 
-The contact is shown as plain text, never as HTML. If the Foundry cannot read the contact, the page still shows the words and the how-tos. The Help link is not shown in Advanced or Admin, but `#/help` still opens the same page there.
+The contact is shown as plain text, never as HTML. If the Foundry cannot read the contact, the page still shows the words and the how-tos.
+
+![The Help page](images/help.png)
 
 ### Use the Foundry as a package
 
@@ -402,14 +488,22 @@ The `scf` and `factory` commands work from a git checkout as before.
 
 ## 2. Run a flow
 
-Pick a flow on the left, press **▶ Run**, describe the task and start it.
+Most work starts with **+ New change** (see [section 1](#1-start)) or with a label on a GitHub issue (see
+[section 6](#6-automate-with-watchers)). An admin can also start one flow directly from the flow editor. To do
+that, open **Flows** in the sidebar (Admin view), choose a flow and press **Test run**. A dialog named
+**Run** and the flow's name opens.
 
-![Run dialog](images/run-dialog.png)
+![The Run dialog of a flow](images/run-dialog.png)
 
-- **Task** — what you want done, in plain language. Flows use it in their prompts.
-- **Repository** — the local git repository to work on.
-- **Variables** — settings the flow exposes, e.g. `test_cmd`. Leave `auto` to let the Foundry
-  detect the test command (npm/pnpm/yarn, pytest, Go, Cargo, Gradle, Maven, Make).
+- **What would you like to change?** — the task, in plain language. Flows use it in their prompts.
+  For a flow that clones its own code (workspace `empty`) the box is **Extra instructions (optional)**. With
+  an empty box, the first **▶ Start run** only warns; press **▶ Run without a task** to start anyway.
+- **Advanced** (closed at first):
+  - **Repository** — the local git repository to work on.
+  - **Variables** — settings the flow exposes, e.g. `test_cmd`. Leave `auto` to let the Foundry
+    detect the test command (npm/pnpm/yarn, pytest, Go, Cargo, Gradle, Maven, Make).
+
+**▶ Start run** (or Ctrl/⌘+Enter in the box) starts the run and opens its page. If the flow has unsaved edits, the run uses them.
 
 **Your checkout is never touched.** Depending on the flow's *workspace* setting, a run works in:
 
@@ -423,7 +517,7 @@ When a run finishes, its branch stays in your repository. Review it, merge it, o
 
 ### Review before start
 
-On **Start work**, the main button is **Review**. It runs the same check for required fields as before. If all is filled in, it shows a review page instead of sending anything.
+On **Start work**, when you choose a flow under **Advanced**, the main button is **Review**. It runs the same check for required fields as before. If all is filled in, it shows a review page instead of sending anything.
 
 - **What you see.** The flow title, the repository as `owner/name` (or "No repository" when none is sent), the full task text, and every value that will be sent. A value the flow fixes says "set by the flow". If the administrator set the run to start as you, a "Start as" row says so.
 - **Notes.** Short safety notes appear when they apply: the repository connection is "Failed" or "Not tested yet"; the task is empty for a flow that uses it. One fixed note is always there: the work runs on the server against this repository and can be cancelled from the run page.
@@ -434,9 +528,9 @@ On **Start work**, the main button is **Review**. It runs the same check for req
 
 ### Start work as an admin
 
-An admin can also start work the way a user does. Open **Start work** (`#/start`, before **Runs**). It is the same page: the box, the starting point and **Make a plan**; the flow, the repository and the fields are under the closed **Advanced**. Under Advanced the page asks first only for what is required, each marked "(required)": the repository (when the flow asks for one), the task, and every required input. With one published flow there is no flow choice; with several, a picker shows each flow's title and description. Optional inputs and fixed values are in a closed **More options** line that says how many there are; it is not shown when there are none, and it opens by itself when the server refuses the start. The repository shows "Connected", "Not tested yet" or "Failed"; a failed one has a note with a link to My repositories. **Add repository** still works. If no flow is published, a new idea or an existing change still works; under **Advanced** you see "No published flows yet. Publish one in the flow editor." After **Start** you land on the run page. The run is yours and shows in **Runs** with you as owner.
+An admin can also start work the way a user does. Press **+ New change** in the top bar; it opens **Start work** (`#/start`). It is the same page: the box, the starting point and **Make a plan**; the flow, the repository and the fields are under the closed **Advanced**. Under Advanced the page asks first only for what is required, each marked "(required)": the repository (when the flow asks for one), the task, and every required input. With one published flow there is no flow choice; with several, a picker shows each flow's title and description. Optional inputs and fixed values are in a closed **More options** line that says how many there are; it is not shown when there are none, and it opens by itself when the server refuses the start. The repository shows "Connected", "Not tested yet" or "Failed"; a failed one has a note with a link to My repositories. **Add repository** still works. If no flow is published, a new idea or an existing change still works; under **Advanced** you see "No published flows yet. Publish one in the flow editor." After **Start** you land on the run page. The run is yours and shows in **Changes** with you as owner.
 
-The same rules as for a user apply: only a published flow, only your own repositories, and no changes to the flow or its variables. The **▶ Run** button of the flow editor works as before.
+The same rules as for a user apply: only a published flow, only your own repositories, and no changes to the flow or its variables. The **Test run** button of the flow editor works as before (see above).
 
 ### Build release files on this machine
 
@@ -636,80 +730,97 @@ scf run release-build --repo owner/repo --ref v2.4.0
 
 ## 3. Follow, approve and resume runs
 
+Every piece of work the Foundry does is a **change**. Behind each change is a **run**: one start of a flow, with its steps, its log and its result. The app talks about changes; the API, the command line and the files talk about runs. This part shows how to find a change, follow it while it runs, answer its questions, approve it and resume it.
+
+Where to look, in short:
+
+| To do this | Open |
+|---|---|
+| See what needs you now | **Today** in the sidebar |
+| See every change, running or finished | **Changes** in the sidebar |
+| Follow one change, answer it, approve it or retry it | the change's page (click it on Today or on Changes) |
+| See where every story of a repository is (Admin view) | **Board** in the sidebar |
+| See how far an epic is and when it ends | **Releases** in the sidebar |
+
+The left sidebar is the same in every view: **Today**, **Changes**, **Ideas**, **Releases** and **Help**. The Advanced view adds **My repositories** below a divider; the Admin view adds **Board**, **Repositories**, **Flows** and **Administration**. On a screen narrower than 768 px the sidebar is a drawer: open it with the **Menu** button (☰) at the top left. The button shows how many items wait for you.
+
+The Simple view keeps the same five places but has its own Today and no list of changes: **Changes** opens Today, and each counter on Today opens its list there. See [Simple: My projects](#simple-my-projects-and-the-project-page).
+
 ### Home
 
-**Home** is the first page, called **Today**. In Advanced and Admin it has the same layout. (Simple has its own home, see [Simple: My projects](#simple-my-projects-and-the-project-page).) It starts with a greeting ("Good morning", "Good afternoon" or "Good evening") and one summary line, for example "1 thing needs you, 1 change is being built, 3 finished today". With nothing to say it reads "Nothing needs you".
+![Today in the Admin view: what needs you, the four counters and what is being built](images/home.png)
 
-- **Attention cards:** at most one card for each item that needs you. The card shows the change's own title (the issue title), one sentence on what happened and what it means, and one main button. **See what happened** opens the technical cause. Items that are closed on GitHub, put aside with **Not now**, or finished as a split are not shown as needing you.
-- **Four counters:** **Waiting**, **Building**, **Needs your check** and **Finished today**. Each one opens its filtered list.
+**Today** is the first page. Open it with **Today** in the sidebar, or with the Foundry's name at the top left. Advanced and Admin show the same layout. (Simple has its own Today, see [Simple: My projects](#simple-my-projects-and-the-project-page).) It starts with a greeting ("Good morning", "Good afternoon" or "Good evening") and one summary line, for example "1 thing needs you, 1 change is being built, 3 finished today". With nothing to say it reads "Nothing needs you".
+
+- **Needs you:** at most one card for each item that needs you. The card shows the change's own title (the issue title), one sentence on what happened and what it means, and one main button. **See what happened** opens the technical cause. Items that are closed on GitHub, put aside with **Not now**, or finished as a split are not shown as needing you.
+- **Four counters:** **Waiting**, **Building**, **Needs your check** and **Finished today**. Each one opens **Changes** filtered to that list.
 - **Building now:** the five-phase strip (**Understand**, **Plan**, **Build**, **Check**, **Deliver**) and one sentence on what is happening now.
 - **Finished recently:** plain titles, with **Show all** for the rest.
-- **Your turn:** the admin Home lists the same items as [Your turn](#your-turn), with their buttons.
-- **Problems (admin):** problems of the Foundry that Your turn does not already show. Admin keeps its extra panels below Today: **Since you last looked**, **Problems** and **Metrics**.
-- **Metrics (admin):** closed until you open it; a link goes to the Dashboard (Administration → Dashboard).
-- **Empty:** with nothing yet, Today offers **Start work**.
+- **Your turn (Admin view):** below Today, the admin page lists the same items as [Your turn](#your-turn), with their buttons. A change is shown once: when Your turn has it, the Today cards leave it out.
+- **Since you last looked, Problems and Metrics (Admin view):** below Your turn. **Problems** lists the problems of the Foundry that Your turn does not already show. **Metrics** is closed until you open it; **All metrics** goes to the Dashboard (**Administration → Dashboard**).
+- **Empty:** with nothing yet, Today says "Nothing here yet. Start work to begin." and offers **Start work** and **My repositories**. **+ New change** in the top bar does the same as **Start work**.
 - **Users** see only their own work: no cost, model, health or other accounts.
 
-Home asks again every 30 seconds.
+Today asks again every 30 seconds; Your turn on the admin page every 5 seconds.
 
-**Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Home and **Drop** in Refinement show **Undo** in the message. Undo on Home brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
+**Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Today and **Drop** on Ideas show **Undo** in the message. Undo on Today brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
 
-**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. **Add repository** runs in steps and tests the connection after saving; **Change authentication** asks you to confirm. A read-only preview shows no action buttons. **Rows on My repositories.** Each row shows the short name (`owner/name`, or the address), how the Foundry signs in, whether it is Connected, Failed or Not tested yet, when it was last checked and how many runs are running or waiting for it ("—" if that cannot be read). A row has at most one thing to do, shown as one button: change the authentication (an account that needs a sign-in), install the GitHub App again, or test the connection (after a failed or missing test; a failed test also shows its first message). Repositories that need attention come first, and a line above the table says how many. From 8 repositories a filter box narrows the list by address. **Compact rows** makes the rows smaller; the browser remembers it. Long names are cut, with the full text on hover. No secret is shown. **One repository.** **Open** on a row (or `#/repos/<id>`) opens the page of that repository, in both displays. It has three sections. **Overview**: name, address, the attention state and next action (as on the row), active runs, the date it was added and **Definition of Ready** (read-only). **Connection**: the method, the user name if there is one, the same **Provider**, **Identity** and **Scope** as everywhere (see "Provider, identity and scope" below), the public key with **Copy** and the deploy-key hint (deploy key), or the install link (GitHub App); the last test with every check (Read, Write, GitHub API) and its message; and the buttons **Test connection** and **Change authentication**. **Dangerous actions**, last and set apart: **Generate a new key** (deploy key only) and **Remove**. Each asks first and names the repository and what is deleted. While one action runs, the other buttons are disabled. An unknown repository, or one of another account, shows "No such repository." with a link back. A read-only preview shows the sections without buttons. The breadcrumb names the repository; Back goes to the list. A row no longer shows the public key, so open the repository to copy it after you add a deploy-key repository.
+**Repository pages.** My repositories (in the Admin view the sidebar calls it **Repositories**), All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. **Add repository** runs in steps and tests the connection after saving; **Change authentication** asks you to confirm. A read-only preview shows no action buttons. **Rows on My repositories.** Each row shows the short name (`owner/name`, or the address), how the Foundry signs in, whether it is Connected, Failed or Not tested yet, when it was last checked and how many runs are running or waiting for it ("—" if that cannot be read). A row has at most one thing to do, shown as one button: change the authentication (an account that needs a sign-in), install the GitHub App again, or test the connection (after a failed or missing test; a failed test also shows its first message). Repositories that need attention come first, and a line above the table says how many. From 8 repositories a filter box narrows the list by address. **Compact rows** makes the rows smaller; the browser remembers it. Long names are cut, with the full text on hover. No secret is shown. **One repository.** **Open** on a row (or `#/repos/<id>`) opens the page of that repository, in both displays. It has three sections. **Overview**: name, address, the attention state and next action (as on the row), active runs, the date it was added and **Definition of Ready** (read-only). **Connection**: the method, the user name if there is one, the same **Provider**, **Identity** and **Scope** as everywhere (see "Provider, identity and scope" below), the public key with **Copy** and the deploy-key hint (deploy key), or the install link (GitHub App); the last test with every check (Read, Write, GitHub API) and its message; and the buttons **Test connection** and **Change authentication**. **Dangerous actions**, last and set apart: **Generate a new key** (deploy key only) and **Remove**. Each asks first and names the repository and what is deleted. While one action runs, the other buttons are disabled. An unknown repository, or one of another account, shows "No such repository." with a link back. A read-only preview shows the sections without buttons. The breadcrumb names the repository; Back goes to the list. A row no longer shows the public key, so open the repository to copy it after you add a deploy-key repository.
 
-**Refinement pages.** The session list and a session show a grey skeleton while they load. If they cannot load, you see what went wrong and **Retry**; a session that is not found and a missing permission are shown as their own messages. A session refreshes by itself; a refresh that fails keeps what you see and says "Could not refresh. Showing data from …" with **Retry**. A refresh never replaces a field you are typing in or that has unsaved text. While the architect works, the page says so once. Each field shows whether it is saving, saved or failed; a failed save keeps your text and has **Retry**. If a publish creates some issues and fails for the rest, a banner lists both and has **Retry** for the rest; it stays until the rest is published or removed. A draft that was split can no longer be changed: you see a message with a link to each part, and your text is kept. Removing a draft, moving text to the notes, merging, publishing with text that is not saved, removing a reason, replacing a field with a suggestion, removing a map entry and dropping a session ask first in a dialog.
+**Ideas pages.** **Ideas** in the sidebar opens the refinement sessions (`#/refinement`). The session list and a session show a grey skeleton while they load. If they cannot load, you see what went wrong and **Retry**; a session that is not found and a missing permission are shown as their own messages. A session refreshes by itself; a refresh that fails keeps what you see and says "Could not refresh. Showing data from …" with **Retry**. A refresh never replaces a field you are typing in or that has unsaved text. While the architect works, the page says so once. Each field shows whether it is saving, saved or failed; a failed save keeps your text and has **Retry**. If a publish creates some issues and fails for the rest, a banner lists both and has **Retry** for the rest; it stays until the rest is published or removed. A draft that was split can no longer be changed: you see a message with a link to each part, and your text is kept. Removing a draft, moving text to the notes, merging, publishing with text that is not saved, removing a reason, replacing a field with a suggestion, removing a map entry and dropping a session ask first in a dialog.
 
 ### Your turn
 
-![Needs you on Home](images/home.png)
+**Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. In the Admin view it is part of **Today**, below the Today cards; the old address `#/your-turn` opens Today. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
 
-**Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
-
-- **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (Administration → Watchers; see "Two tries, then a person").
+- **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (**Administration → Watchers**; see "Two tries, then a person").
 - **Owner (admins):** an item that has a run shows the owner's name, `deleted user` when the account is gone, and nothing otherwise. Users see no owner name.
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
 - **Comments that cannot be read:** an issue whose comments cannot be read in time is listed from its label alone, with no number of questions.
 - **Every waiting label counts.** The issue is listed also past the first 100 issues, also next to another status label, and also without the trigger label unless its run is parked. An answered issue stays listed until its label goes. No status comment is written on it.
 - **One item per issue.** When several watchers list the same issue (the repository name is not case-sensitive), Your turn shows one item. It is the ordinary listing before an extra one, then the one that needs you, then the first watcher's. A waiting-label issue does not also get a separate item for its older runs.
 - **Something to do:** a question that needs something only you can do (a file, an account, access) is listed as "waiting for you — something to do". The action is the question's title, as one line. **Show question** opens the question and **Answer…** sends your answer as a comment on the issue. When the question names a file (`**Needs:** file <path>`), the story goes on by itself once that file is on the develop branch (the default branch without gitflow); the item says so, and no answer is needed. `/defaults` does not answer such a question.
-- **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
-- **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
+- **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the change's page).
+- **Runs you started yourself** (with **+ New change** or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
 - **Who may act:** an admin acts on every item. A user acts only on an item of a project they own (the watcher's owner is their account), and on GitHub only when the watcher does not use the server's own GitHub login. For any other item the answer is "no such item", as for an unknown one. On a **local project** the answer, approval, rejection and retry are written on the story with no GitHub call, and the owner of the machine may approve or reject. Each action is written to the audit log with your own account.
 - **Dismiss** hides an item. It stays hidden until its situation changes (a new question, a new approval, a new failure). **Show again** at the bottom brings all dismissed items back. Watcher errors cannot be dismissed. Dismissals are kept in `your-turn.json` in the data folder.
-- **No refresh needed:** the page updates every 5 seconds. When you come back from a GitHub link, the watcher checks GitHub at once. An answer you give elsewhere shows at the next watcher check.
-- **Closed on GitHub, run still working:** such an issue is listed, with a link to the run (the Runs page while the run is only queued). Cancel the run if the work is no longer wanted, or Dismiss it to let the run finish.
-- **Closed issues:** a failed, stopped, waiting or cancelled run of an issue that is closed on GitHub is not listed, not counted, not a card on the Board and not in the failed list of "since", and nothing is sent for it. This holds for every run, whoever started it, except a run that closed its own issue (for example a hotfix that could not be merged back to `develop`). Its Runs page shows "Nothing — the issue is closed" and no Approve, Reject, Resume or Retry. If the last check of the issue on GitHub failed and nothing is stored, the item stays listed with the note "The state of the issue on GitHub could not be checked". If the issue is opened again, the run is listed again.
-- **Retired flow:** a run that a watcher started (or that has no source) and whose flow no longer exists in any flow folder cannot be resumed. Its Runs page shows "This run's flow is retired — it cannot be resumed." and no Approve, Reject, Resume or Retry; Your turn offers no Retry for it. The record says to start over (failed) or to start a new run (stopped, cancelled, interrupted). The three API routes answer 409 `The flow "<name>" is retired — this run cannot be resumed. Start the work again with a current flow.` and `scf resume|approve|reject` refuse without `--force`. A run you started by hand is never retired. If the issue is closed, the closed message comes first.
-- **Checked every minute:** the Foundry checks that the Board, the watchers, the runs and this page agree. The result is on the [Dashboard](#dashboard).
+- **No refresh needed:** the list updates every 5 seconds. When you come back from a GitHub link, the watcher checks GitHub at once. An answer you give elsewhere shows at the next watcher check.
+- **Closed on GitHub, run still working:** such an issue is listed, with a link to the run (the **Changes** list while the run is only queued). Cancel the run if the work is no longer wanted, or Dismiss it to let the run finish.
+- **Closed issues:** a failed, stopped, waiting or cancelled run of an issue that is closed on GitHub is not listed, not counted, not a card on the Board and not in the failed list of "since", and nothing is sent for it. This holds for every run, whoever started it, except a run that closed its own issue (for example a hotfix that could not be merged back to `develop`). Its change page shows "Nothing — the issue is closed" and no Approve, Reject or Retry. If the last check of the issue on GitHub failed and nothing is stored, the item stays listed with the note "The state of the issue on GitHub could not be checked". If the issue is opened again, the run is listed again.
+- **Retired flow:** a run that a watcher started (or that has no source) and whose flow no longer exists in any flow folder cannot be resumed. Its change page shows "This run's flow is retired — it cannot be resumed." and no Approve, Reject or Retry; Your turn offers no Retry for it. The record says to start over (failed) or to start a new run (stopped, cancelled, interrupted). The three API routes answer 409 `The flow "<name>" is retired — this run cannot be resumed. Start the work again with a current flow.` and `scf resume|approve|reject` refuse without `--force`. A run you started by hand is never retired. If the issue is closed, the closed message comes first.
+- **Checked every minute:** the Foundry checks that the Board, the watchers, the runs and this list agree. The result is on the [Dashboard](#dashboard).
 - **Empty:** it says "Nothing needs you." and, when it can, how many stories are being built and when the next release pull request is expected.
-- **Badge:** the number of items shows in the navigation and in the tab title, for example "(3) Foundry". When something waits, the app opens on this page.
+- **Badge:** the number of items shows on **Today** in the sidebar, on the **Menu** button of a narrow screen, and in the tab title, for example "(3) Foundry". When something waits, the app opens on Today.
 - **Notifications:** new items can also reach you as a macOS or Slack message; see **Notifications** under Settings.
 
 ### Since you last looked
 
-When you open the app after a break of 30 minutes or more, a strip under the header sums up what changed since your last visit. Each line has links.
+In the Admin view, when you open the app after a break of 30 minutes or more, a box **Since you last looked** on Today sums up what changed since your last visit. Each line has links.
 
 - **Stories done:** the run succeeded and committed the story.
 - **Merged into develop:** the run pushed the story to `develop`. This counts even if a later step failed. A story shows under one of these two lines, from its newest run.
 - **Releases to main:** a release pull request or the rolling Foundry pull request was merged. Other pull requests do not count. A successful automatic release build (see [Sources](#sources)) counts here too, as "release files uploaded" (or "release files uploaded 2 times"), with a link to its draft release.
 - **Failed:** runs that failed. A run that a newer run of the same issue replaced, or that was interrupted, is left out.
-- **Newly waiting for you:** items that started to wait for you since your last visit. The line links to **Needs you** on Home.
+- **Newly waiting for you:** items that started to wait for you since your last visit. The line links to **Needs you** on Today.
 - **Only the newest five** of each line are listed, followed by "+N more".
-- **Per browser:** the time of your last visit is kept in this browser and shared by its tabs. **Dismiss** hides the strip in all tabs. Nothing shows when nothing changed.
-- **Notes:** if GitHub could not be read, or a limit was reached (20 repositories, 200 merged pull requests, 2000 finished runs), the strip says so. If that leaves it empty, it stays hidden and tries again after 5 minutes.
+- **Per browser:** the time of your last visit is kept in this browser and shared by its tabs. **Dismiss** hides the box in all tabs. Nothing shows when nothing changed.
+- **Notes:** if GitHub could not be read, or a limit was reached (20 repositories, 200 merged pull requests, 2000 finished runs), the box says so. If that leaves it empty, it stays hidden and tries again after 5 minutes.
 - Flows that have no step named `commit` or `push_develop` never show stories as done or merged.
 
 ### The health line
 
-A line under the top bar of every page says **All good**, or the number of problems of the Foundry itself and one line for each: who has the next move, what to do, why, "Continues: …" when it continues by itself, and a link to the place to act. The sentences come from the server, so they read the same as on the other pages. It asks again on every page change and every 30 seconds while the tab is visible. A hidden tab does not refresh the line; it asks once when you return. The count in the tab title keeps updating. When the server does not answer, the line says so (once, not on every refresh).
+In the Admin view, the top bar has a **health chip**. It reads **All good**, or the number of problems of the Foundry itself ("1 problem", "3 problems"), and it turns red when there is a problem. Press it to open the health line under the top bar; press it again to close it. The line opens by itself only when the server does not answer. Problems also show on Today.
+
+The line has one entry for each problem: who has the next move, what to do, why, "Continues: …" when it continues by itself, and a link to the place to act. The sentences come from the server, so they read the same as on the other pages. It asks again on every page change and every 30 seconds while the tab is visible. A hidden tab does not refresh it; it asks once when you return. The count in the tab title keeps updating. When the server does not answer, the chip reads "No answer" and the line says so (once, not on every refresh).
 
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
 - **A usage limit:** one line per agent (Claude, Codex), not per run, with the time it continues. It shows for an hour after the run stopped; a watcher tries again every 30 minutes, so a limit that lasts keeps showing. A used-up daily budget is a problem too; the link goes to Settings.
 - **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
-- **A schedule run that is late:** a daily schedule run (the release, the daily report) that has not started an hour after its time shows as "The 17:00 release of acme/app is waiting: <why>". The reason names who has the next move: the server waits to restart, another run goes first, the owner's or the daily budget is used up (the link goes to Settings or Users), or the watcher has a problem (its link goes to Watchers). A run that is queued but not started links to its run page. A run that was never queued, because its watcher did not start it, stays until the next day's time. The line goes away when the run starts.
+- **A schedule run that is late:** a daily schedule run (the release, the daily report) that has not started an hour after its time shows as "The 17:00 release of acme/app is waiting: <why>". The reason names who has the next move: the server waits to restart, another run goes first, the owner's or the daily budget is used up (the link goes to Settings or Users), or the watcher has a problem (its link goes to Watchers). A run that is queued but not started links to its change page. A run that was never queued, because its watcher did not start it, stays until the next day's time. The line goes away when the run starts.
 - **An issue closed on GitHub while its run still works:** with a **Cancel run** button. A dialog asks "Cancel this run?": **Keep running** changes nothing, **Cancel the run** cancels that run and reloads the line. You can resume the run later, unless the issue is still closed (see below).
 - **A run of a closed issue:** Resume, Approve, Reject, **Retry** and **Retry with a hint…** look at the issue on GitHub first. If it is closed they are refused (409) with "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.", and no label or comment is posted. After a reopen they work again. The check uses the GitHub access of the run's owner (stored token or GitHub App); a run without an owner uses the server's `gh`. With a deploy key, or when access is refused, the Foundry cannot ask GitHub. When GitHub cannot be reached, only an issue stored as closed is refused; otherwise the run continues. The answer is stored only for a repository with an enabled issues watcher. A run without an issue makes no GitHub call. `scf resume`, `scf approve` and `scf reject` print the same sentence plus "Use --force to resume it anyway."; with `--force` they run. If the check cannot be made, they print one line and continue.
-- **A run that failed because of the Foundry:** the newest run per issue that no newer run replaced, from the last 7 days, at most 5. The line says "The Foundry failed, not the code" with the fix and a link to the run; the reason is on the run page.
+- **A run that failed because of the Foundry:** the newest run per issue that no newer run replaced, from the last 7 days, at most 5. The line says "The Foundry failed, not the code" with the fix and a link to the run; the reason is on the change page.
 - **Last check per repository:** each repository of an enabled watcher is listed with the time of its last successful check (the oldest, when it has several watchers), or "no successful check yet".
 
 - **Version and update:** when the Foundry runs from a git checkout, the line ends with "Version abc1234 · date". With [self-update](#self-update) on, it adds "An update is waiting (abc1234): …" with the reason, or why self-update does nothing. This is information, not a problem: it does not change "All good".
@@ -727,11 +838,11 @@ when the findings file cannot be read): counts only, never a name.
 
 ![The board of a repository](images/board.png)
 
-**Board** shows where every change is, like a parcel tracker. There is one board per repository; with more than one repository you get tabs.
+**Board** (Admin view; **Board** in the sidebar, below the divider) shows where every change is, like a parcel tracker. There is one board per repository; with more than one repository you get tabs.
 
-- **Columns:** *Your turn* (something waits for you; here it also holds a run you stopped yourself, which the list on Home does not show), *Waiting for another story*, *Queued* (also paused by a limit), *Planning*, *Coding*, *Reviewing*, *Merging* (also finished work that waits for the scheduled release), *Done* (grouped Today and This week) and *Failed*.
+- **Columns:** *Your turn* (something waits for you; here it also holds a run you stopped yourself, which Your turn on Today does not show), *Waiting for another story*, *Queued* (also paused by a limit), *Planning*, *Coding*, *Reviewing*, *Merging* (also finished work that waits for the scheduled release), *Done* (grouped Today and This week) and *Failed*.
 - **Which stories show:** every issue a watcher tracks, at any age. Other runs on an issue show for 7 days after they end. Done shows the last 7 days. Evaluation runs and runs without an issue never show.
-- **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"). A bug story has a "goes first" mark. Click the card to open its run page. A story that has no run yet is not a link; use the issue link on it.
+- **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"). A bug story has a "goes first" mark. Click the card to open its change page. A story that has no run yet is not a link; use the issue link on it.
 - **Owner (admins):** a card that has a run shows the owner's name, `deleted user` when the account is gone, and nothing for a card without a run or owner. **All owners** above the board hides the cards of other owners in the page; it makes no new call. Users see no owner name.
 - **Highlight:** "What is in the way of #89?" marks the whole chain of stories that hold it back and dims the others. The line above the board lists the chain, also stories that have no card. **Show all** clears it.
 - **Narrow screens (below 768 px):** the board shows one column at a time. A picker named **Column** above it lists every column with its card count; the first column with cards shows by default. Your choice stays when the board refreshes, and if that column goes away the first column with cards shows. The owner filter and the highlight work as before; while a chain is highlighted, the picker marks the columns that hold cards of the chain. From 768 px up the board is unchanged.
@@ -740,7 +851,9 @@ when the findings file cannot be read): counts only, never a name.
 
 ### Epics
 
-**Epics** (`#/epics`, for admins and users) shows how far each epic of one repository is and when it will be finished. It follows the repository context: with one repository it shows that one; with several, choose one in the **Repository** select. The address is `#/epics?repo=<name>`, and you can save a view.
+![The Epics page: progress and expected finish of each epic](images/releases.png)
+
+**Releases** in the sidebar opens the **Epics** page (`#/epics`, for admins and users). It shows how far each epic of one repository is and when it will be finished. It follows the repository context: with one repository it shows that one; with several, choose one in the **Repository** select. The address is `#/epics?repo=<name>`, and you can save a view.
 
 - **A row** has the epic's name (a link to the epic's page; an issue epic also has an **On GitHub** link), a progress bar, how the epic grew, the expected finish and what holds it up. The last row, **No epic**, is for stories that belong to no epic and has no page.
 - **Progress.** The bar shows Done, Working, Waiting, Your turn and Failed. The same numbers are written next to it ("3 of 10 done; Working 2, Waiting 4"), so you never need the colours.
@@ -752,6 +865,8 @@ when the findings file cannot be read): counts only, never a name.
 - **Small screens.** Below 768 px every row is a card.
 
 #### The epic page
+
+![One epic: expected finish, how the forecast moved and the stories in build order](images/epic.png)
 
 Click an epic's name to open its page (`#/epics/<id>?repo=<name>`). The user display has the same page at `/user/#/epics/<id>`. The breadcrumb and **Epics** link back keep the repository. The page is for owners of the repository and for admins; anyone else sees "This epic is not there, or you cannot see it." It has these parts, top to bottom:
 
@@ -940,9 +1055,9 @@ The **Move to GitHub** dialog under My repositories (see "Local (no GitHub)" the
 
 ### Work page (redesign, off by default)
 
-The redesigned pages are still being built. An admin turns them on in **Settings → Redesign** with the box "Show the redesigned pages (still being built)". Reload the page after you change it. With the box off, **Board** is exactly as described above.
+The redesigned pages are still being built. An admin turns them on in **Administration → Settings**, section **Redesign**, with the box "Show the redesigned pages (still being built)". Reload the page after you change it. With the box off, **Board** is exactly as described above.
 
-With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows the **Work** page: the stories as a board or a list.
+With it on, **Board** in the sidebar (`#/board`, and `#/board/<repo>` for one repository) shows the **Work** page: the stories as a board or a list.
 
 - **Filter:** by repository, owner, status (any of the nine columns), who has the next move, and a text box that matches the title and `#issue`. **N of M stories** shows when a filter hides some. If nothing matches you see "No story matches the filters." and **Clear filters**.
 - **Group and order:** in the **Display** menu. Group by status (default), repository, owner, next move or none. Order by issue number (default), age (oldest first) or title. Done stays newest first when grouped by status and ordered by issue number. Each group heading shows a count.
@@ -960,17 +1075,17 @@ With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows
 - **Updates:** like the board, every 5 seconds, and a check of the watcher when you come back from a GitHub link. If loading fails you see an error and **Retry**; data already shown stays.
 ### Filters in the address
 
-You can filter **Runs** and the **Board** by repository and, as an admin, by owner. The filter is
+You can filter the **Changes** list and the **Board** by repository and, as an admin, by owner. The filter is
 part of the address, so you can share it, and Back and Forward restore it:
 
-- `#/runs?repo=owner%2Fname&owner=<account>` (admin Runs). `repo` and `owner` are the only keys;
+- `#/runs?repo=owner%2Fname&owner=<account>` (**Runs**, the Changes list of the Admin view). `repo` and `owner` are the only keys;
   anything else is ignored. A repository must look like `owner/name`.
 - The Board keeps `#/board/<repository>` and only adds `?owner=<account>`. The classic Board
   matches the repository name without regard to case. For `#/board/<name>` with a name that is not
   in your list (for example an old link) it shows "This repository is not in your list…", all
   repository buttons and a button to `#/board?repo=all`; it no longer opens the first repository.
   Without a name in the address it still shows the first repository.
-- On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
+- On the user display (Advanced view), **My runs** accepts the address too and uses `repo`. `owner` is ignored
   there: a user only ever sees their own runs.
 
 - `repo=all` (for example `#/runs?repo=all` or `#/runs?repo=all&owner=<account>`) means "every
@@ -991,15 +1106,15 @@ scope ("All repositories" or "Repository: owner/name"), even with no chips. One 
 context, updates the switcher and hides the button. It is not shown for the same repository, a
 repository that is not in your list, without a context, or on pages that do not follow the context.
 
-The browser filters what the server already sent; no call gets a new parameter. The Runs list
+The browser filters what the server already sent; no call gets a new parameter. The Changes list
 holds the newest 200 runs, so with a repository filter on a full list you see "Only the newest
 200 runs are searched." Older runs of that repository are not shown. The 30-second refresh keeps
 the filter.
 
-**Refinement and repositories.** The same `?repo=owner%2Fname` filter and filter bar work on
-`#/refinement` (open and dropped sessions), `#/repos` (My repositories) and, as an admin,
-`#/all-repos` (the matching records of all owners). Remove and **Clear filters** work as on Runs.
-On Refinement, **New refinement session** preselects the filtered repository when it is in your
+**Ideas and repositories.** The same `?repo=owner%2Fname` filter and filter bar work on
+`#/refinement` (**Ideas**: open and dropped sessions), `#/repos` (My repositories) and, as an admin,
+`#/all-repos` (the matching records of all owners). Remove and **Clear filters** work as on Changes.
+On Ideas, **New refinement session** preselects the filtered repository when it is in your
 list. A session page `#/refinement/<id>` is not filtered and ignores the query. If the
 repository is not in the answer, the page says "This repository is not in your list. It may have
 been removed, or you may not have access." with **Clear filters**; the text is the same whether
@@ -1088,8 +1203,8 @@ so that you do not filter each page yourself.
 - **The panel** lists **All repositories** first, then **Favourites** (use the star), **Recent**
   and the rest. As an admin the rest is grouped by owner. From eight repositories the panel has a
   search box. Escape or a choice closes it.
-- **Pages that follow it:** Runs, Refinement, Board, My repositories and, as an admin, All
-  repositories. With two or more repositories they open on your current repository
+- **Pages that follow it:** Changes, Ideas, Releases (the Epics page), Board, My repositories and,
+  as an admin, All repositories. With two or more repositories they open on your current repository
   (`?repo=<name>`, `#/board/<name>`, or `?repo=all` for All repositories). If you choose another
   repository on one of these pages, the address changes and the page draws again; an `owner`
   filter stays. On other pages only the label changes.
@@ -1104,7 +1219,8 @@ so that you do not filter each page yourself.
 ### Saved views
 
 You can save the filters of a list or board under a name and come back with one click. This works
-on Runs, Board (also the redesigned Work page), Refinement and My runs.
+on Changes (**Runs** and **My runs**), Board (also the redesigned Work page), Ideas and Releases (the
+Epics page).
 
 - **Save view** is in the filter bar. Type a name of 1–40 characters (spaces at the ends are
   removed). A name can be used once per page. You can keep up to 20 views per account. A view with
@@ -1128,11 +1244,11 @@ on Runs, Board (also the redesigned Work page), Refinement and My runs.
 
 ### The runs list
 
-A run of the architect has the mark **refinement**; click it to open its session.
+To see every change, open **Changes** in the sidebar (`#/runs`). The page is titled **Runs** in the Admin view and **My runs** in the Advanced view; it is the same list, and a user sees only their own changes. (The Simple view has no such list: **Changes** opens Today there.)
 
-Each row is titled with the change's title (or its task, or the flow name when there is no title), and shows the change's phase (Understand, Plan, Build, Check or Deliver) and a status with an icon and a word. Rows have no "?" button and no step column; open a run to see its steps. Below 768 px the rows become cards, with each cell labelled.
+![The Changes list, grouped into Needs you, Running, Queued, Failed and Completed](images/runs.png)
 
-![Runs](images/runs.png)
+Each row is titled with the change's title (or its task, or the flow name when there is no title), and shows the change's phase (Understand, Plan, Build, Check or Deliver) and a status with an icon and a word. Click a row to open the change's page. Rows have no "?" button and no step column; open a change to see its steps. A run of the architect has the mark **refinement**; click it to open its session on Ideas. Below 768 px the rows become cards, with each cell labelled.
 
 Runs are grouped in sections, in this order, each with a count: **Needs you**, **Running**,
 **Queued**, **Failed** and **Completed**. An empty section is left out, and a run is in exactly one
@@ -1145,9 +1261,11 @@ sections are open; **Completed** is quieter and collapsed when it has more than 
 runs), the first line of the task, the repository and issue, and when it was updated. At most *N*
 runs execute at the same time (Settings → Runs at the same time); the rest queue. Each queued row
 shows its place (`1 of 4`), a link to what it waits for and, for a bug story, a "goes first" mark.
-An admin sees the running count (`2/3 running`) in the **Queued** heading.
+An admin sees the running count (`2/3 running`) in the **Queued** heading. **Remove** on a queued
+row takes it out of the queue; it asks first.
 
-**Search and filters (admin).** A bar above the list helps you find a run:
+**Search and filters.** A bar above the list helps you find a run. It is on both **Runs** and
+**My runs**; only admins have the **Owner** select.
 
 - **Search runs** takes a run id, an issue number like `#7`, or text (200 characters at most). The
   list updates 300 ms after you stop typing. Your text and cursor stay in the box while the list
@@ -1170,16 +1288,17 @@ shown and a message tells you why.
 The address keeps your choice, so you can share the link:
 `#/runs?q=…&repo=…&flow=…&status=…&time=…&owner=…&needs=1&view=…`. Unknown values are ignored.
 The Archived view is `view=archived`. A saved view still remembers the repository and the owner only.
+The four counters on Today open this list with their own filter.
 
 The list refreshes every 30 seconds without jumping: your keyboard focus, scroll position, open
 sections and the chosen owner stay as they are, and only the rows that changed are redrawn.
 
 **Density.** The bar has a **Density** group: **Comfortable** (cards, the default) and **Compact**
-(one table per section, one row per run). The compact table has the columns Status, Run, Next,
-Task, Repository and Updated; an admin also sees Owner, Steps and Cost. Each row has the same
+(one table per section, one row per run). The compact table has the columns Status, Change, Phase,
+Next, Task, Repository and Updated; an admin also sees Owner and Cost. Each row has the same
 status mark, links, buttons and checkbox as the card. Switching keeps open sections, **Show all**,
 the selection and the focus. The choice is remembered in this browser (`scf-runs-density` in local
-storage); a browser that does not allow storage simply forgets it. The switch is on **My runs** too.
+storage); a browser that does not allow storage simply forgets it.
 
 **Archive several runs.** Under **Show**, **Archived** lists the archived runs in one section,
 "Archived (n)", newest first. Rows in Failed, Completed and Archived have a checkbox labelled
@@ -1198,18 +1317,18 @@ refused: …" with the reasons. The list then reloads.
 The selection stays through the 30-second refresh. A run that leaves Failed, Completed or Archived
 is dropped from it, and changing to or from the Archived view clears it.
 
-An admin sees every run, with the owner, the steps and the cost in each row, and can pick one
-account in the **Owner** filter next to the title (the list shows "All owners" and each account
+An admin sees every run, with the owner and the cost in each row, and can pick one
+account in the **Owner** filter (the list shows "All owners" and each account
 with its number of runs). The owner shows the account's name, `deleted user` when the account is
 gone, and nothing for a run without an owner. Queued rows show the owner's name the same way.
 A user sees only their own runs and their own queued runs; runs of others in front of them show
-as "n runs ahead of you". The same sections show on **My runs**, with the same selection and bar
-for archiving (a user can archive their own runs only).
+as "n runs ahead of you". **My runs** has the same sections, with the same selection and bar
+for archiving (a user can archive their own runs only), and a **Start work** button next to the title.
 
-The Status column shows the plain status name (see "Words the Foundry uses"). Press the **?**
-next to it to read what it means and what happens next, and press it again to close it. It
-works with a mouse, the keyboard (Tab, then Enter or Space) and touch. Pressing it does not
-open the run.
+The status in a row is the plain status name (see "Words the Foundry uses"). To read what it means
+and what happens next, open the change: the status on its page has a **?**. Press it to show the two
+sentences, and press it again to close them. It works with a mouse, the keyboard (Tab, then Enter or
+Space) and touch.
 
 Every status pill also shows a small icon before its words (for example a check for done, a clock for waiting, a cross for failed), so you can tell what it means without the colour. The words are unchanged.
 
@@ -1246,73 +1365,117 @@ The Search box in the top bar (see "Search" under Keyboard) uses it.
 
 ### A run
 
-Open a run to follow it live. At the top, the **What happens next** block says who has the next
-move, what to do, why, a link to the place to do it, and when it continues by itself (if
-known). It updates live. While the run is not finished it also shows its progress, the estimate
-and the "Taking longer than usual" hint (see "How long will it take?" above). The raw reason of a
-waiting run (the approval message) is the **Details** row below. An admin also sees an **Owner**
-row: the name of the account that started the run, or `deleted user` (no row for a run without an
-owner).
+To follow a change live, open it: click its card on **Today**, its row on **Changes**, its card on the
+Board, or a link in Your turn. The address is `#/runs/<run id>`. **Back to Runs** (Admin view) or
+**Back to My runs** (Advanced view) at the top returns to the list.
 
-A failed run shows a **failure card** instead: who has the next move, the kind of problem, what
-happened, why, what the Foundry already tried, what to do first and your four options (Retry,
-Retry with a hint, Change the plan, Close). The page opens on **Details** (its **Steps** section), and **Show the failed
-step** opens the step that explains the failure. The raw reason is one click away under **Raw
-details** in the card; it is never the first thing shown. A user sees the card without raw
-details.
+The page has a header and three tabs.
 
-The status next to the flow name has the same **?**. The **Current step** (while the run
-works) or **Resumes at step** (when it is stopped) row names the step and says what it does:
-its description, or the kind of step when the flow gives none.
+**The header**, top to bottom:
 
-![Live log](images/run-log.png)
+- **Title and status.** The change's title (the issue title, else the first line of the task, else
+  "Issue #N"), and its status pill with a **?** that shows what the status means and what happens
+  next. A run of the architect also has a **refinement** mark that opens its session on Ideas.
+- **The phase strip.** **Understand**, **Plan**, **Build**, **Check** and **Deliver**, with the
+  current phase marked.
+- **Now.** One sentence on the state ("Working on it.", "Waiting for a person to approve or
+  reject.", "It stopped and has questions for you.", and so on; a running change says what its
+  phase does). Under it, the **What happens next** block says who has the next move, what to do,
+  why, a link to the place to do it, and when it continues by itself ("Continues: …", if known).
+  It updates live. A queued change says how many runs are ahead of it.
+- **Checks to try**, when the change waits for your check (see [Checks to try](#checks-to-try)).
+- **The main buttons.** **Approve** and **Reject** for a change that waits for a decision;
+  **Retry from the failing step** for a failed, stopped or cancelled change; **Stop this change…**
+  for one that is running, waiting or stopped. The main button is filled. The Admin view also has
+  **Retry from step…** and, for a change that stopped at the issue's spending limit, **Raise the
+  change's limit**.
+- **Facts.** **Repository** (with the issue or pull request), **Branch**, **Started**, and
+  **Running for** or **Ran for**, with "Step N of M" and the estimate while the change is not
+  finished (see "How long will it take?" above). A resumed change shows "resumed N×", and a story
+  that ran out of time shows its automatic retries. An admin also sees **Owner** (the name of the
+  account that started the run, or `deleted user`; no row for a run without an owner) and **Cost**.
+- **Technical details**, closed by default: **Run ID**, **Flow**, **Flow version** (a published
+  flow), **Steps** ("3 of 5 steps done, 1 failed"), **Current step** (while the run works) or
+  **Resumes at step** (when it is stopped), **Workspace** (admins) and **Reason**, the raw reason of
+  a waiting or stopped run (the approval message). The step row names the step and says what it
+  does: its description, or the kind of step when the flow gives none.
 
-- **Live log** — each step as it starts and ends, with the agent's tool calls, duration, cost or
-  tokens. A user sees the steps and the tool names only.
-- **Steps & transcripts** — a timeline of every step with its outcome. Open an agent step to read the whole
-  conversation: what it said, each command it ran and the output, and the final result. The
-  label next to the step name shows which agent and model ran it (here Claude on Haiku wrote the
-  code, and Codex reviewed it).
+A failed run shows a **failure card** instead of the What happens next block: who has the next
+move, the kind of problem, what happened, why, what the Foundry already tried, what to do first
+and your four options (Retry, Retry with a hint, Change the plan, Close). The page opens on
+**Details** (its **Steps** section) once, and **Show the failed step** opens the step that
+explains the failure. The raw reason is one click away under **Raw details** in the card; it is
+never the first thing shown. A user sees the card without raw details.
 
-  ![Steps and transcripts](images/run-steps.png)
+**The tabs.** The page opens on **Progress**. Your choice of tab is never changed by an update;
+only a failed run opens on Details once, until you pick a tab yourself. Use the arrow keys, Home
+and End to move between the tabs.
 
-  A user sees **Steps** only: each step with its result and a plain sentence for a failure, but
-  no output, no transcripts and no cost.
+- **Progress** — the acceptance criteria (each marked done or not done yet), the **Your request**
+  box (see [Context of a run](#context-of-a-run)), the task, and the questions of a run that
+  stopped with questions. An admin also sees **Decided by the Foundry**: the questions the
+  Foundry settled itself, round by round. On **My runs**, the answer form is here too (see
+  "Answer a run's questions" below).
+- **What changed** — the complete diff the run made, including uncommitted work. It loads when you
+  open the tab, when you press **Refresh**, and again when the run ends.
 
-- **Evidence** — the **Evidence record** of the run: whether its record verifies (**Verified**,
+  ![What changed: the diff of a change, one file open](images/run-diff.png)
+
+- **Details** — four sections you open and close: **Steps** (open), **Evidence**, **Skills**
+  (only when the run used skills) and **Log**.
+
+**Steps** is a timeline of every step with its outcome. Open an agent step to read the whole
+conversation: what it said, each command it ran and the output, and the final result. The
+label next to the step name shows which agent and model ran it (here Claude on Haiku wrote the
+code, and Codex reviewed it).
+
+![Details › Steps: the timeline of a change, with an agent step open](images/run-steps.png)
+
+A user sees the steps only: each step with its result and a plain sentence for a failure, but
+no output, no transcripts and no cost.
+
+**Log** is the live log: each step as it starts and ends, with the agent's tool calls, duration,
+cost or tokens. A user sees the steps and the tool names only.
+
+![Details › Log: the live log of a running change](images/run-log.png)
+
+**Evidence** holds:
+
+- the **Evidence record** of the run: whether its record verifies (**Verified**,
   **Not verified**, **Not finished** or **No record**), the result, the flow and its version, the
   commits, the approvals, the tests, the pull request and the files. A failed check names the
   event or file, says what is wrong and what to do next. **Check again** reloads the record, and
   **Export evidence** downloads `evidence-<run-id>.json` (the same answer as the API, see
   "Evidence of a run"). A user sees file counts and no paths; models and paths are for administrators.
   A user sees the **Policy decisions** of the run (see "Policy packs in observe mode") without the rule
-  and the pack's hash, which are for administrators. The export never holds the content of a transcript or a log.
+  and the pack's hash, which are for administrators. The export never holds the content of a transcript or a log;
+- **Context sources** (see [Context of a run](#context-of-a-run));
+- a short list of what the run already has: the questions, the answers, the result of each shell
+  or approval step, the link of the next step and what was already tried. With nothing yet it
+  says "No evidence recorded yet."
 
-- **Changes** — the complete diff the run made, including uncommitted work.
+**Long output.** A very long log, diff or transcript does not slow the page. The live log keeps the last 2,000
+lines and says "N earlier lines are not shown" above them; it follows the end only while you
+are at the end. **What changed** lists each file closed (a diff of one file is open) and builds the
+lines when you open it; a file over 1,500 lines shows the first 1,500 and a **Show all**
+button. A transcript shows the first 200 events with **Show 200 more**, and a tool result over
+20,000 characters is cut with **Show all**.
 
-  A very long log, diff or transcript does not slow the page. The live log keeps the last 2,000
-  lines and says "N earlier lines are not shown" above them; it follows the end only while you
-  are at the end. **Changes** lists each file closed (a diff of one file is open) and builds the
-  lines when you open it; a file over 1,500 lines shows the first 1,500 and a **Show all**
-  button. A transcript shows the first 200 events with **Show 200 more**, and a tool result over
-  20,000 characters is cut with **Show all**.
-
-  ![Changes](images/run-diff.png)
-
-- **Issue files** — when a run pulls a GitHub issue, the Foundry saves the issue as `issue.json`
-  (its body, number, title and last update) and its comments as `issue-comments.jsonl` (one comment
-  per line) in the run folder, and `issue-foundry-comments.json`, the ids of the comments the Foundry
-  wrote itself. A step can read these files without calling GitHub again. If a
-  fetch fails, that file is not written and the run goes on without it.
+**Issue files.** When a run pulls a GitHub issue, the Foundry saves the issue as `issue.json`
+(its body, number, title and last update) and its comments as `issue-comments.jsonl` (one comment
+per line) in the run folder, and `issue-foundry-comments.json`, the ids of the comments the Foundry
+wrote itself. A step can read these files without calling GitHub again. If a
+fetch fails, that file is not written and the run goes on without it.
 
 ### Approvals
 
-An **approval** step pauses the run until a person decides. Approve or reject in the UI, with
+An **approval** step pauses the run until a person decides. Approve or reject on the change's page
+(the **Approve** and **Reject** buttons in its header), in Your turn on Today for a watched issue, with
 `scf approve <run-id>` / `scf reject <run-id>`, or — for GitHub flows — by commenting
 `/approve` or `/reject` on the issue (only people with write access count). A waiting run shows
 a **What happens next** block with **You** as who and the approval message as the reason.
 
-![Waiting for approval](images/run-waiting.png)
+![A change waiting for a decision, with Approve and Reject in its header](images/run-waiting.png)
 
 #### Checks to try
 
@@ -1388,13 +1551,13 @@ content, or ask for approval. It never gives access that a rule denied.
   The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
 - **The `tools:` line.** Each try of an agent step writes one line, for example `· tools: generated profile 3f2a9c1b8d0e on Codex: partial — Codex cannot hold … (recorded only)`. The twelve characters are the start of the profile's hash; the line never shows its id or rules. `enforced` means the agent holds the step's tool profile in full. `partial` means it cannot hold all of it: the line names what it cannot hold, such as Git and GitHub commands run through the shell, and for Codex the paths and tools it cannot limit one by one. Today's flows get `partial` where it applies, and the line only records it: nothing changes. `refused` means the step does not start (its line starts with `!`). That happens only with a tool profile the run was started with, when the step's settings allow more than the profile, or the agent cannot hold it. A refused step is not retried and no other agent takes it.
 - **Retry from step…** re-runs from any earlier step.
-- **Stop this change…** (on the run page; it asks first) stops a running run, or a run that waits for approval or is stopped; you can resume it later. A stopped shell step also stops every process it started, background ones included (its whole process group). A shell step that times out is stopped the same way. Processes that left the group (for example a Gradle daemon) are stopped too, if the step saw them while it ran; a process it never saw is not stopped.
+- **Stop this change…** (on the change's page; it asks first: "Stop this change?", with **Stop the change** and **Keep it running**) stops a running run, or a run that waits for approval or is stopped; you can resume it later. A stopped shell step also stops every process it started, background ones included (its whole process group). A shell step that times out is stopped the same way. Processes that left the group (for example a Gradle daemon) are stopped too, if the step saw them while it ran; a process it never saw is not stopped.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
   A stopped run (for example one that waits for your answers) cancelled this way is saved as "cancelled — nothing to do": nothing continues it and it leaves every list of things that wait. `scf runs cancel <id>` and `POST /api/runs/:id/cancel` do the same. A refinement session is not cancelled this way.
-- **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the list of runs,
-  so the list shows current work. Nothing is deleted: `GET /api/runs?archived=1` lists the archived
-  runs, and the run, its log and its changes open as before. **Unarchive** puts it back. On the runs
-  list you can archive or take out several at once (see [The runs list](#the-runs-list)). A run that
+- **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the **Changes** list,
+  so the list shows current work. You archive from the list: tick the runs and press **Archive N runs**. Nothing is deleted: `GET /api/runs?archived=1` lists the archived
+  runs, and the run, its log and its changes open as before. **Take out of the archive** (under **Show → Archived**) puts it back.
+  You can archive or take out several at once (see [The runs list](#the-runs-list)). A run that
   is queued, running or waiting cannot be archived (409). You can archive your own runs; an admin
   can archive any run. The mark is shared: it hides the run from everyone's default list. Resuming,
   retrying, approving or answering an archived run removes the mark. Board, Your turn, statistics
@@ -1435,8 +1598,8 @@ It is never in `queue.json`, the audit log or a server log line.
   as `{ at, text }` (no `by`, folders hidden) and `canAnswer: true` exactly when the call would be
   accepted now. `canAnswer` is absent while a resume is queued. An admin sees the raw `answers`.
 - The audit log gets `run-answer` for an accepted answer only.
-- **On the run page of the user display.** Under the questions of a run with `canAnswer`, the page
-  shows **Your answer**, a text box and **Send answer**. Ctrl/⌘+Enter sends too. An empty box shows
+- **On the change's page in the Advanced view** (**My runs**). On the **Progress** tab, under the
+  questions of a run with `canAnswer`, the page shows **Your answer**, a text box and **Send answer**. Ctrl/⌘+Enter sends too. An empty box shows
   "Write your answer first." and sends nothing. The text is sent trimmed; the button is off while
   the call is out. On success the box is emptied, the form goes away, a toast says "Answer sent —
   continuing" and the page shows the run as queued or running. A refusal shows the server's
@@ -1445,13 +1608,15 @@ It is never in `queue.json`, the audit log or a server log line.
   questions again, the form comes back by itself. The answers given are listed under **Answers
   given**, oldest first, as plain text — also after a cancelled resume, when **Retry** continues
   with them.
-- **What happens next.** For a user's run that can be answered on the run page, the sentence reads
+  ![Answering a run's questions on its Progress tab](images/user-questions.png)
+
+- **What happens next.** For a user's run that can be answered on its page, the sentence reads
   "The planner has questions — answer the questions on the run page and it continues." and links
   to the run page. A run a watcher follows, a run that cannot read an answer, and every record an
   admin reads still say "… on the issue" (the admin pages have no box). The comment on GitHub does
   not change.
 
-**The failure summary.** A failed run (the run page and the comment on the issue) says what
+**The failure summary.** A failed run (the change's page and the comment on the issue) says what
 failed, why, what was tried and the kind of problem:
 
 - **A problem in the code** — the tests keep failing, a review is rejected by the checks. Example:
@@ -1480,13 +1645,13 @@ If the model says the cause is the environment, the failure counts as a Foundry 
 A usage limit, the daily budget, a sign-out and an unreachable AI service do not fail a run: they
 pause it, and it continues by itself (a sign-out needs you to sign in again first).
 
-**When the Foundry itself failed.** Some failures are not a bug in the code. The run page, the
-Runs list, the watcher card, the Dashboard and the notification then say "The Foundry failed, not
+**When the Foundry itself failed.** Some failures are not a bug in the code. The change's page, the
+**Changes** list, the watcher card, the Dashboard and the notification then say "The Foundry failed, not
 the code", what went wrong and the fix. The causes and fixes:
 
 - A command the agent was not allowed to run: allow it in the flow (the step's allowed tools or
   permission mode), then resume. The sentence shows only the tool and program, e.g. `Bash: curl`;
-  the run page's log has the whole command.
+  the log of the change's page (**Details › Log**) has the whole command.
 - A push to a protected branch was blocked: change **Protected branches** in Settings or the
   flow's branch, then resume.
 - A hotfix: GitHub refuses the push to `main` ("only accepts pull requests"): allow direct pushes
@@ -1521,7 +1686,9 @@ sentence adds a hint to allow it in the flow if it was needed.
 
 ### Small screens
 
-On a small screen some pages show their content but not the controls that change things. A note above the page says why: "Editing needs a wider screen (768 px or more)." Use a wider screen to make changes.
+Below 768 px the sidebar is hidden. Open it with the **Menu** button (☰) at the top left; it opens as a drawer over the page, and Tab stays inside it. Escape, **Close menu**, a tap next to it or a choice of page closes it. The Menu button shows how many items wait for you.
+
+On a small screen some pages show their content but not the controls that change things. A note above the page says why: "Editing needs a wider screen (768 px or more)." Use a wider screen to make changes. This applies to every page under **Administration** except All repositories, Models, Problems and Maintenance.
 
 | Page | Below 768 px | 768–1023 px |
 |---|---|---|
@@ -1547,7 +1714,7 @@ Resizing the window across 768 px redraws the page only when its level changes. 
 
 ### Accessibility
 
-The Foundry aims to meet WCAG 2.2 AA. Open **Account → Accessibility** to read the statement: what is checked, the known limits and how to report a problem. The statement is also in [ACCESSIBILITY.md](ACCESSIBILITY.md), and [ACCESSIBILITY_SCRIPTS.md](ACCESSIBILITY_SCRIPTS.md) has keyboard and screen-reader scripts for the owner. Nothing was run in a browser or with a screen reader yet.
+The Foundry aims to meet WCAG 2.2 AA. Open the account menu (your name at the top right) and choose **Accessibility** to read the statement: what is checked, the known limits and how to report a problem. The statement is also in [ACCESSIBILITY.md](ACCESSIBILITY.md), and [ACCESSIBILITY_SCRIPTS.md](ACCESSIBILITY_SCRIPTS.md) has keyboard and screen-reader scripts for the owner. Nothing was run in a browser or with a screen reader yet.
 
 ### Words the Foundry uses
 
@@ -1769,7 +1936,7 @@ constraints and acceptance criteria with a citation at the end of each item, suc
 can be cited. The plan also has a `## Missing context` section that lists the entries the plan
 needed but did not get, with the reason, or says "none". A READY plan in which some of these three
 sections cite no entry gets a policy **warning** (`context.uncited`): it shows in the run log and in
-**Policy decisions** of the Evidence tab. The plan step does not fail. A run with no bundle gets no
+**Policy decisions** in **Details › Evidence** of the change's page. The plan step does not fail. A run with no bundle gets no
 citations and no warning.
 
 **Asked and assumed.** The plan lists its points in two kinds of line. `ASKED:` is a point taken from the issue, its comments or the task. `ASSUMED:` is a choice the planner made itself that the issue does not settle, such as a file location, a default value or who may see something. Read the `ASSUMED:` lines first: a wrong guess is easier to catch before the work is built. The run record keeps them as `planPoints`, a list of `{ kind: "asked" | "assumed", text }`. A plan without these lines, and an older run, has no list.
@@ -1815,7 +1982,8 @@ citations and no warning.
   bundle's hash, its limits, its source and byte counts and the number left out per reason, or the failure
   code. Policy packs are asked at the boundary `context.select` after a bundle is written. The answer is only
   recorded; the run goes on either way.
-- **Context sources on the run page.** The Evidence tab of a run has a **Context sources** section. It
+- **Context sources on the change's page.** The **Evidence** section of the **Details** tab has a
+  **Context sources** section. It
   lists the sources the run was given, with the reason each was picked, the time it was read and whether it
   is **Fresh** or **Stale**. Below them it lists the sources that were left out, each with its status and
   **What to do**. A run from before the bundle existed says **This run has no context bundle.**
@@ -2094,7 +2262,7 @@ policy:
   `output-limit-exceeded`, `timeout-exceeded`, `budget-step-exceeded`, `budget-run-exceeded`,
   `budget-daily-exceeded`, `path-forbidden` and `context-uncited`. Any other id is ignored.
 - **Before you add an id.** Keep the rule in observe mode first and read its decisions: the **Policy
-  decisions** of a run on the Evidence tab, or the `policy.decided` events in `evidence.jsonl`. Compare each
+  decisions** of a run in **Details › Evidence**, or the `policy.decided` events in `evidence.jsonl`. Compare each
   `deny` with what really happened in that run. A deny on a run that succeeded would have stopped it.
 - **What each boundary does.** An enforced denial:
 
@@ -2149,7 +2317,7 @@ when something it states has changed.
   request and no new contract. CI (see below) reports a missing or stale contract as a stop.
 - **Logs.** A written contract logs `delivery: contract <n> written (signed)` or `(unsigned)`.
 
-The settings for the contract are in the **Delivery** card of Settings, or in `config.yaml`:
+The settings for the contract are in the **Delivery** card of **Administration → Settings**, or in `config.yaml`:
 
 ```yaml
 delivery:
@@ -2519,7 +2687,7 @@ Every field is optional. A record accepts only these fields; an unknown field ma
 
 ### Components table (admins)
 
-Settings has a **Components** card, and `GET /api/admin/components` (admin only) gives the same data. Each row is one
+**Administration → Settings** has a **Components** card, and `GET /api/admin/components` (admin only) gives the same data. Each row is one
 component with its kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status.
 The status is shown as text: **Retired**, **Not approved**, **Review due** or **OK**, the same rules as `scf components`.
 
@@ -2615,7 +2783,7 @@ A missing piece of data fails its check with a plain reason, such as "no eval re
 ended in the last 30 days; at least 10 are needed". A check never passes on missing data. A repository with no
 GitHub name shows no runs, so every check fails with a reason.
 
-The numbers are in `config.yaml` under `governance.promotion`, and the Settings page has the card "Promotion
+The numbers are in `config.yaml` under `governance.promotion`, and **Administration → Settings** has the card "Promotion
 gate" for them:
 
 - `min_runs` (default `10`): the fewest runs in the window;
@@ -2660,6 +2828,8 @@ The reason follows the break-glass rules: required, at most 200 characters, no c
 credential-like text. Requests waiting for approval are kept in `autonomy.json` next to the levels.
 
 ### The Autonomy page
+
+![The Autonomy page: the level and gate of each repository and flow](images/autonomy.png)
 
 Admins find the levels on the **Autonomy** page, under **Administration**, in the section **People and access**
 (`#/autonomy`). It lists each repository and each flow, with:
@@ -2717,7 +2887,7 @@ report's file name without `.json`, such as `timeout-2026-10-30T07-21-04-123Z`.
 
 An admin can do the same in the web interface:
 
-- **Settings, "Promoted versions".** Lists the published flows and the other components with their state:
+- **Administration → Settings, "Promoted versions".** Lists the published flows and the other components with their state:
   promoted (with the report id), ready to promote, or blocked (with each blocking suite and what to do).
   **Promote** appears for a component that is ready to promote. A refused promotion shows the blocking list and writes nothing.
 - **Flow editor.** A published flow shows **Not promoted: <suite> (<reason>). <remediation>** until it is promoted,
@@ -2854,9 +3024,12 @@ telemetry:
 
 ## 4. Write your own flows
 
+Flows are an admin task. To open them, switch to the **Admin** view and choose **Flows** in the
+sidebar, below the divider. The row at the top of the page has two tabs: **Flows** and **Library**.
+
 ### The editor
 
-![Flow editor](images/flows.png)
+![The flow editor: the structure list and the inspector of the selected step](images/flows.png)
 
 The header always shows which flow you edit and its scope (*builtin*, *repo*, *global* or
 *not saved yet*), a text state (**Saved** or **Unsaved changes**), whether the flow is valid
@@ -2867,17 +3040,25 @@ Edit a flow **visually** or as **YAML** (switch at the top). There is one main b
 when the flow is new or has changes, otherwise **Test run**. **Ask Claude**, **Save to** and
 **Delete flow** are in the **More** menu. Ctrl/Cmd+S saves, and leaving with unsaved changes asks.
 
+**Test run** checks the flow, then opens a dialog: describe the task, pick the repository and press
+**Start run**. It runs your unsaved edits too, in a fresh git worktree and branch, so your checkout
+is not touched. When the run starts, its page opens.
+
+![The Test run dialog of a flow](images/run-dialog.png)
+
 The **Overview** button opens the graph of how steps connect: grey = next, green = on success,
 red dashed = on failure, purple = route. Click a node to select the step. The choice is
 remembered; at 1100 px wide and below the overview starts closed and opens above the form.
-The list on the left has a search box that filters by name and description.
+The flow list has a search box that filters by name and description.
 
 In the visual editor, the **structure list** shows **Flow settings** first, then one row per step:
 number, id, type icon, a one-line summary, and marks for "only via jumps" and "has a problem".
 Select a row to edit it. The **inspector** next to the list shows only the selected item, either the
 flow settings or one step. Add step (Agent, Shell, more types, **+ From library**), move up/down,
 duplicate, delete, **Save as block** and rename work from the list and from the inspector header.
-At 1100 px wide and below, the list is above the inspector.
+At 1100 px wide and below, the list is above the inspector. Editing a flow needs a screen at least
+1024 px wide; on a narrower one the editor is read-only, has no **Save** and no **More** menu, and
+**Test run** is its main button.
 
 A step shows only the settings of its type: an agent step its prompt and model, a shell step its
 command, an approval step its question, a parallel step the step picker, a sub-flow step the flow
@@ -2892,7 +3073,7 @@ too: basics, **Defaults for agent steps**, **Safety**, **Variables** and **Publi
 Clicking a node in the overview, or a problem, opens that step, focuses the field and opens the
 group that holds it.
 
-![YAML view](images/flow-yaml.png)
+![The same flow in the YAML tab](images/flow-yaml.png)
 
 - **Save to** — *this repo* (`<repo>/.claude-factory/flows/`, shared with your team through git)
   or *global* (`~/.spaghetti-code-foundry/flows/`, just for you). Saving a built-in flow creates your own
@@ -2955,7 +3136,7 @@ current format.
 shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
 helper script that does. Never tick it on a step that runs tests or the build, and not together
 with **Run in Docker** or in a parallel step. A marked step signs in with the token you stored for
-the repository under **My repositories**: its token, its deploy key or the GitHub App (see "What runs sign in with" there); the built-in flows
+the repository under **My repositories** (in the Admin view: **Repositories**): its token, its deploy key or the GitHub App (see "What runs sign in with" there); the built-in flows
 and the blocks of the library are already marked. **Flows you wrote yourself that call `gh` or push need the flag. In a step
 without it the Foundry's own access is used, not your repository's token.** If the sign-in fails
 in a marked step, the run ends there and `on_failure` is not followed. A call you tolerate on
@@ -3013,7 +3194,7 @@ In **agent prompts** you can use:
 
 | Template | Value |
 |---|---|
-| `{{task}}` | The run's task, followed by the answers given on the run page (also `$FACTORY_TASK` / `$SCF_TASK`) |
+| `{{task}}` | The run's task, followed by the answers given on the run's page (also `$FACTORY_TASK` / `$SCF_TASK`) |
 | `{{vars.name}}` | A flow variable |
 | `{{steps.<id>.output}}` | Output of an earlier step (also `.ok`, `.exit_code`) |
 | `{{learnings}}` | Lessons saved by earlier runs in this repo |
@@ -3044,7 +3225,7 @@ A flow author can describe each variable in `var_info` (label, help, kind, range
 
 ### The block library
 
-![Block library](images/library.png)
+![The Library tab: blocks with search and a category filter](images/library.png)
 
 Blocks are ready-made groups of steps: pull a GitHub issue, plan, code, run tests with a fix
 loop, code review, cross-review by Codex, commit, push, open a PR, wait for CI, secret scan,
@@ -3062,10 +3243,13 @@ The Library shows a loading state, an empty state and a failure with **Retry**. 
 
 ## 5. Models, agents and routing
 
-![Models](images/models.png)
+To open the models settings, switch to the **Admin** view, choose **Administration** in the sidebar,
+then **Models** under **Operations**.
 
-*The Models page on the demo machine, where the agents are stand-ins: on your machine the two
-coding agents show as installed.*
+![The Models page: coding agents, providers and routing rules](images/models.png)
+
+*The picture comes from test data. On your machine the **Coding agents** panel shows your own
+Claude Code and Codex.*
 
 ### Agents
 
@@ -3111,14 +3295,16 @@ visit number (`From visit 2` = only retries). The **Agent** column narrows a rul
 
 - **Retries on Opus** — fix steps use Opus from their second attempt.
 - **Codex reviews Claude's code** — review steps run on Codex.
-- **Small jobs on a local model** — triage and learning steps run locally.
+- **Small jobs on <local model>** — triage and learning steps run locally. It is offered only
+  when a local model is set up.
 
 Without a matching rule, a step uses its own model, then the flow's default, then the
 **Default model**.
 
-**Fallback models** are tried in order when a model hits a rate or usage limit. With *continue
-on the first free one when a budget runs out*, runs switch to the first free fallback (local or
-ChatGPT) instead of pausing when the daily or run budget is used up.
+**Fallback models** are tried in order when a model hits a rate or usage limit. With **Continue on
+the first free one (local / ChatGPT) when a budget runs out, instead of pausing** ticked, runs switch
+to the first free fallback (local or ChatGPT) instead of pausing when the daily or run budget is used
+up.
 
 ---
 
@@ -3127,7 +3313,11 @@ ChatGPT) instead of pausing when the daily or run budget is used up.
 A watcher checks GitHub on a schedule and starts runs by itself — as long as the Foundry is
 running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` CLI's login.
 
-![Watchers](images/watchers.png)
+To see and change watchers, switch to the **Admin** view, choose **Administration** in the sidebar,
+then **Watchers** under **Operations**. A repository's own page (**Repositories** in the sidebar,
+then the repository) has a **Watchers** section too.
+
+![The Watchers page: watchers grouped by repository, and the monitor under "The Foundry itself"](images/watchers.png)
 
 ### Sources
 
@@ -3139,12 +3329,12 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 | *Review comments* | someone comments on a Foundry PR (branch `factory/*`) | none shipped — name your own flow |
 | *CI failures* | the latest CI run of a workflow on the default branch failed | none shipped — name your own flow |
 
-![Add a watcher](images/watcher-form.png)
+![The form of + Add watcher: repository, flow, label and the option groups](images/watcher-form.png)
 
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
-**Schedule runs have their own lane.** A run a schedule watcher starts (the daily release, the daily report) uses no story slot and goes before queued stories, also when a helper's cap or the usage limit holds back new stories: these runs use no agent, so they cost nothing; their only load is one test run, which still waits for a free test slot. One schedule run works at a time on the whole machine, in the order they were queued. A spent daily budget of the watcher's owner still holds them. A daily run belongs to the day it was queued for: a release that waited in the queue past midnight still counts for the day before, so the next day gets its own release. A schedule run that has not started an hour after its time shows a late warning on Home and in the [health line](#the-health-line), with the reason it waits; the warning goes away when the run starts. A run that was never queued keeps its warning until the next day's time.
+**Schedule runs have their own lane.** A run a schedule watcher starts (the daily release, the daily report) uses no story slot and goes before queued stories, also when a helper's cap or the usage limit holds back new stories: these runs use no agent, so they cost nothing; their only load is one test run, which still waits for a free test slot. One schedule run works at a time on the whole machine, in the order they were queued. A spent daily budget of the watcher's owner still holds them. A daily run belongs to the day it was queued for: a release that waited in the queue past midnight still counts for the day before, so the next day gets its own release. A schedule run that has not started an hour after its time shows a late warning on **Today** and in the [health line](#the-health-line), with the reason it waits; the warning goes away when the run starts. A run that was never queued keeps its warning until the next day's time.
 
 **Build release files after each release.** A schedule watcher has the checkbox **Build release files after each release** (option `release_build`, default off). When it is on, the watcher looks at the head of main at every check, and at least every 5 minutes. A new commit that has a recipe (the file `.factory/release-build.yaml` at the commit, or the recipe stored in the Foundry settings) gives one `release-build` run of the newest commit on main, which then uploads the files to a draft release (see [Build release files on this machine](#build-release-files-on-this-machine)). A new commit without a recipe is only recorded: nothing is built. The first check after you switch the option on only remembers the current commit, so nothing is built for it. Several moves before a build starts give one build, of the newest commit; a queued build is never cancelled. A commit is never built twice, also after a restart: the record is in `release-builds/` in the data folder. A failed build is not retried; start it by hand. A build you start by hand does not count as recorded, so the watcher may build that commit once more. Switching the option off and on keeps the record, so a commit pushed meanwhile is built at the next check.
 
@@ -3158,11 +3348,11 @@ A field that is cleared is removed from the watcher, so the default applies. A v
 
 ### The Watchers page (admins)
 
-Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository in **My runs**, without the watcher's name.
+Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository under **Changes**, without the watcher's name.
 
 - **From the repository.** The heading of each repository group is a link to the repository view (`#/repos/<id>`). Its **Watchers** section lists the watchers of that repository, with **+ Add watcher** and, per watcher, **Enable** or **Disable**, **Edit** and **Delete** (**Delete** asks first). If the server refuses a change, its sentence is shown.
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
-- **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
+- **+ Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
 - **Variables.** The form shows one field per variable the chosen flow describes, with its label, help and default (as the placeholder): a number field with its range, a switch, a text box, a list or a choice. Changing the flow changes the fields. A field left at its default is not stored. Variables the flow does not describe go in the box "Variables for each run", one `name=value` per line; a described variable typed there moves to its field when the form opens. `agent_env` is a list of `KEY=value` pairs and may hold secrets.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
 - **One watcher.** The list is compact: the id (a link to `#/watchers/<id>`, crumbs **Administration › Watchers › <id>**), the state mark, what it does, the last successful check and a problem line. The watcher's page has the next steps, notes, error details and recent activity; for the monitor also the bug-story switch and the findings. **Check now**, **Edit** and **Enable** or **Disable** are together; **Delete** is alone in a **Danger** group. List rows have no Delete button.
@@ -3178,12 +3368,12 @@ repository. The source `monitor` is not allowed.
 - **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. A described variable whose value does not fit its kind or range is refused (400, the message names the variable, as `vars.<name>: …`); a stored value that is already out of range still runs and is refused only when the watcher is saved again. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
 - **Which repositories:** GitHub only, with the sign-in `none` (the owner is an admin), `github-token` or `github-app`. `ssh-deploy-key`, `https-token` and other addresses are refused.
 - **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
-- **Runs** belong to the repository's owner, so they show in that user's "My runs".
+- **Runs** belong to the repository's owner, so they show under **Changes** for that user.
 - **Lists:** `GET /api/watchers` also shows stored watchers, with their `repoId`. A stored watcher that cannot run shows a `problem` sentence.
 - **Blocked owner:** while the owner is blocked, the watchers of their repositories are paused. They check nothing and start nothing, and the list shows "paused: the owner is blocked". Unblocking starts them again, without a restart. This also works for `scf user block` and `scf user unblock`: the server sees it within its usual sweep. Runs that are already going are not touched.
 - **Removed with their repository:** when a repository is removed (by id or by name), or its owner is deleted, its stored watchers are stopped and removed in the same step. The audit log says so. A watcher found at start whose repository is gone is removed and logged.
 - **Transfer:** a transferred repository keeps its watchers. They run for the new owner, and new runs belong to the new owner.
-- **Sign-in:** a stored watcher talks to GitHub with its repository's own credential: the stored token, a GitHub App token limited to that repository, or the server's own `gh` login for the method `none`. With a token or the app, the server's login is never used, so one repository's watcher cannot see another. The same credential is used for the actions on its items under "Your turn". Watchers in `config.yaml` keep using the server's login.
+- **Sign-in:** a stored watcher talks to GitHub with its repository's own credential: the stored token, a GitHub App token limited to that repository, or the server's own `gh` login for the method `none`. With a token or the app, the server's login is never used, so one repository's watcher cannot see another. The same credential is used for the actions on its items under **Your turn** on the admin's **Today**. Watchers in `config.yaml` keep using the server's login.
 - **When the sign-in does not work** (missing, unreadable or refused, or the owner of a `none` repository is no admin), the watcher makes no GitHub call and its status says so in a plain sentence. It works again by itself at the next check once you fix the credential.
 - **Status comments:** a status comment is only edited by the account that wrote it. When a watcher's account changes (for example a new token of another account), it posts a new status comment and the old one stays as it is on open issues.
 - **Request limit:** a repository token or app has its own GitHub request limit. The limit the Foundry shows is that of the server's own login and the bot.
@@ -3304,7 +3494,7 @@ detector, a fingerprint (the same problem gives the same one), a severity, one s
 evidence, when it was first and last seen and how often. A finding not seen for 24 hours becomes
 *gone* (kept 30 days; at most 500 findings are kept, not counting those with a bug story or an
 owed one). A file that cannot be read is kept as `monitor-findings.json.broken`. If the monitor's
-own check fails, the Health line says so. The monitor's card on the Watchers page shows what waits
+own check fails, the health line says so. The monitor's card on the Watchers page shows what waits
 or is wrong with its bug stories, and lists the findings and the mutes (see
 [Mute a detector or a finding](#mute-a-detector-or-a-finding)). The
 [Problems page](#the-problems-page) shows the same with the state of each finding.
@@ -3312,7 +3502,7 @@ or is wrong with its bug stories, and lists the findings and the mutes (see
 #### Bug stories from the monitor
 
 Set `report_to` and the monitor writes a lasting problem up as one GitHub issue, so the normal flow
-can fix it. **Try it on a private repository first**, and read one real story before you point it
+can fix it. The pages call such an issue a **bug-fix change**; this guide calls it a bug story. **Try it on a private repository first**, and read one real story before you point it
 at a public one.
 
 ```yaml
@@ -3356,7 +3546,7 @@ monitor:
   seen is still checked on GitHub every 6 hours, so a close or a reopen is noticed.
 - **Two tries, then a person.** The monitor counts the bug stories it made for a finding. After
   two that did not fix it, it makes no third: the finding *needs you*, the log says so once
-  (`story-skipped`, reason `two_tries`), and **Needs you** on Home shows one item for it. A story that
+  (`story-skipped`, reason `two_tries`), and **Needs you** on **Today** shows one item for it. A story that
   existed before the upgrade counts as one. Nothing becomes "needs you" while bug stories are off,
   quiet after a restart or stopped by the breaker, or while the finding is muted.
   - **Try again or mute.** On the Watchers page the findings list shows "needs you" and a **Try
@@ -3386,9 +3576,9 @@ from `gh api rate_limit`, read at most once a minute for the server's own login 
 
 One switch stops the monitor from making bug stories. It needs no GitHub.
 
-- **Switch.** On the monitor's card on the Watchers page, the line says "Bug stories: on",
-  "Bug stories: off since 14:05" or "Bug stories: quiet until 14:15 after the restart", and a button
-  switches them off or on. Only an admin can do this. On the command line: `scf monitor off`,
+- **Switch.** On the monitor's card on the Watchers page, the line says "Bug-fix changes: on",
+  "Bug-fix changes: off since 14:05" or "Bug-fix changes: quiet until 14:15 after the restart", and a
+  button switches them off or on. Only an admin can do this. On the command line: `scf monitor off`,
   `scf monitor on` and `scf monitor status`. The commands only read and write the state file, so
   they work when the server is not running. The server reads the state at every check and again
   right before each GitHub call that makes or touches a story. The state (since when, by whom: the
@@ -3430,9 +3620,9 @@ The monitor stops making stories by itself when many things go wrong at once. It
 - **What stops.** No story, as with the off switch. Findings are still recorded. The log has a
   `breaker-open` line and one `story-skipped` line (reason `breaker`) for each story that is owed.
   The reason and the time are kept in `monitor-guard.json`, so a restart does not close it.
-- **Your turn.** An admin sees one item, "The monitor stopped making bug stories", with the reason
+- **Your turn.** An admin sees one item on **Today**, "The monitor stopped making bug stories", with the reason
   and the way back: switch bug stories on again on the Watchers page. It cannot be dismissed and
-  goes away when the breaker is closed. The card says "Bug stories: stopped by the circuit
+  goes away when the breaker is closed. The card says "Bug-fix changes: stopped by the circuit
   breaker since …"; `scf monitor status` says so too.
 - **Switch on again.** Only an admin: the button on the monitor's card or `scf monitor on`. The log
   gets `on` and `breaker-closed`. Every switch-on starts the counts anew: findings and failed runs
@@ -3465,12 +3655,15 @@ does not become a bug story.
 #### The Problems page
 
 **Problems** (`#/problems`, admins only; users do not see it) shows what the monitor found and what
-happens to each problem.
+happens to each problem. To open it, switch to the **Admin** view, choose **Administration** in the
+sidebar, then **Problems** under **Operations**.
+
+![The Problems page: the monitor's sentence, the findings with their state, and the detectors](images/problems.png)
 
 - **The sentence at the top.** One sentence says whether the monitor is running, whether bug
   stories are on, off, quiet or stopped, when it last checked, how many bug stories it made today
   and the daily limit, and whether the circuit breaker is open, with its reason. The count comes
-  from the monitor's log, so it can be above the limit: "Make a story now" does not count against
+  from the monitor's log, so it can be above the limit: **Make a bug-fix change now** does not count against
   the limit. "Last checked" is kept in memory: after a server restart it says "has not checked
   since the server started" until the monitor runs again.
 - **The findings.** Newest and most severe first (gone ones last), at most 100 at first and then
@@ -3478,8 +3671,8 @@ happens to each problem.
   checks"), the state and the bug story. The summary links to the finding's own page
   (`#/problems/<id>`, crumbs **Administration › Problems › <id>**). It shows the evidence, the bug
   stories (links; "(earlier)" for older ones) and the runs that build them. Its buttons are in two
-  groups: **Bug story** (**Make a story now**, **Try again**) and **Mute** (mute, **This is not a
-  problem**). The rows have no Mute button. An unknown id shows the server's sentence and a link
+  groups: **Bug-fix change** (**Make a bug-fix change now**, **Try again**) and **Mute** (**Mute**,
+  **This is not a problem**). The rows have no Mute button. An unknown id shows the server's sentence and a link
   back. If the findings file cannot be read, the page says so instead of "No findings."
 
 | State | What it says |
@@ -3493,23 +3686,23 @@ happens to each problem.
 | muted | muted by an admin (with the reason), or the story was closed as not planned |
 | gone | gone: not seen for 24 hours |
 
-- **Actions.** **Switch the monitor off / on** (the same as on the Watchers page; while it is off
+- **Actions.** **Switch the monitor off** / **Switch the monitor on** (the same as on the Watchers page; while it is off
   the monitor still records problems, but makes no bug story and writes no comment). **Mute** and
   **End mute**. **Try again** for *needs you*. **This is not a problem** mutes the finding for
   good with a reason you give; you can end it here later.
-- **Make a story now.** For a finding that is *seen, no story yet*. It skips the waiting rules:
+- **Make a bug-fix change now.** For a finding that is *seen, no change yet*. It skips the waiting rules:
   the severity, "longer than one check", 3 days for minor, the daily and per-check limits, the
   quiet time and an open circuit breaker. It never skips the off switch, the mutes, "only once"
   (a story already on GitHub is taken up, not made again) or the two tries; the cleaning of
-  private text applies too. It makes only that one story. The button says why it cannot be used:
-  the monitor is off, is not running, or no repository is set. The API answers 409 when the
+  private text applies too. It makes only that one story. The button says why it cannot be used, in brackets after its
+  label: the monitor is off, is not running, or no repository is set. The API answers 409 when the
   monitor is off or not running, or the finding has a story, is muted, used its two tries, is
   gone or has no repository; 502 when GitHub fails.
 - **Detectors.** Each detector is listed with what it looks for, its owner, its threshold, its
   window, its next action, when it last found something and whether it is muted. The owner is
   **admin** or **repository owner**; a detector without an owner shows an empty cell. The threshold,
   window and next action are sentences from the server, and they follow the numbers you set. Change
-  a number and press **Save**; this changes the setting `monitor.<detector>` like the Settings page.
+  a number and press **Save**; this changes the setting `monitor.<detector>` like the **Settings** page.
 - **Thresholds and settings.** The Detectors table has one number field per threshold of each
   detector. Below the Mutes, the **Monitor settings** section holds two groups. **Bug stories**: the
   repository (`report_to`), the limits per day and per check, the quiet time after a start and the
@@ -3541,7 +3734,7 @@ refreshed at every server start. The trigger label and the review label (`vars.r
 get one too. If the review label is the same as the trigger label, the one description says both.
 
 Each watcher's card on the **Watchers** page lists the labelled issues it is *not* working on
-right now under **What happens next**, with the same lines as the Dashboard. A watcher error is
+right now under **What happens next**, with the same lines as the **Dashboard**. A watcher error is
 a line too; the raw error is under **Error details**.
 
 Every check also compares the label with the newest run and fixes what is safe to fix: a run that
@@ -3560,7 +3753,7 @@ removed at the next check, so the issue looks like every other story that waits.
 pull request holds it, the thing to do (merge it) is on that pull request. A run that asked, was
 answered and cannot continue yet shows `factory:working`. The label comes back only for new,
 unanswered questions. A waiting label on an issue that has no run, or next to another status label, is not changed; the
-issue is listed under **Needs you** as waiting for you. Remove the label to start it.
+issue is listed under **Needs you** on **Today** as waiting for you. Remove the label to start it.
 
 **Something to do.** A question that needs something only you can do keeps the needs-info label, and `/defaults` does not answer it. The story waits with no run, no cost and no comment until someone answers on the issue, or the file the question names is on the develop branch (the default branch without gitflow). The Foundry checks for that file at each check: when it is there, it posts one note ("Nothing needed from you — …, so the Foundry goes on.") and resumes the story. It does this at most twice for one issue; after that the story waits for a person. A file path that is not a plain repository path is not checked.
 
@@ -3639,7 +3832,7 @@ watchers:
 | `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
-| `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. Its question comments then say "Nothing needed from you", and the questions are not in Your turn: an issue that waits for other issues is answered when it can start, and you may answer first. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
+| `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. Its question comments then say "Nothing needed from you", and the questions are not in **Your turn**: an issue that waits for other issues is answered when it can start, and you may answer first. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
 | `pause_while_pr_open` | Start nothing while a PR from a branch with this prefix is open (for the older two-label pipeline) |
 | `comment_on_failure` | On by default: post the failure reason and output on the issue |
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
@@ -3676,7 +3869,7 @@ the planner does. Each issue then gets only the questions that need you, plus a 
 questions were all decided gets a comment that says so, and no waiting label. An issue with both gets one comment with
 both and the waiting label. Each issue's decisions are a separate decision: two issues of one epic can decide the same
 topic differently, and the note says so. The decisions are recorded in the run record (see "Decided by the Foundry" on the
-run page). If the check fails for an issue, that issue is not recorded and the check reports the error; a retry posts
+run's page). If the check fails for an issue, that issue is not recorded and the check reports the error; a retry posts
 nothing twice. With the setting off, the check asks every question, as before.
 
 ### Bug stories go first
@@ -3690,7 +3883,7 @@ A story with a bug label is repaired before the Foundry builds anything new. The
 - **Nothing running is stopped.** A bug story only takes the next free slot.
 - **Taking the label off** ends it: the story goes back to its place in the queue.
 - **Where you see it:** a bug story has a "goes first" mark on the board and in the queue. Another story that waits for it says "waits: a bug story goes first".
-- **Runs started by hand** from the Runs page get no priority. Resume, approve and reject on the run page of a bug story do.
+- **Runs started by hand** (with **+ New change**) get no priority. Resume, approve and reject on the page of a bug story's run do.
 
 ### The status comment
 
@@ -3861,7 +4054,8 @@ recommendation.
   before. A run reads the setting when it starts or resumes, so a change applies to the runs that start or
   resume after it. Runs read it as `$FACTORY_DECIDE_TECHNICAL`. See [Settings and safety](#7-settings-and-safety)
   for the other repository settings.
-- **Admins:** the admin run page has a card **Decided by the Foundry** on its Overview. It lists each round with
+- **Admins:** in the Admin view, the run's page has a part **Decided by the Foundry**, below the task and its
+  questions. It lists each round with
   its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and
   asked the owner). Under each round is each question with its decision; the full question text is under
   **Full question**. The card is hidden when a run has no such rounds.
@@ -3949,7 +4143,7 @@ anything. A false red holds the whole repository until the tests pass again on a
 | Label | Means | What you do |
 |---|---|---|
 | `Factory_needs_info` | Waiting for you — questions: asked up front for the whole batch, or by the planner | Reply on the issue — or just **`/defaults`** to accept the recommendations. It continues by itself. A question that needs something only you can do (a file, an account, access) is not answered by `/defaults`: do it, and the story goes on by itself once the file the question names is on the develop branch (or answer on the issue). |
-| `Factory_working` | Working, or paused — usage limit: planning and coding are running or paused | Wait; follow it on the Runs page |
+| `Factory_working` | Working, or paused — usage limit: planning and coding are running or paused | Wait; follow it under **Changes** in the app |
 | `Factory_waiting` | Waiting for you — risky plan / split: it waits for your decision | `/approve` or `/reject` + feedback on the issue |
 | `Factory_done` | Done: implemented, tested, reviewed and merged into `develop` (gitflow) or in the rolling pull request | Nothing — merge the release pull request (or the rolling one) when you like |
 | `Factory_ERROR` | It failed; the comment on the issue starts with what you need to do, then says what happened, why, the kind of problem, what was already tried and your options, with the failing output | Fix the cause if needed, then remove the label to start over, or resume the run on its page to continue at the failed step. If the Foundry itself failed, the comment says so and names the fix |
@@ -3961,10 +4155,10 @@ Issues with an excluded label (e.g. `geni`) are never picked up, whatever other 
 | I want to… | Do this |
 |---|---|
 | Build an issue, or a whole epic | Add `Factory_go` to each issue (select them all in GitHub's issue list → Labels). Give stories a **Depends on** section so they are built in order. |
-| Answer the questions | Reply on the issue, or `/defaults` — or in the app, on Home |
+| Answer the questions | Reply on the issue, or `/defaults` — or in the app, on **Today** |
 | Change a question the Foundry decided itself | Reply `/overrule Q<n> <your answer>` on the issue (you need write access). See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself) |
 | Check a plan before it is coded | Add `Factory_review_plan` before (or together with) `Factory_go` |
-| Approve / reject a risky plan | `/approve` (+ notes), or `/reject` + what to change — or in the app, on Home |
+| Approve / reject a risky plan | `/approve` (+ notes), or `/reject` + what to change — or in the app, on **Today** |
 | Retry after an error | Remove `Factory_ERROR` to start over, or resume the run on its page to continue at the failed step |
 | Stop the Foundry from touching an issue | Remove `Factory_go`, or add an excluded label |
 | Get the work into `main` | Merge the release pull request `develop` → `main` (gitflow), or the rolling Foundry pull request |
@@ -3977,13 +4171,14 @@ anything new is built. There is nothing to do; the story goes on by itself after
 A line can say "waiting — the base branch has failing tests": the tests on the base branch fail, and
 the story starts by itself when a new commit lands. See [A red base branch](#a-red-base-branch).
 
-Look at the **Dashboard**: the **Waiting** card lists every labelled issue that isn't being
+Look at the **Dashboard** (Admin view: **Administration**, then **Dashboard** under **Operations**):
+the card **Waiting — what happens next** lists every labelled issue that isn't being
 worked on right now (the same list is on each watcher's card on the **Watchers** page). Every
 line starts with a badge for who has the next move (**You**, **Foundry**, **Another story**, **A
 time limit**, **Something is wrong**), then the status name with its **?** (press it for what
 it means and what happens next), then the issue, what to do, why, "Continues: …" when it
 continues by itself (it can say how long the run it waits for still needs, for example "after #88
-(about 20 min left)", and the Runs list shows it too), and a link to the place to do it (GitHub links open in a new tab). Lines
+(about 20 min left)", and the **Changes** list shows it too), and a link to the place to do it (GitHub links open in a new tab). Lines
 where you have the next move come first, above the rest. The state of the watcher itself
 (**active**, **disabled** or **watcher error**) has a **?** too. Problems of the Foundry itself
 (a restart wait, a usage limit, a watcher error) are in the [health line](#the-health-line) on
@@ -4072,7 +4267,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
 - **It has an excluded label** such as `geni`.
 - **The story is parked.** Its trigger label was removed while its run waited for your answers, you replied `/park` (or a "do not build" line to a "not a coding task" stop), or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
 - **The issue was closed on GitHub, but its run is still working.** The
-  line says so and links to the run page. Cancel the run there if the work is no longer wanted;
+  line says so and links to the run's page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.
   A run that waits for you or is stopped is not cancelled when its issue is closed: it only
   leaves your lists. If you reopen the issue, the watcher puts the status label back and the
@@ -4155,7 +4350,7 @@ flowchart LR
 - **A wait for a slot does not use up a step's time limit.** While a step waits for a test slot, its
   time limit stops: the wait is moved back, at most `FACTORY_TEST_SLOT_WAIT_SEC` seconds (default
   `5400`, 90 minutes). A step never runs longer than its limit plus that bound, so a step that waits
-  forever still ends. The step log and the run page say how long it waited, for example `waited 18 min
+  forever still ends. The step log and the run's page say how long it waited, for example `waited 18 min
   for a test slot`. If the step still ends on its limit, the message says that it waited, and whether
   the wait counted: `timed out (waited 18 min for a test slot, which did not count)`. A read-only Codex
   session cannot write the record of its wait, so its limit counts every second.
@@ -4181,11 +4376,11 @@ flowchart LR
 - **Reuse of test results.** `release-daily` skips the full tests when this exact code already passed them in a story run or in an earlier daily check: the same clean tree and the same test command. The log and the checks then say `not run again: this exact code already passed these tests (run <id>, <time>)`. The build still runs, and no new record is written. Set the flow variable `reuse_test_results` to `no` to run the tests every day. `daily-pr` always runs its tests. [Self-update](#self-update) still runs its own tests unless the daily check recorded them, as described there.
 - `develop` is created from `main` the first time, and kept up to date with `main` (for example
   after a hotfix) before new work starts. `develop` must not be in *Protected branches*
-  (Settings), since the Foundry pushes to it; `main` stays protected (the one exception is the
+  (**Settings**, section **Safety**), since the Foundry pushes to it; `main` stays protected (the one exception is the
   hotfix path below, and only when you switch it on).
 - **Hotfix — bug stories go to `main` at once.** An issue with a label in `hotfix_labels` (default
-  `bug`, any case) is built as a hotfix when an admin has switched on **Hotfixes** in Settings →
-  Safety (off by default). Without the setting, or in a changed copy of the flow, it is built as a
+  `bug`, any case) is built as a hotfix when an admin has switched on **Hotfixes** in **Settings**,
+  section **Safety** (off by default). Without the setting, or in a changed copy of the flow, it is built as a
   feature and the report says why in one line. The plan, plan review, size and risk checks, code
   areas, build, tests, reviews and docs are the same. What differs:
   - The branch is `hotfix/<issue>-<title>` (`hotfix_prefix`), made from the `main` commit the
@@ -4230,7 +4425,7 @@ request to `main` at 17:00, and no new coding starts while it is open.
 Two delivery pipelines, what supports them, and the standalone refinement flow: `epic-questions`,
 `issue-gitflow` and `release-daily` (gitflow), `issue-plan`, `issue-code-daily` and `daily-pr`
 (human in the loop), and `refine-brief` (the architect's context brief, see
-[Refinement](#12-refinement); it can't be deleted, because Refinement uses it) and `refine-round`
+[Refinement](#12-ideas-refinement); it can't be deleted, because Refinement uses it) and `refine-round`
 (the architect's question round, same section). Build anything else yourself in the editor, with **✨ Draft flow with Claude**, or with any
 AI assistant ([Let any AI write a flow](#let-any-ai-write-a-flow)). **A flow that a watcher uses —
 enabled or disabled, or as its questions check — or that another flow runs as a step can't be
@@ -4535,7 +4730,7 @@ the cap stays below the configured number until the machine has been quieter for
 The wait above applies to every step up. These values are built into the governor; they are not set in the configuration.
 
 Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
-governor changed the limits today, and Home's health line shows the same count when it is above 0.
+governor changed the limits today, and the health line shows the same count when it is above 0.
 The daily digest mentions the changes only when there were more than 20 in the last 24 hours. Its "Machine load" part also says how long the runs at once were below `concurrency` in the last 24 hours, with the lowest value and the two main reasons, for example "the runs at once were below 4 for 2 h 10 min in the last day (lowest 2): memory pressure 1 h 5 min, high load 50 min". A day without a cap has no such line. The governor's limits end by themselves
 four minutes after the last check — the cap on runs, the cap on test runs, the workers per test run, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
@@ -4543,12 +4738,12 @@ machine slept starts fresh. The step downs of the last hour are part of what it 
 pause of more than four minutes they are forgotten and the wait before a step up is 10 minutes again. `scf governor reset` takes them away at once. The daily release check
 asks for a test slot like every test run, but waits five minutes at most.
 
-**The Load governor card (admins).** The Overview page shows the governor's last result on one card. It has the runs at once now, out of `concurrency`, and each cap that holds with its reason. Below that are the free cores, with the runs that fit next to your other programs once a run's use is learned; the load of other programs, with the top five programs by name; the Foundry's own load (runs, test runs and the server with its helpers); and a step chart of the runs at once over the last 24 hours. "Show as list" gives the same steps as a table with the reason of each. The time below `concurrency` and its reasons are shown above the chart. A result older than four minutes shows the caps that still hold, but no measurements. With no result the card says so and names `scf governor install`. The card reads files only: the last result (`governor/latest.json`), the caps that have not ended, and the change log.
+**The Load governor card (admins).** The **Overview** page (**Administration**, then **Overview** under **Operations**) shows the governor's last result on one card. It has the runs at once now, out of `concurrency`, and each cap that holds with its reason. Below that are the free cores, with the runs that fit next to your other programs once a run's use is learned; the load of other programs, with the top five programs by name; the Foundry's own load (runs, test runs and the server with its helpers); and a step chart of the runs at once over the last 24 hours. "Show as list" gives the same steps as a table with the reason of each. The time below `concurrency` and its reasons are shown above the chart. A result older than four minutes shows the caps that still hold, but no measurements. With no result the card says so and names `scf governor install`. The card reads files only: the last result (`governor/latest.json`), the caps that have not ended, and the change log.
 
 **Paused test runs.** Under sustained overload the governor pauses test runs beyond the first. It does so at
 once when memory pressure is critical, and when the 1-minute load is above `testsHigh` (4 per core) for three
 checks in a row. Then all test runs but one stop, and the run that holds the first test slot goes on. A paused
-run shows "paused: machine overloaded since HH:MM" on the Runs page, and its log says it was paused. The pause
+run shows "paused: machine overloaded since HH:MM" on its page, and its log says it was paused. The pause
 ends when the memory pressure is no longer critical and the load is at or below `high` (2.5 per core); the
 paused runs then go on by themselves. Paused time does not count against a test run's time limit. Agent steps
 are never paused in the middle of a model call, and the monitor does not report a paused run as stuck. Cancelling
@@ -4640,39 +4835,49 @@ date; a desktop notification gives the counts.
 
 #### Self-update
 
-Off by default, because it lets merged code run on this machine without a person looking. For a Foundry that runs from a git checkout of its own repository. Switch it on in Settings → Safety and name the repository (`self_update: { enabled: true, repo: owner/name }` in `config.yaml`). After upgrading, stop and start the Foundry once, so that it can go back after a bad update.
+Off by default, because it lets merged code run on this machine without a person looking. For a Foundry that runs from a git checkout of its own repository. Switch it on in **Settings** (Admin view: **Administration**, then **Settings** under **System**), section **Safety**, with the checkbox **Self-update**, and name the repository in **Repository the Foundry may update from** (`self_update: { enabled: true, repo: owner/name }` in `config.yaml`). After upgrading, stop and start the Foundry once, so that it can go back after a bad update.
 
-Every 5 minutes it checks, in this order, and stops at the first reason that applies (the Health line shows it):
+Every 5 minutes it checks, in this order, and stops at the first reason that applies (the health line shows it):
 
 1. The record `self-update.json` can be read, and no earlier go-back failed.
 2. The Foundry runs from a git checkout, under the supervisor (`scf ui` / `scf serve`, or the service).
 3. The `origin` of the checkout is the repository in the setting.
 4. `main` can be read from GitHub. Nothing new: nothing to do.
 5. The checkout is on `main` and has no local changes (untracked files count). Only then does it fetch.
-6. The same commit did not fail after its last try. It waits for a newer commit. (A failed test run is tried again 20 minutes later, up to 3 tries in all; the wait is shown in the Health line.)
+6. The same commit did not fail after its last try. It waits for a newer commit. (A failed test run is tried again 20 minutes later, up to 3 tries in all; the wait is shown in the health line.)
 7. The checkout can fast-forward to `main`.
 
-Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 30-minute limit starts when they start, and a run that hits it counts as a failed try (the log says the tests ran out of time). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the Health line says which try it is. The log and the Health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
+Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 30-minute limit starts when they start, and a run that hits it counts as a failed try (the log says the tests ran out of time). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the health line says which try it is. The log and the health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
 
-**Stuck runs.** While the update waits, the Health line and Home name the runs that look stuck, and the server log lists them once per change. A run is stuck when it waits for a code area (a lock another run holds), or when nothing in its run folder or `logs/` has changed for 30 minutes and no step has started or resumed in that time. A test run that writes its `tests.log` is not stuck. When every active run is stuck, the update does not wait for them: it interrupts them, waits up to 60 seconds for them to end, and then installs. A run that is interrupted ends as *interrupted* ("interrupted by a restart of the server — resume it to continue"), and its watcher resumes it after the restart. If they have not ended after 60 seconds, nothing is installed and the update waits again. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
+**Stuck runs.** While the update waits, the health line and **Today** name the runs that look stuck, and the server log lists them once per change. A run is stuck when it waits for a code area (a lock another run holds), or when nothing in its run folder or `logs/` has changed for 30 minutes and no step has started or resumed in that time. A test run that writes its `tests.log` is not stuck. When every active run is stuck, the update does not wait for them: it interrupts them, waits up to 60 seconds for them to end, and then installs. A run that is interrupted ends as *interrupted* ("interrupted by a restart of the server — resume it to continue"), and its watcher resumes it after the restart. If they have not ended after 60 seconds, nothing is installed and the update waits again. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
 
 **Skipped tests.** When the daily release check (`release-daily`) already passed the same tests on the same code, self-update does not run them again. The log then says `self-update: <sha> is not tested again: the release check passed these tests on this code (run <id>, <time>)`; install and build still run. It skips only when all of these hold: the test command is the updater's own test step (`npm test`, or `npm ci && npm test` when `node_modules` was missing), the release check recorded a green run of that command on the same tree in the data folder (`tested/`), and the record has exactly the form the check writes. Every other case runs the tests as usual: a story's record, another tree or command, no detected command, an unreadable record, or a `test_cmd` pinned in `.claude-factory/config.yaml` of the code, even when a record matches. A release check with its own `test_cmd` records under that command, so it matches only when that command is the updater's own test step. Only the release check's record counts. Anything that can write `tested/` in the data folder can make self-update skip its tests, so keep that folder as private as the rest of the Foundry.
 
 If the new server stops or does not answer within 3 minutes, the supervisor puts the previous version back once and reports it (the monitor finding is critical). An install that was cut off is finished or undone at the next start. If you switch the setting off while an update waits, the server restarts on the unchanged version when the runs are done.
 
-When the Health line says "Self-update is stopped", the checkout needs a person: run `git status`, `npm ci`, `npm run build`, then delete `self-update.json` in the data folder. Going back does not undo changes the bad version made in the data folder.
+When the health line says "Self-update is stopped", the checkout needs a person: run `git status`, `npm ci`, `npm run build`, then delete `self-update.json` in the data folder. Going back does not undo changes the bad version made in the data folder.
 
 ---
 
 ## 7. Settings and safety
 
-![Settings](images/settings.png)
+**Where to find it.** Settings and the pages about people and access are under **Administration**. Admins see it in the sidebar when they use the Admin view (choose the view in the account menu). **Administration** opens on **Overview**, and a row at the top of the page lists its pages in three groups:
 
-**Saving.** Next to **Save** the page says "Saving…", then "Saved at …" or "Not saved.". A message also appears. **Clean up** in the Disk section asks first in a dialog.
+| Group | Pages | Address |
+|---|---|---|
+| **Operations** | Overview, Problems, Watchers, Models, Dashboard | `#/operations`, `#/problems`, `#/watchers`, `#/models`, `#/dashboard` |
+| **People and access** | Users, All repositories, Credentials, Audit, Autonomy | `#/users`, `#/all-repos`, `#/credentials`, `#/audit`, `#/autonomy` |
+| **System** | Settings, Maintenance | `#/settings`, `#/maintenance` |
+
+To change a setting, open **Administration** in the sidebar, then **Settings** under **System**. Users with the role `user` never see Administration; the server refuses its calls for them (see [Roles and permissions](#roles-and-permissions)).
+
+![The Settings page under Administration, System](images/settings.png)
+
+**Saving.** Next to **Save** the page says "Saving…", then "Saved at …" or "Not saved.". A message also appears. Cleaning up old workspaces is not on this page: it is on **Maintenance** (see **Disk** below).
 
 **Saving keeps your file.** A save changes only the settings you changed in `config.yaml`: your comments and the order of the keys stay, and a setting you put back to its default is removed from the file. If someone else saved, or the file was edited by hand, since you opened the page, the save is refused with "the settings changed since you loaded them — reload first". Reload the page and make the change again. A hand edit shows on the page at once, but the server uses it only after the next save or a restart.
 
-**Restart when no story is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no story is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start until the active runs are done, then the server starts again by itself. The watchers keep checking during the wait (a watcher that was removed or changed stops, and none starts); only a move of the data folder stops them all. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
+**Restart when no change is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no change is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start until the active runs are done, then the server starts again by itself. The watchers keep checking during the wait (a watcher that was removed or changed stops, and none starts); only a move of the data folder stops them all. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
@@ -4681,11 +4886,11 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 **Start-up settings.** The data folder, the port, the repository and the program paths are read only when the server starts, so they are not changed on this page. To change one, stop the server, change it where it is set, and start the server again; the **Set at start-up** card shows the values in use. Two things are set up once, not in settings: the first admin is made on the setup page when the server starts for the first time, and the login service is installed with `scf service install` (see [Upgrading](#11-upgrading-from-claude-factory)).
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
-it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
+it; paused runs continue the next day. An admin can also set a daily budget per user (Administration › People and access › **Users**). Flows can also cap one run (`limits.max_cost_usd`).
 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
-**Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the Help page of the Simple view: a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
+**Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the **Help** page (in the sidebar of every view): a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
 
 **Starters (`simple.hidden_starters`, `simple.projects_folder`)** — `simple.hidden_starters` is a list of ids of built-in starters that are not offered for a new project (an own starter is always offered; empty offers all, at most 50 ids). `simple.projects_folder` is an absolute path outside the Foundry data folder where new projects from a starter go; not set means `scf-projects` in the home folder of the person who runs the Foundry. See [Starters](#starters) in section 1.
 
@@ -4741,7 +4946,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 **Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting: the sources, the catalogue, the selection, the review checks, the skills that cannot be used, and the group **Tools a skill may ask for** (shell, network, file access, and what to do when a tool is not available), and the group **Skill source checks** (the catalogue clone for the scheduled checks and how often the server looks; see [Let the server run it](#let-the-server-run-it)). **Approved releases** (`skills.releases.approved`) is a row editor: each row has a catalogue, a version and a digest; **Remove** deletes a row and **Add a row** adds one (at most 50). Empty rows and fields are left out, and a row problem from the server is shown at its row, for example "Row 1, digest: …". Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), removing a term from the high-risk list, turning on **network** access for skills, setting a missing tool to `degrade` (a run continues without a tool a skill asked for), and setting or changing the folder of **Catalogue clone for source checks** (the server then commits, pushes branches and opens pull requests there). Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. When the server refuses a save, each skills problem is shown under the control it belongs to (for a list, at its line, for example "Line 2: …"); a problem outside the skills settings stays in the banner at the top. A successful save clears all of these messages. Stored as `skills` in `config.yaml`.
 
 **Notifications** — macOS notifications and a Slack webhook tell you only when something new
-lands under **Needs you** on Home (a question, a risky plan or split, a release pull request, a failure, a
+lands under **Needs you** on **Today** (a question, a risky plan or split, a release pull request, a failure, a
 watcher error). Nothing is sent for progress. A run that succeeds is told only if you switch on
 "Also notify when a run succeeds" (off by default; runs that finished before you switched it on are
 not told).
@@ -4796,8 +5001,8 @@ token (the method "GitHub App" on My repositories). Set it up once:
    GitHub App" as its attention state; its owner chooses another authentication.
 
 The server finds the installation with the app's own key, so a user needs no rights on GitHub. That is why
-each account has a list of the repositories it may connect through the app. Set it on the Users page with the
-"App repositories" button: one entry per line, `owner/name`, or `owner/*` for every repository of an owner.
+each account has a list of the repositories it may connect through the app. Set it on the account's page
+(Administration › People and access › **Users**, then the account's name) with the "App repositories" button: one entry per line, `owner/name`, or `owner/*` for every repository of an owner.
 An admin's own connections are not limited. A user cannot read or change any list, or these settings.
 
 - Adding a repository, changing its method to the app and testing an app connection answer 403 when the
@@ -4812,7 +5017,7 @@ An admin's own connections are not limited. A user cannot read or change any lis
 After the first save with a name, an older build of the Foundry rejects the new `slug` field in `config.yaml`.
 
 **Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones on the
-**Maintenance** page (Administration › Maintenance, `#/maintenance`; it is no longer on Settings) or with `scf clean` (branches in your repositories are kept).
+**Maintenance** page (Administration › System › **Maintenance**, `#/maintenance`; it is not on Settings) or with `scf clean` (branches in your repositories are kept). **Preview** lists what would go; **Clean up** asks first in a dialog.
 
 **Accounts.** `scf user` keeps accounts in `users.json` in the data folder. Each account has an id,
 name, e-mail, role (`admin` or `user`), status (`active` or `blocked`), password hash, created time
@@ -4831,7 +5036,9 @@ as another admin. Change a role with
 `scf user role <e-mail> admin|user`. `scf user list` shows the last sign-in of each account
 ("never" when there is none).
 
-**The Users page.** Admins only: **Users** in the top bar (`#/users`). It lists name, e-mail, role,
+![The Users page under Administration, People and access](images/users.png)
+
+**The Users page.** Admins only: open **Administration** in the sidebar, then **Users** under **People and access** (`#/users`). It lists name, e-mail, role,
 status, last sign-in and the number of runs. The status is **blocked**, **account system** (an account
 of the identity provider), **no password yet**, **locked** (too many wrong tries) or **active**; when more
 than one is true, the first in this list wins, so a blocked account reads "blocked" even if it is also
@@ -4845,9 +5052,9 @@ that does not exist shows "This account does not exist." with a link back to Use
 
 **Simple accounts and their caps.** The Users page has a **View** column: an account that uses the Simple view shows a "Simple" mark. Tick **Only Simple accounts** to show only those accounts (the address becomes `#/users?view=simple`). Under the filtered list, each Simple account lists its projects, with today's spend, the daily cap in effect (its own cap, or the default `simple_project_daily_budget_usd` when it has none) and a field with a **Save** button. Type a number above 0 to set the cap, or leave the field empty and save to clear it and use the default. A value that is not a number above 0 is refused before anything is sent. If the server refuses a value, the message shows on that project's row. Read-only pages show the values without the field. The "Cost limits are off in Settings" note appears when `cost_limits` is off, because the caps are then not enforced.
 
-**Invite someone who is not an engineer.** In **Add user**, tick **Simple account**. It sets the role to user and the Simple view, and the role menu is then off. The dialog shows the set-password link as usual. The link works once, for 24 hours; send it to the person yourself, and an expired link is refused (use **New link**). When they set their password, the sign-in page says "Your password is set. Sign in with it to start the guide." After they sign in, the guide opens at step 1, **Welcome**. Only the first sign-in after the link does this; an account that has signed in before, or that was reset, is not sent to the guide. Starters are for admins only, so at steps 3 and 5 the guide tells the person to ask their admin. The admin then makes the project, and it belongs to that admin: work on it uses the admin's limits, and the daily cap is set on the project (see "A daily cap per project" in the cost chapter). An account made without **Simple account** is not changed by this.
+**Invite someone who is not an engineer.** In **+ Add user**, tick **Simple account**. It sets the role to user and the Simple view, and the role menu is then off. The dialog shows the set-password link as usual. The link works once, for 24 hours; send it to the person yourself, and an expired link is refused (use **New link**). When they set their password, the sign-in page says "Your password is set. Sign in with it to start the guide." After they sign in, the guide opens at step 1, **Welcome**. Only the first sign-in after the link does this; an account that has signed in before, or that was reset, is not sent to the guide. Starters are for admins only, so at steps 3 and 5 the guide tells the person to ask their admin. The admin then makes the project, and it belongs to that admin: work on it uses the admin's limits, and the daily cap is set on the project (see "A daily cap per project" in the cost chapter). An account made without **Simple account** is not changed by this.
 
-- **Add user** asks for name, e-mail and role, or **Simple account** (see above). Then the dialog shows the set-password link once. The
+- **+ Add user** asks for name, e-mail and role, or **Simple account** (see above). Then the dialog shows the set-password link once. The
   link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
   localhost; otherwise select the link in the field and copy it. Close the dialog too early and
   the link is gone: use **New link**.
@@ -4957,13 +5164,13 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
-| `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no story is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
+| `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no change is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
 | `help-action` | An approved action of Ask SCF ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
 | `help-action` | An account followed an offer of an Ask SCF reply (opened a page). Refused when the thing is gone (404), not allowed now (403) or the conversation is deleted (410) | `conversation <id>` | `<type>` (for example `open-run`), or `refused: denied` or `refused: stale` |
-| `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on Home (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
+| `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on **Today** (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
 call that changes nothing (the same repository settings again, a flow saved without a change, an unpublished flow). If an old key
@@ -4980,7 +5187,9 @@ A watcher in `config.yaml` is named `watchers.<id>.<option>`. A change to a repo
 and `agent_env` (the environment of a watcher, on any path). A watcher's `owner` (an account's e-mail) and `task` (free text) say
 only `changed` too. A value longer than 80 characters is cut and ends with `…`; a line is at most 2,000 characters.
 
-**The Audit page.** Admins only: **Audit** in the top bar (`#/audit`). It shows who did what, newest first: time, who, action,
+![The Audit page with its filters and the newest entries](images/audit.png)
+
+**The Audit page.** Admins only: open **Administration** in the sidebar, then **Audit** under **People and access** (`#/audit`). It shows who did what, newest first: time, who, action,
 target and result. "Who" is the account's name, "command line" for `scf`, or "not signed in" for a failed sign-in. An account
 that is gone shows as "deleted user". A detail, such as `user -> admin` for a role change, is under the target.
 
@@ -4990,13 +5199,13 @@ that is gone shows as "deleted user". A detail, such as `user -> admin` for a ro
 - The page shows the newest 500 lines. When there are more, it says so: narrow the filters or use **Export CSV**.
 - An empty result says "No entries." An error, such as a log that cannot be read, shows on the page.
 
-An account with the role `user` never sees the link or the page; a user who opens `/#/audit` lands on My runs.
+An account with the role `user` never sees the link or the page; a user who opens `/#/audit` lands on **Changes**.
 
 **View as user.** An admin can open the display of one user and see what that user sees, read-only.
 
-- **Start.** On the Users page, press **View as user** on an account with the role user (admins do not have the button). The user display opens at `/user/?as=<id>` with that user's My runs, run page, My repositories, Refinement and Start work.
-- **The bar.** A bar at the top says "You are viewing as <name>. Nothing can be changed here." Press **Back to the admin display** to end the view and return to the Users page. The top bar still shows your own name and Sign out.
-- **Read-only.** Buttons that only change things are not shown: Start, Add repository, Remove, Approve, Reject, Retry, Cancel, Send answer and the buttons of a refinement session. A button that is still there, such as Change password, shows "This is a preview. Nothing can be changed here." and sends nothing. The page sends no changing call in this mode.
+- **Start.** Open the account's page (Administration › People and access › **Users**, then the name) and press **View as user** under **Actions**. Only an account with the role user has the button. The user display opens at `/user/?as=<id>` with that user's Today, Changes, Ideas, Releases and My repositories, and the pages of their changes.
+- **The bar.** A bar at the top says "You are viewing as <name>. Nothing can be changed here." Press **Back to the admin display** to end the view and go back to the Users page. The top bar still shows your own name and Sign out.
+- **Read-only.** Buttons that only change things are not shown: Start, Add repository, Remove, Approve, Reject, Retry, Cancel, Send answer and the buttons of a refinement session (an idea on **Ideas**). A button that is still there, such as Change password, shows "This is a preview. Nothing can be changed here." and sends nothing. The page sends no changing call in this mode.
 - **When the view ends.** A view ends after 30 minutes, or when the server restarts. The page then says so and offers **View again** (a new start, a new audit line) and **Back to the admin display**. It never shows your own data instead. A view opened in another tab, or when the browser cannot keep the user's name, also shows this card.
 - **Other cases.** `/user/` without `as` sends an admin in the Admin view to the admin display; an admin in Simple or Advanced stays there. If a user opens `/user/?as=…`, the parameter is ignored.
 
@@ -5054,10 +5263,12 @@ Every account has a role, `admin` or `user`. The server checks it on every call.
 not in the table below answers 404, also for an admin.
 
 - **An admin** may make every call and sees every page.
-- **A user** sees only the **Start work**, **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
-  table. Every other call answers `403 {"error":"not allowed for your role"}`. Pages other than
-  Start work, Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
-  opens `/` is sent to `/user/`, and any other address there goes to `#/runs`.
+- **A user** works on the user display at `/user/`. Its sidebar has **Today**, **Changes**, **Ideas**, **Releases** and **Help**,
+  plus **My repositories** in the Advanced view, and the top bar has **+ New change**. The Setup check and the Get started
+  guide are there too. A user may use the calls marked `yes` or `own runs` in the
+  table. Every other call answers `403 {"error":"not allowed for your role"}`. Board, Flows and Administration
+  are not part of the user display. A user who
+  opens `/` is sent to `/user/`, and any other address there goes to **Changes** (`#/runs`); in the Simple view it goes to **Today**.
 
 **What a user does not see.** The server cuts these from every answer a user gets, so the page
 cannot show them: costs, tokens, budgets and prices; the model, provider and agent; step output
@@ -5089,9 +5300,9 @@ show as "n runs ahead of you", without ids.
 
 **Answering a run.** On a run that waits, a user can approve or reject it with a note
 (`POST /api/runs/<id>/approve` or `/reject` with `{"note": "…"}`). The note reaches the run. A user whose run stopped with questions answers them on the run page
-(see "Answer a run's questions"); the card in My runs says so and sorts on top.
+(see "Answer a run's questions"); in **Changes** the change is listed under **Needs you**, at the top.
 
-![My repositories](images/repos.png)
+![The repository list with authentication and connection status](images/repos.png)
 
 **What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the sign-in you chose for it, and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it.
 
@@ -5166,7 +5377,7 @@ On the repository lists, a filter **Authentication** (`?method=<method>` in the 
 method, with its own chip. With no repository that uses the method the list says "No repository uses this
 authentication." and offers **Clear filters**.
 
-**The My repositories page.** `#/repos` is in the top bar for every account. It lists your repositories
+**The My repositories page.** Open **My repositories** in the sidebar (Advanced view) or **Repositories** (Admin view); the address is `#/repos`. The Simple view has no repository list: a project opens from **Today**. The page lists your repositories
 with the URL, how the Foundry signs in (the authentication method) and the connection status, which is
 "Not tested yet" until it is tested (see below). **Add repository** works in steps. Step 1 asks for the address; press **Next**. Steps 2 and 3 ask for the method and its details; **Back** returns to the address and keeps what you typed. Press **Add repository** to save. The Foundry then tests the connection by itself, and the dialog shows what it stored: the address, the method, the user name, the public key of a deploy key, the result of each check, and "A token is stored. It is never shown again." If the test fails, the repository is kept; press **Test again**, or **Change details** to enter new details. Press **Done** to close. The methods:
 a GitHub fine-grained personal access token (give it these repository permissions, each "Read and write":
@@ -5196,7 +5407,7 @@ GitHub App" under its attention state; choose another authentication. **Remove**
 - **Use one of my GitHub repositories**: pick one from the list. Only GitHub repositories you connected with a token or the GitHub App are listed.
 - **Create a new repository**: type a name (`name` or `owner/name`). **Private** is ticked by default.
 
-Tick **Also move closed stories** to move them too. Press **Check** first: the dialog shows the dry run, with the repository, the branches and tags that will be pushed, and each story as create or skip. Nothing changes yet. **Yes, publish** is on only after a check that has no blocked stories; press it to move the project. The server checks that confirmation itself: it is single-use, expires after 10 minutes, and a move is refused with "Nothing was published" (409) before anything is created or pushed when the branches, tags or stories changed since the check. **Cancel** leaves everything local (see "Move a local project to GitHub" in the Work section). Progress and errors use the server's fixed messages. **Cancel** is off while the move runs. When it has finished, the list reloads; after a move that worked, the local project is no longer in it.
+Tick **Also move closed changes** to move closed stories too. Press **Check** first: the dialog shows the dry run, with the repository, the branches and tags that will be pushed, and each story as create or skip. Nothing changes yet. **Yes, publish** is on only after a check that has no blocked stories; press it to move the project. The server checks that confirmation itself: it is single-use, expires after 10 minutes, and a move is refused with "Nothing was published" (409) before anything is created or pushed when the branches, tags or stories changed since the check. **Cancel** leaves everything local (see "Move a local project to GitHub" in the Work section). Progress and errors use the server's fixed messages. **Cancel** is off while the move runs. When it has finished, the list reloads; after a move that worked, the local project is no longer in it.
 
 A watcher on a local repository works the same way without GitHub: it starts the stories set to `go` and reads the folder itself. Watchers that need GitHub (review comments, CI failures, release files) are refused for it, and the watcher form says why.
 
@@ -5214,10 +5425,13 @@ Errors from the server show in the dialog in plain words. A failed removal shows
 method shows "Needs authentication" for a user. An admin can also choose "The server's own access". The page
 has no per-repository settings. An admin sets them on the **Repositories** page.
 
-**Outcomes on the repository view.** The repository view (`#/repos/<id>`) has an **Outcomes** section on both displays, for a GitHub repository. It is the same card as on the Dashboard (see [Outcomes](#outcomes)), for that one repository: the repository is fixed, and you choose the **Flow** and the window (7, 30 or 90 days). The measures and their definitions are the same. You see only what you may see: no **Cost per successful run**, no **Returning users**, and for a user no model route or policy version filter. A measure that is read with an admin-only measure says how many are left out ("… for admins only"). A repository on another host shows "Outcomes are measured for GitHub repositories only." If the card cannot load, it says "Could not load the outcomes." with **Retry**; the rest of the page still works. The card reads `GET /api/outcomes?repo=<owner/name>`.
+![One repository (acme/app) in the Admin view: Overview, Connection with Test connection, and Outcomes](images/repo.png)
 
-**The Repositories page (admin).** An admin has one Repositories page with a switch: **Mine** (`#/repos`),
-**All** (`#/all-repos`) and **Credentials** (`#/credentials`, see below); a user never gets **All** or **Credentials**. **All** lists the repositories of all accounts with the
+**Outcomes on the repository view.** The repository view (`#/repos/<id>`) has an **Outcomes** section on both displays, for a GitHub repository. It is the same card as on the Dashboard (Administration › Operations › **Dashboard**; see [Outcomes](#outcomes)), for that one repository: the repository is fixed, and you choose the **Flow** and the window (7, 30 or 90 days). The measures and their definitions are the same. You see only what you may see: no **Cost per successful run**, no **Returning users**, and for a user no model route or policy version filter. A measure that is read with an admin-only measure says how many are left out ("… for admins only"). A repository on another host shows "Outcomes are measured for GitHub repositories only." If the card cannot load, it says "Could not load the outcomes." with **Retry**; the rest of the page still works. The card reads `GET /api/outcomes?repo=<owner/name>`.
+
+**The Repositories page (admin).** An admin opens **Repositories** in the sidebar (Admin view). The page has a switch: **Mine** (`#/repos`),
+**All** (`#/all-repos`) and **Credentials** (`#/credentials`, see below); a user never gets **All** or **Credentials**. The same two lists are
+also under **Administration** › **People and access**, as **All repositories** and **Credentials**. **All** lists the repositories of all accounts with the
 Owner column (name and e-mail, "blocked" for a blocked owner, "Unknown account" when the account is gone), the
 URL, the authentication method and the connection status ("Not tested yet" until the owner tests it). Rows with
 a problem come first, then by owner and address. Besides the usual states, a row can say "Not on the app list"
@@ -5275,8 +5489,11 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   type the token again.
 - Queued and running runs of the old owner are not stopped.
 
-**The Credentials page (admin).** `#/credentials` is the third scope of the admin's Repositories page (**Credentials**,
-after **Mine** and **All**); a user never gets it. It is a table of the stored credentials of all accounts, sorted by
+![The Credentials page with the stored credentials of all accounts](images/credentials.png)
+
+**The Credentials page (admin).** Open **Administration** in the sidebar, then **Credentials** under **People and access**
+(`#/credentials`). It is also the third scope of the admin's Repositories page (**Credentials**, after **Mine** and **All**).
+A user never gets it. It is a table of the stored credentials of all accounts, sorted by
 owner name and then by name, with Owner, Provider, Identity, Scope, Fingerprint, Created and Last used ("never" when
 it was not used yet). Provider, Identity and Scope are those of the repository the credential belongs to (a credential
 named `repo:<id>` of the same owner); a credential with no repository shows "No repository" and its own type and
@@ -5344,7 +5561,7 @@ see no flows until you publish some. An unpublished flow answers 404.
 
 `GET /api/flows` shows a user the published, valid flows as `{name, title, description,
 version, usesTask, fields}`. `usesTask` is true when a step reads the task (`{{task}}`,
-`FACTORY_TASK` or `SCF_TASK`); the Start work page shows a Task box only when it is not false. The built-in `issue-plan` and `issue-gitflow` read the task in their planning steps: what you type reaches the planner on top of the issue, and it may be left empty. `fields` lists the variables that are *fixed* (shown with their value) or
+`FACTORY_TASK` or `SCF_TASK`); the **+ New change** page (`#/start`) shows a Task box only when it is not false. The built-in `issue-plan` and `issue-gitflow` read the task in their planning steps: what you type reaches the planner on top of the issue, and it may be left empty. `fields` lists the variables that are *fixed* (shown with their value) or
 *user fills in* (with label, help text, default and whether it is required); hidden variables
 are not listed. In `vars` a user may set only the inputs (403 `you cannot set the var "<name>"`
 for any other). A required input that is empty gives 400 `fill in "<label>"`. Hidden and fixed
@@ -5397,7 +5614,7 @@ it gives 403. A user also gets 403 for the diff of an `inplace` run. The server'
 a workspace ignore hooks, `fsmonitor` and the global git settings. A user's run without `github_repo` keeps its learnings in a file of its own account. What is
 protected and what is still open is in `docs/THREAT_MODEL.md`.
 
-**After an upgrade.** Existing accounts with the role `user` lose access to everything but Refinement, Runs and My repositories.
+**After an upgrade.** Existing accounts with the role `user` keep only the pages of the user display (see above): no Board, Flows or Administration.
 Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 `scf user create --admin` under another e-mail.
 
@@ -5619,7 +5836,6 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
 
-**What comes later.** Pages for users (starting runs).
 
 ### Automatic skills
 
@@ -6596,7 +6812,7 @@ On macOS, launchd runs it the same way. Save this as `~/Library/LaunchAgents/com
 
 ##### Let the server run it
 
-The Foundry server can run the due checks itself, so no cron job or launchd job is needed. Name the catalogue clone and how often the server looks in `config.yaml`, or on the Skills card of Settings:
+The Foundry server can run the due checks itself, so no cron job or launchd job is needed. Name the catalogue clone and how often the server looks in `config.yaml`, or in the **Skill source checks** group of the **Skills** card on the Settings page (in the Admin view, open **Administration** in the sidebar, then **Settings** under System):
 
 ```yaml
 skills:
@@ -6611,7 +6827,7 @@ skills:
 - **Log.** Each line of the check goes to the server log with the prefix `skill-sources: `, for example `skill-sources: awesome-copilot: OPEN <url> …`. Secrets are removed from the lines.
 - **Problems.** A `PROBLEM` outcome becomes a finding of the detector `skill-source-check` on the [Problems page](#the-problems-page), named after its source (or **Skill source checks** for a problem of the whole catalogue). A later check that no longer reports it marks it as gone. Turning the checks off, or changing the folder, marks all of them as gone.
 - **Changes.** Changing or clearing the key takes effect at the next tick, without a restart. A check that is running when the folder is cleared or changed stops before its next git or gh step. A new folder is checked at the next free tick.
-- **Who may change it.** Only an administrator can save these fields, in Settings (the Skills card) or in `config.yaml`.
+- **Who may change it.** Only an administrator can save these fields, on the Settings page (the **Skills** card) or in `config.yaml`.
 - **Git and gh.** The server commits, pushes branches and opens pull requests in that clone with its own git and gh sign-in, the account that runs the server. It never merges or approves. Merging the pull request is still the approval. `gh` must be installed and signed in for that account.
 - **Do not also run cron on the same clone.** A cron job or launchd job and this setting would both check the same clone. Remove the cron or launchd job when you set `folder`.
 
@@ -7354,7 +7570,7 @@ skills:
 - **High risk always stops,** whatever the policy says. A skill is high risk when its id, category or a capability equals a `high_risk` term. Terms match whole hyphen-separated words, so `insecurity-notes` is not high risk. A package that says `risk: high` is high risk too. A `medium` skill also always stops; only `low` can be warned about. A mandatory skill (`skills.selection.include`) that cannot be used also stops.
 - **Resume:** resuming a stopped run checks the skills again. Install, approve or pin the skill (see [Pinned versions and integrity](#pinned-versions-and-integrity)), then resume. If the stored request cannot be read again, the run stays stopped.
 - **Unchanged:** a run whose plan asks for no skills, with no `skills.selection.include`, is not checked. Older run files stay valid.
-- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The run page shows the skills in a card; see [Skills on the run page](#skills-on-the-run-page). The plan comment lists the required skills; stop reasons are not posted to GitHub.
+- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The page of the run shows the skills under **Details**; see [Skills on the run page](#skills-on-the-run-page). The plan comment lists the required skills; stop reasons are not posted to GitHub.
 
 ### Skills in Claude sessions
 
@@ -7426,7 +7642,7 @@ It decides whether a run may go on with a skill. It does not limit what a sessio
 
 ### Skills on the run page
 
-The run page has a **Skills** card; users see it on their run page too. It has two lists.
+To see which skills a run uses, open the run (from **Changes** in the sidebar), choose the **Details** tab and open the **Skills** section. The section is there for admins and users, in the Advanced and Admin views. It is hidden when the run has no skill information. The Simple view does not show skills. The section has two lists.
 
 - **Requested:** what the plan asked for, and what the administrator always includes. Each item has a state: *Selected*, *Missing* (not installed, or a dependency is unavailable), *Conflicting*, *Not approved*, *Too large* or *Not checked* (no answer yet). The reason, the evidence and the message of a problem are shown when there are any.
 - **Resolved:** the skills the run uses, in load order, with their dependencies. Each row shows version, category, why it was chosen, about how many tokens of context it needs, its integrity, and how the session got it: *Loaded*, *Reloaded*, *Reused* or *Left out (over budget)*. Reviewer steps show *Review checks given*.
@@ -7435,10 +7651,10 @@ Integrity words: *Verified* (the package matches the lock), *Changed*, *Missing*
 
 - **Up to a minute old.** Integrity and category come from the skill list the server keeps for one minute.
 - **Evidence.** A path is shown as text. An issue is a link when the repository is `owner/name`.
-- **Status line.** The card says when the lock is missing or was changed, when the run planned again (new skills are locked at the next agent step), when the run stopped because a skill cannot be used, and the context estimate.
-- **Why these skills.** A short list at the end of the card says why each skill was chosen. It has one line per capability the run involves: the winner and the reason it won (for example `trust tier`), the companions that load with it (`composable`), and up to 5 rejected skills with their reason (for example `not ... (outranked: evaluation)`). Each group of identical copies names the copy that was kept and the copies that were not offered. Project pins and owner overrides that the run applied are listed with their target. The list is capped at 20 capabilities and 20 groups of copies, and it says how many more there are. It only names skills the run involves, so the full catalogue is never shown. The list is hidden when there is nothing to explain.
-- **Admins** also see the source (built-in or administrator folder), the digest, who set a pin or override, and the commit of the project pins. Users never see digests, sources, authors (`by`), commits or folder paths.
-- **Older runs** without skill information show no card. Older runs without the "Why these skills" data show the card without that list.
+- **Status line.** The section says when the lock is missing or was changed, when the run planned again (new skills are locked at the next agent step), when the run stopped because a skill cannot be used, and the context estimate.
+- **Why these skills.** A short list at the end of the section, under **Why these skills**, says why each skill was chosen. It has one line per capability the run involves: the winner and the reason it won (for example `trust tier`), the companions that load with it (`composable`), and up to 5 rejected skills with their reason (for example `not ... (outranked: evaluation)`). Each group of identical copies names the copy that was kept and the copies that were not offered. Project pins and owner overrides that the run applied are listed with their target. The list is capped at 20 capabilities and 20 groups of copies, and it says how many more there are. It only names skills the run involves, so the full catalogue is never shown. The list is hidden when there is nothing to explain.
+- **Admins** also see the source (built-in or administrator folder), the digest (the **Source** and **Digest** columns), who set a pin or override, and the commit of the project pins. Users never see digests, sources, authors (`by`), commits or folder paths.
+- **Older runs** without skill information show no Skills section. Older runs without the "Why these skills" data show the section without that list.
 
 The same data is the `skillView` field of `GET /api/runs/:id` and of the `update` events of the run stream. The run list does not carry it.
 
@@ -7456,7 +7672,9 @@ A flow step gets these checks with `skill_role: reviewer` on a `claude` step. Th
 ### Access from other computers
 
 By default the Foundry answers only on the Mac it runs on. Colleagues can reach it from their own
-computers when you set three things in **Settings → Network** (or in `config.yaml`):
+computers when you set three things in the **Network** section of the Settings page (**Administration** → **Settings**), or in `config.yaml`:
+
+![The Settings page in the Admin view, with the Network and Skills settings](images/settings.png)
 
 ```yaml
 server:
@@ -7537,12 +7755,14 @@ then cross the network unencrypted. Use it only on a network you trust.
 **Do not mix** HTTPS and plain HTTP on one host name: HSTS makes browsers refuse HTTP for that name
 for a year.
 
-A user account can only use Runs and the calls in "Roles and permissions" above, but a run can
+A user account can only do what "Roles and permissions" above allows, but a run can
 still run commands on this Mac, so only give accounts to people you trust. Links
 in Slack and notifications still point at `http://localhost:<port>`.
 
 **Stored credentials.** A token or an ssh key can be stored through the API
-(`POST /api/credentials`); there is no UI page yet, and runs do not use them yet. They are kept in
+(`POST /api/credentials`); you cannot add one in the web interface, and runs do not use them yet.
+An admin can see them on the **Credentials** page (**Administration** → **Credentials** under People and access):
+owner, provider, identity, scope, fingerprint, created and last used, never the secret. They are kept in
 `credentials.json` in the data folder (mode `0600`), encrypted with AES-256-GCM. The key is not in
 the data folder: it is in the macOS Keychain, as an item of the service
 `claude-factory-credential-key`. Only macOS is supported. The token or deploy key of a repository is stored here
@@ -7605,10 +7825,10 @@ workspaces:
 - A user sees only the repositories, watchers' runs, runs and refinement sessions of their own workspaces. A
   team member does not see `default`, and an account in no team sees `default` only. An object of another
   workspace answers `404`, as an unknown id does; lists, search, the board and the usage view leave it out.
-  An admin sees all workspaces. A user cannot start work on a repository outside their workspaces.
+  An admin sees all workspaces. A user cannot start a change on a repository outside their workspaces.
 - An invalid entry, or a second entry with the same id, stops the config from being read. A plugin can supply
   the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
-- The Settings page does not show the list yet; edit it in `config.yaml`.
+- The Settings page does not show the list; edit it in `config.yaml`.
 
 **Where the files go.** The `default` workspace keeps its runs in `runs/` and its area locks in `locks/` under
 the data folder, as before. Each other workspace keeps its runs in `workspaces/<id>/runs/` and its locks in
@@ -7616,7 +7836,7 @@ the data folder, as before. Each other workspace keeps its runs in `workspaces/<
 then in each workspace folder. A run's steps can only write to their own workspace's lock folder, and the
 sandbox denies every runs folder.
 
-**Skills of a workspace.** Each workspace other than `default` has its own administrator skills folder, `<data folder>/workspaces/<id>/skills/`, with the same layout as `<data folder>/skills/`. A run of the workspace takes its administrator skills only from that folder, so a team's skills are used only by its runs. The `default` workspace uses `<data folder>/skills/`, and a team workspace does not see it. The other skill sources (approved releases, `skills.roots`, the built-in skills and the repository) are the same for every workspace, and so are the pins and the skill lifecycle. The skill card of a run shows the skills of that run's workspace. To list a team's skills, use `scf skills --workspace <id>`; `scf skills pin <id@version> <digest> --workspace <id>` takes the package from that folder. `--workspace` with an id that is not valid is refused.
+**Skills of a workspace.** Each workspace other than `default` has its own administrator skills folder, `<data folder>/workspaces/<id>/skills/`, with the same layout as `<data folder>/skills/`. A run of the workspace takes its administrator skills only from that folder, so a team's skills are used only by its runs. The `default` workspace uses `<data folder>/skills/`, and a team workspace does not see it. The other skill sources (approved releases, `skills.roots`, the built-in skills and the repository) are the same for every workspace, and so are the pins and the skill lifecycle. The Skills section of a run (under **Details**) shows the skills of that run's workspace. To list a team's skills, use `scf skills --workspace <id>`; `scf skills pin <id@version> <digest> --workspace <id>` takes the package from that folder. `--workspace` with an id that is not valid is refused.
 
 **A workspace removed from `config.yaml`.** Its runs stay listed and readable, but it becomes read-only: a new
 run or a resume in it fails with `WORKSPACE_REMOVED`, and answers, parking and archiving are refused. Cancelling
@@ -7642,8 +7862,8 @@ plugins:
   message; that stops the start like any other failure. See [PLUGIN_API.md](PLUGIN_API.md).
 - **What is refused.** A relative path, a URL, a built-in Node module, and a module inside a runs
   folder or a repository the Foundry works on. At most 20 plugins; no name twice.
-- **Where they are set.** In `config.yaml` only. The settings page shows the plugins read-only.
-  `PUT /api/config` refuses a `plugins` key, and a save from the settings page keeps the stored list.
+- **Where they are set.** In `config.yaml` only. The **Plugins** card on the Settings page shows them read-only.
+  `PUT /api/config` refuses a `plugins` key, and a save from the Settings page keeps the stored list.
 - **Checking.** `scf plugins` lists the loaded plugins in order, with their version, their module and
   what each registered. It needs a running, signed-in server (admin); `GET /api/plugins` is the same
   list. The health line shows a plugin problem when `config.yaml` lists other plugins than the ones
@@ -7659,7 +7879,7 @@ A plugin can also add to the web interface. In `register(api)` it calls `api.ui(
   and opens at `#/plugins/<name>/<page>` inside the normal layout. The `<name>` is the plugin's label
   in lower case (`@`, `/`, `.` and `_` become `-`). A page can name more files of its folder (`.js`,
   `.css`, `.svg`).
-- **Menu items.** A link under "Plugins" in the sidebar. It names a page and the roles that see it;
+- **Menu items.** A link under a **Plugins** heading in the sidebar. It names a page and the roles that see it;
   a role can see the item only when it can see the page.
 - **Who may see what.** A plugin file is served only when a rule of that plugin lists your role.
   Without a rule the answer is 404; without a session, 401; with a role the rule does not list, 403.
@@ -7700,7 +7920,8 @@ toward a run's `max_cost_usd` and the daily budget, as Claude Code's do.
 makes one short call to a small model (default `haiku`) that reads the end of the failing output
 and writes the *why* sentence. It costs a few tenths of a cent to a few cents, is counted in the
 run and in the daily budget, and never gets more than what is left of them. The model has no
-tools and sees no GitHub token. Change the model or switch the call off in Settings → Agents, or in `config.yaml`:
+tools and sees no GitHub token. Change the model or switch the call off under **Administration → Settings → Agents**
+(Admin view), or in `config.yaml`:
 
 ```yaml
 failure_summary: {enabled: true, model: haiku}   # model: ollama:<model> for a local one
@@ -7709,7 +7930,7 @@ failure_summary: {enabled: true, model: haiku}   # model: ollama:<model> for a l
 With the call off, or on Codex-only installs, the card and the comment use the rules text. To
 turn it off for one process, set `SCF_NO_FAILURE_MODEL=1`.
 
-**Fixed-price subscriptions:** turn off **Enforce cost limits** in Settings (`cost_limits: false`).
+**Fixed-price subscriptions:** turn off **Enforce cost limits** under **Administration → Settings** (`cost_limits: false`).
 Costs are still recorded and shown everywhere, but nothing is ever stopped because of money — no
 run limit, no step limit, no daily budget. The usage limits that Claude and Codex report
 themselves still pause runs; they continue by themselves when the limit resets.
@@ -7745,12 +7966,16 @@ The default is `usage.prices: {}` (no entries; the built-in table applies). Up t
 
 ### Operations overview
 
-**Overview** is the first page of Administration. It shows what needs attention, on one page: four tiles (Problems, Queue, Watchers, Spent today) and eight cards. Each card has a link to its own page.
+To see what needs attention, switch to the Admin view and click **Administration** in the sidebar. It opens on
+**Overview**, the first page of the **Operations** section. The page shows four tiles (Problems, Queue, Watchers,
+Spent today) and eight cards. Each card has a link to its own page.
+
+![The Overview page of Administration, with its tiles and cards](images/operations.png)
 
 - **Health** shows the same line as the health chip. **Cancel run** is the only action on the page; it asks first.
 - **Problems** counts the open findings of the monitor (Open Problems).
 - **Providers** says how many agents and providers are ready (Open Models).
-- **Queue** shows how many runs are running and waiting, and the first five waiting runs (Open Runs).
+- **Queue** shows how many runs are running and waiting, and the first five waiting runs (Open Runs, which opens **Changes**).
 - **Watchers** shows how many are enabled, the ones with a problem, and the oldest successful check (Open Watchers).
 - **Limits** shows today's spending and the accounts at a limit (Open Settings, Open Users).
 - **Load governor** shows the runs at once now and why, the free capacity, the load of other programs with the top five programs by name, the Foundry's own load, and the changes of the last 24 hours as a small chart (Open Settings). It is described under "The load governor".
@@ -7760,17 +7985,20 @@ A part that cannot be loaded says "Not available" in its own card; the rest of t
 
 ### Dashboard
 
-![Dashboard](images/dashboard.png)
+To open the Dashboard, switch to the Admin view, click **Administration** in the sidebar, then **Dashboard** in
+the **Operations** section.
 
-Spend today and over 30 days, success rate, **Needs a human** (the number of runs whose next
-move is yours — the same as **Needs you** on the Runs page), the **Waiting** card (every
+![The Dashboard with spend, success rate and the cost per day](images/dashboard.png)
+
+It shows spend today and over 30 days, success rate, **Needs a human** (the number of runs whose next
+move is yours — the same as **Needs you** in the **Changes** list), the **Waiting** card (every
 labelled issue that isn't being worked on: who has the next move, what to do, why, and a link;
 lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first, plus today's runs, runs active now and today's cost; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository (with today's runs and cost),
 the steps where runs fail most, and eval results. If one part cannot be loaded, for example the evals, that part says "Could not load evals." with **Retry**, and the rest of the page is shown.
 
 **By user and limits.** Where an account has limits (fair use), the card shows them next to the numbers, for example `2 / 5` for runs today against the limit. An account that has reached a limit (runs at the same time, runs per day, or cost per day) gets an **at limit** mark. Accounts that have limits or a run active now are listed even without runs in the last 30 days. A deleted account ("deleted user") has no limits and no mark. "Today" is the server's local day. Only admins get these numbers.
 
-**Your turn in numbers** shows how long items waited for you (last 30 days) and whether anything waited for you without being on Your turn:
+**Your turn in numbers** shows how long items waited for you (last 30 days) and whether anything waited for you without being on Your turn (the list of what waits for you on **Today**):
 
 - *Half waited X or less* and *the longest* — measured to the minute, and only while the server runs. A wait ends when you act in the app (the item moves to "Done — continuing") or the item leaves the page.
 - *Dismissed items are not counted* — they are counted apart.
@@ -8110,7 +8338,7 @@ must start with `SCF_EVAL_`, and its value must not look like a real key.
 
 #### Checking Ask SCF before you switch it on
 
-`scf eval help` checks Ask SCF against 14 fixed scenarios. It needs no account and no server,
+Ask SCF is the help that opens with **Ask Foundry** in the top bar. `scf eval help` checks it against 14 fixed scenarios. It needs no account and no server,
 stores no conversation and calls no model: every scenario has a fixed answer, as a model might
 give it, and the check is what the Foundry sends and what it keeps of that answer.
 
@@ -8162,7 +8390,7 @@ Before a new version of a skill replaces the pinned one, keep this evidence with
 ### Spending limits per issue and per month
 
 Two limits stop money from running out on one issue or in one month. Both are off until you set them
-in `config.yaml` (or with **Settings → Spending limits**, where an empty field means no limit). Both
+in `config.yaml` (or under **Administration → Settings → Spending limits**, where an empty field means no limit). Both
 apply only while `cost_limits` is on:
 
 ```yaml
@@ -8174,12 +8402,12 @@ limits:
 - **Per issue.** The cost of the issue, of its split parts (nested ones too) and of all their runs and
   retries counts together. Before each agent step, a run whose issue has reached the limit stops with a
   reason that gives the amount spent and the limit. An administrator raises or clears the limit of that
-  issue with **Raise the issue's limit** on the run page, with `scf runs issue-limit` and
+  issue with **Raise the change's limit** on the change's page, with `scf runs issue-limit` and
   `scf runs set-issue-limit`, or with `GET` and `PUT /api/runs/:id/issue-limit`. Each change writes a
   `limits-change` audit line with the amounts. People see no amounts, only that the issue reached its limit.
   If the spend of the issue cannot be read, the run stops too (the limit is not guessed).
 - **Per month.** When the cost of all runs this UTC month reaches `monthly_budget_usd`, every pending job
-  waits until the next month, and the Work page says so ("waiting — this month's budget" for an admin,
+  waits until the next month, and its status says so ("waiting — this month's budget" for an admin,
   "waiting — the limit for this month is reached" for others). A workspace's own `monthly_budget_usd`
   (see [Workspaces](#workspaces)) holds its runs the same way. If a run folder cannot be read, the work
   waits rather than starting.
@@ -8262,7 +8490,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 `<data folder>/skill-plans/`. It holds the skill request, the plan comment ID and hash, the HEAD
 commit and the technology hash — never the plan text. If the record cannot be written and skills
 are in play, the run stops with `skills not resolved: …` and resumes at `post_plan`; without
-skills it only logs a warning. `scf clean --purge` and the Admin clean-up remove records older than
+skills it only logs a warning. `scf clean --purge` and **Clean up** on **Administration → Maintenance** remove records older than
 the larger of 90 days and the cut-off, and report `and N plan record(s)`. A dry run only counts.
 Records are only touched when the runs folder is the default one in the data folder.
 
@@ -8354,14 +8582,18 @@ you can do first. Find yours in the table:
 | The watcher for … cannot start: its check interval is outside what is allowed | Change the check interval of the watcher to a time like 5m |
 | The watcher for … has an error: the error is not one the Foundry can explain | Look at Error details on the Watchers page |
 
+The messages are the Foundry's own words. "The run page" is the page of one change: open **Changes** in the
+sidebar and click the change. **My repositories** is in the sidebar of the Advanced view; in the Admin view it is
+**Repositories**. **Watchers**, **Models**, **Users** and **Settings** are pages under **Administration** (Admin view).
+
 Then the message adds how to try again. A failed run can be resumed on its page to continue at
 the failed step, or (for an issue the Foundry watches) you remove the `factory:failed` label to
 start over. When the fix is a change to the flow (a larger budget), only a new run counts: a
 resumed run keeps the flow it started with. A change in Settings, such as the cost limits, also
 counts for a resume.
 
-The raw text is still there, as a detail: under **Raw details** in the failure card on the run page, and inside each
-failed step of the **Steps & transcripts** list, under **Error details** on the watcher card,
+The raw text is still there, as a detail: under **Raw details** in the failure card on the change's page, and inside each
+failed step under **Details › Steps** on that page, under **Error details** on the watcher card,
 and inside the collapsed **Details** of the failure comment on the issue. The settings behind
 the messages are `max_visits` (attempts), `limits.max_cost_usd` (run budget), `max_budget_usd`
 (step budget) and `timeout_sec` (time limit). If a step only needs more time, raise
@@ -8370,16 +8602,16 @@ the messages are `max_visits` (attempts), `limits.max_cost_usd` (run budget), `m
 A watcher error names its repository and shows in the [health line](#the-health-line). For a
 connection problem, check the network, and that `gh auth status` works in the terminal where the
 Foundry runs and that you have access to the repository. **Error details** on the watcher card
-shows gh's first output line too. **Check now** on the Watchers page retries
+shows gh's first output line too. **Check now** on **Administration → Watchers** retries
 immediately. A "has not checked since …" line means no check finished for a long time (a check
 that takes over 10 minutes is given up).
 
 **"Codex is not installed" or "Codex is not logged in".** Install Codex (`npm i -g
-@openai/codex`, or the ChatGPT desktop app) and run `codex login`. The Models page shows the
+@openai/codex`, or the ChatGPT desktop app) and run `codex login`. **Administration → Models** shows the
 status.
 
 **A local model says it is done but changed nothing.** The model is not good at tool use. Try a
-coding model (`qwen3-coder`, `gpt-oss`) and use **Try a model** on the Models page.
+coding model (`qwen3-coder`, `gpt-oss`) and use **Try a model** on **Administration → Models**.
 
 **A run stopped with "daily budget reached".** It continues automatically the next day, or when
 you raise the budget and resume it.
@@ -8392,15 +8624,15 @@ sentence says (e.g. allow the command in the flow), then resume the run. The lab
 failed label.
 
 **A push was refused.** Either the branch is protected, or the secret scan found something.
-A protected branch is a setting to change (**Protected branches** in Settings, or the flow's
+A protected branch is a setting to change (**Protected branches** under **Administration → Settings**, or the flow's
 branch); the run then says the Foundry failed. A secret-scan finding is in the code: the step
 output lists the file, line and kind of secret.
 
 **Locked out.** "This account is locked" after many wrong tries: wait 30 minutes, ask an admin to
-press **Unlock** on the Users page, or restart the server on the machine (the lock is in memory).
+press **Unlock** on **Administration → Users**, or restart the server on the machine (the lock is in memory).
 
-**Reset password gave an error.** The account may already have lost its password. If the Users
-page now reads "no password yet", use **New link**.
+**Reset password gave an error.** The account may already have lost its password. If the account on
+**Administration → Users** now reads "no password yet", use **New link**.
 
 **Change password gave an error.** The password is not changed; your other sessions may be signed
 out. Try again.
@@ -8475,23 +8707,29 @@ The folder of your clone can keep its name.
 
 ---
 
-## 12. Refinement
+## 12. Ideas (refinement)
 
-**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log, the architect's brief and the talk (questions, answers and a map of rules, examples and open questions). On the session page you can ask the architect to look at the code (see below).
+**Ideas** is where a rough idea grows into a story before it goes to the backlog. Open it with **Ideas** in the sidebar; it is there in every view. This part of the Foundry was called **Refinement**, and the page still has that heading, as do the API routes (`/api/refinement`) and the address `#/refinement`. Each idea is worked on in a **session**. The session keeps the idea, its state, a log, the architect's brief and the talk (questions, answers and a map of rules, examples and open questions). On the session page you can ask the architect to look at the code (see below).
 
-**Start a session.** Click **New session** (or choose **Refine an idea first** or **Refine an existing issue** on **Start work**). Choose the kind: **An idea** or **An existing issue**. For an idea, choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (optional, up to 120 characters). When the title is empty, the first line of the idea is used. For an existing issue, choose a repository and give the issue number (see below); a blank, zero or non-number issue is refused with "Give the issue number." and nothing is sent. The repositories offered are your GitHub repositories and your connected local projects from **My repositories** (a local project works for an idea only, not for an existing issue). If you have none, the dialog links to that page. On a local project the architect reads the project's folder (the branch `develop`, or the default branch when there is none), and publishing makes local stories in the folder (see "Publishing"); only the owner can do either. If the server refuses, its sentence shows in the dialog. What you typed is kept in page memory when you close the dialog or the request fails, and is cleared after the session is made. Nothing is written to GitHub.
+![The Ideas page with the list of sessions and the New session button](images/ideas.png)
 
-**Refine an existing issue.** Click **Refine an existing issue** next to **New session** (it opens the same dialog with the kind "An existing issue"). Under the kind the dialog says that a session from an issue cannot be published yet. Choose one of your repositories and give the issue number (for example `12` or `#12`). The issue is read from GitHub; nothing on GitHub changes. If the server refuses (the Foundry is building or has built the issue, it is closed, it does not exist, or you already have a session for it), the dialog shows the reason and stays open. The session page then says "From issue #N" with a link. If the issue has the build label, the page warns that the Foundry may start building it while you refine it, and offers **Remove the build label**. The label is removed only when you press that button, with the repository's GitHub sign-in, and only by the owner of the session. After that the warning is gone. The watcher is not held back: until the label is removed, the Foundry may start building the issue.
+**Start a session.** On the Ideas page, click **New session**. The dialog **New refinement session** asks "What do you want to refine?": **An idea** or **An existing GitHub issue**. For an idea, choose a repository, write your idea in your own words under **Your idea** (required, up to 10,000 characters) and, if you like, a **Title (optional)** (up to 120 characters). When the title is empty, the first line of the idea is used. For an existing issue, choose a repository and give the **Issue number** (see below); a blank, zero or non-number issue is refused with "Give the issue number." and nothing is sent. Press **Start session**. The repositories offered are your GitHub repositories and your connected local projects from **My repositories** (a local project works for an idea only, not for an existing issue). If you have none, the dialog links to that page. On a local project the architect reads the project's folder (the branch `develop`, or the default branch when there is none), and publishing makes local stories in the folder (see "Publishing"); only the owner can do either. If the server refuses, its sentence shows in the dialog. What you typed is kept in page memory when you close the dialog or the request fails, and is cleared after the session is made. Nothing is written to GitHub.
 
-**Start from an existing issue (server; the button above uses it).** `POST /api/refinement` also accepts `{ "repo": …, "issue": <number> }` instead of an idea. The issue is read from GitHub with the repository's sign-in; nothing is written to GitHub. The issue's title becomes the session title (up to 256 characters) and its title and text become the idea. The session keeps `source`: the issue number, link, and the title, text and `updated_at` it had when it was read (`GET /api/refinement/:id` returns it). When the text has the story format that Preview writes, the session gets one draft with the fields filled, all marked as typed by a person; text the fields cannot hold goes into the notes under its heading, and "Accepted anyway" is not taken. Without the story format, you get the idea only and no draft. Hidden Foundry markers and the "Refined in Spaghetti Code Foundry by …" note are left out. A text over the idea limit is refused, not cut. It is refused with a reason when the issue does not exist (404), is a pull request (400), is closed (409), or the repository is not yours (403). It is refused with 409 when the Foundry is building or has built the issue: a live or queued run, a Foundry status label (working, waiting, needs info, done; a watcher's own names count), or a run with a pull request, unless that pull request is closed and not merged. An issue with only a failed run, or only the failed label, is accepted. An issue for which you already have an open session is refused with the id of that session. When the issue has the build label, `source.buildLabel` says so. A session from an issue cannot be published yet (409) until write-back exists.
+**From + New change.** **+ New change** in the top bar asks "Where do you start?". **An existing change** takes an issue number and opens a session for that issue, like the dialog above; it needs a GitHub repository. **A conversation** lists your open sessions, newest first, with a link to all of them. **A new idea** starts a change request instead of a session (see [Ask for a change (API)](#ask-for-a-change-api)).
 
-**Backlog readiness.** Click **Backlog readiness** on the Refinement page to see which open issues of a repository are not ready. Choose one of your repositories. The list shows the open issues the Foundry is not building and has not built (the same rule as "Refine an existing issue"), newest first, with the number (a link to GitHub), the title and four marks, done by code only: **Acceptance criteria** (a section with at least one item), **Value sentence** ("As …, I want …, so that …"), **Depends on** (every issue named there exists; hover a ✗ to see which were not found) and **No open questions** (no "Open questions" heading with content, and no unchecked question item). The marks are hints; nothing is blocked by them. Press **Refine** to start a session from that issue and open it. When you already have an open session for the issue, the button reads **Open session**. GitHub's newest 100 issues and pull requests are read; when that page is full, the view says that older open issues may be missing. When GitHub cannot be read, the view says so and tells you to check the repository's sign-in under **My repositories**. The view starts no architect run, writes nothing to GitHub and adds or removes no labels; the watcher is not changed. It is not shown in a preview ("View as user"). Server: `GET /api/refinement/backlog?repo=owner/name` (see the route table); only the owner of the repository can read it.
+**Refine an existing issue.** Click **Refine an existing GitHub issue** next to **New session** (it opens the same dialog with the kind "An existing GitHub issue"). Choose one of your repositories and give the issue number (for example `12` or `#12`). The issue is read from GitHub; nothing on GitHub changes. If the server refuses (the Foundry is building or has built the issue, it is closed, it does not exist, or you already have a session for it), the dialog shows the reason and stays open. The session page then says "From issue #N" with a link. If the issue has the build label, the page warns that the Foundry may start building it while you refine it, and offers **Remove the build label**. The label is removed only when you press that button, with the repository's GitHub sign-in, and only by the owner of the session. After that the warning is gone. The watcher is not held back: until the label is removed, the Foundry may start building the issue.
+
+**Start from an existing issue (server; the button above uses it).** `POST /api/refinement` also accepts `{ "repo": …, "issue": <number> }` instead of an idea. The issue is read from GitHub with the repository's sign-in; nothing is written to GitHub. The issue's title becomes the session title (up to 256 characters) and its title and text become the idea. The session keeps `source`: the issue number, link, and the title, text and `updated_at` it had when it was read (`GET /api/refinement/:id` returns it). When the text has the story format that Preview writes, the session gets one draft with the fields filled, all marked as typed by a person; text the fields cannot hold goes into the notes under its heading, and "Accepted anyway" is not taken. Without the story format, you get the idea only and no draft. Hidden Foundry markers and the "Refined in Spaghetti Code Foundry by …" note are left out. A text over the idea limit is refused, not cut. It is refused with a reason when the issue does not exist (404), is a pull request (400), is closed (409), or the repository is not yours (403). It is refused with 409 when the Foundry is building or has built the issue: a live or queued run, a Foundry status label (working, waiting, needs info, done; a watcher's own names count), or a run with a pull request, unless that pull request is closed and not merged. An issue with only a failed run, or only the failed label, is accepted. An issue for which you already have an open session is refused with the id of that session. When the issue has the build label, `source.buildLabel` says so. Publishing such a session updates the issue (see "The issue changed on GitHub" under "Publishing on the session page").
+
+**Backlog readiness.** Click **Backlog readiness** on the Ideas page to see which open issues of a repository are not ready. Choose one of your repositories. The list shows the open issues the Foundry is not building and has not built (the same rule as "Refine an existing issue"), newest first, with the number (a link to GitHub), the title and four marks, done by code only: **Acceptance criteria** (a section with at least one item), **Value sentence** ("As …, I want …, so that …"), **Depends on** (every issue named there exists; hover a ✗ to see which were not found) and **No open questions** (no "Open questions" heading with content, and no unchecked question item). The marks are hints; nothing is blocked by them. Press **Refine** to start a session from that issue and open it. When you already have an open session for the issue, the button reads **Open session**. GitHub's newest 100 issues and pull requests are read; when that page is full, the view says that older open issues may be missing. When GitHub cannot be read, the view says so and tells you to check the repository's sign-in under **My repositories**. The view starts no architect run, writes nothing to GitHub and adds or removes no labels; the watcher is not changed. It is not shown in a preview ("View as user"). Server: `GET /api/refinement/backlog?repo=owner/name` (see the route table); only the owner of the repository can read it.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. It becomes *published* when every draft of the session has a GitHub issue (see "Publishing"); with only some published it stays as it was. Later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner. See "The session page" below for how the page is laid out.
+**The session page.** Click a session in the list to open it. It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list on the Ideas page shows title, repository, state and last change; an admin also sees the owner. **Open sessions** and **Dropped** switch between the two lists. See "The session page" below for how the page is laid out.
 
 ### The session page
+
+![A session page with the row of parts: Idea and brief, Conversation, Story drafts, Hand off and Log](images/refinement-session.png)
 
 The session page `#/refinement/:id` is one workspace. The title, the state, the repository and the **Rename**, **Drop** and **Restore** buttons stay on top. Under them is a row of five parts; one part is shown at a time:
 
@@ -8797,7 +9035,7 @@ A session keeps the talk with the architect, so it is not lost. The session page
 
 **One at a time.** A session has one architect run at a time, counted together with the brief read (409 with a plain sentence). You can ask the architect in several sessions: the runs of one account wait in line and the architect works on them one after another, in the order they were asked. A waiting session says how many of your other sessions are first. An architect run takes none of the Foundry's run places (`concurrency`) and is not held back by a helper's cap such as the load governor: it starts at once, unless another architect run of your account works. A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
 
-**What you see of the run.** It shows in your Runs list with the mark "refinement", and nowhere else. Its task is shown as one line (the first line of the talk) in the Runs list, on the run page and in the queue.
+**What you see of the run.** It shows in your **Changes** list with the mark "refinement", and nowhere else. Its task is shown as one line (the first line of the talk) in the Changes list, on the run's page and in the queue.
 
 ### The architect's context brief
 
@@ -8807,7 +9045,7 @@ The flow `refine-brief` lets the architect read a repository and its open issues
 scf run refine-brief --task "your idea" --var github_repo=owner/name
 ```
 
-**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session at a time (a second ask for the same session answers 409). A read asked for while the architect works for another of your sessions waits in line and starts by itself; you do not have to come back to ask again. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
+**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session at a time (a second ask for the same session answers 409). A read asked for while the architect works for another of your sessions waits in line and starts by itself; you do not have to come back to ask again. A read costs at most $3 and counts for the daily budget. The read is in the **Changes** list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Changes list. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
 
 **What it reads.** It clones the repository (the `develop` branch when the remote has one, the default branch otherwise) and reads the open issues with all their comments. Up to 200 open issues are read, the newest first. A body is cut at 2,000 characters and a comment at 600; the cut is marked. When the backlog is larger than 200, the brief must say so under "Could not find out", or the run fails.
 
@@ -8817,9 +9055,9 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 
 **Whose access it uses.** In a run the server started for a refinement session, the clone and the issue list use the sign-in you stored for the repository under **My repositories** (its token, its deploy key or the GitHub App), and nothing else (not the server's `gh` login, not the bot token). A token needs read access to Contents and Issues. A deploy key gives git access only, so the issue list fails for such a repository; choose a token or the app. The architect and every other step never get it. For a repository with the method "none" the server's own access is used, but only when the owner of the run is an admin; any other account gets "set a token for this repository under My repositories". A token that is missing, cannot be read or is refused by GitHub fails the run with a sentence in plain words. Runs started by hand, by the CLI or by a watcher use the stored token too, in their marked steps. For admins: with a stored token the clone ignores the server's git settings and allows only https, so a proxy or an own CA must be set in the server's environment (`HTTPS_PROXY`, `GIT_SSL_CAINFO`).
 
-**Cost and model.** One run costs at most $3. It uses the planning model of the build flow (`claude-opus-5-5`); an admin changes it with a routing rule for the flow `refine-brief` on the Models page.
+**Cost and model.** One run costs at most $3. It uses the planning model of the build flow (`claude-opus-5-5`); an admin changes it with a routing rule for the flow `refine-brief` on **Administration → Models**.
 
-**Cannot be deleted.** Refinement uses the flow, so `DELETE /api/flows/refine-brief` is refused (also for a copy an admin saved).
+**Cannot be deleted.** Ideas uses the flow, so `DELETE /api/flows/refine-brief` is refused (also for a copy an admin saved).
 
 ### The architect's question round
 
@@ -8870,19 +9108,19 @@ When the task has the part "The person's own way", the first way works out that 
 
 **It only reads, and whose access it uses.** As the brief: the tools `Read`, `Glob` and `Grep`, nothing is written to GitHub, and the talk is never put into a shell command. In a run the server started for a refinement session, only the clone uses the token you stored under **My repositories**; the architect and `check_round` never get it. The clone step asks for repository access (`repo_access`), so it follows the same rules as the clone of the brief, also in a run by hand.
 
-**Cost and model.** At most $3 and 30 minutes a run, with the model `claude-opus-5-5`. An admin changes it with a routing rule for the flow `^refine-round$` on the Models page.
+**Cost and model.** At most $3 and 30 minutes a run, with the model `claude-opus-5-5`. An admin changes it with a routing rule for the flow `^refine-round$` on **Administration → Models**.
 
 **Not for users.** A user cannot start it with `POST /api/runs` (404, also when an admin published a copy), it is not listed for a user, and `DELETE /api/flows/refine-round` is refused.
 
-### Refinement in short
+### Ideas in short
 
-**What it is for.** A story that is clear before it is built is built right the first time. Refinement helps you write such a story. You stay in charge: you write the story, you decide, and you press **Publish**.
+**What it is for.** A story that is clear before it is built is built right the first time. **Ideas** helps you write such a story. You stay in charge: you write the story, you decide, and you press **Publish**.
 
 **What the architect does.** It reads the code and the open issues, asks questions, points out what is unclear, proposes text, and suggests ways to split a big story. Its proposals wait beside your draft. They go into a story only when you accept them.
 
 **What the architect does not do.** It does not write to the repository or to GitHub. It does not decide for you, write an implementation plan or write code. Text from an issue or from your idea is only read, never followed as an instruction. Only you can see and publish your sessions. A story on GitHub holds only text that you wrote or accepted.
 
-**Definition of Ready.** Each story is checked against a short list for its repository (by default: clear value, stands on its own, criteria that can be checked, small enough, no open questions, out of scope named, no implementation plan). Press **Check** on a draft. A story with an open question or an implementation plan is not ready. You may accept another item anyway, with a reason; never the implementation plan.
+**Definition of Ready.** Each story is checked against a short list for its repository (by default: clear value, stands on its own, criteria that can be checked, small enough, no open questions, out of scope named, no implementation plan). Press **Check readiness** on a draft. A story with an open question or an implementation plan is not ready. You may accept another item anyway, with a reason; never the implementation plan.
 
 **Splitting.** When a story is too big, press **Split**, choose a way, and confirm. Each part becomes its own draft, with **Depends on** set so that the parts are built in order. The original is kept as a record.
 
@@ -8898,15 +9136,15 @@ When the task has the part "The person's own way", the first way works out that 
 4. The draft also holds three criteria for three formats. Sam presses **Split**, picks the way with one story for CSV and one for each other format, and confirms. There are three drafts; the second and third depend on the first.
 5. Sam presses **Publish**. The three issues are created in order, with the dependencies as issue numbers. The session is *Published*.
 
-### Refinement for admins
+### Ideas for admins
 
-- **Definition of Ready per repository.** Open the repository (Repositories → **All** → **Open**) and press **Edit Definition of Ready** in the section Run settings. Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
-- **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on the Models page for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
-- **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the Runs list (click the mark to open the session), in the dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
+- **Definition of Ready per repository.** In the Admin view, open the repository (**Repositories** in the sidebar, then **All**, then **Open** on its row) and press **Edit Definition of Ready** in the section **Run settings**. Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
+- **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on **Administration → Models** for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
+- **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the **Changes** list (click the mark to open the session), on the Dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
 
 ### Ask for a change (API)
 
-One change request carries your words from the first question to the finished stories. Start it with `POST /api/changes` and `{ "repo": "owner/name", "text": "…" }` (text at most 10,000 characters). You may add `"pictures"`: up to 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, checked by their content. The architect reads them as files `pictures/1.png` and so on. The architect then runs by itself: it reads the project, asks a round of questions in plain words, and writes the cards. A round without questions goes straight to the cards.
+One change request carries your words from the first question to the finished stories. **+ New change** in the top bar, with **A new idea**, starts one for you. Start it with `POST /api/changes` and `{ "repo": "owner/name", "text": "…" }` (text at most 10,000 characters). You may add `"pictures"`: up to 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, checked by their content. The architect reads them as files `pictures/1.png` and so on. The architect then runs by itself: it reads the project, asks a round of questions in plain words, and writes the cards. A round without questions goes straight to the cards.
 
 Read the request with `GET /api/changes/:id` (or `GET /api/changes?repo=…` for the list). The `state` tells you what to do next:
 
@@ -8918,7 +9156,8 @@ Read the request with `GET /api/changes/:id` (or `GET /api/changes?repo=…` for
 
 Then choose once:
 
-- **Yes, build this** (`POST /api/changes/:id/build`) publishes every card with the build label: `Factory_go` on GitHub, state `go` on a local project.- **Not now** (`POST /api/changes/:id/later`) publishes every card without the build label. The request is then `planned`. A later call to `build` adds the label to its stories.
+- **Yes, build this** (`POST /api/changes/:id/build`) publishes every card with the build label: `Factory_go` on GitHub, state `go` on a local project.
+- **Not now** (`POST /api/changes/:id/later`) publishes every card without the build label. The request is then `planned`. A later call to `build` adds the label to its stories.
 
 Both choices publish every card that has a title and is not a split original. They do not check the Definition of Ready; the build's own plan step still checks each story. Only the owner of the request can act on it.
 
@@ -8938,6 +9177,13 @@ more problem: the story gets "Not seen since the fix.".
 
 It is **off by default**. Nothing here starts until an admin does the five steps in
 [Switch it on and off](#switch-it-on-and-off).
+
+You work with self-repair in the **Admin** view. Open **Administration** in the sidebar. Under
+**Operations** you find **Problems** (the findings, with **Try again** and **Mute**) and **Watchers**
+(the monitor's card). The switches for hotfixes and self-update are under **System → Settings**, in
+the **Safety** section.
+
+![The Problems page in the Admin view, with the monitor's findings and their buttons](images/problems.png)
 
 ### What the monitor looks for
 
@@ -9012,11 +9258,11 @@ With **Hotfixes** on, the story is built on `hotfix/<issue>-…` from `main`, te
 
 On, in five steps:
 
-1. Add the **monitor** watcher (source **The Foundry itself**).
+1. Add the **monitor** watcher (source **The Foundry itself**) under **Administration → Watchers**.
 2. Set `monitor.report_to` to the repository for the stories.
 3. Have an `issue-gitflow` watcher for that repository, so the stories get built.
-4. Switch on **Hotfixes** in Settings → Safety.
-5. Switch on [Self-update](#self-update), so the running Foundry gets the fix.
+4. Switch on **Hotfixes** under **Administration → Settings**, in the **Safety** section.
+5. Switch on [Self-update](#self-update) in the same section, so the running Foundry gets the fix.
 
 What "off" stops:
 
@@ -9031,9 +9277,9 @@ What "off" stops:
 ### When it says "needs you"
 
 - **Two stories did not fix it.** No third is made. Read both stories, fix the cause by hand, then
-  press **Try again** on the Watchers page, or mute the finding.
+  press **Try again** at the finding on the **Problems** page, or mute the finding.
 - **The breaker stopped stories.** Look at what went wrong first, then switch stories on again
-  (the button on the monitor's card, or `scf monitor on`).
+  (**Switch bug-fix changes on** on the monitor's card on the **Watchers** page, or `scf monitor on`).
 - **The fix failed.** The run of the bug story failed. Open the run, fix the cause, and resume it, or
   remove the label and build the story as a feature.
 - **`develop` is behind after a hotfix.** The fix is on `main`, but `develop` could not take it.
@@ -9060,9 +9306,9 @@ the monitor off nothing is created.
 
 ## 14. Ask SCF
 
-**Ask SCF** is the help assistant inside the Foundry. You ask a question in your own words; it explains
-how the Foundry works, what your work is doing, and how to solve a problem. It is being built in
-steps. This chapter holds its rules. They are fixed first, and every later part keeps to them.
+**Ask SCF** is the help assistant inside the Foundry. You open it with **Ask Foundry** in the top bar.
+You ask a question in your own words; it explains how the Foundry works, what your work is doing, and
+how to solve a problem. This chapter holds its rules.
 
 **It reads and explains. It acts only when you confirm.** Nothing you ask changes the Foundry, a
 repository or GitHub. A reply can only propose an action from the server's own list. A proposal changes
@@ -9071,13 +9317,16 @@ nothing, and an action runs only after you confirm it yourself (see **Approved a
 
 ### Where you ask: the Ask SCF drawer
 
-When an administrator has switched Ask SCF on, the top bar of every page has an **Ask SCF** button, in
-the admin display and in the user display. While Ask SCF is off (the default), the button is not there.
-While an administrator has paused it, the button stays: you can read, export and delete your conversations,
-but **Send** and **Try again** are off and a line says that Ask SCF is paused.
+When an administrator has switched Ask SCF on, the top bar of every page has an **Ask Foundry** button,
+between **Search** and **+ New change**. It is there in every view (Simple, Advanced and Admin). While
+Ask SCF is off (the default), the button is not there. While an administrator has paused it, the button
+stays: you can read, export and delete your conversations, but **Send** and **Try again** are off and a
+line says that Ask SCF is paused.
 
-- **Open it** with the button. A panel opens at the right side, over the page. The page behind it is not
-  drawn again: what you typed there, and what was open, stays as it is.
+![The Ask SCF panel, opened with Ask Foundry in the top bar, with a question and its answer](images/ask.png)
+
+- **Open it** with **Ask Foundry**. A panel titled **Ask SCF** opens at the right side, over the page.
+  The page behind it is not drawn again: what you typed there, and what was open, stays as it is.
 - **Close it** with Escape, the ✕ or a click beside the panel. The focus goes back to where it was. A
   question you had started to type is still there when you open the panel again.
 - **Opening sends nothing.** Nothing goes to the AI model until you press **Send**.
@@ -9139,7 +9388,7 @@ Following a link closes the panel and opens the page.
 
 The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
 takes the whole width. It opens without any movement. A preview of another person's display
-("View as user") has no Ask SCF button.
+("View as user") has no **Ask Foundry** button.
 
 ### What Ask SCF knows, and how to check an answer
 
@@ -9174,11 +9423,11 @@ In the Simple view, Ask SCF answers in plain words, for someone who does not kno
 
 - **Words.** The same word list as the rest of Simple is used (for example "change" for a story, "work" for a run, "got stuck" for a failed run). A sentence that still needs a word of the Advanced view is left out.
 - **Only your own work.** It explains only your own projects and runs. Another account's work is not used.
-- **Links.** A reply links only to **My projects**, **Help** and your own project pages. Any other link is dropped.
+- **Links.** A reply links only to your start page (**Today** in the sidebar; the link is named **My projects**), **Help** and your own project pages. Any other link is dropped.
 - **No changes.** A Simple reply offers no actions, no offers and no drafts. Earlier questions of the conversation are not sent with a new one.
 - **Where links go.** Links open in place; the reply does not offer a hand-off to an Advanced page.
 
-The panel shows the Simple suggestions instead of the Advanced ones. If a reply has nothing left in plain words, the panel says so and asks you to switch to the Advanced view to read it.
+The panel shows the Simple suggestions instead of the Advanced ones. If a reply has nothing left in plain words, the panel says so and asks you to switch to the Advanced view to read it (with **View** in the account menu).
 
 ### What you can ask
 
@@ -9191,9 +9440,9 @@ The panel shows the Simple suggestions instead of the Advanced ones. If a reply 
 
 Ask SCF does three kinds of work only by sending you to the place that already does them:
 
-- **Writing and improving stories** is done in [Refinement](#12-refinement), with the architect.
-- **What happens next** with a run or an issue is said by the Foundry itself, on the run page and (for administrators) on Home.
-- **Findings of the monitor** are handled on the Problems page (administrators).
+- **Writing and improving stories** is done in [Refinement](#12-ideas-refinement) (**Ideas** in the sidebar), with the architect.
+- **What happens next** with a run or an issue is said by the Foundry itself, on the run page and (for administrators) on **Today**.
+- **Findings of the monitor** are handled on the Problems page (administrators: **Administration → Problems**).
 
 ### What a reply can hold
 
@@ -9220,8 +9469,8 @@ An offer is a navigation part shown as a card with an **Open** button. It opens 
 
 - a run, if you may open it (both roles);
 - a repository, if you may open it (both roles);
-- your item under **Your turn** on Home (administrators only). It opens Home only while the run or
-  issue is still on Home, in a group or under "Done — continuing". An item you dismissed counts as gone.
+- your item under **Your turn** on **Today** (administrators only). It opens Today only while the run or
+  issue is still listed there, in a group or under "Done — continuing". An item you dismissed counts as gone.
 
 The address comes from the Foundry, never from the text of the answer. When you press **Open**, the
 server checks again that you may open the page as it is now. Then the drawer closes and the page opens.
@@ -9276,8 +9525,6 @@ Every reply ends with one of these sentences. The server chooses it from the sou
 - "This is likely, but the sources below do not fully confirm it."
 - "Ask SCF could not check this against the documentation or the current state. Treat it as a guess."
 
-Until the parts that read the documentation and the current state are built, replies carry the last sentence.
-
 ### What it does not do
 
 When you ask for something Ask SCF does not do, it says so in a fixed sentence and tells you the
@@ -9297,6 +9544,8 @@ safest thing you can do instead. These sentences come from the server, not from 
 | You ask it to start a session or publish an issue | Ask SCF does not start a Refinement session and does not publish an issue. **Continue on another page** only opens the New session form with the text filled in. | Check the form, then press **Start session** yourself. Nothing is saved before that. |
 
 For an administrator some of these sentences differ: they point to Home, Problems or Settings instead of to an administrator.
+
+These sentences are the server's fixed words, so they still use some older page names. **My runs** is the **Changes** list in the sidebar, **Home** is **Today**, and **Refinement** is **Ideas**.
 
 ### Conversations
 
@@ -9535,9 +9784,9 @@ Under a finished answer, **Continue on another page** takes that answer to a pag
 the work. You choose the page first. Before anything happens, you see exactly what is copied.
 
 **The pages.** Everyone can take an answer to **Run details**, when the answer is about a run you
-can see, and to **Refinement**: a new session from the answer, or from one of its drafts. An
+can see, and to **Refinement** (the **Ideas** page): a new session from the answer, or from one of its drafts. An
 administrator can also take it to **Problems** (for a finding the answer is about) and to **Your
-turn on Home** (for a status answer or a next step). Only the pages you may open now are offered.
+turn on Home** (the **Today** page; for a status answer or a next step). Only the pages you may open now are offered.
 
 **The preview.** For a Refinement session the preview lists the title, the text, the repository
 (only one you still own) and a **Link back** to this conversation. Run details, Problems and Your
@@ -9596,7 +9845,7 @@ not stored.
 
 ### Ask SCF for administrators
 
-**It is off by default.** Switch it on in **Settings → Ask SCF** (the card's switch is `help.enabled`; the limits are on the same card). The same settings are in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
+**It is off by default.** Switch it on in the Admin view under **Administration → Settings**, on the **Ask SCF** card (the card's switch is `help.enabled`; the limits are on the same card). The same settings are in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
 
 ```yaml
 help:
@@ -9728,7 +9977,7 @@ Before you move to the next stage, have evidence for each of these:
 2. **Permission.** From an account that is not allowed, a question gets 403 and nothing is stored. Check
    one account of the stage and one that is not in it. `scf api routes help` shows who may call each route.
 3. **Accessibility.** Use the drawer with the keyboard alone (open it, ask, rate, close with Escape), and
-   once with a screen reader. Account → Accessibility states what is checked and the known limits.
+   once with a screen reader. **Accessibility** in the account menu states what is checked and the known limits.
 4. **Recovery.** Pause Ask SCF (`paused: true`). Check that a question gets the paused sentence and that
    your conversations can still be read, exported and deleted. Take the pause off and check that a new
    question works without a reload. Restart the server during an answer and check that the answer is

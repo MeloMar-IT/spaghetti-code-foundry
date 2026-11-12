@@ -32,6 +32,8 @@ export interface SeedData {
   noteFlow?: "note";
   /** Only with `large`: a failed run with a long reason and repository name, and a run with very long diff lines. */
   stress?: { statusRun: string; diffRun: string; repo: string };
+  /** Only with `startSeeded({ guide: true })` (the guide screenshots): a run of Ann that stopped with questions, a finished run of Ann on acme/app, and an epic. */
+  guide?: { questionsRun: string; changeRun: string; epic: string };
 }
 
 export interface Seeded extends SeedData {
@@ -87,6 +89,8 @@ const sleep =(ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** True when the launcher is asked for the large data set (UI_TEST_LARGE=1). */
 export const largeFromEnv = (env: NodeJS.ProcessEnv): boolean => env.UI_TEST_LARGE === "1";
+/** True when the launcher serves a guide screenshot run (`--grep @guide` sets UI_GUIDE=1). */
+export const guideFromEnv = (env: NodeJS.ProcessEnv): boolean => env.UI_GUIDE === "1";
 
 /** 600 characters with no space: the first line of the large log and diff, and the last line of the log, must stay inside their own box. */
 const LONG_TAIL = "-" + "x".repeat(599);
@@ -130,6 +134,50 @@ export function seedLarge(runsDir: string, workRoot: string, owner: string, repo
   return { runs, logRun, diffRun };
 }
 
+/**
+ * The extra data of the guide screenshots, only on the default server of a `--grep @guide` run (the other specs never see it):
+ * a run of Ann (story #16) that stopped with questions she can answer on its page, a finished run of Ann (story #14), and the saved issue
+ * list of acme/app with one epic (#12) and its stories. Synchronous.
+ */
+export function seedGuide(runsDir: string, home: string, owner: string, repo: string): { questionsRun: string; changeRun: string; epic: string } {
+  // Dates relative to the server's clock: the board drops finished work after a week, and the epic page counts the stories
+  // finished in the last 14 days and says how old the issue list is
+  const day = 86_400_000;
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const questionsRun = "ui-user-questions";
+  const questions = "**Q1. Which build states should the filter offer?** Recommendation: passing, failing and running.\n\n"
+    + "**Q2. Should the board keep the filter for the next visit?** Recommendation: yes, in the browser.";
+  writeRunFile(runsDir, repo, questionsRun, owner, "stopped", {
+    task: "Filter the board by build status", vars: { github_repo: "acme/app", issue: "16" }, reason: 'stopped at step "ask_for_info"',
+    startedAt: ago(40 * 60_000), finishedAt: ago(30 * 60_000),
+    history: [{ id: "ask_for_info", type: "shell", visit: 1, ok: true, output: questions }],
+    state: { next: "ask_for_info", steps: {}, visits: { ask_for_info: 1 } },
+    flowDef: { name: "gate", workspace: "empty", steps: [{ id: "ask_for_info", type: "shell", run: "echo \"$FACTORY_TASK\"" }] },
+  });
+  const changeRun = "ui-user-change";
+  writeRunFile(runsDir, repo, changeRun, owner, "succeeded", {
+    task: "Show a status badge on each card", vars: { github_repo: "acme/app", issue: "14" },
+    startedAt: ago(2 * day), finishedAt: ago(2 * day - 25 * 60_000),
+    history: [{ id: "say", type: "shell", visit: 1, ok: true, output: "hi" }, { id: "gate", type: "approval", visit: 1, ok: true, output: "approved" }],
+  });
+  const issue = (number: number, title: string, extra: Record<string, unknown> = {}) =>
+    ({ number, title, state: "open", labels: ["claude-factory"], createdAt: ago(20 * day), dependsOn: [], ...extra });
+  const closed = (days: number) => ({ state: "closed", stateReason: "completed", closedAt: ago(days * day) });
+  const issues = [
+    issue(12, "Build status on the board", { labels: ["epic"], stories: [13, 14, 15, 16, 17, 18] }),
+    issue(13, "Read the build status from GitHub Actions", { epic: 12, ...closed(9) }),
+    issue(14, "Show a status badge on each card", { epic: 12, ...closed(2), dependsOn: [13] }),
+    issue(15, "Explain a failed build in plain words", { epic: 12, ...closed(3), dependsOn: [13] }),
+    issue(16, "Filter the board by build status", { epic: 12, dependsOn: [14] }),
+    issue(17, "Refresh the status every minute", { epic: 12, dependsOn: [14] }),
+    issue(18, "Link each badge to its build log", { epic: 12, dependsOn: [16, 17] }),
+  ];
+  const dir = join(home, "issue-lists");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${encodeURIComponent("acme/app")}.json`), JSON.stringify({ repo: "acme/app", readAt: ago(10 * 60_000), cut: false, issues }));
+  return { questionsRun, changeRun, epic: "12" };
+}
+
 /** A repository name of exactly 100 characters. */
 export const STRESS_REPO = "acme/" + "stress-".repeat(14).slice(0, 94) + "x";
 
@@ -160,7 +208,7 @@ export function seedStress(runsDir: string, workRoot: string, owner: string, rep
  * Starts the real server on a free port picked by the system, with its own temporary data folder (FACTORY_HOME is set to it and put back on close),
  * two accounts and seeded data. Do not run two at the same time in one process: they would share process.env.
  */
-export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seeded> {
+export async function startSeeded(opts: { large?: boolean; guide?: boolean } = {}): Promise<Seeded> {
   const saved = { home: process.env.FACTORY_HOME, lock: process.env.FACTORY_LOCK_DIR, path: process.env.PATH };
   // what is set up so far; close() undoes exactly this, also after a failure half way
   let tmp: string | undefined;
@@ -233,6 +281,7 @@ export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seede
     writeRun("ui-user-failed", user.user.id, "failed", "boom");
     const large = opts.large ? seedLarge(runsDir, tmp, admin.user.id, repo) : undefined;
     const stress = opts.large ? seedStress(runsDir, tmp, admin.user.id, repo) : undefined;
+    const guide = opts.guide && !opts.large ? seedGuide(runsDir, home, user.user.id, repo) : undefined;
 
     const send = (method: string, path: string, body: unknown) =>
       fetch(url + path, { method, headers: { "content-type": "application/json", ...admin.headers(method) }, body: JSON.stringify(body) });
@@ -268,6 +317,7 @@ export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seede
       sessionId: session.id,
       watcherId: "ui-w",
       ...(large ? { large, stress, noteFlow: "note" as const } : {}),
+      ...(guide ? { guide } : {}),
       close,
     };
   } catch (e) {

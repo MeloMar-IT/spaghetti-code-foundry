@@ -6,7 +6,9 @@ you only when it has to.
 
 Formerly **claude-factory**. The command is now `scf` (`factory` still works), the repository is [MeloMar-IT/spaghetti-code-foundry](https://github.com/MeloMar-IT/spaghetti-code-foundry) and the data folder is `~/.spaghetti-code-foundry`. The `<repo>/.claude-factory` folder, the labels (`claude-factory`, `factory:*`) and `factory/…` branches keep the old name.
 
-![Home: what needs you, what is running, what finished](docs/images/home.png)
+![Today in the Admin view: what needs you, what is running, what finished](docs/images/home.png)
+
+*The screenshots are made from test data: the repository `acme/app`, the accounts Test Admin and Ann, and runs named "Seeded … run".*
 
 Work is described as **flows**: YAML pipelines of agent steps (Claude Code or OpenAI's Codex
 CLI), shell steps, approvals and branches. The Foundry runs them headlessly — from a GitHub
@@ -19,9 +21,14 @@ issue that gets a label, a task you type, a red CI build, or a schedule.
   plan, review of the plan, code, tests, code review, docs, merge.
 - **A person only where a person is needed.** Every plan gets a risk score from 0 to 100; above
   75 you approve it first. Stories that are too big are split into smaller ones.
-- **Always clear what happens next.** *Home* shows first what waits for you, one button
-  each. The *Board* shows where every story is and why. A health line says when something is
+- **Always clear what happens next.** *Today* shows first what waits for you, one button
+  each. The *Board* shows where every story is and why. A health chip says when something is
   wrong with the Foundry itself.
+- **One web UI, three views.** A sidebar with Today, Changes, Ideas, Releases and Help, and
+  **+ New change** to describe a change in your own words. **Simple** shows your projects in
+  plain words, **Advanced** adds the runs, ideas, releases and repositories, and **Admin** adds
+  the board, flows and administration. **Ask Foundry** (when an admin switches it on) explains how it all works. Five looks
+  (Calm, Midnight, Friendly, Editorial, Bento), light or dark.
 - **Several stories at once.** Runs lock the parts of the code they change, so stories in
   different areas are built in parallel without merge conflicts.
 - **Gitflow.** Each story on its own feature branch, merged into `develop` when it is done;
@@ -33,6 +40,8 @@ issue that gets a label, a task you type, a red CI build, or a schedule.
   any AI assistant write one.
 - **Accounts and roles.** An admin makes flows, watchers and settings. Users run the flows the
   admin published, on their own repositories, and see only their own runs.
+
+![Today in the Simple view: your projects in plain words](docs/images/user-home.png)
 - **Safe by default.** Every run works in its own copy of the code. Pushes to protected
   branches and pushes that contain secrets are blocked. Approval steps, optional budgets,
   optional sandboxing (Claude Code's sandbox or Docker).
@@ -87,11 +96,11 @@ scf ui      # web UI at http://localhost:4777
 
 The first visit asks you to create the admin account. After that you sign in.
 
-**2. Let it build your GitHub issues.** In the UI, open **Administration** → **Watchers** → **Add watcher**: your
+**2. Let it build your GitHub issues.** In the UI, open **Administration** → **Watchers** → **+ Add watcher**: your
 repository (`owner/repo`), the flow `issue-gitflow` and the label `Factory_go`. Your repository
 needs a `develop` branch; the Foundry creates it from `main` when it is missing.
 
-**3. Put the label `Factory_go` on an issue.** Then watch **Home**: questions and risky
+**3. Put the label `Factory_go` on an issue.** Then watch **Today**: questions and risky
 plans show up there. Everything else continues by itself, and once a day you get one pull
 request from `develop` to `main`.
 
@@ -104,8 +113,12 @@ scf run my-flow --task "Add a --json flag to the export command" --var test_cmd=
 ```
 
 The run happens in a fresh worktree on a `factory/<run-id>` branch — your checkout is not
-touched. Look at the result in the UI (Runs → the run → Changes) and merge the branch if you
-like it.
+touched. Look at the result in the UI (**Changes** in the sidebar → the run → **What changed**) and merge
+the branch if you like it.
+
+**Or describe a change in your own words.** Press **+ New change** in the top bar, write what
+you would like to change and press **Make a plan**. The Foundry asks its questions, then shows
+its plan.
 
 To keep it running after you close the terminal: `scf service install`. Everything the web interface does is also a command: `scf login`, then for example `scf runs list` or `scf turn list` (`scf api routes` lists every call). To get a report every 6 hours on how each model does per step, and where another level fits: `scf analyst install`.
 
@@ -126,7 +139,7 @@ Write your own flows in the editor or with any AI assistant ([FLOW_AUTHORING.md]
 
 | Document | What it is |
 |---|---|
-| **[User guide](docs/USER_GUIDE.md)** | Everything, with screenshots: Home and the board, running and resuming flows, writing flows, watchers and labels, models and routing, accounts, safety, costs, the command line, troubleshooting |
+| **[User guide](docs/USER_GUIDE.md)** | Everything, with screenshots: the three views, Today and the board, running and resuming flows, writing flows, watchers and labels, models and routing, accounts, safety, costs, the command line, troubleshooting |
 | **[Design](docs/DESIGN.md)** | How the Foundry is built and why, with diagrams |
 | **[Lessons learned](docs/LESSONS_LEARNED.md)** | What building and running it taught us, including the incidents |
 | **[Flow authoring](docs/FLOW_AUTHORING.md)** | The complete flow format. Give it to any AI assistant (or use `scf flow-guide`), describe the flow you want, and check the result with `scf validate` |

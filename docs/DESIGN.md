@@ -34,7 +34,7 @@ headlessly against git repositories — from a task someone types, or automatica
 Its main use: put one label on a GitHub issue, and the Foundry asks the open questions, plans,
 codes, tests, reviews and merges the story, asking a person only when it has to.
 
-![Home: the page that shows what needs you, what is running and what finished](images/home.png)
+![Today in the Admin view: what waits for you, what is running and what finished](images/home.png)
 
 Node.js and TypeScript (ESM), no web framework, no database. About 15,000 lines of source and
 2,100 tests.
@@ -1856,7 +1856,7 @@ What a watcher takes care of:
   baseline step the state, so the gate in `tools/baseline-tests` (`known-red`) stops a held run
   before the test command. Test names reach GitHub only after `redactText`.
 
-![Watchers and what each story is waiting for](images/watchers.png)
+![The Watchers page in the Admin view (Administration → Watchers)](images/watchers.png)
 
 ---
 
@@ -1948,9 +1948,10 @@ next (you, the Foundry, another story, GitHub), **what** they do, **why**, **whe
 and since when. Everything that shows status uses that record:
 
 - **Your turn** — only the items where *you* are next, one button each, sorted by how much work
-  they unblock.
+  they unblock. In the Admin view it is part of **Today** (`#/home`; the old `#/your-turn` is an alias).
 - **The board** — every story of a repository in columns.
-- **The health line** — problems of the Foundry itself, under the top bar on every page.
+- **The health chip** — problems of the Foundry itself. The **Health** chip in the top bar of the admin
+  display turns red on a problem and opens the health line above the page; Today lists the problems.
 - **Since you last looked**, notifications, the status comment on GitHub, and the run page.
 
 Rules of the module: name the root cause (if A waits for B and B waits for you, A says so);
@@ -2132,7 +2133,15 @@ state (`failed.backOk = false`) that a person must repair. The monitor reads the
 
 ## 15. The web interface
 
-Plain JavaScript modules, no build step, no framework. The places of the admin display:
+Plain JavaScript modules, no build step, no framework.
+
+**The shell.** Every page sits in one frame (`ui/index.html` and `ui/user/index.html`, wired by `initShell` in `ui/shell.js`):
+
+- **Top bar:** the brand, the page title, then **Search** (the command palette, `ui/palette.js`, Ctrl+K or Cmd+K), **Ask Foundry** (the Ask SCF drawer, only when Ask SCF is on), **+ New change** (`#/start`, `NEW_CHANGE` in `ui/ia.js`) and, in the admin display, the **Health** chip. The account menu holds the name, **Appearance** (theme, density and look, `ui/prefs.js`), **View** (Simple, Advanced, Admin; `mountViewSwitch` in `ui/view-mode.js`) and **Accessibility**.
+- **Sidebar:** the repository switcher at the top (`#context`, `ui/context.js`; "All repositories" or one repository), then the five places every view shows (`SIDEBAR_MAIN`): **Today** (`#/home`), **Changes** (`#/runs`), **Ideas** (`#/refinement`), **Releases** (`#/epics`) and **Help** (`#/help`). Below a divider come the extra pages of the view (`SIDEBAR_EXTRA`): none in Simple; **My repositories** in Advanced; **Board**, **Repositories**, **Flows** and **Administration** (`#/operations`) in Admin. The links are static in the two HTML files; `showViewNav` hides the divider and the extra pages (`data-extra`) in Simple, and `ui/shell.js` marks the current link with `aria-current`. On a narrow screen the sidebar is a drawer opened with the menu button.
+- **Secondary row and breadcrumb:** `subnavFor` and `resolve` of `ui/ia.js` still work on the destinations below. Administration has three labelled sections (`SECTIONS`): Operations (Overview, Problems, Watchers, Models, Dashboard), People and access (Users, All repositories, Credentials, Audit, Autonomy) and System (Settings, Maintenance).
+
+**Destinations.** `DESTINATIONS` in `ui/ia.js` group the pages for the secondary row, the breadcrumb, and the active sidebar link. Their labels are the breadcrumb names, not the sidebar names. Those of the admin display:
 
 | Place | Pages | Purpose |
 |---|---|---|
@@ -2145,11 +2154,11 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 | **Flows** | Flows, Library | Edit and create flows; reusable blocks |
 | **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, autonomy levels with their gate and history, settings, workspace clean-up |
 
-**User display:** **Home**, **Epics**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
+**User display:** destinations **Home**, **Epics**, **My runs**, **My repositories**, **Refinement**; **Start work** is the action page (`#/start`). The source is `ui/ia.js`. In the sidebar they appear as Today, Releases, Changes, My repositories and Ideas, and the action as + New change.
 
-![A run that waits for a decision on a risky plan](images/run-waiting.png)
+![A run that waits for a person's decision](images/run-waiting.png)
 
-**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account is sent to the display of its view in effect (`viewOf` in `ui/view-mode.js`) before any page is drawn: Admin is the page at `/`, Simple and Advanced are the user display. Simple is the user display with fewer links (`showViewNav` keeps only Home) and two pages of its own: `ui/simple.js` draws My projects (`#/home`) and the project page (`#/repos/<id>`) from the lists of `GET /api/repos`, `/api/runs` and `/api/queue`, grouped by `ui/simple-model.js`, with every word from `ui/simple-words.js`; other pages in Simple show the "Open this in the Advanced view" card. The view switch is mounted there too (`mountViewSwitch`), except in a preview. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
+**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws the Changes list of a user (`#/runs`: cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the + New change page, `#/start`) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account is sent to the display of its view in effect (`viewOf` in `ui/view-mode.js`) before any page is drawn: Admin is the page at `/`, Simple and Advanced are the user display. Simple is the user display with fewer links (`showViewNav` keeps the five sidebar places and + New change, `SIMPLE_NAV`) and pages of its own (`SIMPLE_SECTIONS`): `ui/simple.js` draws Today with My projects (`#/home`; the Today part is laid out by `ui/simple-home.js` after the person's look), the project page (`#/repos/<id>`) and Help, from the lists of `GET /api/repos`, `/api/runs` and `/api/queue`, grouped by `ui/simple-model.js`, with every word from `ui/simple-words.js`; `ui/simple-change.js` draws one change (`#/change/<id>`). A page the view does not have shows the card "This page is not in the Simple view." with **Open this in the Advanced view** (`offerFor` and `offerCard` in `ui/view-mode.js`); the address stays. The view switch is the **View** select in the account menu of both displays (`mountViewSwitch`), except in a preview. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 
@@ -2179,7 +2188,7 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 
 ### UI styles
 
-`ui/style.css` is only a list of `@import url("/css/…")` lines. The rules live in small modules under `ui/css/`. There is no build step: the browser follows the imports. `/css/…` is served like `/style.css` (static, no sign-in, `text/css`), and the CSP allows same-origin `@import`. `ui/index.html` and `ui/user/index.html` link `/tokens.css` (the token values) and then `/style.css`.
+`ui/style.css` is only a list of `@import url("/css/…")` lines. The rules live in small modules under `ui/css/`. There is no build step: the browser follows the imports. `/css/…` is served like `/style.css` (static, no sign-in, `text/css`), and the CSP allows same-origin `@import`. `ui/index.html` and `ui/user/index.html` run `/prefs-boot.js` first (it sets `data-theme`, `data-density` and `data-look` on `<html>` from the stored choice, so the page does not flash), then link `/tokens.css` (the token values), `/looks.css` (the looks), `/style.css` and `/kit/kit.css`.
 
 **Modules and who owns what.** Every module starts with a comment that says what belongs in it and what does not.
 
@@ -2191,7 +2200,7 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 | `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`, and the editor grid under `.page-editor`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
-| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. `ask` is the Ask SCF drawer. |
+| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`, `gallery`, `work`, `simple` (the Simple view). `ask` is the Ask SCF drawer. |
 
 **Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
 - **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
@@ -2207,6 +2216,10 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 5. Anything else: the page file of the area that uses it. A page file (and `templates.css`) does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page. A test (`competingSelectors` in `tests/helpers/ui-css.ts`) enforces this; a class whose base rule a page file owns goes on a short allow-list with a reason.
 
 **Look tokens (#850).** Fonts, corner radii and shadows come from `ui/tokens.css`: `--font-body`, `--font-display` and `--font-mono` (with `--mono`), `--radius-*` and `--shadow-none`, `--shadow-low`, `--shadow-high`. A rule in `ui/**/*.css` may not set `font-family`, `font`, `border-radius` or `box-shadow` to a literal value; `inherit`, `var(--…)` and the look tokens only. `tests/ui-look-tokens.test.ts` checks this and fails on a stale allow-list entry. The fonts are system stacks only: nothing is loaded from another server.
+
+**Looks.** There are five looks: Calm (the default), Midnight, Friendly, Editorial and Bento (`LOOKS` in `ui/prefs.js`). `ui/looks.css` imports one file per look from `ui/css/looks/`. A look file sets only token values, under `html[data-look="<name>"]`; `calm.css` also matches `html[data-look]`, so it is the base for every look, and a later file wins at the same specificity. The person picks theme (System, Light, Dark), density (Comfortable, Compact) and look in the **Appearance** dialog of the account menu (`appearanceDialog`). The choice is kept in this browser per account (`localStorage` key `scf.prefs`, at most 20 accounts) and shared by the account's tabs (`watchPrefs`); no server call is made. One page depends on the look beyond tokens: the Simple Today picks a layout from it (`LAYOUT_OF_LOOK` in `ui/simple-home.js`: cards for Calm and Friendly, a list for Midnight and Editorial, tiles for Bento), and every layout draws the same model.
+
+![The five looks: Calm, Midnight, Friendly, Editorial and Bento](images/looks.png)
 
 Use a token, not a number, for z-index and for the widths below. Keep rules that override each other in the same module and in the same order.
 
@@ -2851,7 +2864,7 @@ The interface of Ask SCF is one drawer for both displays (#234). Three files, an
 |---|---|
 | `ui/ask-model.js` | The decisions, as pure functions: the page that goes with a question (`pageOf`, `whereOf`, `contextFor`), the suggested questions (`suggestionsFor`), whether Send sends (`sendPlan`), when the conversation is read again (`pollDelay`), what a message looks like (`entryOf`), what is announced (`announce`) and a failed call in plain words (`explainAskError`). No document, no fetch, no timer. |
 | `ui/ask-view.js` | The nodes: the button, the drawer (`role="dialog"`, `aria-modal`, named by its heading), the question form, one message. Every text of a conversation goes in as text. |
-| `ui/ask.js` | `initAsk(role)` asks `GET /api/help/conversations` once; only when `enabled` is true it calls `createAsk`, which puts the button into `#ask-scf` and the drawer at the end of `<body>`. It owns the state, the calls and the timer. |
+| `ui/ask.js` | `initAsk(role)` asks `GET /api/help/conversations` once; only when `enabled` is true it calls `createAsk`, which puts the **Ask Foundry** button into `#ask-scf` (in the top bar, between Search and + New change) and the drawer at the end of `<body>`. It owns the state, the calls and the timer. |
 
 - **Mounted once per display.** `ui/app.js` calls `initAsk("admin")`, `ui/user/app.js` calls `initAsk("user")`, and not in a preview ("View as user"): the server shows no conversations there, and a 403 in a preview would end the view.
 - **The page is not touched.** The drawer is a sibling of the page, not a route. Opening and closing change no address and draw no page again. While it is open, `#top`, `#skip` and `#content` are `inert`; closing removes that unless the menu of a narrow screen is open.
