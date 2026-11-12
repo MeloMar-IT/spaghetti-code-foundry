@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Watchers: a job that is queued for an issue counts as working, also when it has no run file yet. Before, a new run that waited for a slot next to an older parked run lost its working label ("a new run replaces …" a second time), and when it ended without a status label the watcher started yet another run for the same issue.
 - Skills: a review that asks for changes sends the skill back to the writer once, with the review notes (new step `after_review`); the second review with changes asks the owner as before. The writer may run 8 times, the check 9.
 - Skills: the check of a written skill lists every live endpoint of a file, each with its line and what to do (a Markdown link in SKILL.md or references/, or a host under example.com), instead of only the first one; a writer fixed one address per round and ran out of tries. Scan problems name their line too.
 - Skill scan: the `prompt-injection.fake-turn` rule matches `[INST]` only in capitals, so a Python index such as `per[inst]` is no longer a finding.

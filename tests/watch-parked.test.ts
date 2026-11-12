@@ -214,4 +214,26 @@ describe("a story whose trigger label is removed is parked", () => {
     expect(runs()).toHaveLength(2);
   });
 
+  it("keeps the working label of a new run that waits in the queue next to a parked run", async () => {
+    const w = watcher();
+    const first = await stopWithQuestions(w);
+    issue4([]);
+    await w.tick();
+    await settle();
+    expect(scheduler.get(first.runId)?.parkedAt).toBeTruthy();
+
+    // The label is back and the new job is queued: it waits for a slot, so it has no run file yet.
+    issue4([TRIGGER, "factory:working"]);
+    const real = scheduler.queue.bind(scheduler);
+    vi.spyOn(scheduler, "queue").mockImplementation(() => {
+      const q = real();
+      return { ...q, pending: [...q.pending, { kind: "start", runId: "20990101-000000-q000", githubRepo: "acme/app", issue: "4" } as (typeof q.pending)[number]] };
+    });
+    const at = lines().length;
+    await w.tick();
+    expect(edits(at)).toHaveLength(0);
+    expect(w.status.lastActions.join("\n")).not.toContain("a new run replaces");
+    expect(runs()).toHaveLength(1);
+  });
+
 });

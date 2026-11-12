@@ -1624,9 +1624,10 @@ export class Watcher {
         answeredEarly = true;
       }
       // A run that is working (running or queued, e.g. approved or resumed in the UI): the label says so.
-      // A queued job counts too when a waiting label sits next to another status label (it may have no run file yet).
+      // A queued job for the issue counts too: it may have no run file yet (it waits for a slot), and the newest run file is then
+      // an older run, perhaps a parked one, that nothing continues.
       const workingRun = !!run && (this.d.scheduler.isActive(run.runId) || this.d.scheduler.isQueued(run.runId));
-      if (workingRun || (mixed && queuedId !== undefined)) {
+      if (workingRun || queuedId !== undefined) {
         // Mixed labels: the label goes to working whatever the order (the first status label may be working already).
         if (mixed || (status && status !== this.L.working)) {
           await this.store.setLabels(n, this.L.working, this.allStatus);
@@ -1666,7 +1667,9 @@ export class Watcher {
         continue;
       }
       // A run parked while the label was gone, or cancelled while it was stopped: nothing continues it, and a new run replaces it.
-      if (run && run.status !== "running" && ((run.parkedAt && (asksQuestions(run) || isStoppedCancel(run.reason))) || (run.status === "cancelled" && isStoppedCancel(run.reason)))) {
+      // Not while a new job for the issue is queued: it is that replacement (it has no run file until it gets a slot), and its
+      // working label stays.
+      if (run && queuedId === undefined && run.status !== "running" && ((run.parkedAt && (asksQuestions(run) || isStoppedCancel(run.reason))) || (run.status === "cancelled" && isStoppedCancel(run.reason)))) {
         const clear = !!status && status !== this.L.done;
         if (clear) await this.store.setLabels(n, undefined, this.allStatus);
         if (run.parkedAt) {
