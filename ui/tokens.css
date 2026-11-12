@@ -4,7 +4,7 @@
    The look (calm, midnight, friendly, editorial or bento) is set on <html> by ui/prefs.js. Looks set their values in ui/css/looks/<look>.css (loaded through /looks.css after
    this file, selector html[data-look=…]); the values here are the base for pages without a look (the gallery, the docs demo).
    Look tokens: fonts (--font-body/display/mono), radii (--radius-*), shadows (--shadow-none/low/high) and spacing (--space-*).
-   Rules in ui/**/*.css may use only these (checked by tests/ui-look-tokens.test.ts). */
+   Rules in the .css files under ui/ may use only these (checked by tests/ui-look-tokens.test.ts). */
 
 :root {
   color-scheme: light dark;

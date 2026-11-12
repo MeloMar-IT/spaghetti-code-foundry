@@ -165,3 +165,17 @@ describe("no third party", () => {
     }
   });
 });
+
+describe("CSS comments", () => {
+  // A "*/" inside a comment (say a glob such as ui/**/*.css) ends it early; the browser then reads the rest as a selector
+  // and drops the rule after it. In ui/tokens.css that removed every token, so no page had colours, fonts or sizes.
+  it("no comment in ui/**.css ends early", () => {
+    const early = filesUnder("ui", ".css").filter((f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").includes("*/"));
+    expect(early).toEqual([]);
+  });
+
+  it("ui/tokens.css starts its :root block outside any comment", () => {
+    const code = read("ui/tokens.css").replace(/\/\*[\s\S]*?\*\//g, "").trimStart();
+    expect(code.startsWith(":root {")).toBe(true);
+  });
+});
