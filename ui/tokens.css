@@ -1,6 +1,10 @@
 /* Design tokens (#322). Loaded before style.css by both index.html files.
    Colours are written as light-dark(light, dark), one line per token. Light or dark follows the operating system;
-   html[data-theme="light"|"dark"] forces one. html[data-density="compact"] changes only the density tokens. */
+   html[data-theme="light"|"dark"] forces one. html[data-density="compact"] changes only the density tokens.
+   The look (calm, midnight, friendly, editorial or bento) is set on <html> by ui/prefs.js. Looks set their values in ui/css/looks/<look>.css (loaded through /looks.css after
+   this file, selector html[data-look=…]); the values here are the base for pages without a look (the gallery, the docs demo).
+   Look tokens: fonts (--font-body/display/mono), radii (--radius-*), shadows (--shadow-none/low/high) and spacing (--space-*).
+   Rules in ui/**/*.css may use only these (checked by tests/ui-look-tokens.test.ts). */
 
 :root {
   color-scheme: light dark;
@@ -48,8 +52,11 @@
   --color-log-dim: #8b887f;
 
   /* typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
+  --font-sans: var(--font-body);
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-numeric: var(--font-body);
   --text-micro: 11px;
   --text-meta: 12px;
   --text-small: 13px;
@@ -59,6 +66,9 @@
   --text-table-head: 12px;
   --text-section: 15px;
   --text-page: 18px;
+  --text-heading: var(--text-page);
+  --font-label: var(--font-body);
+  --label-case: none;
   --text-display: 28px;
   --leading-body: 1.45;
   --leading-tight: 1.3;
@@ -96,10 +106,24 @@
   --radius-pill: 999px;
   --radius-round: 50%;
 
+  /* components: the status pill, card, button, table and focus ring */
+  --pill-pad-y: var(--space-2xs);
+  --pill-pad-x: var(--space-md);
+  --pill-gap: 5px;
+  --pill-radius: var(--radius-pill);
+  --card-radius: var(--radius-lg);
+  --button-radius: var(--radius-md);
+  --table-radius: var(--radius-md);
+  --focus-width: 2px;
+  --focus-offset: 2px;
+
   /* elevation */
   --shadow-sm: 0 1px 2px rgb(0 0 0 / .06);
-  --shadow-md: 0 4px 12px rgb(0 0 0 / .12);
-  --shadow-lg: 0 20px 60px rgb(0 0 0 / .25);
+  --shadow-none: none;
+  --shadow-low: 0 4px 12px rgb(0 0 0 / .12);
+  --shadow-high: 0 20px 60px rgb(0 0 0 / .25);
+  --shadow-md: var(--shadow-low);
+  --shadow-lg: var(--shadow-high);
 
   /* motion */
   --motion-fast: .1s;

@@ -91,6 +91,7 @@ steps:
       track="{{run.dir}}/check.procs"; : > "$track"
       fmt() { if [ "$1" -lt 60 ]; then printf '%d s' "$1"; elif [ "$1" -lt 3600 ]; then printf '%d min' $(($1 / 60)); else printf '%d h %d min' $(($1 / 3600)) $(($1 % 3600 / 60)); fi; }
       tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi
+      sha0=""; if [ -n "$tree" ]; then sha0=$(git rev-parse HEAD 2>/dev/null) || sha0=""; fi
       hit=""; if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -n "$tree" ] && [ -n "$cmd" ]; then
         key=$(printf '%s\n%s\n' "$tree" "$cmd" | shasum | cut -c1-40); f="{{run.dir}}/../../tested/$key"
         if [ "${#key}" -eq 40 ] && [ -f "$f" ] && [ ! -L "$f" ]; then
@@ -126,7 +127,9 @@ steps:
       { echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo '```'; echo "\$ $cmd"; if [ -n "$hit" ]; then echo "not run again: this exact code already passed these tests ($hit)"; else "$FACTORY_TOOLS/test-summary" "$marker"; fi
         [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\$ $FACTORY_VAR_BUILD_CMD → ${bnote:-$(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")}"
         echo '```'; if [ -n "$timed" ]; then if [ "$timed" = tests ]; then what="the tests"; else what="the build"; fi; echo "⏱ **Checks did not finish in time** — the time limit of $(fmt "$limit") (verify_timeout_min) ran out before $what finished, so they were stopped. The wait for a test slot does not count. Marked as draft; see the run log."; elif [ "$ok" != yes ]; then echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; fi; } > "{{run.dir}}/checks.md"
-      cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"
+      cat "{{run.dir}}/checks.md"
+      if [ "$ok" = yes ] && [ -z "$timed" ] && [ -n "$sha0" ] && { [ -n "$hit" ] || [ "$record" = yes ]; } && now=$(git rev-parse HEAD 2>/dev/null) && [ "$now" = "$sha0" ]; then echo "TESTED: $sha0"; fi
+      echo "CHECKS: $ok"
   - id: release_pr
     type: shell
     repo_access: true

@@ -15,15 +15,17 @@ import { briefInScope, callerWorkspaces, findScopedRepo, inWorkspaces, runInScop
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
 import { AnswerRefused, effectiveVars } from "../engine/runner.js";
-import { ANSWER_MAX_CHARS, answerRoom, WORKSPACE_REMOVED, type RunSummary } from "../engine/state.js";
+import { ANSWER_MAX_CHARS, answerRoom, runDirOf, WORKSPACE_REMOVED, type RunSummary } from "../engine/state.js";
+import { CHECK_MARKS, addRunCheck, checkMarksOf, checksRevision, cleanCheckPart, publicChecks, setRunCheckMark, type CheckMarkValue } from "../engine/plan-checks.js";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { isPublished, userVars } from "../flow/publish.js";
 import { isVarName, type Flow } from "../flow/schema.js";
 import { guardedRepos } from "./api-repos.js";
 import { checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
-import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
-import { adminRun, answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
+import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext, runSince } from "./next.js";
+import { asideCheck, putAside, withNotNow } from "./your-turn.js";
+import { adminRun, answerBlock, hidePaths, refinementSessionOf, storyOf, userLogLine, userRecord, userRun, type Criterion } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
 import { cachedSkillRegistryAt } from "../skills/registry.js";
 import { runSkillView, type RunSkillView } from "./skill-view.js";
@@ -128,7 +130,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const ws = callerWorkspaces(user);
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
-  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string } }) => unknown = admin ? adminRun : userRun;
+  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string }; issueTitle?: string; criteria?: Criterion[] }) => unknown = admin ? adminRun : userRun;
   // A running run whose test runs are paused by the load governor: since when (a fresh pause record of the step, see slot-waits.ts).
   const pausedOf = (r: RunSummary): { paused?: { since: string } } => {
     const since = r.status === "running" ? pausedSince(r.runDir, Date.now()) : undefined;
@@ -174,13 +176,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       .flatMap((b) => readRun(scheduler, b.dirName, want) ?? []);
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
+    const aside = asideCheck();
     const names = admin ? ownerNames() : undefined;
     return send(res, 200, runs.map((r) => hide(shape({
       ...r,
       ...answerable(r),
       ...(replaced.has(r.runId) ? { superseded: true } : {}),
       ...(names && r.owner ? { ownerName: names.get(r.owner) ?? DELETED_OWNER } : {}),
-      next: view(next(r)),
+      next: view(withNotNow(next(r), runSince(r), aside)),
     })))), true;
   }
   if (!id && method === "POST") {
@@ -271,6 +274,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     auditAction(ctx.diagLog, user.id, archived ? "run-archive" : "run-unarchive", id);
     return send(res, 200, { runId: id, archived }), true;
   }
+  if (action === "not-now" && method === "POST") {
+    const s = scheduler.get(id);
+    if (!s) throw new HttpError(404, "run not found");
+    const rec = nextFor(ctx, undefined, !admin)(s);
+    if (rec.kind !== "failed") throw new HttpError(409, "only work that got stuck can be put aside");
+    putAside(rec, runSince(s));
+    return send(res, 200, { runId: id, notNow: true }), true;
+  }
   if (action === "cancel" && method === "POST") {
     const cancelled = cancelRun(ctx, user, id);
     return send(res, 200, { cancelled }), true;
@@ -331,7 +342,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         lastCan = "canAnswer" in can;
         const paused = pausedOf(e.summary);
         lastPaused = paused.paused?.since ?? "";
-        out = { type: "update", summary: shape({ ...withSkills(e.summary), ...can, ...paused, next }) };
+        out = { type: "update", summary: shape({ ...withSkills(e.summary), ...storyOf(e.summary), ...can, ...paused, next }) };
       } else if (!admin) {
         const line = userLogLine(e.line);
         if (line === undefined) return;
@@ -358,9 +369,43 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return true;
   }
 
+  if (action === "checks" && seg[3] === "add" && !seg[4] && method === "POST") {
+    const body = await readJson(req);
+    const found = scheduler.get(id);
+    if (!found) throw new HttpError(404, "run not found");
+    const text = { try: cleanCheckPart(body.try), expect: cleanCheckPart(body.expect) };
+    if (!text.try || !text.expect) throw new HttpError(400, "write what to try and what to expect");
+    const rev = body.rev;
+    if (rev !== undefined && typeof rev !== "string") throw new HttpError(400, "rev must be text");
+    if (found.status !== "waiting" || scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(409, "only a change that waits for your check can get a check");
+    const dir = runDirOf(opts.runsDir, id);
+    const r = dir ? addRunCheck(dir, text, { by: user.id, at: new Date().toISOString() }, rev) : "refused";
+    if (r === "full") throw new HttpError(409, "a change keeps at most 4 checks of your own");
+    if (r === "refused") throw new HttpError(409, "this change moved on; load it again");
+    const now = scheduler.get(id) ?? found;
+    return send(res, 200, { runId: id, id: r.id, checks: publicChecks(now.checks), checksRev: checksRevision(now.checks), checkMarks: checkMarksOf(now) }), true;
+  }
+
+  if (action === "checks" && !seg[3] && method === "POST") {
+    const body = await readJson(req);
+    const found = scheduler.get(id);
+    if (!found) throw new HttpError(404, "run not found");
+    const check = body.check;
+    if (typeof check !== "string" || !(found.checks ?? []).some((c) => c.id === check)) throw new HttpError(400, "there is no such check on this change");
+    const mark = body.mark;
+    if (mark !== null && !(CHECK_MARKS as readonly unknown[]).includes(mark)) throw new HttpError(400, 'mark must be "works", "not-quite" or null');
+    const rev = body.rev;
+    if (rev !== undefined && typeof rev !== "string") throw new HttpError(400, "rev must be text");
+    if (found.status !== "waiting" || scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(409, "only a change that waits for your check can be marked");
+    const dir = runDirOf(opts.runsDir, id);
+    const r = dir ? setRunCheckMark(dir, check, mark as CheckMarkValue | null, { by: user.id, at: new Date().toISOString() }, rev) : "refused";
+    if (r === "refused") throw new HttpError(409, "this change moved on; load it again");
+    return send(res, 200, { runId: id, checkMarks: checkMarksOf(scheduler.get(id) ?? found) }), true;
+  }
+
   const s = scheduler.get(id);
   if (!s) throw new HttpError(404, "run not found");
-  if (!action && method === "GET") return send(res, 200, hide(shape({ ...withSkills(s), ...answerable(s), ...pausedOf(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
+  if (!action && method === "GET") return send(res, 200, hide(shape({ ...withSkills(s), ...storyOf(s), ...answerable(s), ...pausedOf(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
   if (action === "diff" && method === "GET") {
     if (!admin && (s.flowDef?.workspace === "inplace" || (s.workdir !== undefined && s.workdir === s.repo))) throw new HttpError(403, "only an admin can see the changes of a run that works in the server's folder");
     return send(res, 200, runDiff(s)), true;

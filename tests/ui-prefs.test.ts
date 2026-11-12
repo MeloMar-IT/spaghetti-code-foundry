@@ -31,18 +31,27 @@ const mem = (initial?: unknown) => {
 };
 const bad = { getItem: () => { throw new Error("x"); }, setItem: () => { throw new Error("x"); } };
 const saved = (s: any) => JSON.parse(s.data);
-const DEF = { theme: "system", density: "comfortable" };
-const DARK = { theme: "dark", density: "compact" };
+const DEF = { theme: "system", density: "comfortable", look: "calm" };
+const DARK = { theme: "dark", density: "compact", look: "calm" };
+const MID = { ...DARK, look: "midnight" };
+const CALM = { "data-look": "calm" };
 const root = () => new FakeElement("html");
 
 describe("cleanPrefs", () => {
   it("gives the defaults for garbage", () => {
-    for (const x of [undefined, null, 42, "dark", [], ["dark", "compact"], { theme: "blue", density: "tiny" }, { theme: "Dark" }]) {
+    for (const x of [undefined, null, 42, "dark", [], ["dark", "compact"], { theme: "blue", density: "tiny", look: "neon" }, { theme: "Dark" }, { look: "Calm" }, { look: 5 }, { look: null }]) {
       expect(prefs.cleanPrefs(x)).toEqual(DEF);
     }
   });
-  it("keeps valid values and only the two keys", () => {
-    expect(prefs.cleanPrefs({ theme: "dark" })).toEqual({ theme: "dark", density: "comfortable" });
+  it("keeps every look, and falls back to calm", () => {
+    for (const look of prefs.LOOKS) expect(prefs.cleanPrefs({ look }).look).toBe(look);
+    for (const look of ["Midnight", "blue", 5, null, undefined]) expect(prefs.cleanPrefs({ look }).look).toBe("calm");
+    expect(Object.keys(prefs.cleanPrefs({}))).toEqual(["theme", "density", "look"]);
+    expect(prefs.DEFAULTS.look).toBe("calm");
+    expect(prefs.LOOKS).toEqual(["calm", "midnight", "friendly", "editorial", "bento"]);
+  });
+  it("keeps valid values and only the three keys", () => {
+    expect(prefs.cleanPrefs({ theme: "dark" })).toEqual({ theme: "dark", density: "comfortable", look: "calm" });
     expect(prefs.cleanPrefs({ ...DARK, extra: 1 })).toEqual(DARK);
   });
 });
@@ -58,9 +67,14 @@ describe("readPrefs", () => {
   it("uses the account's entry, else last", () => {
     const store = mem({ v: 1, last: { theme: "light", density: "comfortable" }, accounts: { u1: DARK, u3: { theme: 5 } } });
     expect(prefs.readPrefs("u1", store)).toEqual(DARK);
-    expect(prefs.readPrefs("u2", store)).toEqual({ theme: "light", density: "comfortable" });
+    expect(prefs.readPrefs("u2", store)).toEqual({ theme: "light", density: "comfortable", look: "calm" });
     expect(prefs.readPrefs("u3", store)).toEqual(DEF);
-    for (const id of [undefined, "", "toString", "__proto__"]) expect(prefs.readPrefs(id, store)).toEqual({ theme: "light", density: "comfortable" });
+    for (const id of [undefined, "", "toString", "__proto__"]) expect(prefs.readPrefs(id, store)).toEqual({ theme: "light", density: "comfortable", look: "calm" });
+  });
+  it("reads stored data without a look as calm, and keeps a stored look", () => {
+    const store = mem({ v: 1, last: { theme: "dark", density: "compact" }, accounts: { u1: { theme: "light" }, u2: { look: "bento" } } });
+    expect(prefs.readPrefs("u1", store).look).toBe("calm");
+    expect(prefs.readPrefs("u2", store).look).toBe("bento");
   });
   it("only touches the key scf.prefs", () => {
     const store = mem({ v: 1, last: DARK, accounts: {} });
@@ -89,6 +103,14 @@ describe("writePrefs", () => {
     prefs.writePrefs("u1", DARK, store);
     expect(saved(store).accounts).toEqual({ u2: DEF, u1: DARK });
   });
+  it("saves the look per account and as last, and cleans an unknown one", () => {
+    const store = mem({ v: 1, last: DEF, accounts: { u2: { ...DEF, look: "bento" } } });
+    prefs.writePrefs("u1", { ...DEF, look: "friendly" }, store);
+    expect(saved(store).accounts).toEqual({ u2: { ...DEF, look: "bento" }, u1: { ...DEF, look: "friendly" } });
+    expect(saved(store).last.look).toBe("friendly");
+    prefs.writePrefs("u1", { ...DEF, look: "neon" }, store);
+    expect(saved(store).accounts.u1.look).toBe("calm");
+  });
   it("keeps at most 20 accounts and drops the oldest", () => {
     const store = mem();
     for (let i = 0; i <= 20; i++) prefs.writePrefs(`a${i}`, DARK, store);
@@ -110,7 +132,7 @@ describe("writePrefs", () => {
   it("cleans values, survives bad storage, and treats ids safely", () => {
     const store = mem();
     prefs.writePrefs("u1", { theme: "blue", density: "compact" }, store);
-    expect(saved(store).accounts.u1).toEqual({ theme: "system", density: "compact" });
+    expect(saved(store).accounts.u1).toEqual({ theme: "system", density: "compact", look: "calm" });
     expect(() => prefs.writePrefs("u1", DARK, bad)).not.toThrow();
     expect(() => prefs.writePrefs("u1", DARK, undefined)).not.toThrow();
     prefs.writePrefs("", DARK, store);
@@ -132,21 +154,28 @@ describe("applyPrefs", () => {
   )("sets %s and %s", (theme, density) => {
     const r = root();
     prefs.applyPrefs({ theme, density }, r);
-    expect(r.attrs).toEqual({ "data-theme": theme, "data-density": density });
+    expect(r.attrs).toEqual({ "data-theme": theme, "data-density": density, ...CALM });
+  });
+  it.each(["calm", "midnight", "friendly", "editorial", "bento"])("sets the look %s", (look) => {
+    const r = root();
+    prefs.applyPrefs({ look }, r);
+    expect(r.attrs["data-look"]).toBe(look);
   });
   it("uses the defaults for garbage, and never removes an attribute", () => {
     const r = root();
     const remove = vi.spyOn(r, "removeAttribute");
-    prefs.applyPrefs(DARK, r);
+    prefs.applyPrefs(MID, r);
     prefs.applyPrefs(prefs.DEFAULTS, r);
-    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "comfortable" });
+    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "comfortable", ...CALM });
     prefs.applyPrefs("junk", r);
-    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "comfortable" });
+    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "comfortable", ...CALM });
+    prefs.applyPrefs({ look: "neon" }, r);
+    expect(r.attrs["data-look"]).toBe("calm");
     expect(remove).not.toHaveBeenCalled();
   });
   it("defaults to document.documentElement", () => {
     prefs.applyPrefs(DARK);
-    expect((document as any).documentElement.attrs).toEqual({ "data-theme": "dark", "data-density": "compact" });
+    expect((document as any).documentElement.attrs).toEqual({ "data-theme": "dark", "data-density": "compact", ...CALM });
   });
 });
 
@@ -155,8 +184,15 @@ describe("initPrefs", () => {
     const store = mem({ v: 1, last: DEF, accounts: { u1: DARK } });
     const r = root();
     prefs.initPrefs({ id: "u1" }, { store, root: r });
-    expect(r.attrs).toEqual({ "data-theme": "dark", "data-density": "compact" });
+    expect(r.attrs).toEqual({ "data-theme": "dark", "data-density": "compact", ...CALM });
     expect(saved(store)).toEqual({ v: 1, last: DARK, accounts: { u1: DARK } });
+  });
+  it("rewrites last when only the look differs", () => {
+    const store = mem({ v: 1, last: DEF, accounts: { u1: { ...DEF, look: "editorial" } } });
+    const r = root();
+    prefs.initPrefs({ id: "u1" }, { store, root: r, target: null });
+    expect(r.attrs["data-look"]).toBe("editorial");
+    expect(saved(store).last.look).toBe("editorial");
   });
   it("uses last for an account without an entry, and adds none", () => {
     const store = mem({ v: 1, last: DARK, accounts: { u1: DEF } });
@@ -168,7 +204,7 @@ describe("initPrefs", () => {
   it("does not throw with bad storage or no user", () => {
     const r = root();
     expect(() => prefs.initPrefs({ id: "u1" }, { store: bad, root: r })).not.toThrow();
-    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "comfortable" });
+    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "comfortable", ...CALM });
     expect(() => prefs.initPrefs(undefined, { store: mem(), root: r })).not.toThrow();
   });
   it("does not write when last already matches", () => {
@@ -191,6 +227,47 @@ describe("initPrefs", () => {
   });
 });
 
+describe("watchPrefs (other tabs)", () => {
+  const target = () => {
+    const fns: any[] = [];
+    return {
+      fns,
+      addEventListener: (_t: string, f: any) => fns.push(f),
+      removeEventListener: (_t: string, f: any) => { fns.splice(fns.indexOf(f), 1); },
+    };
+  };
+  it("applies a change from another tab for this account only, without a reload", () => {
+    const store = mem({ v: 1, last: DEF, accounts: { u1: DEF, u2: DEF } });
+    const r = root();
+    const t = target();
+    prefs.initPrefs({ id: "u1" }, { store, root: r, target: t });
+    expect(r.attrs["data-look"]).toBe("calm");
+    store.data = JSON.stringify({ v: 1, last: MID, accounts: { u1: DEF, u2: MID } });
+    t.fns[0]({ key: KEY });
+    expect(r.attrs["data-look"]).toBe("calm");
+    store.data = JSON.stringify({ v: 1, last: MID, accounts: { u1: MID, u2: DEF } });
+    t.fns[0]({ key: KEY });
+    expect(r.attrs).toEqual({ "data-theme": "dark", "data-density": "compact", "data-look": "midnight" });
+  });
+  it("ignores other keys, and a new watcher replaces the old one", () => {
+    const store = mem({ v: 1, last: DEF, accounts: {} });
+    const r = root();
+    const t = target();
+    prefs.initPrefs({ id: "u1" }, { store, root: r, target: t });
+    store.data = JSON.stringify({ v: 1, last: MID, accounts: { u1: MID } });
+    t.fns[0]({ key: "other" });
+    expect(r.attrs["data-look"]).toBe("calm");
+    prefs.initPrefs({ id: "u1" }, { store, root: r, target: t });
+    expect(t.fns).toHaveLength(1);
+    const stop = prefs.watchPrefs({ id: "u1" }, { store, root: r, target: t });
+    stop();
+    expect(t.fns).toHaveLength(0);
+  });
+  it("does nothing without an event target", () => {
+    expect(() => prefs.watchPrefs({ id: "u1" }, { store: mem(), root: root(), target: null })).not.toThrow();
+  });
+});
+
 describe("the Appearance dialog", () => {
   const modalRoot = () => document.getElementById("modal-root") as unknown as FakeElement;
   const groups = () => modalRoot().all("div").filter((d) => d.attrs.role === "group");
@@ -201,7 +278,12 @@ describe("the Appearance dialog", () => {
   it("shows the title, the groups and the marks", () => {
     void prefs.appearanceDialog({ id: "u1" }, { store: mem(), root: root() });
     expect(modalRoot().all("h2").map((x) => x.textContent)).toEqual(["Appearance"]);
-    const [theme, density] = groups();
+    const [theme, density, look] = groups();
+    expect(groups()).toHaveLength(3);
+    expect(look!.attrs["aria-label"]).toBe("Look");
+    expect(buttons(look!).map((b) => b.textContent)).toEqual(["Calm", "Midnight", "Friendly", "Editorial", "Bento"]);
+    expect(marks(look!)).toEqual(["true", "false", "false", "false", "false"]);
+    expect(buttons(look!).map((b) => b.all("svg").length)).toEqual([1, 0, 0, 0, 0]);
     expect(theme!.attrs["aria-label"]).toBe("Theme");
     expect(density!.attrs["aria-label"]).toBe("Density");
     expect(buttons(theme!).map((b) => b.textContent)).toEqual(["System", "Light", "Dark"]);
@@ -230,6 +312,46 @@ describe("the Appearance dialog", () => {
     buttons(groups()[1]!)[1]!.click();
     expect(saved(store).accounts.u1).toEqual(DARK);
     expect(modalRoot().children.length).toBeGreaterThan(0);
+  });
+  it("starts on a stored look, and a click on a look applies and saves it", () => {
+    const store = mem({ v: 1, last: DEF, accounts: { u1: { ...DEF, look: "bento" } } });
+    const r = root();
+    void prefs.appearanceDialog({ id: "u1" }, { store, root: r });
+    expect(marks(groups()[2]!)).toEqual(["false", "false", "false", "false", "true"]);
+    buttons(groups()[2]!)[2]!.click();
+    expect(r.attrs["data-look"]).toBe("friendly");
+    expect(saved(store).accounts.u1).toEqual({ ...DEF, look: "friendly" });
+    expect(saved(store).last.look).toBe("friendly");
+    expect(marks(groups()[2]!)).toEqual(["false", "false", "true", "false", "false"]);
+    expect(marks(groups()[0]!)).toEqual(["true", "false", "false"]);
+  });
+  it("a stale dialog does not undo a look chosen in another tab", () => {
+    const store = mem();
+    const r = root();
+    void prefs.appearanceDialog({ id: "u1" }, { store, root: r });
+    prefs.writePrefs("u1", { ...DEF, look: "midnight" }, store);
+    buttons(groups()[1]!)[1]!.click();
+    expect(saved(store).accounts.u1).toEqual({ ...DEF, density: "compact", look: "midnight" });
+    expect(r.attrs["data-look"]).toBe("midnight");
+  });
+  it("keeps unsaved choices on screen when reads work but writes throw", () => {
+    const store = mem({ v: 1, last: DEF, accounts: { u1: DEF } });
+    store.setItem = vi.fn(() => { throw new Error("quota"); });
+    const r = root();
+    void prefs.appearanceDialog({ id: "u1" }, { store, root: r });
+    buttons(groups()[2]!)[1]!.click(); // Midnight, not saved
+    buttons(groups()[1]!)[1]!.click(); // Compact, not saved
+    expect(r.attrs).toEqual({ "data-theme": "system", "data-density": "compact", "data-look": "midnight" });
+    expect(marks(groups()[2]!)).toEqual(["false", "true", "false", "false", "false"]);
+    expect(marks(groups()[1]!)).toEqual(["false", "true"]);
+    expect(saved(store).accounts.u1).toEqual(DEF);
+  });
+  it("applies a look when storage throws", () => {
+    const r = root();
+    void prefs.appearanceDialog({ id: "u1" }, { store: bad, root: r });
+    buttons(groups()[2]!)[1]!.click();
+    expect(r.attrs["data-look"]).toBe("midnight");
+    expect(marks(groups()[2]!)).toEqual(["false", "true", "false", "false", "false"]);
   });
   it("works when storage throws", () => {
     const r = root();
@@ -292,19 +414,27 @@ describe("ui/prefs-boot.js", () => {
     return r.attrs;
   };
 
-  it("sets nothing for empty or broken storage", () => {
-    for (const raw of [null, "{nope", "[]", "null", { v: 1 }, { v: 2, last: DARK }]) expect(boot(raw)).toEqual({});
-    expect(boot(null, { throws: true })).toEqual({});
-    expect(boot(null, { none: true })).toEqual({});
+  it("sets only the calm look for empty or broken storage", () => {
+    for (const raw of [null, "{nope", "[]", "null", { v: 1 }, { v: 2, last: DARK }]) expect(boot(raw)).toEqual(CALM);
+    expect(boot(null, { throws: true })).toEqual(CALM);
+    expect(boot(null, { none: true })).toEqual(CALM);
+  });
+  it("sets each known look, and calm for an unknown one", () => {
+    for (const look of prefs.LOOKS) expect(boot({ v: 1, last: { look } })).toEqual({ "data-look": look });
+    for (const look of ["neon", "Calm", 1, null]) expect(boot({ v: 1, last: { look } })).toEqual(CALM);
+  });
+  it("never throws without a document", () => {
+    expect(() => vm.runInNewContext(src, {})).not.toThrow();
   });
   it("sets the attributes from last", () => {
-    expect(boot({ v: 1, last: DARK })).toEqual({ "data-theme": "dark", "data-density": "compact" });
-    expect(boot({ v: 1, last: { theme: "light", density: "comfortable" } })).toEqual({ "data-theme": "light" });
-    expect(boot({ v: 1, last: { theme: "system", density: "compact" } })).toEqual({ "data-density": "compact" });
+    expect(boot({ v: 1, last: DARK })).toEqual({ "data-theme": "dark", "data-density": "compact", ...CALM });
+    expect(boot({ v: 1, last: { theme: "dark", density: "compact" } })).toEqual({ "data-theme": "dark", "data-density": "compact", ...CALM });
+    expect(boot({ v: 1, last: { theme: "light", density: "comfortable" } })).toEqual({ "data-theme": "light", ...CALM });
+    expect(boot({ v: 1, last: { theme: "system", density: "compact" } })).toEqual({ "data-density": "compact", ...CALM });
   });
   it("ignores unknown values and accounts", () => {
-    expect(boot({ v: 1, last: { theme: "blue", density: "tiny" } })).toEqual({});
-    expect(boot({ v: 1, accounts: { u1: DARK } })).toEqual({});
+    expect(boot({ v: 1, last: { theme: "blue", density: "tiny" } })).toEqual(CALM);
+    expect(boot({ v: 1, accounts: { u1: DARK } })).toEqual(CALM);
   });
   it("has no import or export, and uses the same key as prefs.js", () => {
     expect(/^\s*(import|export)\b/m.test(src)).toBe(false);
@@ -313,8 +443,14 @@ describe("ui/prefs-boot.js", () => {
   });
   it("agrees with writePrefs", () => {
     const store = mem();
-    prefs.writePrefs("u1", DARK, store);
-    expect(boot(store.data!)).toEqual({ "data-theme": "dark", "data-density": "compact" });
+    prefs.writePrefs("u1", MID, store);
+    expect(boot(store.data!)).toEqual({ "data-theme": "dark", "data-density": "compact", "data-look": "midnight" });
+  });
+  it("only the look files read data-look", () => {
+    expect(readUiCss()).not.toContain("data-look");
+    const tokens = readFileSync("ui/tokens.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(tokens).not.toContain("data-look");
+    for (const look of ["calm", "midnight", "friendly", "editorial", "bento"]) expect(readFileSync(`ui/css/looks/${look}.css`, "utf8")).toContain("data-look");
   });
   it("is loaded before the stylesheets on both displays", () => {
     for (const f of ["ui/index.html", "ui/user/index.html"]) {

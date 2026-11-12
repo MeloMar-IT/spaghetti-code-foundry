@@ -1,6 +1,7 @@
 import { api, configVersion } from "./api.js";
-import { h, mount, showError, tableBox, toast } from "./dom.js";
+import { h, mount, showError, table, toast } from "./dom.js";
 import { settingControl } from "./kit/forms.js";
+import { pageHeader } from "./kit/product.js";
 import { confirmUnreadable, mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 
@@ -117,8 +118,8 @@ function monitorSettingsSection(m, reload) {
   if (!stories.length && !breaker.length) return null;
   return h("section", {},
     h("h2", {}, "Monitor settings"),
-    stories.length ? h("h3", {}, "Bug stories") : null,
-    stories.length ? h("p", { class: "muted" }, "Bug stories with their evidence are written as issues to this repository; everyone who can read it sees them.") : null,
+    stories.length ? h("h3", {}, "Bug-fix changes") : null,
+    stories.length ? h("p", { class: "muted" }, "Bug-fix changes with their evidence are written as GitHub issues to this repository; everyone who can read it sees them.") : null,
     settingsForm(stories, m, reload),
     breaker.length ? h("h3", {}, "Circuit breaker") : null,
     settingsForm(breaker, m, reload));
@@ -137,23 +138,23 @@ export function monitorSentence(m) {
     ? `it last checked at ${when(m.lastCheck)}${m.running === false ? " (since the server started)" : ""}`
     : "it has not checked since the server started";
   const n = m.madeToday ?? 0;
-  const count = `it made ${n} bug ${n === 1 ? "story" : "stories"} today${m.perDay !== undefined ? ` (on its own at most ${m.perDay} a day)` : ""}`;
+  const count = `it made ${n} bug-fix ${n === 1 ? "change" : "changes"} today${m.perDay !== undefined ? ` (on its own at most ${m.perDay} a day)` : ""}`;
   const why = m.breaker?.open ? m.breaker.why : m.state === "breaker" ? m.why : undefined;
   const breaker = m.breaker?.open || m.state === "breaker" ? `the circuit breaker is open${why ? ` (${why})` : ""}` : "the circuit breaker is closed";
-  return `The monitor is ${m.running === false ? "not running" : "running"}; bug stories are ${stories}; ${last}; ${count}; ${breaker}.`;
+  return `The monitor is ${m.running === false ? "not running" : "running"}; bug-fix changes are ${stories}; ${last}; ${count}; ${breaker}.`;
 }
 
 /** What a finding's state says, in plain words. */
 export function stateText(f) {
   const n = f.story?.issue;
   switch (f.state) {
-    case "seen": return "seen, no story yet";
-    case "waiting": return `bug story #${n} is waiting`;
-    case "building": return `bug story #${n} is being built`;
+    case "seen": return "seen, no change yet";
+    case "waiting": return `bug-fix change #${n} is waiting`;
+    case "building": return `bug-fix change #${n} is being built`;
     case "fixed-watching": return "fixed, watching";
     case "came-back": return "came back";
     case "needs-you": return "needs you";
-    case "muted": return f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : "muted (the story was closed as not planned)";
+    case "muted": return f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : "muted (the change was closed as not planned)";
     case "gone": return "gone";
     default: return String(f.state ?? "");
   }
@@ -161,10 +162,10 @@ export function stateText(f) {
 
 /** The label of "Make a story now", and whether it works. */
 export function storyButton(m) {
-  if (m.running === false) return { label: "Make a story now (the monitor is not running)", enabled: false };
-  if (m.state === "off" || m.state === "unreadable") return { label: "Make a story now (the monitor is off)", enabled: false };
-  if (m.reportTo === false) return { label: "Make a story now (no repository is set)", enabled: false };
-  return { label: "Make a story now", enabled: true };
+  if (m.running === false) return { label: "Make a bug-fix change now (the monitor is not running)", enabled: false };
+  if (m.state === "off" || m.state === "unreadable") return { label: "Make a bug-fix change now (the monitor is off)", enabled: false };
+  if (m.reportTo === false) return { label: "Make a bug-fix change now (no repository is set)", enabled: false };
+  return { label: "Make a bug-fix change now", enabled: true };
 }
 
 let shown = PAGE;
@@ -193,7 +194,7 @@ function switchRow(m, reload) {
       h("span", { class: "spacer" }),
       h("button", { class: "small", onClick: click }, wantOn ? "Switch the monitor on" : "Switch the monitor off"),
       h("button", { class: "small", title: "Reload", "aria-label": "Reload", onClick: reload }, "↻")),
-    h("p", { class: "muted flush mt-4" }, "While it is off the monitor still records problems, but makes no bug story and writes no comment."));
+    h("p", { class: "muted flush mt-4" }, "While it is off the monitor still records problems, but makes no bug-fix change and writes no comment."));
 }
 
 /** What the finding call returns, as nodes: the evidence, the bug stories and the runs. */
@@ -206,7 +207,7 @@ function findingDetail(d) {
   };
   return [
     d.evidence?.length ? h("pre", { class: "mono" }, d.evidence.join("\n")) : h("p", { class: "muted" }, "No evidence was recorded."),
-    h("div", {}, "Bug stories: ", d.stories?.length ? d.stories.map(story) : h("span", { class: "muted" }, "No bug story yet.")),
+    h("div", {}, "Bug-fix changes: ", d.stories?.length ? d.stories.map(story) : h("span", { class: "muted" }, "No bug-fix change yet.")),
     h("div", {}, "Runs: ", d.runs?.length
       ? d.runs.map((r) => h("span", {}, h("a", { href: `#/runs/${r.id}` }, r.id), ` (${r.status}${r.startedAt ? `, ${when(r.startedAt)}` : ""}) `))
       : h("span", { class: "muted" }, "No run yet.")),
@@ -225,7 +226,7 @@ function findingActions(f, m, reload) {
   }
   if (f.state === "seen") {
     const b = storyButton(m);
-    story.push(h("button", { class: "small", disabled: !b.enabled, onClick: () => act(() => api.monitorStory(f.id), (r) => (r.story?.made ? `Bug story #${r.story.issue} made` : `Bug story #${r.story?.issue} exists already`), reload) }, b.label));
+    story.push(h("button", { class: "small", disabled: !b.enabled, onClick: () => act(() => api.monitorStory(f.id), (r) => (r.story?.made ? `Bug-fix change #${r.story.issue} made` : `Bug-fix change #${r.story?.issue} exists already`), reload) }, b.label));
   }
   if (f.state === "needs-you") {
     story.push(h("button", { class: "small", onClick: () => act(() => api.retryMonitor(f.id), () => "The monitor may try again", reload) }, "Try again"));
@@ -235,6 +236,9 @@ function findingActions(f, m, reload) {
     h("button", { class: "small", onClick: async () => { if (await muteForm({ finding: f.id }, m.detectors, { notProblem: true })) await reload(); } }, "This is not a problem"));
   return { story, mute };
 }
+
+const head = (title = "Problems") =>
+  pageHeader({ layout: "toolbar", title, meta: title === "Problems" ? h("span", { class: "muted" }, "What the monitor found") : undefined });
 
 function findingsTable(m, redraw) {
   const rows = m.findings.slice(0, shown);
@@ -247,9 +251,7 @@ function findingsTable(m, redraw) {
     h("td", {}, storyCell(f.story, f.needsYou))));
   const left = m.findings.length - rows.length;
   return h("div", {},
-    tableBox(h("table", { class: "table compact", "aria-label": "Findings" },
-      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story"].map((c) => h("th", { scope: "col" }, c)))),
-      h("tbody", {}, body))),
+    table(["Severity", "What", "Since", "How often", "State", "Change"], body, { label: "Findings", class: "compact" }),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
 
@@ -272,9 +274,8 @@ function detectorsTable(m, reload) {
         ? h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(mute.id), () => "Mute ended", reload) }, "End mute")
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
-  return tableBox(h("table", { class: "table compact", "aria-label": "Detectors" },
-    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
-    h("tbody", {}, rows)));
+  return table(["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")],
+    rows, { label: "Detectors", class: "compact" });
 }
 
 // The newest reload wins: an older answer that arrives later is dropped.
@@ -284,11 +285,11 @@ let reloads = 0;
 export async function renderProblems(main, { data } = {}) {
   let m = data;
   if (!m) {
-    mount(main, h("h1", {}, "Problems"), loadingState("Loading problems…", { rows: 5, shape: "table" }));
+    mount(main, head(), loadingState("Loading problems…", { rows: 5, shape: "table" }));
     try {
       m = await api.monitor();
     } catch (e) {
-      mount(main, h("h1", {}, "Problems"), errorState(explainError(e, { what: "The problems could not be loaded." }), { onRetry: () => renderProblems(main) }));
+      mount(main, head(), errorState(explainError(e, { what: "The problems could not be loaded." }), { onRetry: () => renderProblems(main) }));
       return;
     }
   }
@@ -312,7 +313,7 @@ export async function renderProblems(main, { data } = {}) {
     m.findings?.length ? findingsTable(m, redraw) : m.findingsUnreadable ? null : emptyState("No findings."));
   redraw();
   mount(main,
-    h("h1", {}, "Problems"),
+    head(),
     note,
     switchRow(m, reload),
     list,
@@ -331,16 +332,16 @@ export async function renderProblemDetail(main, id, { data } = {}) {
   let m;
   if (data) ({ d, m } = data);
   else {
-    mount(main, h("h1", {}, "Problem"), loadingState("Loading the problem…", { rows: 3, shape: "detail" }));
+    mount(main, head("Problem"), loadingState("Loading the problem…", { rows: 3, shape: "detail" }));
     const [one, list] = await Promise.allSettled([api.monitorFinding(id), api.monitor()]);
     if (one.status === "rejected") {
       const e = one.reason;
-      mount(main, h("h1", {}, "Problem"),
-        errorState(explainError(e, { what: "The problem could not be loaded." }), { back, onRetry: e?.status === 404 ? undefined : () => renderProblemDetail(main, id) }));
+      mount(main, head("Problem"),
+        errorState(explainError(e,{ what: "The problem could not be loaded." }), { back, onRetry: e?.status === 404 ? undefined : () => renderProblemDetail(main, id) }));
       return;
     }
     if (list.status === "rejected") {
-      mount(main, h("h1", {}, "Problem"),
+      mount(main, head("Problem"),
         errorState(explainError(list.reason, { what: "The problems could not be loaded." }), { back, onRetry: () => renderProblemDetail(main, id) }));
       return;
     }
@@ -365,13 +366,13 @@ export async function renderProblemDetail(main, id, { data } = {}) {
   const f = (m.findings ?? []).find((x) => x.id === id);
   const { story, mute } = f ? findingActions(f, m, reload) : { story: [], mute: [] };
   mount(main,
-    h("h1", {}, f?.summary ?? "Problem"),
+    head(f?.summary?.trim() ? f.summary : "Problem"),
     f
       ? h("div", { class: "muted text-sm" },
         [SEVERITY[f.severity] ?? f.severity, f.detector, `since ${when(f.firstSeen)}`, `seen in ${f.count} ${f.count === 1 ? "check" : "checks"}`, stateText(f)].join(" · "), " · ", storyCell(f.story, f.needsYou))
       : h("p", { class: "status bad" }, "This problem is not in the list of the monitor any more. What was found is shown below.", " ", h("a", { href: back.href }, back.label)),
     note,
     findingDetail(d),
-    story.length ? h("section", { class: "action-group" }, h("h2", {}, "Bug story"), h("div", { class: "row" }, story)) : null,
+    story.length ? h("section", { class: "action-group" }, h("h2", {}, "Bug-fix change"), h("div", { class: "row" }, story)) : null,
     mute.length ? h("section", { class: "action-group" }, h("h2", {}, "Mute"), h("div", { class: "row" }, mute)) : null);
 }

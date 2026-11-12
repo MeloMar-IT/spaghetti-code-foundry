@@ -126,31 +126,40 @@ describe("criticalPathView", () => {
 
   it("says how many are left, the chain and where it is now", () => {
     const v = m.criticalPathView(chains({ stories: [12, 13, 14, 15], remaining: 2, at: 14 }), stories);
-    expect(v.summary).toBe("The longest chain still to do has 2 stories left.");
+    expect(v.summary).toBe("The longest chain still to do has 2 changes left.");
     expect(v.path).toBe("#12 (done) → #13 (done) → #14 → #15");
     expect(v.now).toBe("Now at #14 Login: Working — reviewing");
   });
 
   it("says story for one", () => {
-    expect(m.criticalPathView(chains({ stories: [15], remaining: 1, at: 15 }), stories).summary).toContain("has 1 story left");
+    expect(m.criticalPathView(chains({ stories: [15], remaining: 1, at: 15 }), stories).summary).toContain("has 1 change left");
   });
 
   it("tells every story done from done plus split", () => {
     const done = [{ issue: 1, title: "A", state: "done", words: "Done" }];
     const c = { nodes: [{ issue: 1, title: "A", state: "done", done: true, order: 0, level: 0, dependsOn: [], outside: [] }], edges: [], outside: [], cycles: [], order: [1], criticalPath: { stories: [], remaining: 0 } };
-    expect(m.criticalPathView(c, done).summary).toBe("Nothing left on any chain: every story is done.");
+    expect(m.criticalPathView(c, done).summary).toBe("Nothing left on any chain: every change is done.");
     const mixed = [...done, { issue: 2, title: "B", state: "split", words: "Split" }];
-    expect(m.criticalPathView(c, mixed).summary).not.toContain("every story is done");
+    expect(m.criticalPathView(c, mixed).summary).not.toContain("every change is done");
   });
 
   it("tells an empty epic from one whose stories were all split or dropped", () => {
-    expect(m.criticalPathView(null, []).summary).toBe("No stories yet.");
-    expect(m.criticalPathView({ nodes: [], edges: [], outside: [], cycles: [], order: [], criticalPath: { stories: [], remaining: 0 } }, []).summary).toBe("No stories yet.");
+    expect(m.criticalPathView(null, []).summary).toBe("No changes yet.");
+    expect(m.criticalPathView({ nodes: [], edges: [], outside: [], cycles: [], order: [], criticalPath: { stories: [], remaining: 0 } }, []).summary).toBe("No changes yet.");
     for (const state of ["split", "dropped"]) {
       const v = m.criticalPathView(null, [{ issue: 1, title: "A", state, words: state }]);
-      expect(v.summary).not.toBe("No stories yet.");
+      expect(v.summary).not.toBe("No changes yet.");
       expect(v.summary).toContain("split or dropped");
     }
+  });
+});
+
+describe("storySemantic", () => {
+  it("maps every story state to a status semantic; an unknown one is neutral", () => {
+    const all = { done: "success", working: "running", waiting: "neutral", your_turn: "waiting", failed: "danger", split: "disabled", dropped: "disabled" };
+    for (const [state, sem] of Object.entries(all)) expect(m.storySemantic(state), state).toBe(sem);
+    for (const x of ["other", undefined, null, "__proto__", "constructor"]) expect(m.storySemantic(x), String(x)).toBe("neutral");
+    expect(m.storyItems([{ issue: 1, title: "A", state: "failed", words: "Failed" }], null, "")[0].semantic).toBe("danger");
   });
 });
 
@@ -172,7 +181,7 @@ describe("storyItems", () => {
 describe("chainNotes", () => {
   it("names cycles without promising how they are built, and the stories outside", () => {
     const notes = m.chainNotes({ cycles: [[3, 4]], outside: [{ issue: 77, title: "Other" }, { issue: 80 }] });
-    expect(notes).toEqual(["#3 and #4 depend on each other, so none of them can start first", "Stories outside this epic that stories here wait for: #77 Other, #80"]);
+    expect(notes).toEqual(["#3 and #4 depend on each other, so none of them can start first", "Changes outside this epic that changes here wait for: #77 Other, #80"]);
     expect(notes[0]).not.toMatch(/together|same time/);
     expect(m.chainNotes(null)).toEqual([]);
   });
@@ -182,7 +191,7 @@ describe("paceView", () => {
   const days = (done: number[]) => done.map((d, i) => ({ from: `f${i}`, to: `t${i}`, done: d }));
   it("says about how many a day, over how many days", () => {
     const v = m.paceView({ perDay: 1.4, days: days([0, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15]) }, undefined);
-    expect(v.perDay).toBe("About 1.4 stories a day over the last 14 days (all epics of this repository).");
+    expect(v.perDay).toBe("About 1.4 changes a day over the last 14 days (all epics of this repository).");
     expect(v.rows).toHaveLength(14);
     expect(v.rows[0]).toEqual({ label: "Last 24 hours", done: 15 });
     expect(v.rows[1].label).toBe("1–2 days ago");
@@ -190,13 +199,13 @@ describe("paceView", () => {
   });
 
   it("says when nothing was finished", () => {
-    expect(m.paceView({ perDay: 0, days: days([0, 0]) }, undefined).perDay).toBe("No story was finished in the last 2 days.");
-    expect(m.paceView(undefined, undefined).perDay).toBe("No story was finished in the last 14 days.");
+    expect(m.paceView({ perDay: 0, days: days([0, 0]) }, undefined).perDay).toBe("No change was finished in the last 2 days.");
+    expect(m.paceView(undefined, undefined).perDay).toBe("No change was finished in the last 14 days.");
   });
 
   it("says the median story time, or that there is not enough history", () => {
-    expect(m.paceView({ perDay: 1, days: days([1]) }, (2 * 60 + 10) * 60_000).median).toBe("A story takes about 2 h 10 min from the start of its run to done (the median of the finished runs).");
-    expect(m.paceView({ perDay: 1, days: days([1]) }, undefined).median).toBe("Not enough finished stories yet to say how long one takes.");
+    expect(m.paceView({ perDay: 1, days: days([1]) }, (2 * 60 + 10) * 60_000).median).toBe("A change takes about 2 h 10 min from the start of its run to done (the median of the finished runs).");
+    expect(m.paceView({ perDay: 1, days: days([1]) }, undefined).median).toBe("Not enough finished changes yet to say how long one takes.");
   });
 });
 

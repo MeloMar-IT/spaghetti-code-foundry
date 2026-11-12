@@ -195,12 +195,12 @@ describe("pure functions", () => {
   });
   it("readyLogText", () => {
     const c = "1 met, 2 not met, 4 unsure";
-    expect(rd.readyLogText({ what: "ready-checked", who: "Ann", detail: c })).toBe(`Ann checked a story draft against the Definition of Ready: ${c}`);
-    expect(rd.readyLogText({ what: "ready-checked" })).toBe("Someone checked a story draft against the Definition of Ready");
-    expect(rd.readyLogText({ what: "ready-checked", detail: "lots" })).toBe("Someone checked a story draft against the Definition of Ready");
-    expect(rd.readyLogText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a story draft");
-    expect(rd.readyLogText({ what: "architect-judged", detail: c })).toBe(`The architect judged the readiness of a story draft: ${c}`);
-    expect(rd.readyLogText({ what: "architect-judged" })).toBe("The architect judged the readiness of a story draft");
+    expect(rd.readyLogText({ what: "ready-checked", who: "Ann", detail: c })).toBe(`Ann checked a change draft against the Definition of Ready: ${c}`);
+    expect(rd.readyLogText({ what: "ready-checked" })).toBe("Someone checked a change draft against the Definition of Ready");
+    expect(rd.readyLogText({ what: "ready-checked", detail: "lots" })).toBe("Someone checked a change draft against the Definition of Ready");
+    expect(rd.readyLogText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a change draft");
+    expect(rd.readyLogText({ what: "architect-judged", detail: c })).toBe(`The architect judged the readiness of a change draft: ${c}`);
+    expect(rd.readyLogText({ what: "architect-judged" })).toBe("The architect judged the readiness of a change draft");
     expect(rd.readyLogText({ what: "ready-accepted", who: "Ann", detail: "it is small" })).toBe('Ann accepted an item anyway: "it is small"');
     expect(rd.readyLogText({ what: "ready-accepted", who: "Ann" })).toBe("Ann accepted an item anyway");
     expect(rd.readyLogText({ what: "ready-unaccepted", who: "Ann", detail: "it is small" })).toBe('Ann removed the reason of an item accepted anyway: "it is small"');
@@ -208,7 +208,7 @@ describe("pure functions", () => {
     expect(rd.readyLogText({ what: "created" })).toBe("");
   });
   it("the page tells the lines and the kind", () => {
-    expect(ui.logText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a story draft");
+    expect(ui.logText({ what: "ready-asked", who: "Ann" })).toBe("Ann asked the architect to judge the readiness of a change draft");
     expect(talk.kindOf({ kind: "ready" })).toBe("ready");
     expect(ui.architectStatus({ state: "queued", kind: "ready" }).detail).toBe("Then it judges what code could not decide.");
     expect(ui.architectStatus({ state: "running", kind: "ready" }).text).toBe("The architect is judging the readiness of your draft.");
@@ -402,9 +402,11 @@ describe("Ready and Drafting", () => {
   it("is Ready when every item is met or accepted; the list row and the toolbar say so", async () => {
     over = { state: "ready" };
     await withDraft(readyDraft());
-    const pills = () => walk(section()).filter((e) => e.attrs.class === "pill state-ready").map((e) => e.textContent);
+    const isPill = (e: FakeElement, state: string) => String(e.attrs.class).startsWith("pill sem-") && String(e.attrs.class).endsWith(` state-${state}`);
+    const pills = () => walk(section()).filter((e) => isPill(e, "ready")).map((e) => e.textContent);
     expect(pills()).toEqual(["Ready", "Ready"]);
-    expect(walk(main()).filter((e) => e.attrs.class === "pill state-ready").map((e) => e.textContent)).toEqual(["Ready", "Ready", "Ready"]);
+    expect(walk(section()).filter((e) => isPill(e, "ready")).every((e) => e.all("svg").length === 1 && String(e.attrs.class).includes("sem-success"))).toBe(true);
+    expect(walk(main()).filter((e) => isPill(e, "ready")).map((e) => e.textContent)).toEqual(["Ready", "Ready", "Ready"]);
   });
   it("falls back to Drafting after an edit; the accepted reason stays", async () => {
     await withDraft(readyDraft());
@@ -414,7 +416,7 @@ describe("Ready and Drafting", () => {
     expect(box().textContent).toContain("Drafting");
     expect(items().every((e) => e.textContent.includes("Not checked yet"))).toBe(true);
     expect(itemOf("small enough").textContent).toContain("Accepted anyway: Fine");
-    expect(walk(section()).filter((e) => e.attrs.class === "pill state-drafting").length).toBe(2);
+    expect(walk(section()).filter((e) => String(e.attrs.class).startsWith("pill sem-waiting") && String(e.attrs.class).endsWith(" state-drafting")).length).toBe(2);
   });
   it("tells a list that changed", async () => {
     await withDraft({ readiness: { at: AT, items: [item("value", "met", "ok")], stale: true } });

@@ -356,3 +356,38 @@ describe("release-daily verify: reuse of a test record", () => {
     expect(loadFlow("release-daily", s.repo).flow.vars?.reuse_test_results).toBe("yes");
   });
 });
+
+describe("release-daily verify: the TESTED line (safe points, #863)", () => {
+  it("prints the tested commit right before CHECKS: yes", () => {
+    const s = setup();
+    const lines = s.verify({ test: "true" }).out.trimEnd().split("\n");
+    expect(lines.at(-1)).toBe("CHECKS: yes");
+    expect(lines.at(-2)).toBe(`TESTED: ${s.git("rev-parse", "HEAD")}`);
+  });
+
+  it("prints none when the tests fail, time out or leave the tree changed", () => {
+    for (const [test, build] of [["false", ""], ["touch x", ""], ["touch x", "rm -f x"], ["git checkout -q HEAD~1", "git checkout -q -"]] as const) {
+      const s = setup();
+      expect(s.verify({ test, build }).out, test).not.toContain("TESTED:");
+    }
+    const slow = setup();
+    expect(slow.verify({ test: "sleep 60" }, { FACTORY_CHECK_LIMIT_SEC: "2" }).out).not.toContain("TESTED:");
+  });
+
+  it("prints none when a git call fails", () => {
+    const status = setup();
+    expect(status.verify({ bin: status.fakeGit('[ "$1" = status ] && exit 1') }).out).not.toContain("TESTED:");
+    const always = setup();
+    expect(always.verify({ bin: always.fakeGit("exit 1") }).out).not.toContain("TESTED:");
+  });
+
+  it("prints it for a reuse hit too", () => {
+    const s = setup();
+    const tree = s.git("rev-parse", "HEAD^{tree}");
+    mkdirSync(s.tested, { recursive: true });
+    writeFileSync(join(s.tested, testedKey(tree, "touch ran-tests")), "run s1, 2026-10-26T10:00Z\n");
+    const r = s.verify({ test: "touch ran-tests" }, { FACTORY_VAR_REUSE_TEST_RESULTS: "yes" });
+    expect(r.out).toContain("not run again");
+    expect(r.out).toContain(`TESTED: ${s.git("rev-parse", "HEAD")}\nCHECKS: yes`);
+  });
+});

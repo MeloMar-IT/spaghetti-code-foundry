@@ -258,14 +258,14 @@ describe("ensureSignedIn on the fake DOM", () => {
     await auth.ensureSignedIn(fakeApi(SESSION), reload);
     const root = (document as any).documentElement as FakeElement;
     expect(root.attrs).toMatchObject({ "data-theme": "dark", "data-density": "compact" });
-    expect(JSON.parse(store.data).last).toEqual({ theme: "dark", density: "compact" });
+    expect(JSON.parse(store.data).last).toEqual({ theme: "dark", density: "compact", look: "calm" });
   });
 
   it("signs in when storage throws", async () => {
     vi.stubGlobal("localStorage", { getItem: () => { throw new Error("x"); }, setItem: () => { throw new Error("x"); } });
     expect(await auth.ensureSignedIn(fakeApi(SESSION), reload)).toEqual(SESSION.user);
     const root = (document as any).documentElement as FakeElement;
-    expect(root.attrs).toMatchObject({ "data-theme": "system", "data-density": "comfortable" });
+    expect(root.attrs).toMatchObject({ "data-theme": "system", "data-density": "comfortable", "data-look": "calm" });
   });
 
   it("the sign-out button signs out and reloads", async () => {
@@ -700,14 +700,14 @@ describe("roles in the page", () => {
 
   it("the admin display has the Start work page", () => {
     const html = readFileSync("ui/index.html", "utf8");
-    const link = html.indexOf('<a href="#/start" data-nav="start">Start work</a>');
+    const link = html.indexOf('<a href="#/start" data-nav="start" class="btn primary">+ New change</a>');
     expect(link).toBeGreaterThan(-1);
     expect(link).toBeLessThan(html.indexOf('data-nav="runs"'));
     const app = readFileSync("ui/app.js", "utf8");
     expect(app).toContain('from "./user/start.js"');
     expect(app).toContain('section === "start"');
     // a slow Start work page must not overwrite the page that took over
-    expect(app).toContain("renderStart(box, { admin: true })");
+    expect(app).toContain("renderStart(box, { admin: true, contextRepo:");
     expect(app).toContain("if (mine !== routeGen) done?.();");
   });
 

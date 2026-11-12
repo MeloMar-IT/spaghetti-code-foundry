@@ -27,9 +27,9 @@ export function logText(entry) {
   if (entry.what === "architect-resumed") return `${who} asked the architect to carry on`;
   if (entry.what === "architect-brief") return "The architect wrote the context brief";
   if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
-  if (entry.what === "draft-added") return `${who} added a story draft`;
-  if (entry.what === "draft-published") return `${who} published a story draft${entry.detail ? `: ${entry.detail}` : ""}`;
-  if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
+  if (entry.what === "draft-added") return `${who} added a change draft`;
+  if (entry.what === "draft-published") return `${who} published a change draft${entry.detail ? `: ${entry.detail}` : ""}`;
+  if (entry.what === "draft-removed") return `${who} removed a change draft${entry.detail ? `: "${entry.detail}"` : ""}`;
   if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
   if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
   return importLogText(entry) || talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || splitLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
@@ -45,14 +45,14 @@ export function activityText(doing, kind = "brief") {
     // A round, an answer, a suggestion, a review or a view: fixed sentences only, never the words of the step.
     if (/clone|check out/i.test(t)) return "Getting the code.";
     if (/reads the code/i.test(t)) return "Reading the code.";
-    if (kind === "impact" && /issues/i.test(t)) return "Reading the open issues.";
-    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : kind === "impact" ? "Checking the view." : kind === "ready" ? "Checking the judgement." : kind === "split" ? "Checking the ways." : "Checking the answer.";
+    if (kind === "impact" && /issues/i.test(t)) return "Reading the open GitHub issues.";
+if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : kind === "impact" ? "Checking the view." : kind === "ready" ? "Checking the judgement." : kind === "split" ? "Checking the ways." : "Checking the answer.";
     if (/^getting ready/i.test(t)) return "Getting ready.";
     return "";
   }
   if (/clone|check out/i.test(t)) return "Getting the code.";
   if (/reads the code/i.test(t)) return "Reading the code and writing the brief.";
-  if (/issues/i.test(t) && /read/i.test(t)) return "Reading the open issues.";
+  if (/issues/i.test(t) && /read/i.test(t)) return "Reading the open GitHub issues.";
   if (/check/i.test(t) && /brief/i.test(t)) return "Checking the brief.";
   if (/[\w.-]+\/|\.\w{1,4}\b/.test(t)) return "Working on the brief.";
   return t;
@@ -141,7 +141,7 @@ export function briefSection(s, onAsk) {
 export const PARTS = [
   { id: "brief", label: "Idea and brief" },
   { id: "talk", label: "Conversation" },
-  { id: "drafts", label: "Story drafts" },
+  { id: "drafts", label: "Change drafts" },
   { id: "handoff", label: "Hand off" },
   { id: "log", label: "Log" },
 ];

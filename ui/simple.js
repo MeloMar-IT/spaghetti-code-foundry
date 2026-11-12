@@ -3,9 +3,14 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { changeRepoOf, changesOf } from "./simple-change-model.js";
-import { projectsModel } from "./simple-model.js";
+import { homeModel, projectsModel } from "./simple-model.js";
+import { currentLook, homeLayout } from "./simple-home.js";
+import { greeting } from "./today.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
 import { openAsk } from "./ask-handoff.js";
+import { requestView } from "./request-box.js";
+import { SAFE, safePointsView } from "./safe-points.js";
+import { REQUEST } from "./request-model.js";
 import { askCard, checkCard, hasUnsentAnswers, stuckCard } from "./simple-turn.js";
 import { CHANGE, FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
@@ -25,11 +30,12 @@ function linkNode(l, cls, focus) {
 export function projectsView(projects) {
   const body = projects.length
     ? h("ul", { class: "simple-projects" }, projects.map((p) => h("li", { class: "simple-card" },
-      h("h2", {}, h("a", { href: `#/repos/${encodeURIComponent(p.id)}`, "data-focus": `simple-project-${p.id}` }, p.name)),
+      h("h3", {}, h("a", { href: `#/repos/${encodeURIComponent(p.id)}`, "data-focus": `simple-project-${p.id}` }, p.name)),
       h("p", { class: "simple-state" }, p.state),
       linkNode(p.next, "btn primary simple-big", `simple-next-${p.id}`))))
     : h("p", { class: "simple-empty" }, WORDS.empty);
-  return [h("h1", {}, WORDS.myProjects), h("p", {}, h("a", { href: "#/start-guide", "data-focus": "simple-get-started" }, GUIDE.getStarted)), body];
+  // The greeting of Today is the h1 of the page; My projects follows it.
+  return [h("h2", {}, WORDS.myProjects), h("p", {}, h("a", { href: "#/start-guide", "data-focus": "simple-get-started" }, GUIDE.getStarted)), body];
 }
 
 /** "Yes, build this" of a Planned request, by request id: "sending" | "failed". Kept here because the page is drawn again after a build. */
@@ -269,7 +275,7 @@ function tryController({ id, a, local, every }) {
  * The project page. `actions`: the action row, [{ id: "change" | "tryIt" | "final", href?, onClick?, node? }] (`node`: drawn as it is); nothing is drawn
  * without actions. `doneOpen` and `onToggle` keep the "Show all done" box open across a refresh.
  */
-export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide, onBuild, turns = [], answer } = {}) {
+export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide, onBuild, turns = [], answer, safe } = {}) {
   return [
     h("a", { class: "simple-back", href: "#/home", "data-focus": "simple-back" }, WORDS.back),
     h("h1", {}, model.name),
@@ -280,11 +286,14 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
           || (c.approve && answer && checkCard(c, turns, answer)) || (c.stuck && answer && stuckCard(c, turns, answer)) || h("li", { class: "simple-card" },
           h("strong", {}, c.title),
           c.line ? h("p", { class: "muted" }, c.line) : null,
+          c.points ? requestView(c.points, { heading: "h3", note: REQUEST.notYours }) : null,
           c.link ? linkNode({ ...c.link, label: c.todo }, "btn primary simple-big", `simple-todo-${c.id}`) : null)))
         : h("p", {}, WORDS.nothingTodo)),
     h("section", { class: "simple-making" },
       h("h2", {}, WORDS.making),
       GROUPS.map(([key, title]) => groupView(key, title, model.groups[key], { doneOpen, onToggle, onBuild }))),
+    // the versions that worked (#863); left out for a caller that reads none
+    safe ? h("section", { class: "simple-group simple-safe" }, h("h2", {}, SAFE.simpleTitle), ...safePointsView(safe.answer, { simple: true, restore: { id: safe.id } })) : null,
     actions.length
       ? h("div", { class: "simple-actions" }, actions.filter((x) => WORDS.actions[x.id]).map((x) => x.node ? x.node : x.href
         ? h("a", { class: "btn simple-big", href: x.href, "data-focus": `simple-action-${x.id}` }, WORDS.actions[x.id])
@@ -294,13 +303,13 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
 }
 
 /** Loads the three lists and polls them; `draw(projects)` gets the projects. Returns a cleanup. */
-async function live(main, { a, draw, turns = false, changesFor }) {
+async function live(main, { a, draw, turns = false, changesFor, safeFor }) {
   const box = h("div", { class: "simple" });
   mount(main, box);
   let poll;
   const states = liveStates({
     body: box,
-    heading: () => h("h1", {}, WORDS.myProjects),
+    heading: () => h("h1", {}, turns ? WORDS.myProjects : greeting()),
     label: WORDS.loading,
     what: WORDS.loadFailed,
     retry: () => poll.refresh(),
@@ -316,10 +325,14 @@ async function live(main, { a, draw, turns = false, changesFor }) {
       const project = changesFor === undefined ? null : (Array.isArray(repos) ? repos : []).find((r) => String(r.id) === String(changesFor));
       const name = project ? changeRepoOf(project) : null;
       if (name && typeof a.changes === "function") changes[String(project.id)] = await Promise.resolve().then(() => a.changes(name)).then(changesOf, () => []);
-      return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending, mineItems, changes };
+      const all = await withActive(a, runs, queue);
+      // the safe points of one project (an id, or a function that picks it); a failed read gives no answer, and the page is drawn without it
+      const sid = typeof safeFor === "function" ? safeFor({ repos, runs: all, pending: queue?.pending }) : safeFor;
+      const safe = sid == null ? undefined : { id: sid, answer: typeof a.safePoints === "function" ? await Promise.resolve().then(() => a.safePoints(sid)).then((v) => v, () => undefined) : undefined };
+      return { repos, runs: all, pending: queue?.pending, mineItems, changes, safe };
     },
-    draw: ({ repos, runs, pending, mineItems, changes }) => {
-      const nodes = draw(projectsModel(repos, runs, pending, changes), () => poll.refresh(), repos, mineItems);
+    draw: ({ repos, runs, pending, mineItems, changes, safe }) => {
+      const nodes = draw(projectsModel(repos, runs, pending, changes), () => poll.refresh(), repos, mineItems, { runs, pending, safe });
       keepScroll(box, () => mount(box, ...nodes, states.alert, states.note));
     },
     every: REFRESH_MS,
@@ -364,11 +377,13 @@ export async function renderSimpleHelp(main, { a = api } = {}) {
  * My projects; never rejects; returns a cleanup. `openGuide()` is called once, when the first successful load shows no project and
  * `alive()` still says this page is the one on screen (a slow answer that arrives after the person left must not move them).
  */
-export function renderSimpleHome(main, { a = api, openGuide, alive = () => true } = {}) {
+export function renderSimpleHome(main, { a = api, openGuide, alive = () => true, list = "", look = currentLook } = {}) {
   let first = true;
   return live(main, {
     a,
-    draw: (projects) => {
+    // the current project of the home reads its newest safe point
+    safeFor: ({ repos, runs, pending }) => homeModel(runs, pending, repos, projectsModel(repos, runs, pending)).project?.id ?? null,
+    draw: (projects, _refresh, repos, _turns, { runs, pending, safe } = {}) => {
       const empty = first && projects.length === 0;
       first = false;
       if (empty && alive()) {
@@ -378,7 +393,10 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true 
           // the page stays as it is
         }
       }
-      return projectsView(projects);
+      // Today first, drawn by the layout of the person's look (work of the person's projects only), then My projects.
+      // A counter opens `list` on this page.
+      const model = homeModel(runs, pending, repos, projects, { list, safe });
+      return [...homeLayout(model, look(), { focus: "simple-today" }), ...projectsView(projects)];
     },
   });
 }
@@ -399,7 +417,8 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
     a,
     turns: true,
     changesFor: id,
-    draw: (projects, refresh, repos, turns) => {
+    safeFor: id,
+    draw: (projects, refresh, repos, turns, { safe } = {}) => {
       const p = projects.find((x) => String(x.id) === String(id));
       // The move removes the local record: while it runs and after it worked, its box stays even though the project is gone.
       if (!p && mv.keepsPage()) return [h("a", { class: "simple-back", href: "#/home" }, WORDS.back), mv.node];
@@ -416,6 +435,9 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
       answer = {
         detail: (k) => a.turnDetail(k), act: (b) => a.actTurn(b), done: () => refresh?.(),
         approveRun: (rid, note) => a.approveRun(rid, note), rejectRun: (rid, note) => a.rejectRun(rid, note), resumeRun: (rid) => a.resumeRun(rid),
+        notNow: (rid) => a.notNowRun(rid),
+        markCheck: (rid, cid, mark, rev) => a.markCheck(rid, cid, mark, rev),
+        addCheck: (rid, t, e, rev) => a.addCheck(rid, t, e, rev),
         tryIt: local ? (runId) => ctl.tryRun(runId) : null,
         help: () => { if (!openAsk()) globalThis.location.hash = "#/help"; },
       };
@@ -434,7 +456,7 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         await a.buildChange(cid);
         refresh?.();
       };
-      return projectView(p, { onBuild, actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide, turns, answer });
+      return projectView(p, { onBuild, actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide, turns, answer, safe });
     },
   });
   return () => { keepPage(null); off(); ctl.stop(); mv.stop(); };

@@ -1,4 +1,4 @@
-import { h, mount } from "./dom.js";
+import { h, mount, tabStops, trapTarget } from "./dom.js";
 import { SECTIONS, splitHash, subnavFor } from "./ia.js";
 import { mediaFor } from "./viewport.js";
 
@@ -29,12 +29,12 @@ export function setCount(count) {
 }
 
 // The sidebar, drawer and menu button. One controller per initShell call; showPage and setCount use the current one.
-const fresh = () => ({ collapsed: false, drawer: false, narrow: false, shown: 0, apply: null, closeDrawer: null, announce: 0 });
+const fresh = () => ({ drawer: false, narrow: false, shown: 0, apply: null, closeDrawer: null, announce: 0 });
 let shell = fresh();
 
-/** What the sidebar does now. narrow: the drawer rules apply. */
-export function sideState({ narrow, collapsed, drawer }) {
-  return narrow ? { open: !!drawer, modal: !!drawer } : { open: !collapsed, modal: false };
+/** What the sidebar does now. narrow: the drawer rules apply. On a wide screen it is always shown. */
+export function sideState({ narrow, drawer }) {
+  return narrow ? { open: !!drawer, modal: !!drawer } : { open: true, modal: false };
 }
 
 /** localStorage that never throws: a missing or broken store reads as empty and ignores writes. */
@@ -51,7 +51,7 @@ export function safeStore() {
 }
 
 /** Sets up the menu button, drawer, skip button and account menu. Call once, after sign-in. Returns a stop function. */
-export function initShell(role, { user, store = safeStore(), media = mediaFor("compact") } = {}) {
+export function initShell(role, { user, media = mediaFor("compact") } = {}) {
   const ctl = fresh();
   shell = ctl;
   const undo = [];
@@ -65,14 +65,12 @@ export function initShell(role, { user, store = safeStore(), media = mediaFor("c
   if (name && user?.name) name.textContent = user.name;
   // The visible name must be part of the accessible name of the account button.
   if (user?.name) el("account-summary")?.setAttribute("aria-label", `Account for ${user.name}`);
-  try { ctl.collapsed = store.getItem("scf-side") === "closed"; } catch { ctl.collapsed = false; }
   ctl.narrow = !!media?.matches;
 
   const links = () => [...(el("side")?.querySelectorAll("a[href]") ?? [])];
   ctl.apply = () => {
     const st = sideState(ctl);
     const body = document.body;
-    body?.classList?.toggle("side-closed", ctl.collapsed);
     body?.classList?.toggle("drawer-open", ctl.drawer);
     el("menu-btn")?.setAttribute("aria-expanded", String(st.open));
     const scrim = el("scrim");
@@ -92,17 +90,13 @@ export function initShell(role, { user, store = safeStore(), media = mediaFor("c
   };
   ctl.apply();
 
+  // On a wide screen the sidebar is always shown and the button is hidden; only the drawer needs it.
   on(el("menu-btn"), "click", () => {
-    if (ctl.narrow) {
-      if (ctl.drawer) { ctl.closeDrawer(el("menu-btn")); return; }
-      ctl.drawer = true;
-      ctl.apply();
-      links()[0]?.focus();
-      return;
-    }
-    ctl.collapsed = !ctl.collapsed;
-    try { store.setItem("scf-side", ctl.collapsed ? "closed" : "open"); } catch { /* the choice lasts until reload */ }
+    if (!ctl.narrow) return;
+    if (ctl.drawer) { ctl.closeDrawer(el("menu-btn")); return; }
+    ctl.drawer = true;
     ctl.apply();
+    links().find((a) => !a.hidden)?.focus();
   });
   // The scrim is a backdrop, not a control: it takes the mouse or a tap; the keyboard uses Escape or the menu button.
   on(el("scrim"), "mousedown", () => ctl.closeDrawer(el("menu-btn")));
@@ -113,14 +107,14 @@ export function initShell(role, { user, store = safeStore(), media = mediaFor("c
     if (!ctl.drawer) return;
     if (e.key === "Escape") {
       if (el("modal-root")?.children?.length) return; // the dialog's own Escape wins
+      // An open project switcher closes first with its own Escape (it stops this event when it runs before this one).
+      if (el("context")?.querySelector?.("[aria-haspopup]")?.getAttribute("aria-expanded") === "true") return;
       ctl.closeDrawer(el("menu-btn"));
     } else if (e.key === "Tab") {
       if (el("modal-root")?.children?.length) return; // a dialog over the drawer traps Tab itself
       // The drawer is modal: Tab stays inside it.
-      const list = [...(el("side")?.querySelectorAll("a[href], button, select") ?? [])];
-      if (!list.length) return;
-      const at = list.indexOf(document.activeElement);
-      const to = at < 0 ? list[0] : e.shiftKey && at === 0 ? list.at(-1) : !e.shiftKey && at === list.length - 1 ? list[0] : null;
+      const side = el("side");
+      const to = side ? trapTarget(tabStops(side), document.activeElement, !!e.shiftKey) : null;
       if (to) { e.preventDefault?.(); to.focus(); }
     }
   });
@@ -134,7 +128,7 @@ export function initShell(role, { user, store = safeStore(), media = mediaFor("c
   return () => {
     for (const f of undo.splice(0)) f();
     if (shell === ctl) shell = fresh();
-    document.body?.classList?.remove("side-closed", "drawer-open");
+    document.body?.classList?.remove("drawer-open");
     for (const id of ["top", "skip", "content"]) el(id)?.removeAttribute("inert");
   };
 }
@@ -170,6 +164,10 @@ export function showPage(role, to) {
       a.removeAttribute("aria-current");
     }
   }
+  // The area of the page on <html>; a look may style one area (Editorial inverts Administration).
+  const area = to.page?.area;
+  const root = document.documentElement;
+  if (typeof area === "string" && area) root?.setAttribute("data-area", area); else root?.removeAttribute("data-area");
   const subnav = document.getElementById("subnav");
   if (subnav) {
     const links = to.dest ? subnavFor(role, to.dest) : [];
@@ -192,7 +190,8 @@ export function showPage(role, to) {
   pageTitle = to.title;
   document.title = titleText(pageTitle, waiting);
   // Names the place; a detail page adds its argument, because several routes share one title.
-  const where = to.arg && !String(to.title).includes(to.arg) ? `${to.title}: ${to.arg}` : String(to.title);
+  // A page that is named by its content (the run page: the change's title) does not show its argument (the run ID).
+  const where = to.arg && !to.page?.named && !String(to.title).includes(to.arg) ?`${to.title}: ${to.arg}` : String(to.title);
   const title = document.getElementById("page-title");
   if (title) title.textContent = where;
   const main = document.getElementById("main");

@@ -215,7 +215,11 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
         // "A bug story goes first" holds a stopped run that the watcher would resume: only while the run still is stopped.
         (h.next.kind === "bug_first" && !queued && (run.status === "stopped" || run.status === "cancelled" || rec.kind === "interrupted"))));
     // A retired run keeps its own record (it says "start a new run"), not a hold that says "resume"; any other hold only gets the flag.
-    const picked = hold?.next ?? rec;
+    let picked = hold?.next ?? rec;
+    // The run's own facts about a failure stay when a watcher hold is shown instead.
+    if (picked !== rec && picked.kind === "failed" && rec.kind === "failed") {
+      picked = { ...picked, ...(rec.issueClosed ? { issueClosed: true as const } : {}), ...(rec.splitMade ? { splitMade: rec.splitMade } : {}) };
+    }
     const out = waitLeft(rec.retired && !picked.retired ? (RETIRED_REPLACES.has(picked.kind) && RETIRED_REPLACES.has(rec.kind) ? rec : { ...picked, retired: true as const }) : picked);
     if (out.kind === "done" || out.kind === "superseded") return out;
     const timing = out.kind === "running" && run.status === "running" ? runTiming(run, historyFor(ctx)) : runProgress(run);

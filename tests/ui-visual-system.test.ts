@@ -1,104 +1,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { readUiCss } from "./helpers/ui-css.js";
+import { PAIRS, SEMANTICS, checkPairs, failures, parseTokens, ratio, readUiCss, resolve, splitValue } from "./helpers/ui-css.js";
 
 // ui/tokens.css is the one place for colours, type, spacing and density (#322). This test reads the files as text,
 // computes every contrast ratio and keeps ui/style.css free of raw values. It does not check how the pages look.
 
 const read = (p: string) => readFileSync(p, "utf8");
-
-type Theme = "light" | "dark";
-type Decl = { light: string; dark: string };
-type Tokens = {
-  base: Map<string, Decl>;
-  compact: Map<string, string>;
-  reduced: Map<string, string>;
-  other: string[];
-  /** Every declaration in order, so a duplicate is not collapsed by the Maps. */
-  baseNames: string[];
-  compactNames: string[];
-};
-type Pair = { fg: string; bg: string; min: number | "exempt" };
-type PairResult = Pair & { light: number; dark: number; pass: boolean };
-
-/** "light-dark(a, b)" → {light:a, dark:b}; any other value → both. Throws on a malformed light-dark(. */
-function splitValue(value: string): Decl {
-  const v = value.trim();
-  if (v.startsWith("light-dark(")) {
-    const m = /^light-dark\(([^,()]+), ([^,()]+)\)$/.exec(v);
-    if (!m) throw new Error(`malformed light-dark(): ${v}`);
-    return { light: m[1]!.trim(), dark: m[2]!.trim() };
-  }
-  return { light: v, dark: v };
-}
-
-const declarations = (body: string): [string, string][] => [...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1]!, m[2]!.trim()]);
-
-/** Parses tokens.css: the first `:root {}` block, the compact block, the reduced-motion block. */
-function parseTokens(source: string): Tokens {
-  let css = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  const take = (re: RegExp): string => {
-    const m = re.exec(css);
-    if (!m) return "";
-    css = css.replace(m[0], "");
-    return m[1]!;
-  };
-  const base = new Map<string, Decl>();
-  const baseDecls = declarations(take(/:root\s*\{([^}]*)\}/));
-  for (const [k, v] of baseDecls) base.set(k, splitValue(v));
-  const compactDecls = declarations(take(/:root\[data-density="compact"\]\s*\{([^}]*)\}/));
-  const compact = new Map<string, string>(compactDecls);
-  const reduced = new Map<string, string>(declarations(take(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*:root\s*\{([^}]*)\}\s*\}/)));
-  const other = declarations(css).map(([k]) => k);
-  return { base, compact, reduced, other, baseNames: baseDecls.map(([k]) => k), compactNames: compactDecls.map(([k]) => k) };
-}
-
-/** Follows var(--x) until a hex colour; throws when a name is unknown or the value is not #rgb/#rrggbb. */
-function resolve(t: Tokens, name: string, theme: Theme): string {
-  const decl = t.base.get(name);
-  if (!decl) throw new Error(`unknown token ${name}`);
-  const value = decl[theme];
-  const ref = /^var\((--[\w-]+)\)$/.exec(value);
-  if (ref) return resolve(t, ref[1]!, theme);
-  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
-  if (!hex) throw new Error(`${name} is not a hex colour: ${value}`);
-  const h = hex[1]!.length === 3 ? [...hex[1]!].map((c) => c + c).join("") : hex[1]!;
-  return `#${h.toLowerCase()}`;
-}
-
-function luminance(hex: string): number {
-  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!;
-}
-
-function ratio(a: string, b: string): number {
-  const full = (h: string) => (h.length === 4 ? `#${[...h.slice(1)].map((c) => c + c).join("")}` : h);
-  const [l1, l2] = [luminance(full(a)), luminance(full(b))].sort((x, y) => y - x);
-  return (l1! + 0.05) / (l2! + 0.05);
-}
-
-function checkPairs(t: Tokens, pairs: Pair[]): PairResult[] {
-  return pairs.map((p) => {
-    const light = ratio(resolve(t, p.fg, "light"), resolve(t, p.bg, "light"));
-    const dark = ratio(resolve(t, p.fg, "dark"), resolve(t, p.bg, "dark"));
-    return { ...p, light, dark, pass: p.min === "exempt" || (light >= p.min && dark >= p.min) };
-  });
-}
-const failures = (rs: PairResult[]) => rs.filter((r) => !r.pass);
-
-const SEMANTICS = ["neutral", "accent", "success", "warning", "danger", "info", "running", "waiting", "disabled"];
-const TEXT_ON = ["--color-bg", "--color-surface", "--color-surface-2"];
-const PAIRS: Pair[] = [
-  ...["--color-text", "--color-text-muted"].flatMap((fg) => TEXT_ON.map((bg) => ({ fg, bg, min: 4.5 }))),
-  ...SEMANTICS.flatMap((s) => {
-    const min = s === "disabled" ? ("exempt" as const) : 4.5;
-    return [{ fg: `--color-${s}`, bg: `--color-${s}-soft`, min }, { fg: `--color-${s}`, bg: "--color-surface", min }];
-  }),
-  { fg: "--color-on-accent", bg: "--color-accent", min: 4.5 },
-  { fg: "--color-on-danger", bg: "--color-danger", min: 4.5 },
-  ...["--color-border-strong", "--color-focus"].flatMap((fg) => ["--color-bg", "--color-surface"].map((bg) => ({ fg, bg, min: 3 }))),
-  ...["text", "ok", "fail", "step", "dim"].map((s) => ({ fg: `--color-log-${s}`, bg: "--color-log-bg", min: 4.5 })),
-];
 
 /** The full token inventory by group; the CSS must define exactly these (plus the legacy names). */
 const GROUPS: Record<string, string[]> = {
@@ -108,13 +15,14 @@ const GROUPS: Record<string, string[]> = {
     ...SEMANTICS, ...SEMANTICS.map((s) => `${s}-soft`),
   ].map((n) => `--color-${n}`),
   typography: [
-    "--font-sans", "--font-mono", "--text-micro", "--text-meta", "--text-small", "--text-code", "--text-body", "--text-table", "--text-table-head",
-    "--text-section", "--text-page", "--text-display", "--leading-body", "--leading-tight", "--weight-regular", "--weight-medium", "--weight-bold",
+    "--font-body", "--font-display", "--font-sans", "--font-mono", "--font-numeric", "--text-micro", "--text-meta", "--text-small", "--text-code", "--text-body", "--text-table", "--text-table-head",
+    "--text-section", "--text-page", "--text-heading", "--font-label", "--label-case","--text-display", "--leading-body", "--leading-tight", "--weight-regular", "--weight-medium", "--weight-bold",
   ],
   spacing: ["2xs", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"].map((n) => `--space-${n}`),
   sizing: ["--size-icon", "--size-icon-sm", "--size-sidebar", "--size-form", "--size-bar", "--size-touch", "--size-touch-min"],
   borders: ["--border-width", "--radius-none", "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-pill", "--radius-round"],
-  elevation: ["--shadow-sm", "--shadow-md", "--shadow-lg"],
+  components: ["--pill-pad-y", "--pill-pad-x", "--pill-gap", "--pill-radius", "--card-radius", "--button-radius", "--table-radius", "--focus-width", "--focus-offset"],
+  elevation: ["--shadow-none", "--shadow-low", "--shadow-high", "--shadow-sm", "--shadow-md", "--shadow-lg"],
   motion: ["--motion-fast", "--motion-base", "--motion-slow"],
   density: ["--control-pad-y", "--control-pad-x", "--cell-pad-y", "--cell-pad-x", "--card-pad", "--stack-gap", "--page-pad-y", "--page-pad-x"],
   layering: ["--layer-sticky", "--layer-menu", "--layer-overlay", "--layer-toast"],
@@ -221,7 +129,7 @@ describe("ui/tokens.css", () => {
 
   it("passes every contrast pair, in both themes", () => {
     const results = checkPairs(tokens, PAIRS);
-    expect(results).toHaveLength(35);
+    expect(results).toHaveLength(34);
     expect(failures(results).map((r) => `${r.fg} on ${r.bg}: ${r.light.toFixed(2)} / ${r.dark.toFixed(2)}`)).toEqual([]);
   });
 });
@@ -267,11 +175,67 @@ describe("ui/style.css", () => {
   });
 });
 
+describe("the component tokens", () => {
+  const kit = (f: string) => read(`ui/kit/${f}.css`);
+
+  it("are used by the pill, card, button, table and focus rules, and by the kit", () => {
+    const expectIn = (body: string, ...parts: string[]) => { for (const p of parts) expect(body, p).toContain(p); };
+    expectIn(rule(style, ".pill"), "var(--pill-pad-y) var(--pill-pad-x)", "var(--pill-gap)", "var(--pill-radius)");
+    expectIn(rule(style, ".card"), "var(--card-radius)");
+    expectIn(rule(style, "button, .btn"), "var(--button-radius)");
+    expectIn(rule(style, ".table"), "var(--table-radius)");
+    expectIn(rule(style, "a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible"), "var(--focus-width)", "var(--focus-offset)");
+    expectIn(rule(kit("display"), ".scf-card"), "var(--card-radius)");
+    expectIn(rule(kit("display"), ".scf-badge"), "var(--pill-pad-y) var(--pill-pad-x)", "var(--pill-radius)", "var(--pill-gap)");
+    expectIn(rule(kit("display"), ".scf-table-box"), "var(--table-radius)");
+    expectIn(rule(kit("actions"), ".scf-btn"), "var(--button-radius)");
+  });
+
+  it("draw the focus ring of the kit with the width and offset tokens", () => {
+    for (const f of ["actions", "display", "forms"]) {
+      const lines = kit(f).split("\n").filter((l) => l.includes(":focus-visible") && l.includes("outline:"));
+      expect(lines.length, f).toBeGreaterThan(0);
+      for (const l of lines) expect(l, `${f}: ${l}`).toContain("var(--focus-width)");
+    }
+  });
+});
+
+describe("status pills show a glyph, not colour alone", () => {
+  const glyphRules = [...style.matchAll(/^\.pill:is\(([^)]*)\):not\(:has\(> \.ico\)\)::before \{ content: "(.)"; content: "\2" \/ ""; \}$/gm)];
+  const classesWithGlyph = new Map(glyphRules.flatMap((m) => m[1]!.split(",").map((c) => [c.trim().slice(1), m[2]!] as const)));
+
+  it("has a glyph rule with empty alt text that skips a pill with an icon", () => {
+    expect(glyphRules.length).toBeGreaterThanOrEqual(7);
+    expect(style).toContain(":not(:has(> .ico))::before");
+  });
+
+  it("covers every status class a pill is drawn with", () => {
+    // the semantic tones (statusMark and kit helpers), the fixed status classes of the CSS and the refinement states
+    const want = ["sem-success", "sem-danger", "sem-warning", "sem-running", "sem-waiting", "sem-info", "sem-disabled",
+      "ok", "fail", "locked", "approval", "kind-done", "kind-running", "state-active", "state-error", "state-ready", "state-published",
+      "ready-met", "ready-not-met", "who-you", "who-something-is-wrong", "who-a-time-limit", "state-exploring", "state-drafting", "state-dropped"];
+    for (const c of want) expect(classesWithGlyph.has(c), c).toBe(true);
+    // a status without a glyph is only a neutral or accent label
+    for (const c of ["sem-neutral", "sem-accent"]) expect(classesWithGlyph.has(c), c).toBe(false);
+  });
+
+  it("uses the same glyph for the same meaning", () => {
+    expect(classesWithGlyph.get("sem-success")).toBe(classesWithGlyph.get("ok"));
+    expect(classesWithGlyph.get("sem-danger")).toBe(classesWithGlyph.get("fail"));
+    expect(classesWithGlyph.get("sem-warning")).toBe(classesWithGlyph.get("locked"));
+  });
+
+  it("gives the kit badge tones a glyph with empty alt text", () => {
+    const css = read("ui/kit/display.css");
+    for (const tone of ["ok", "fail", "warn", "run", "neutral"]) expect(css, tone).toMatch(new RegExp(`\\.scf-badge--${tone}::before \\{ content: "(.)"; content: "\\1" / ""; \\}`));
+  });
+});
+
 describe("pages", () => {
-  it("load /tokens.css, /style.css, then /kit/kit.css", () => {
+  it("load /tokens.css, /looks.css, /style.css, then /kit/kit.css", () => {
     for (const p of ["ui/index.html", "ui/user/index.html"]) {
       const hrefs = [...read(p).matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
-      expect(hrefs, p).toEqual(["/tokens.css", "/style.css", "/kit/kit.css"]);
+      expect(hrefs, p).toEqual(["/tokens.css", "/looks.css", "/style.css", "/kit/kit.css"]);
     }
   });
 });

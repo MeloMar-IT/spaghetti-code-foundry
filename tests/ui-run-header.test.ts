@@ -25,10 +25,12 @@ const byFocus = (head: any, name: string) => [...head.el.all("button"), ...head.
 const fact = (head: any, key: string) => head.el.all("dd").find((d: FakeElement) => d.attrs["data-fact"] === key);
 
 describe("pure helpers", () => {
-  it("runTitle: first line, else the flow, else Run", () => {
+  it("runTitle: issue title, else the first task line, else Issue #N, else Change; never the flow or the run ID", () => {
+    expect(rh.runTitle({ issueTitle: "Fix login", task: "A\nB", flow: "f", runId: "r9" })).toBe("Fix login");
     expect(rh.runTitle({ task: "A\nB", flow: "f" })).toBe("A");
-    expect(rh.runTitle({ task: "  ", flow: "f" })).toBe("f");
-    expect(rh.runTitle({})).toBe("Run");
+    expect(rh.runTitle({ task: "  ", flow: "f", vars: { issue: 7 }, runId: "r9" })).toBe("Issue #7");
+    expect(rh.runTitle({ task: "  ", flow: "f", runId: "r9" })).toBe("Change");
+    expect(rh.runTitle({})).toBe("Change");
   });
 
   it("mainAction fills Approve, else Retry, never Cancel", () => {
@@ -54,6 +56,9 @@ describe("pure helpers", () => {
     }
     expect(rh.runActions({ status: "stopped", refinement: "s1" })).toEqual([]);
     expect(rh.runActions({ status: "stopped", next: { kind: "issue_closed" } })).toEqual(["cancel"]);
+    // a split that already made new issues is not retried
+    expect(rh.runActions({ status: "failed", state: { next: "create_split" }, next: { kind: "failed", splitMade: "some" } })).toEqual([]);
+    expect(rh.runActions({ status: "failed", state: { next: "create_split" }, next: { kind: "failed" } })).toEqual(["retry"]);
   });
 
   it("retryText and the retries fact", () => {
@@ -67,17 +72,17 @@ describe("pure helpers", () => {
     expect(r({ started: 1, waiting: true, outcome: "open" })).toBe("1 automatic retry after a time limit — the next one is waiting");
     expect(r({ started: 0, waiting: true, outcome: "open" })).toBe("An automatic retry after a time limit is waiting");
     const s = base({ resumes: 2, retries: { started: 2, waiting: false, outcome: "finished" } });
-    const keys = ["work", "branch", "started", "duration", "resumes", "retries", "flow"];
+    const keys = ["work", "branch", "started", "duration", "resumes", "retries"];
     expect(rh.headerFacts(s, { now: NOW }).map((f: any) => f.key)).toEqual(keys);
-    expect(rh.headerFacts(s, { admin: true, now: NOW }).map((f: any) => f.key).slice(0, 7)).toEqual(keys);
+    expect(rh.headerFacts(s, { admin: true, now: NOW }).map((f: any) => f.key).slice(0, 6)).toEqual(keys);
     expect(rh.headerFacts(base({}), { now: NOW }).some((f: any) => f.key === "retries")).toBe(false);
   });
 
   it("headerFacts: the keys per role", () => {
     const s = base({ resumes: 2, owner: "u1", totalCostUsd: 1.5, workdir: "/w" });
-    expect(rh.headerFacts(s, { now: NOW }).map((f: any) => f.key)).toEqual(["work", "branch", "started", "duration", "resumes", "flow"]);
+    expect(rh.headerFacts(s, { now: NOW }).map((f: any) => f.key)).toEqual(["work", "branch", "started", "duration", "resumes"]);
     const admin = rh.headerFacts(s, { admin: true, names: new Map([["u1", "Ann"]]), now: NOW });
-    expect(admin.map((f: any) => f.key)).toEqual(["work", "branch", "started", "duration", "resumes", "flow", "owner", "cost", "workspace"]);
+    expect(admin.map((f: any) => f.key)).toEqual(["work", "branch", "started", "duration", "resumes", "owner", "cost"]);
     expect(admin.find((f: any) => f.key === "owner").text).toBe("Ann");
     expect(admin.find((f: any) => f.key === "duration").label).toBe("Running for");
     expect(rh.headerFacts(s, { admin: true, names: new Map(), now: NOW }).find((f: any) => f.key === "owner").text).toBe("deleted user");
@@ -190,7 +195,7 @@ describe("an old run and a queued run", () => {
     const head = rh.createRunHeader({ admin: false, onAction: () => {} });
     expect(() => head.update({ runId: "r1", flow: "walk", status: "failed" }, {})).not.toThrow();
     for (const k of ["work", "branch", "started", "duration"]) expect(fact(head, k).textContent, k).toBe("—");
-    expect(head.el.all("h1")[0].textContent).toBe("walk");
+    expect(head.el.all("h1")[0].textContent).toBe("Change");
     expect(head.el.textContent).toContain("failed");
     expect(head.el.all("button").filter((b: FakeElement) => b.textContent === "?")).toHaveLength(0);
     expect(buttons(head)).toEqual([]);
@@ -199,10 +204,138 @@ describe("an old run and a queued run", () => {
   it("a queued run without a run: title, only Cancel, the ahead text", () => {
     const head = rh.createRunHeader({ admin: false, onAction: () => {} });
     head.update(null, { job: { runId: "r1", flow: "walk", githubRepo: "o/r", issue: 3, next: nextStep("queued", { repo: "o/r", runId: "r1" }), ahead: 2 } });
-    expect(head.el.all("h1")[0].textContent).toBe("Queued run");
-    expect(buttons(head).filter((t: string) => t !== "?")).toEqual(["Cancel"]);
+    expect(head.el.all("h1")[0].textContent).toBe("Issue #3");
+    expect(buttons(head).filter((t: string) => t !== "?")).toEqual(["Stop this change…"]);
     expect(head.el.textContent).toContain("2 runs ahead of you");
-    expect(head.el.all("dd").map((d: FakeElement) => d.textContent)).toEqual(["walk", "o/r#3"]);
+    expect(head.el.textContent).toContain(rh.NOW_TEXT.queued);
+    expect(head.el.all("dd").map((d: FakeElement) => d.textContent)).toEqual(["o/r#3", "r1", "walk"]);
+  });
+});
+
+describe("phase and now sentence", () => {
+  const flowDef = { steps: ["pull_ticket", "plan", "wait_for_story", "implement", "run_tests", "push"].map((id) => ({ id })) };
+  const run = (over: Record<string, unknown>) => ({ runId: "r1", flow: "f", flowDef, history: [], state: { next: null }, ...over });
+  const ok = (id: string) => ({ id, ok: true, type: "shell" });
+  const cur = (s: any, job: any = null) => rh.runPhase(s, job);
+
+  it("marks the phase of the step a running run is at", () => {
+    expect(cur(run({ status: "running", state: { next: "implement" } }))).toEqual({ current: 2, complete: false });
+    expect(cur(run({ status: "running", state: { next: null }, history: [ok("pull_ticket"), ok("plan")] }))).toEqual({ current: 1, complete: false });
+  });
+  it("a stopped run shows the step it stopped at, not the step it resumes at", () => {
+    // The shipped flows stop at wait_for_story or send_back but resume at pull_ticket.
+    const s = run({ status: "stopped", reason: 'stopped at step "wait_for_story" — needs attention', state: { next: "pull_ticket" }, history: [ok("pull_ticket"), ok("plan"), ok("wait_for_story")] });
+    expect(cur(s)).toEqual({ current: 1, complete: false });
+    expect(cur({ ...s, reason: undefined })).toEqual({ current: 1, complete: false });
+    expect(cur(run({ status: "stopped", reason: 'stopped at step "sub/send_back" — needs attention', state: { next: "pull_ticket" } }))).toEqual({ current: 1, complete: false });
+  });
+  it("a failed run shows the failed step; a waiting run the step that waits", () => {
+    const failed = run({ status: "failed", state: { next: "pull_ticket" }, history: [ok("pull_ticket"), { id: "run_tests", ok: false, type: "shell" }] });
+    expect(cur(failed)).toEqual({ current: 3, complete: false });
+    expect(cur(run({ status: "waiting", waiting: { stepId: "push" }, state: { next: "implement" } }))).toEqual({ current: 4, complete: false });
+  });
+  it("a succeeded run is complete; a queued run, or a pending retry, marks nothing", () => {
+    expect(cur(run({ status: "succeeded" }))).toEqual({ current: null, complete: true });
+    expect(cur(run({ status: "queued", state: { next: "plan" } }))).toEqual({ current: null, complete: false });
+    expect(cur(run({ status: "failed", state: { next: "plan" }, history: [{ id: "plan", ok: false }] }), { runId: "r1" })).toEqual({ current: null, complete: false });
+    expect(cur(null)).toEqual({ current: null, complete: false });
+  });
+  it("uses the name rules for a step that is not in the flow, and does not throw", () => {
+    expect(cur(run({ status: "running", state: { next: "my_own_step" } }))).toMatchObject({ complete: false });
+    expect(cur(run({ status: "running", flowDef: undefined, state: { next: "run_tests" } }))).toEqual({ current: 3, complete: false });
+  });
+
+  it("nowText: one sentence per state", () => {
+    const T = rh.NOW_TEXT;
+    const now = (s: any, job: any = null) => rh.nowText(s, job);
+    expect(now(null)).toBe(T.queued);
+    expect(now(run({ status: "queued" }))).toBe(T.queued);
+    expect(now(run({ status: "running", state: { next: "implement" } }))).toBe("Making the change.");
+    expect(now(run({ status: "waiting" }))).toBe(T.waiting);
+    expect(now(run({ status: "stopped", questions: "Which db?" }))).toBe(T.questions);
+    expect(now(run({ status: "stopped" }))).toBe(T.stopped);
+    expect(now(run({ status: "failed" }))).toBe(T.failed);
+    expect(now(run({ status: "cancelled" }))).toBe(T.cancelled);
+    expect(now(run({ status: "succeeded" }))).toBe(T.succeeded);
+  });
+  it("nowText: answered questions do not override the current status", () => {
+    const T = rh.NOW_TEXT;
+    const answered = { questions: "Which db?", answers: [{ at: "2026-01-01T10:00:00Z", text: "pg" }] };
+    expect(rh.nowText(run({ ...answered, status: "succeeded" }))).toBe(T.succeeded);
+    expect(rh.nowText(run({ ...answered, status: "failed" }))).toBe(T.failed);
+    expect(rh.nowText(run({ ...answered, status: "waiting" }))).toBe(T.waiting);
+  });
+  it("nowText: a pending retry is queued although the run failed before", () => {
+    expect(rh.nowText(run({ status: "failed" }), { runId: "r1" })).toBe(rh.NOW_TEXT.queued);
+  });
+
+  it("the header shows the strip and the sentence, and the strip stays for the same phase", () => {
+    const head = rh.createRunHeader({ admin: false, onAction: () => {} });
+    head.update(base({ flowDef, state: { next: "implement" } }), {});
+    const strip = () => head.el.all("ol").find((o: FakeElement) => (o.attrs.class ?? "").includes("scf-phase-strip"));
+    const first = strip();
+    expect(first.all("li").map((li: FakeElement) => li.textContent)).toEqual(["Understand", "Plan", "Build", "Check", "Deliver"]);
+    expect(first.all("li").filter((li: FakeElement) => li.attrs["aria-current"] === "step")).toHaveLength(1);
+    expect(head.el.textContent).toContain("Making the change.");
+    head.update(base({ flowDef, state: { next: "implement" }, branch: "other" }), {});
+    expect(strip()).toBe(first);
+    head.update(base({ flowDef, state: { next: "run_tests" } }), {});
+    expect(strip()).not.toBe(first);
+    head.update(base({ flowDef, status: "succeeded" }), {});
+    expect(strip().all("li").filter((li: FakeElement) => li.attrs["aria-current"] === "step")).toHaveLength(0);
+  });
+});
+
+describe("technical details and the title", () => {
+  const tech = (head: any) => head.el.all("details").find((d: FakeElement) => d.attrs["data-part"] === "tech");
+  const flowDef = { steps: ["a", "b", "c", "d", "e"].map((id) => ({ id })) };
+  it("holds Run ID, Flow and the step count, starts closed, and is the only place for them", () => {
+    const head = rh.createRunHeader({ admin: false, onAction: () => {} });
+    head.update(base({ flowDef, history: [{ id: "a", ok: true }, { id: "b", ok: true }] }), {});
+    const d = tech(head);
+    expect(d.open).toBeFalsy();
+    expect(d.all("summary")[0].textContent).toBe("Technical details");
+    expect(d.textContent).toContain("r1");
+    expect(d.textContent).toContain("walk");
+    expect(d.textContent).toContain("2 of 5 steps done");
+    const outside = head.el.textContent.replace(d.textContent, "");
+    expect(outside).not.toContain("r1");
+    expect(outside).not.toContain("walk");
+    expect(head.el.all("h1")[0].textContent).toBe("Do the thing");
+  });
+  it("shows the workspace to an administrator only, and keeps its open state over updates", () => {
+    const user = rh.createRunHeader({ admin: false, onAction: () => {} });
+    user.update(base({ workdir: "/w" }), {});
+    expect(tech(user).textContent).not.toContain("/w");
+    const admin = rh.createRunHeader({ admin: true, actions: () => [] });
+    admin.update(base({ workdir: "/w" }), {});
+    expect(tech(admin).textContent).toContain("/w");
+    const d = tech(admin);
+    d.open = true;
+    admin.update(base({ workdir: "/w", history: [{ id: "a", ok: true }] }), {});
+    expect(tech(admin)).toBe(d);
+    expect(d.open).toBe(true);
+  });
+  it("calls onTitle once for equal titles and again when the title changes", () => {
+    const onTitle = vi.fn();
+    const head = rh.createRunHeader({ admin: false, onAction: () => {}, onTitle });
+    head.update(base(), {});
+    head.update(base({ branch: "x" }), {});
+    expect(onTitle).toHaveBeenCalledTimes(1);
+    expect(onTitle).toHaveBeenCalledWith("Do the thing");
+    head.update(base({ issueTitle: "Fix login" }), {});
+    expect(onTitle).toHaveBeenCalledTimes(2);
+    expect(onTitle).toHaveBeenLastCalledWith("Fix login");
+  });
+  it("the user button is Stop this change…", () => {
+    const head = rh.createRunHeader({ admin: false, onAction: () => {} });
+    head.update(base(), {});
+    expect(buttons(head).filter((t: string) => t !== "?")).toEqual(["Stop this change…"]);
+  });
+  it("techRows leaves out the reason of a failed run with a record", () => {
+    const rows = rh.techRows(base({ status: "failed", reason: "step failed", next: { failure: {} } }), { admin: true });
+    expect(rows.map((r: any) => r.key)).not.toContain("reason");
+    expect(rh.techRows(base({ status: "stopped", reason: "why" }), {}).find((r: any) => r.key === "reason").text).toBe("why");
   });
 });
 

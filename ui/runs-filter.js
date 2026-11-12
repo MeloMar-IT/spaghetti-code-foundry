@@ -9,11 +9,13 @@ export const STATUSES = ["running", "waiting", "succeeded", "failed", "cancelled
 export const TIMES = ["today", "7d", "30d"];
 /** The ids of the sections of the list; "" is All. */
 export const VIEWS = ["needs", "running", "queued", "failed", "completed", "archived"];
+/** The groups of work Home counts (see ui/today.js): the Runs list can be narrowed to one of them, in the browser. */
+export const GROUPS = ["waiting", "building", "check", "finished", "finished-today"];
 const DAYS = { today: 0, "7d": 7, "30d": 30 };
-const KEYS = ["q", "repo", "flow", "status", "time", "owner", "needs", "view"];
+const KEYS = ["q", "repo", "flow", "status", "time", "owner", "needs", "view", "group"];
 const SERVER = ["q", "repo", "flow", "status", "time", "owner"];
 
-export const emptyFilter = () => ({ q: "", repo: "", flow: "", status: "", time: "", owner: "", needs: false, view: "" });
+export const emptyFilter = () => ({ q: "", repo: "", flow: "", status: "", time: "", owner: "", needs: false, view: "", group: "" });
 
 /** A full filter from the `{ repo?, owner? }` of resolve(). */
 export const filterOf = (query) => ({ ...emptyFilter(), repo: query?.repo ?? "", owner: query?.owner ?? "" });
@@ -25,6 +27,7 @@ const clean = {
   status: (v) => (STATUSES.includes(v) ? v : ""),
   time: (v) => (TIMES.includes(v) ? v : ""),
   view: (v) => (VIEWS.includes(v) ? v : ""),
+  group: (v) => (GROUPS.includes(v) ? v : ""),
 };
 
 /** The filter of an address like "#/runs?q=…&repo=…". Wrong or unknown values are dropped; the first of a repeated key wins. */
@@ -110,6 +113,8 @@ export function jobMatches(job, filter, { ownerName, now = Date.now() } = {}) {
       if (typeof job.githubRepo === "string") hay.push(`${job.githubRepo}#${job.issue}`);
     }
     if (typeof job?.task === "string") hay.push(job.task.split("\n")[0]);
+    // the title the row shows (next.title) is searched too, as the server does for a run
+    if (typeof job?.next?.title === "string") hay.push(job.next.title.trim());
     const q = filter.q.toLowerCase();
     if (!hay.some((t) => typeof t === "string" && t.toLowerCase().includes(q))) return false;
   }

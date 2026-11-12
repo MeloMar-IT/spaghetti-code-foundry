@@ -94,13 +94,13 @@ describe("the picture picker", () => {
     choose(main, [png("4.png"), png("5.png"), png("6.png")]);
     expect(main.textContent).toContain(CHANGE.pictureTooMany("6.png"));
     expect(waits).toHaveLength(5);
-    expect(off_(btn(main, "Send"))).toBe(true);
-    btn(main, "Send").click();
+    expect(off_(btn(main, "Make a plan"))).toBe(true);
+    btn(main, "Make a plan").click();
     await tick();
     expect(a.createChange).not.toHaveBeenCalled();
     waits.forEach((w) => w());
     await until(() => main.all("img").length === 5);
-    expect(off_(btn(main, "Send"))).toBe(false);
+    expect(off_(btn(main, "Make a plan"))).toBe(false);
     off();
   });
 
@@ -109,7 +109,7 @@ describe("the picture picker", () => {
     choose(main, [png("bad.png"), png("ok.png")]);
     await until(() => main.all("img").length === 1);
     expect(main.textContent).toContain(CHANGE.pictureReadFailed("bad.png"));
-    expect(off_(btn(main, "Send"))).toBe(false);
+    expect(off_(btn(main, "Make a plan"))).toBe(false);
     off();
   });
 
@@ -117,7 +117,7 @@ describe("the picture picker", () => {
     const a = fake();
     const { main, off } = await open(a);
     type(main.all("textarea")[0]!, "Plain");
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await until(() => a.createChange.mock.calls.length === 1);
     expect(a.createChange).toHaveBeenCalledWith({ repo: "o/app", text: "Plain" });
     off();
@@ -127,7 +127,7 @@ describe("the picture picker", () => {
     type(second.main.all("textarea")[0]!, "With pictures");
     choose(second.main, [png("a.png"), file("b.webp", "image/webp")]);
     await until(() => second.main.all("img").length === 2);
-    btn(second.main, "Send").click();
+    btn(second.main, "Make a plan").click();
     await until(() => b.createChange.mock.calls.length === 1);
     expect(b.createChange).toHaveBeenCalledWith({ repo: "o/app", text: "With pictures", pictures: ["B64:a.png", "B64:b.webp"] });
     second.off();
@@ -140,12 +140,12 @@ describe("the picture picker", () => {
     type(main.all("textarea")[0]!, "Keep me");
     choose(main, [png("a.png")]);
     await until(() => main.all("img").length === 1);
-    btn(main, "Send").click();
+    btn(main, "Make a plan").click();
     await until(() => main.textContent.includes(CHANGE.picturesRefused));
     expect(main.all("img")).toHaveLength(1);
     expect(main.all("textarea")[0]!.value).toBe("Keep me");
     expect(a.change).not.toHaveBeenCalled();
-    expect(off_(btn(main, "Send"))).toBe(false);
+    expect(off_(btn(main, "Make a plan"))).toBe(false);
     off();
   });
 });

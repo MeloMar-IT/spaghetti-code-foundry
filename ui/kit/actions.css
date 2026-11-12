@@ -15,13 +15,13 @@
   color: var(--color-text);
   background: var(--color-surface);
   border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--button-radius);
   padding: var(--control-pad-y) var(--control-pad-x);
   cursor: pointer;
   transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 .scf-btn:hover { background: var(--color-surface-2); }
-.scf-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-btn:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
 .scf-btn:disabled, .scf-btn[aria-disabled="true"] {
   color: var(--color-disabled);
   background: var(--color-disabled-soft);
@@ -54,7 +54,7 @@
 
 .scf-link { color: var(--color-accent); text-decoration: underline; }
 .scf-link:hover, .scf-link:focus-visible { color: var(--color-accent); text-decoration: underline; }
-.scf-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-link:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
 .scf-link--disabled, .scf-link--disabled:hover { color: var(--color-disabled); text-decoration: none; cursor: not-allowed; }
 @media (pointer: coarse) {
   .scf-btn { min-width: var(--size-touch); min-height: var(--size-touch); }

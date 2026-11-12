@@ -21,18 +21,19 @@ export const PREPARE: Record<string, ShotPrep> = {
   // the run pages redraw their head when the run summary arrives; wait for it ("Workspace") before the paths are rewritten
   "run-log": {
     act: async (page) => {
-      await page.locator('#main [data-tab="log"]').click();
-      await page.locator('#main [data-tab="log"].on').waitFor();
+      await page.locator('#main [data-tab="details"]').click();
+      await page.locator('#main [data-tab="details"].on').waitFor();
+      await page.locator('#main [data-section="log"] > summary').click();
       await page.locator("#main pre.log", { hasText: "waiting for approval: Go?" }).waitFor();
-      await page.locator("#main dt", { hasText: "Workspace" }).waitFor();
+      await page.locator('#main dd[data-fact="tech-workspace"]').waitFor({ state: "attached" });
     },
   },
   "run-steps": {
     act: async (page) => {
-      await page.locator('#main [data-tab="steps"]').click();
-      await page.locator('#main [data-tab="steps"].on').waitFor();
+      await page.locator('#main [data-tab="details"]').click();
+      await page.locator('#main [data-tab="details"].on').waitFor();
       await page.locator("#main .timeline").waitFor();
-      await page.locator("#main dt", { hasText: "Workspace" }).waitFor();
+      await page.locator('#main dd[data-fact="tech-workspace"]').waitFor({ state: "attached" });
     },
   },
   "run-diff": {

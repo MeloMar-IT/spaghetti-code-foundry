@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { chooseFlow, flowRadios } from "./helpers/start-flow.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -36,7 +37,7 @@ const submit = async (root: FakeElement) => {
     await flush();
   }
 };
-const radios = (root: FakeElement) => find(root, "input", { name: "flow" });
+const radios = (root: FakeElement) => flowRadios(root);
 const failBoxes = (root: FakeElement) => find(root, "div", { role: "alert" });
 
 type Answers = (unknown | undefined)[];
@@ -77,11 +78,16 @@ const fakeApi = () => ({
   },
 });
 
-async function open(opts: object = {}, wait = true) {
+async function open(opts: object = {}, wait = true, plan = false) {
   main = document.createElement("div") as unknown as FakeElement;
   const p = ui.renderStart(main, { a: fakeApi(), dialog: async () => undefined, go, ...opts });
   if (!wait) return p;
-  return (await p) as () => void;
+  const cleanup = (await p) as () => void;
+  if (plan) return cleanup;
+  const had = draft.readDraft() !== null;
+  await chooseFlow(main); // the page starts without a flow: these tests are about a flow, chosen under Advanced
+  if (!had) draft.clearDraft(); // choosing the flow is not the work these tests look at
+  return cleanup;
 }
 
 beforeEach(() => {
@@ -122,55 +128,63 @@ describe("renderStart: flows", () => {
     const p = open({}, false);
     await flush();
     expect(one(main, "h1").textContent).toBe("Start work");
-    const box = one(main, "div", { role: "status" });
+    // the composer is there while the flows load; the skeleton is inside Advanced
+    expect(find(main, "form")).toHaveLength(1);
+    expect(find(main, "textarea", { name: "task" })).toHaveLength(1);
+    const box = one(one(main, "details", { class: "composer-advanced" }), "div", { role: "status" });
     expect(box.attrs["aria-busy"]).toBe("true");
     expect(box.textContent).toContain("Loading the flows");
-    expect(find(main, "form")).toHaveLength(0);
     gateFlows!();
     await p;
-    expect(find(main, "form")).toHaveLength(1);
     expect(find(main, "div", { role: "status" })).toHaveLength(0);
+    expect(radios(main)).toHaveLength(1);
   });
 
-  it("explains a failing flows call, offers Retry and draws the form after it", async () => {
+  it("explains a failing flows call inside Advanced, offers Retry and lists the flows after it", async () => {
     data.flows = [flow("a")];
     flowsAnswers = [err("db down", 500)];
-    await open();
-    const box = one(main, "div", { class: "state-error" });
+    await open({}, true, true);
+    const adv = one(main, "details", { class: "composer-advanced" });
+    const box = one(adv, "div", { class: "state-error" });
     expect(box.attrs["data-kind"]).toBe("server");
     expect(box.textContent).toContain(ui.FLOWS_FAILED);
     expect(box.textContent).toContain("db down");
     expect(find(box, "button")).toHaveLength(1);
-    expect(find(main, "form")).toHaveLength(0);
+    // the composer works while the flows fail
+    expect(find(main, "textarea", { name: "task" })).toHaveLength(1);
+    expect(submitBtn(main).disabled).toBe(false);
+    expect(find(main, "div", { role: "alert" }).every((el) => adv.contains(el))).toBe(true);
     one(main, "button", { "data-focus": "retry" }).click();
     await flush();
     expect(calls.flows).toBe(2);
-    expect(find(main, "form")).toHaveLength(1);
+    expect(radios(main)).toHaveLength(1);
   });
 
   it("says when the server cannot be reached, and Retry works", async () => {
     data.flows = [flow("a")];
     flowsAnswers = [new TypeError("fetch failed")];
-    await open();
+    await open({}, true, true);
     const box = one(main, "div", { class: "state-error" });
     expect(box.attrs["data-kind"]).toBe("offline");
     expect(box.textContent).toContain("The server could not be reached.");
     one(main, "button", { "data-focus": "retry" }).click();
     await flush();
-    expect(find(main, "form")).toHaveLength(1);
+    expect(radios(main)).toHaveLength(1);
   });
 
-  it("shows a permission box without a button on a 403", async () => {
+  it("shows a muted note, no alert and no button, on a 403", async () => {
     flowsAnswers = [err("no", 403)];
-    await open();
-    const box = one(main, "div", { class: "state-error state-permission" });
-    expect(box.textContent).toContain(ui.FLOWS_DENIED);
-    expect(find(box, "button")).toHaveLength(0);
+    await open({}, true, true);
+    const adv = one(main, "details", { class: "composer-advanced" });
+    expect(adv.textContent).toContain(ui.FLOWS_DENIED);
+    expect(find(main, "div", { class: "state-error" })).toHaveLength(0);
+    expect(find(main, "div", { role: "alert" })).toHaveLength(0);
+    expect(find(adv, "button")).toHaveLength(0);
   });
 
   it("shows the error again when Retry fails again, and never rejects", async () => {
     flowsAnswers = [err("one", 500), err("two", 500)];
-    await open();
+    await open({}, true, true);
     one(main, "button", { "data-focus": "retry" }).click();
     await flush();
     expect(one(main, "div", { class: "state-error" }).textContent).toContain("two");
@@ -179,7 +193,7 @@ describe("renderStart: flows", () => {
   it("draws nothing after cleanup when a Retry finishes late", async () => {
     flowsAnswers = [err("one", 500)];
     data.flows = [flow("a")];
-    const cleanup = await open();
+    const cleanup = await open({}, true, true);
     gating.flows = true;
     one(main, "button", { "data-focus": "retry" }).click();
     await flush();
@@ -187,26 +201,30 @@ describe("renderStart: flows", () => {
     cleanup();
     gateFlows!();
     await flush();
-    expect(find(main, "form")).toHaveLength(0);
+    expect(radios(main)).toHaveLength(0);
     expect(find(main, "div", { role: "status" })).toHaveLength(1);
   });
 
-  it("says what to do with no flows: a user asks the administrator", async () => {
-    await open();
-    expect(one(main, "div", { class: "empty" }).textContent).toContain(ui.NO_FLOWS);
-    expect(find(one(main, "div", { class: "empty" }), "a")).toHaveLength(0);
+  it("says that no flow is published as a muted note inside Advanced, never as an empty box", async () => {
+    await open({}, true, true);
+    const adv = one(main, "details", { class: "composer-advanced" });
+    expect(adv.textContent).toContain(draft.NO_FLOWS_NOTE);
+    expect(find(main, "div", { class: "empty" })).toHaveLength(0);
+    expect(find(main, "div", { role: "alert" })).toHaveLength(0);
+    expect(find(adv, "a")).toHaveLength(0);
   });
 
   it("links an admin to the flow editor", async () => {
-    await open({ admin: true });
-    expect(one(main, "div", { class: "empty" }).textContent).toContain(ui.NO_FLOWS_ADMIN);
+    await open({ admin: true }, true, true);
+    expect(one(main, "details", { class: "composer-advanced" }).textContent).toContain(draft.NO_FLOWS_NOTE);
     expect(one(main, "a", { href: "#/flows" })).toBeTruthy();
   });
 
   it("treats an answer that is not a list as no flows", async () => {
     flowsAnswers = [{ nope: true }];
-    await open();
-    expect(one(main, "div", { class: "empty" }).textContent).toContain(ui.NO_FLOWS);
+    await open({}, true, true);
+    expect(one(main, "details", { class: "composer-advanced" }).textContent).toContain(draft.NO_FLOWS_NOTE);
+    expect(find(main, "div", { class: "empty" })).toHaveLength(0);
   });
 });
 
@@ -217,6 +235,7 @@ describe("renderStart: repositories", () => {
     gating.repos = true;
     const p = open({}, false);
     await flush();
+    await chooseFlow(main);
     expect(find(main, "form")).toHaveLength(1);
     expect(one(main, "div", { role: "status" }).textContent).toContain("Loading your repositories");
     expect(submitBtn(main).disabled).toBe(true);
@@ -245,7 +264,7 @@ describe("renderStart: repositories", () => {
 
   it("explains a failed list in the repository part only; other flows still start", async () => {
     data.flows = [flow("a", [field("github_repo")]), flow("b")];
-    reposAnswers = [err("repo list broken", 500)];
+    reposAnswers = [err("repo list broken", 500), err("repo list broken", 500)]; // the load, and the read after flow a is chosen
     await open();
     const box = one(main, "div", { class: "state-error" });
     expect(box.textContent).toContain(ui.REPOS_FAILED);
@@ -262,7 +281,7 @@ describe("renderStart: repositories", () => {
   it("Retry on the list shows the skeleton, then the repositories, and keeps typed values", async () => {
     data.flows = [flow("a", [field("github_repo"), field("x")])];
     data.repos = [repo("1", "a/a")];
-    reposAnswers = [err("broken", 500)];
+    reposAnswers = [err("broken", 500), err("broken", 500)]; // the load, and the read after the flow is chosen
     await open();
     one(main, "input", { name: "x" }).value = "typed";
     gating.repos = true;
@@ -272,7 +291,7 @@ describe("renderStart: repositories", () => {
     expect(submitBtn(main).disabled).toBe(true);
     gateRepos!();
     await flush();
-    expect(calls.repos).toBe(2);
+    expect(calls.repos).toBe(3);
     expect(one(main, "select").value).toBe("a/a");
     expect(one(main, "input", { name: "x" }).value).toBe("typed");
     expect(submitBtn(main).disabled).toBe(false);
@@ -304,30 +323,30 @@ describe("renderStart: repositories", () => {
     data.flows = [flow("a"), flow("b", [field("github_repo")])];
     data.repos = [repo("1", "a/a")];
     reposAnswers = [err("broken", 500)];
-    await open();
+    await open(); // the first read failed; flow a needs no repository
+    expect(calls.repos).toBe(1);
+    reposAnswers = [err("broken again", 500)];
     radios(main)[1]!.fire("change");
     await flush();
-    expect(calls.repos).toBe(1);
+    expect(calls.repos).toBe(2);
     expect(find(main, "div", { class: "state-error" })).toHaveLength(1);
     radios(main)[0]!.fire("change");
     radios(main)[1]!.fire("change");
     await flush();
-    expect(calls.repos).toBe(2);
+    expect(calls.repos).toBe(3);
     expect(one(main, "select").value).toBe("a/a");
   });
 
-  it("asks once for two quick switches while the list is pending", async () => {
+  it("does not ask again for quick switches once the list is known", async () => {
     data.flows = [flow("a"), flow("b", [field("github_repo")])];
     data.repos = [repo("1", "a/a")];
     await open();
-    gating.repos = true;
+    expect(calls.repos).toBe(1);
     radios(main)[1]!.fire("change");
     radios(main)[0]!.fire("change");
     radios(main)[1]!.fire("change");
     await flush();
     expect(calls.repos).toBe(1);
-    gateRepos!();
-    await flush();
     expect(one(main, "select").value).toBe("a/a");
   });
 });
@@ -437,7 +456,7 @@ describe("renderStart: read-only preview", () => {
     noButtons();
 
     data.flows = [flow("a", [field("github_repo")])];
-    reposAnswers = [err("broken", 500)];
+    reposAnswers = [err("broken", 500), err("broken", 500)]; // the load and the read after the flow is chosen
     await open({ readOnly: true });
     noButtons();
     expect(find(main, "button", { "data-focus": "retry-repos" })).toHaveLength(1);

@@ -10,6 +10,7 @@
 // with the real issue numbers. Safe to run twice: a second run finds its earlier comment and stops.
 // An issue that is itself a split part, or whose parts are still open (tools/split-family), is not split again,
 // unless FACTORY_SPLIT_CONFIRMED=1 (the flow sets it when the owner approved this split).
+// Output: one "#N title" line per new issue, then "SPLIT_PARTS: #a #b …" once all of them exist (before the listing comment).
 // Env: FACTORY_SPLIT_CONFIRMED, FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_VAR_TRIGGER_LABEL,
 //      FACTORY_VAR_REVIEW_PLAN_LABEL, FACTORY_RUN_ID, FACTORY_FIRST_INFO (the first line of the comment).
 import { execFileSync, spawnSync } from "node:child_process";
@@ -127,6 +128,9 @@ for (const [i, p] of parts.entries()) {
   created.set(p.n, num);
   console.log(`#${num} ${p.title}${deps.length ? ` (depends on ${deps.join(", ")})` : ""}`);
 }
+// Every part exists now. The line tells the Foundry that a failure after this point must not be retried (it would make the parts twice).
+const partRefs = [...created.values()].map((n) => `#${n}`);
+console.log(`SPLIT_PARTS: ${partRefs.join(" ")}`);
 
 // ── close the original with the list ──
 const list = parts.map((p) => `- #${created.get(p.n)} ${p.title}`).join("\n");
@@ -143,7 +147,6 @@ const comment = [
 stories.comment(Number(parentNo), comment);
 // Issues that depended on the original now depend on its parts (else they'd start as soon as the
 // original is closed).
-const partRefs = [...created.values()].map((n) => `#${n}`);
 try {
   const { dependencies } = await import(new URL("../dist/queue/deps.js", import.meta.url).href);
   const open = JSON.parse(stories.openList(300, "number,title,body,labels,state"));

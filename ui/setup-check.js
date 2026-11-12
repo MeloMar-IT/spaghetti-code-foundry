@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, toast } from "./dom.js";
+import { statusPill } from "./icons.js";
 import { errorState, explainError, loadingState } from "./states.js";
 
 // Not imported from users.js: that is an admin module, and the user display must not reach it.
@@ -18,7 +19,7 @@ export const pageClipboard = () => (typeof navigator === "undefined" ? undefined
 export function setupRowNode(r, { clipboard, notify = toast, alive = () => true, again = null, text = (s) => s } = {}) {
   const explain = r.explain ? text(r.explain) : "";
   return h("li", { class: `setup-row ${r.tone}` },
-    h("div", { class: "setup-name" }, h("span", { "aria-hidden": "true" }, r.mark), " ", h("strong", {}, r.name), r.optional ? " (optional)" : ""),
+    h("div", { class: "setup-name" }, statusPill(r.semantic, r.word), " ", h("strong", {}, r.name), r.optional ? " (optional)" : ""),
     explain && h("p", {}, explain),
     r.command && h("p", {},
       h("code", {}, r.command), " ",
@@ -42,6 +43,8 @@ export function setupRows(report) {
     name: i.name,
     mark: i.state === "ok" ? "✔" : i.state === "unknown" ? "?" : "✘",
     tone: i.state === "ok" ? "ok" : i.state === "unknown" ? "unknown" : "bad",
+    semantic: i.state === "ok" ? "success" : i.state === "unknown" ? "neutral" : i.needed ? "danger" : "warning",
+    word: i.state === "ok" ? "Ready" : i.state === "unknown" ? "Not checked" : "Needs fixing",
     optional: !i.needed && i.state !== "ok",
     explain: i.state === "ok" ? "" : i.explain,
     command: i.state === "ok" ? undefined : i.command,

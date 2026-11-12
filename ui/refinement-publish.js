@@ -8,20 +8,20 @@ import { banner } from "./states.js";
 
 export const PUBLISH = "Publish";
 export const PUBLISH_TITLE = "Publish to GitHub";
-export const CONFIRM = "Create the issues";
-export const CONFIRM_UPDATE = "Update the issue";
-export const CONFIRM_BOTH = "Update and create the issues";
-export const CONFIRM_REPLACE = "Replace the issue";
-export const CONFIRM_CREATE_REPLACE = "Create the issues and replace the original";
-export const BY_HAND = "Change by hand: it names the issue by its title.";
-export const START = "Start building this story";
+export const CONFIRM = "Create the GitHub issues";
+export const CONFIRM_UPDATE = "Update the GitHub issue";
+export const CONFIRM_BOTH = "Update and create the GitHub issues";
+export const CONFIRM_REPLACE = "Replace the GitHub issue";
+export const CONFIRM_CREATE_REPLACE = "Create the GitHub issues and replace the original";
+export const BY_HAND = "Change by hand: it names the GitHub issue by its title.";
+export const START = "Start building this change";
 export const NOTHING_SENT = "Nothing is sent to GitHub until you confirm.";
-export const NO_WATCHER = "This repository has no enabled watcher for issues, so no label can start a build from here.";
+export const NO_WATCHER = "This repository has no enabled watcher for GitHub issues, so no label can start a build from here.";
 export const ARCHITECT_BUSY = "The architect is working. You can publish when it is done.";
 export const NOT_SAVED = "Your text could not be saved, so nothing was published. Try again.";
 export const LOST_ASK = "Some text has no place on the page any more and is not saved. Publish anyway?";
 export const NOT_READY_NOW = "No draft is ready to publish now.";
-export const ALL_PUBLISHED = "Every story draft is on GitHub.";
+export const ALL_PUBLISHED = "Every change draft is on GitHub.";
 export const NOTHING_READY = "Nothing can be published yet.";
 export const UNKNOWN = "What is on GitHub now is not known. Reload the page to see it.";
 export const NO_READY_YET = "A draft can be published when it is ready.";
@@ -36,7 +36,7 @@ export const canPublish = (s) => mayChange(s) && ((s.drafts ?? []).some((d) => d
 export const onGithub = (s) => (s?.drafts ?? []).filter((d) => d.published).map((d) => ({ id: d.id, issue: d.published.issue, url: d.published.url, title: d.preview?.title || d.title?.text || "" }));
 
 /** A dependency of a plan item in words: "#12" or "new issue 2: Title". */
-export const dependsText = (dep) => ("issue" in dep ? `#${dep.issue}` : `new issue ${dep.item}: ${dep.title}`);
+export const dependsText = (dep) => ("issue" in dep ? `#${dep.issue}` : `new GitHub issue ${dep.item}: ${dep.title}`);
 
 /** The labels a person may tick: the repository's labels without the build and the review label (any case). */
 export const offeredLabels = (plan) => (plan.repoLabels ?? []).filter((l) => !(plan.buildLabel && same(l, plan.buildLabel)) && !(plan.reviewLabel && same(l, plan.reviewLabel)));
@@ -58,10 +58,10 @@ export function choiceProblem(plan, s, draftId, pick) {
   if (d?.addReviewLabel === true) {
     if (!plan.reviewLabel) return "A draft asks for the review label, but this repository has none. Switch the review label off on the draft.";
     if (!(plan.repoLabels ?? []).some((x) => same(x, plan.reviewLabel))) return `The review label "${plan.reviewLabel}" does not exist in ${plan.repo}. Create it on GitHub or switch it off on the draft.`;
-    if (plan.buildLabel && same(plan.reviewLabel, plan.buildLabel) && !pick.startBuilding) return `The review label is also the build label. Tick "${START}" for this story or switch the review label off.`;
+    if (plan.buildLabel && same(plan.reviewLabel, plan.buildLabel) && !pick.startBuilding) return `The review label is also the build label. Tick "${START}" for this change or switch the review label off.`;
   }
   if (pick.startBuilding && buildChoice(plan).missing) return buildChoice(plan).missing;
-  if (pick.labels.length > LABELS_MAX) return `Choose at most ${LABELS_MAX} labels for a story.`;
+  if (pick.labels.length > LABELS_MAX) return `Choose at most ${LABELS_MAX} labels for a change.`;
   return "";
 }
 
@@ -109,7 +109,7 @@ export const publishBody = (plan, picks) => ({
 
 export const KEEP_MINE = "Keep mine";
 export const KEEP_GITHUB = "Keep GitHub's";
-export const CHANGED_HINT = "Keep mine replaces GitHub's version; it is kept, folded, in a comment on the issue. Keep GitHub's writes nothing and publishes none of the stories listed below; your draft stays here.";
+export const CHANGED_HINT = "Keep mine replaces GitHub's version; it is kept, folded, in a comment on the GitHub issue. Keep GitHub's writes nothing and publishes none of the changes listed below; your draft stays here.";
 
 /** The question when the issue changed on GitHub. */
 export const changedText = (c) => `Issue #${c.issue} changed on GitHub after this session read it. Which version do you keep?`;
@@ -127,8 +127,8 @@ export function versionsNode(c) {
 /** What the dialog says about a split issue that a publish replaces by its parts. */
 export const replacesText = (r) => (r.ready
   ? (r.staysOpen
-    ? `Issue #${r.issue} is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them. #${r.issue} stays open: check it and close it by hand.`
-    : `Issue #${r.issue} is replaced by its parts and closed as not planned. Issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them.`)
+    ? `Issue #${r.issue} is replaced by its parts: GitHub issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them. #${r.issue} stays open: check it and close it by hand.`
+    : `Issue #${r.issue} is replaced by its parts and closed as not planned. GitHub issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them.`)
   :`Issue #${r.issue} is replaced by its parts when every part is on GitHub. Nothing changes for it now.`);
 
 /** The replacement in the dialog: the sentence, the 1,000 warning and the dependants. Texts are set as text, never as HTML. */
@@ -136,9 +136,9 @@ export function replacesNode(r) {
   const list = r.dependants ?? [];
   return [
     h("p", { "data-replaces": "" }, replacesText(r)),
-    r.cut ? h("p", { class: "status bad" }, `This repository has more than 1,000 open issues and pull requests. Some issues that depend on #${r.issue} may be missing.`) : null,
+    r.cut ? h("p", { class: "status bad" }, `This repository has more than 1,000 open issues and pull requests. Some GitHub issues that depend on #${r.issue} may be missing.`) : null,
     list.length ? [
-      h("h4", {}, `Issues that depend on #${r.issue}`),
+      h("h4", {}, `GitHub issues that depend on #${r.issue}`),
       h("ul", { "data-dependants": "" }, list.map((d) => h("li", { "data-dependant": String(d.issue) },
         h("b", {}, `#${d.issue} ${d.title}`),
         d.byHand ? h("p", { class: "muted" }, BY_HAND)
@@ -257,10 +257,10 @@ function planDialog(plan, s, run) {
     const cancel = h("button", { onClick: () => (busy ? undefined : close(undefined)) }, "Cancel");
     return h("div", { class: "stack" },
       asked ? [h("p", { class: "status bad" }, changedText(asked)), versionsNode(asked), h("p", { class: "muted" }, CHANGED_HINT)] : null,
-      h("p", {},`These issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
+      h("p", {},`These GitHub issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
       (plan.willUpdate ?? []).length ? h("p", {}, `Issue #${plan.items.find((x) => x.updates !== undefined)?.updates} is updated, not created again.`) : null,
       plan.replaces ? replacesNode(plan.replaces) : null,
-      plan.notChanged !== undefined ? h("p", { class: "muted" }, `Issue #${plan.notChanged} is not changed: no story draft stands for it.`) : null,
+      plan.notChanged !== undefined ? h("p", { class: "muted" }, `Issue #${plan.notChanged} is not changed: no change draft stands for it.`) : null,
       choice.why ? h("p", { class: "muted" }, choice.why) : null,
       h("ol", { class: "plan" }, plan.items.map(item)),
       error,

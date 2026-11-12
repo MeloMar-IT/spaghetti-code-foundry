@@ -3,7 +3,7 @@ import { h, toast } from "./dom.js";
 // Splitting a draft on the draft page: the architect's ways, a way of your own, and a plan you change before anything is sent.
 // The plan lives in memory only (it survives a redraw and an in-app reload, not a reload of the browser page). Every text is set as text.
 
-export const SPLIT_TITLE = "Ways to split this story";
+export const SPLIT_TITLE = "Ways to split this change";
 export const ASK_SPLIT = "Split";
 export const ASK_AGAIN = "Ask again";
 export const OWN = "Describe my own way";
@@ -113,7 +113,7 @@ export function planProblem(plan, d, count) {
       if (j > i) return `Part ${i + 1} depends on part ${j + 1}, which comes later. Change the order or remove the dependency.`;
     }
   }
-  if (count + plan.parts.length > DRAFT_LIMIT) return `A session has at most ${DRAFT_LIMIT} story drafts. This split would make ${count + plan.parts.length}.`;
+  if (count + plan.parts.length > DRAFT_LIMIT) return `A session has at most ${DRAFT_LIMIT} change drafts. This split would make ${count + plan.parts.length}.`;
   return "";
 }
 
@@ -136,35 +136,35 @@ export function planBody(plan, d) {
 export function splitLogText(entry) {
   const who = entry.who || "Someone";
   const n = /^\d+$/.test(String(entry.detail ?? "")) ? Number(entry.detail) : null;
-  if (entry.what === "split-asked") return `${who} asked the architect for ways to split a story draft`;
-  if (entry.what === "architect-split") return n === null ? "The architect proposed ways to split a story draft" : `The architect proposed ${plural(n, "way", "ways")} to split a story draft`;
-  if (entry.what === "draft-split") return n === null ? `${who} split a story draft` : `${who} split a story draft into ${n} drafts`;
+  if (entry.what === "split-asked") return `${who} asked the architect for ways to split a change draft`;
+  if (entry.what === "architect-split") return n === null ? "The architect proposed ways to split a change draft" : `The architect proposed ${plural(n, "way", "ways")} to split a change draft`;
+  if (entry.what === "draft-split") return n === null ? `${who} split a change draft` : `${who} split a change draft into ${n} drafts`;
   if (entry.what === "criterion-moved") return `${who} moved a criterion to another draft${entry.detail ? `: "${entry.detail}"` : ""}`;
   if (entry.what === "drafts-merged") {
     const detail = String(entry.detail ?? "");
-    if (!detail) return `${who} merged two story drafts`;
+    if (!detail) return `${who} merged two change drafts`;
     const i = detail.indexOf("; removed ");
     const raw = i >= 0 ? detail.slice(0, i) : detail;
     // The titles are not escaped in the detail: when it cannot be read in one way only, the plain sentence is used.
-    if (detail.split("; removed ").length > 2 || !/^"[^]*" \+ "[^]*"$/.test(raw) || raw.split('" + "').length !== 2) return `${who} merged two story drafts`;
+    if (detail.split("; removed ").length > 2 || !/^"[^]*" \+ "[^]*"$/.test(raw) || raw.split('" + "').length !== 2) return `${who} merged two change drafts`;
     const head = raw.replace('" + "', '" and "');
-    return `${who} merged two story drafts: ${head}${i >= 0 ? `. Dependencies that no longer fit the split were removed: ${detail.slice(i + 10)}` : ""}`;
+    return `${who} merged two change drafts: ${head}${i >= 0 ? `. Dependencies that no longer fit the split were removed: ${detail.slice(i + 10)}` : ""}`;
   }
   return "";
 }
 
 // ---- the ways ----
 const warningText = (v) => (v.kind === "layer"
-  ? `Story ${v.story} delivers nothing a user can see or check: ${v.why}`
-  : `Stories ${v.stories[0]} and ${v.stories[1]} touch the same code: ${v.why}`);
+  ? `Change ${v.story} delivers nothing a user can see or check: ${v.why}`
+  : `Changes ${v.stories[0]} and ${v.stories[1]} touch the same code: ${v.why}`);
 
 function wayNodes(s, d, w, n, act) {
   const text = (id) => d.criteria.find((c) => c.id === id)?.text ?? REMOVED;
   const out = [h("h4", {}, `Way ${n + 1}: ${CUT_WORDS[w.cut] ?? w.cut}`)];
   out.push(h("ol", {}, w.stories.map((x) => h("li", {}, h("b", {}, x.title), h("span", { class: "said" }, x.sentence),
-    x.dependsOn.length ? h("small", { class: "muted" }, `Depends on: story ${x.dependsOn.join(", ")}`) : null,
+    x.dependsOn.length ? h("small", { class: "muted" }, `Depends on: change ${x.dependsOn.join(", ")}`) : null,
     h("ul", {}, x.criteria.map((id) => h("li", {}, text(id))))))));
-  out.push(h("p", {}, h("b", {}, "The first story already delivers: "), w.first));
+  out.push(h("p", {}, h("b", {}, "The first change already delivers: "), w.first));
   out.push(h("h4", {}, NOWHERE), w.unplaced.length ? h("ul", {}, w.unplaced.map((id) => h("li", {}, text(id)))) : h("p", { class: "muted" }, "Every criterion has a place."));
   if (w.warnings.length) out.push(h("ul", {}, w.warnings.map((v) => h("li", {}, h("span", { class: "pill" }, "Warning"), warningText(v)))));
   if (act && canSplit(d)) {

@@ -88,6 +88,7 @@ beforeEach(() => {
       return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
     }
     if (init.method === "GET" && url.endsWith("/preview")) return reply({ state: "stopped" });
+    if (init.method === "GET" && url.endsWith("/safe-points")) return reply({ branch: "main", gitflow: false, complete: true, points: [] });
     if (init.method === "GET") {
       gets++;
       const snapshot = [...repos];
@@ -368,7 +369,8 @@ describe("the page", () => {
     // the failed row comes first, then the untested one
     const pills = walk(main()).filter((e) => e.tag === "td" && e.attrs["data-label"] === "Connection").flatMap((td) => byClass(td, "pill"));
     expect(pills.map((p) => p.textContent)).toEqual(["Failed", "Not tested yet", "Connected"]);
-    expect(pills.map((p) => p.attrs.class)).toEqual(["pill fail", "pill", "pill ok"]);
+    expect(pills.map((p) => p.attrs.class)).toEqual(["pill sem-danger fail", "pill sem-neutral", "pill sem-success ok"]);
+    for (const p of pills) expect(p.all("svg")).toHaveLength(1); // an icon and a word
     expect(byClass(main(), "muted").filter((e) => e.textContent.startsWith("tested ")).map((e) => e.textContent)).toEqual(["tested just now", "tested just now"]);
     expect(byClass(main(), "muted").find((e) => e.textContent.startsWith("tested "))!.attrs.title).toBeTruthy();
     expect(byClass(main(), "status").map((e) => [e.attrs.class, e.textContent])).toEqual([
@@ -1236,13 +1238,13 @@ describe("the SSH deploy key", () => {
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
   it("links the page for every account", async () => {
-    expect(read("index.html")).toContain('href="#/repos" data-nav="repos">Repositories<');
+    expect(read("index.html")).toContain('href="#/repos" data-nav="repos" data-extra>Repositories<');
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
     expect(ia.subnavFor("admin", "repos")).toEqual([]);
     const app = read("app.js");
     expect(app).toContain('from "./repos.js"');
     expect(app).toContain('section === "repos"');
-    expect(read("user/index.html")).toContain('href="#/repos" data-nav="repos">My repositories<');
+    expect(read("user/index.html")).toContain('href="#/repos" data-nav="repos" data-extra>My repositories<');
     expect(read("user/app.js")).toContain('from "/repos.js"');
   });
 
@@ -1509,7 +1511,9 @@ describe("rows with health and the next step (#380)", () => {
     repos = [rec({ method: "none" }), rec({ connection: connection(false) }), rec({ connection: connection(true) })];
     await show();
     const [none, fail, ok] = rows();
-    expect(byClass(cell(none!, "Next step"), "pill")[0]!.attrs.class).toBe("pill fail");
+    expect(byClass(cell(none!, "Next step"), "pill")[0]!.attrs.class).toBe("pill sem-danger fail");
+    expect(byClass(cell(none!, "Next step"), "pill")[0]!.all("svg")).toHaveLength(1);
+    expect(byClass(cell(ok!, "Next step"), "pill")[0]!.attrs.class).toMatch(/^pill sem-(success|warning) /);
     expect(texts(cell(none!, "Next step"))).toEqual(["Change authentication"]);
     expect(texts(cell(none!, "Actions"))).not.toContain("Change authentication");
     expect(texts(cell(fail!, "Next step"))).toEqual(["Test again"]);

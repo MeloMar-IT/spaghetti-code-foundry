@@ -25,7 +25,7 @@ const SWITCH_DEFAULTS = { auto_defaults: false, wait_for_dependencies: true, com
 const LIST_DEFAULTS = { priority_labels: ["bug"], dependency_done_labels: [], remove_on_done: [] };
 const KEYS = [...SWITCHES, ...LISTS, ...TEXTS, "status_labels"];
 
-const AUTO_HELP = "The Foundry answers its own questions with its recommendations, at most twice per issue; after that a person answers. Default: off.";
+const AUTO_HELP = "The Foundry answers its own questions with its recommendations, at most twice per GitHub issue; after that a person answers. Default: off.";
 
 /** "a, b," → ["a", "b"] */
 export const labelList = (text) => String(text ?? "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -78,18 +78,18 @@ export function watcherOptions(w, flows) {
   const group = (title, ...kids) => (groups[title] =h("details", {}, h("summary", {}, title), h("div", { class: "stack" }, ...kids)));
   const el = h("div", { class: "stack" },
     group("Labels",
-      list1("priority_labels", "Labels that go first", "Issues with one of these labels start before all others. Leave empty for none. Default: bug", "bug"),
+      list1("priority_labels", "Labels that go first", "GitHub issues with one of these labels start before all others. Leave empty for none. Default: bug", "bug"),
       ...statusFields,
       list1("remove_on_done", "Labels to remove when a run succeeds", "For example the trigger label. Default: none", "e.g. claude-factory")),
     group("Dependencies",
-      sw1("wait_for_dependencies", "Wait for dependencies", 'An issue waits until the issues under "Depends on" or "Blocked by" are done. Default: on'),
+      sw1("wait_for_dependencies", "Wait for dependencies", 'A change waits until the changes under "Depends on" or "Blocked by" are done. Default: on'),
       list1("dependency_done_labels", "Labels that count as done", "A dependency with one of these labels counts as done, also when it is still open. Default: none", "e.g. released"),
       f("Pause while a pull request is open", controls.pause_while_pr_open, "Starts nothing while an open pull request's branch starts with this text, e.g. factory/daily-. Default: none"),
       sw1("one_at_a_time", "One run at a time", "Never runs two of this watcher's runs at the same time. Default: off")),
     group("Comments",
-      sw1("status_comment", "Keep a status comment", "Keeps one status comment on every issue the watcher follows. Default: on"),
-      sw1("comment_on_failure", "Comment when a run fails", "Posts the reason and the failing step's output on the issue. Default: on"),
-      f("Questions check", select, "Runs this flow once over all new issues before any starts, e.g. epic-questions. Default: none"),
+      sw1("status_comment", "Keep a status comment", "Keeps one status comment on every GitHub issue the watcher follows. Default: on"),
+      sw1("comment_on_failure", "Comment when a run fails", "Posts the reason and the failing step's output on the GitHub issue. Default: on"),
+      f("Questions check", select, "Runs this flow once over all new GitHub issues before any starts, e.g. epic-questions. Default: none"),
       sw1("auto_defaults", "Answer questions automatically", AUTO_HELP)));
   const groupOf = (control) => Object.values(groups).find((d) => hasChild(d, control));
   return {
@@ -128,7 +128,7 @@ export function optionNotes(w) {
   if (w.source !== "issues") return [];
   const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
   const notes = [];
-  if (w.auto_defaults) notes.push("answers its own questions (at most twice per issue)");
+  if (w.auto_defaults) notes.push("answers its own questions (at most twice per GitHub issue)");
   if (w[CHECK]) notes.push(`questions check: ${w[CHECK]}`);
   const pr = w.priority_labels ?? LIST_DEFAULTS.priority_labels;
   if (!same(pr, LIST_DEFAULTS.priority_labels)) notes.push(pr.length ? `labels that go first: ${pr.join(", ")}` : "no label goes first");

@@ -134,7 +134,8 @@ describe("renderMyRun states", () => {
     state.runError = refused("gone", 404);
     state.pending = [{ runId: "r1", kind: "run", enqueuedAt: iso(1), task: "queued", ahead: 0, next: rec("queued") }];
     const stop = await open();
-    expect(main.textContent).toContain("Queued run");
+    expect(main.textContent).toContain("Waiting in the queue");
+    expect(main.textContent).not.toContain("Queued run");
     expect(main.textContent).not.toContain(ui.NOT_FOUND);
     stop();
   });
@@ -171,7 +172,7 @@ describe("renderMyRun states", () => {
     lose();
     expect(banners()).toHaveLength(1);
     expect(main.textContent).toContain("Do the thing");
-    one(main, "button", { "data-tab": "log" }).click();
+    one(main, "button", { "data-tab": "details" }).click();
     expect(main.textContent).toContain("▶ one");
     expect(toastText()).toBe("");
     await flush();
@@ -201,7 +202,7 @@ describe("renderMyRun states", () => {
     emit(stream(), "log", { line: "▶ one" });
     emit(stream(), "update", { summary: summaryOf() });
     expect(banners()).toHaveLength(0);
-    one(main, "button", { "data-tab": "log" }).click();
+    one(main, "button", { "data-tab": "details" }).click();
     expect(main.textContent.split("▶ one").length - 1).toBe(1);
     stop();
   });

@@ -1,11 +1,13 @@
 import { api, configVersion } from "./api.js";
-import { confirmDialog, fieldFor, glyph, h, markInvalid, mount, tableBox, toast } from "./dom.js";
+import { confirmDialog, fieldFor, glyph, h, markInvalid, mount, table as domTable, toast } from "./dom.js";
+import { statusPill } from "./icons.js";
+import { pageHeader } from "./kit/product.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "./states.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
 const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
-const okPill = (ok, text) => h("span", { class: `pill ${ok ? "ok" : "fail"}` }, text ?? (ok ? "ready" : "not ready"));
+const okPill = (ok, text) => statusPill(ok ? "success" : "danger", text ?? (ok ? "ready" : "not ready"));
 
 /** Model specs to suggest in every model field. */
 function specSuggestions(providers) {
@@ -115,13 +117,11 @@ function changeConfig(form, change) {
 function agentsCard(agents) {
   return section("Coding agents",
     h("p", { class: "muted flush" }, "Agent steps run on Claude Code or on OpenAI's Codex CLI (with your ChatGPT account). Pick one per step, per flow, or with routing rules below."),
-    tableBox(h("table", { class: "table compact", "aria-label": "Coding agents" },
-      h("thead", {}, h("tr", {}, ["Agent", "Status", "Version", "Detail"].map((x) => h("th", { scope: "col" }, h("span", { class: "sr-only" }, x))))),
-      h("tbody", {}, agents.map((a) => h("tr", {},
-        h("td", {}, h("b", {}, a.agent === "claude" ? "Claude Code" : "Codex (ChatGPT)")),
-        h("td", {}, okPill(a.installed && a.loggedIn !== false, !a.installed ? "not installed" : a.loggedIn === false ? "not logged in" : "ready")),
-        h("td", { class: "mono muted" }, a.version ?? ""),
-        h("td", { class: "muted" }, a.detail)))))),
+    domTable(["Agent", "Status", "Version", "Detail"], agents.map((a) => h("tr", {},
+      h("td", {}, h("b", {}, a.agent === "claude" ? "Claude Code" : "Codex (ChatGPT)")),
+      h("td", {}, okPill(a.installed && a.loggedIn !== false, !a.installed ? "not installed" : a.loggedIn === false ? "not logged in" : "ready")),
+      h("td", { class: "mono muted" }, a.version ?? ""),
+      h("td", { class: "muted" }, a.detail))), { label: "Coding agents", class: "compact" }),
     agents.find((a) => a.agent === "codex" && (!a.installed || a.loggedIn === false))
       ? h("p", { class: "muted flush" }, "To use ChatGPT: run ", h("code", {}, "npm i -g @openai/codex"), " then ", h("code", {}, "codex login"), " in a terminal, and reload this page.")
       : null);
@@ -167,14 +167,13 @@ function providersCard(cfg, providers, reload, problem, form) {
   const table = problem
     ? errorState(problem, { onRetry: reload })
     : providers.length
-      ? tableBox(h("table", { class: "table compact", "aria-label": "Providers" },
-        h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models"].map((x) => h("th", { scope: "col" }, x)))),
-        h("tbody", {}, providers.map((p) => h("tr", {},
-          h("td", {}, h("a", { href: `#/models/${encodeURIComponent(p.name)}` }, h("b", { class: "mono" }, p.name)), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
-          h("td", {}, okPill(p.ok), h("div", { class: "muted text-2xs" }, p.detail),
-            marks.get(p.name)),
-          h("td", { class: "muted" }, p.agents.join(", ")),
-          h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")))))))
+      ? domTable(["Provider", "Status", "Used by", "Models"], providers.map((p) => h("tr", {},
+        h("td", {}, h("a", { href: `#/models/${encodeURIComponent(p.name)}` }, h("b", { class: "mono" }, p.name)), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
+        h("td", {}, okPill(p.ok), h("div", { class: "muted text-2xs" }, p.detail),
+          marks.get(p.name)),
+        h("td", { class: "muted" }, p.agents.join(", ")),
+        h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")))),
+      { label: "Providers", class: "compact" })
       : emptyState("No providers.");
   return section("Providers",
     h("p", { class: "muted flush" }, "Where models run. Local providers cost nothing and keep code on your Mac; runs record them at $0."),
@@ -198,7 +197,9 @@ const PRESETS = (local) => [
 
 function routingCard(cfg, specs, localSpec, form) {
   const rules = cfg.router.rules.map((r) => ({ ...r }));
-  const body = h("tbody");
+  // The shared table draws the box and the head; the rules are mounted into its body.
+  const rulesBox = domTable(["Step", "Flow", "From visit", "Agent", "Model", h("span", { class: "sr-only" }, "Actions")], [], { label: "Routing rules", class: "compact" });
+  const body = rulesBox.querySelector("tbody");
   const defModel = input(cfg.default_model ?? "", { class: "mono", list: "models", placeholder: "Claude Code's default" });
   const fallback = input(cfg.router.fallback.join(", "), { class: "mono", placeholder: `e.g. codex, ${localSpec ?? "ollama:qwen3-coder"}` });
   const onRate = h("input", { type: "checkbox", class: "fit", checked: cfg.router.fallback_on.includes("rate_limit") });
@@ -279,7 +280,7 @@ function routingCard(cfg, specs, localSpec, form) {
     h("div", {}, h("div", { class: "row mb-6" }, h("b", {}, "Rules"), h("span", { class: "spacer" }),
       ...PRESETS(localSpec).map((p) => h("button", { class: "small", onClick: () => { rules.push(...p.rules.map((r) => ({ ...r }))); draw(); } }, `+ ${p.label}`)),
       h("button", { class: "small", onClick: () => { rules.push({ model: "" }); draw(); } }, "+ Rule")),
-      tableBox(h("table", { class: "table compact", "aria-label": "Routing rules" }, h("thead", {}, h("tr", {}, ["Step", "Flow", "From visit", "Agent", "Model", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))), body))),
+      rulesBox),
     f("Fallback models", fallback, "Comma-separated, tried in order."),
     h("div", { class: "row" },
       h("label", { class: "row tight" }, onRate, h("span", {}, "Use them when a model hits a rate or usage limit")),
@@ -305,8 +306,8 @@ export async function renderModels(main) {
       return;
     }
     const form = { version: configVersion(cfg.value) };
-    const head = h("div", { class: "toolbar" }, h("h1", {}, "Models"), h("span", { class: "muted" }, "Agents, providers and which model runs which step"),
-      h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻"));
+    const head = pageHeader({ layout: "toolbar", title: "Models", meta: h("span", { class: "muted" }, "Agents, providers and which model runs which step"),
+      actions: [h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻")] });
     if (st.status === "rejected") {
       // The routing rules do not need the provider list: they stay usable and can be saved.
       const problem = explainError(st.reason, { what: "The agents and providers could not be checked.", safe: "Routing below still works and can be saved." });
@@ -411,8 +412,8 @@ export async function renderModelDetail(main, name, { go = (hash) => { location.
     test.marks = undefined;
     const inConfig = Object.hasOwn(c.providers, name);
     const used = routingUse(c, name, st.value.providers.map((x) => x.name));
-    const head = h("div", { class: "toolbar" }, h("h1", {}, name), okPill(p.ok), h("span", { class: "muted" }, p.detail),
-      h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻"));
+    const head = pageHeader({ layout: "toolbar", title: name, meta: [okPill(p.ok), h("span", { class: "muted" }, p.detail)],
+      actions: [h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻")] });
     const settings = section("Settings",
       h("p", { class: "muted flush" }, [p.kind, p.base_url, p.agents.length ? `Used by: ${p.agents.join(", ")}` : null].filter(Boolean).join(" · ")),
       p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—"),

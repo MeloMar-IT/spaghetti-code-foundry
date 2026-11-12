@@ -26,8 +26,8 @@ export const PAGES = [
   { id: "setup", path: "#/setup", title: "Setup check", area: "home", dest: "home", parent: null, nav: "secondary", label: { admin: "Setup check", user: "Setup check" }, roles: AU },
   { id: "agents", path: "#/agents", title: "Claude and Codex", area: "home", dest: null, parent: null, nav: "secondary", label: { admin: "Claude and Codex", user: "Claude and Codex" }, roles: AU },
   { id: "start-guide", path: "#/start-guide", title: "Get started", area: "home", dest: null, parent: null, nav: "secondary", label: { user: "Get started" }, roles: ["user"] },
-  { id: "help", path: "#/help", title: "Help", area: "home", dest: null, parent: null, nav: "secondary", label: { user: "Help" }, roles: ["user"] },
-  { id: "change", path: "#/change/:id", title: "Ask for a change", area: "home", dest: null, parent: null, nav: "detail", label: {}, roles: ["user"] },
+  { id: "help", path: "#/help", title: "Help", area: "home", dest: null, parent: null, nav: "secondary", label: { admin: "Help", user: "Help" }, roles: AU },
+  { id: "change", path: "#/change/:id", title: "Ask for a change", area: "home", dest: null, parent: null, nav: "detail", label: {}, roles: AU },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
   { id: "epics", path: "#/epics", title: "Epics", area: "work", dest: "epics", parent: null, nav: "primary", label: { admin: "Epics", user: "Epics" }, roles: AU, scope: true },
@@ -37,7 +37,7 @@ export const PAGES = [
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "start", path: "#/start", title: "Start work", area: "work", dest: null, parent: null, nav: "action", label: { admin: "Start work", user: "Start work" }, roles: AU },
   { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU, scope: true },
-  { id: "run", path: "#/runs/:id", title: (id) => `Run ${id}`, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
+  { id: "run", path: "#/runs/:id", title: "Change", named: true, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
   { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU, scope: true },
   { id: "repo", path: "#/repos/:id", title: "Repository", area: "repositories", dest: "repos", parent: "repos", nav: "detail", label: {}, roles: AU },
   { id: "flows", path: "#/flows", title: "Flows", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Flows" }, roles: A },
@@ -73,6 +73,36 @@ export const DESTINATIONS = [
   { id: "flows", label: { admin: "Flows" }, landing: "flows", group: "setup", roles: A },
   { id: "administration", label: { admin: "Administration" }, landing: "operations", group: "setup", roles: A },
 ];
+
+/** The places every view shows in the sidebar, in order. The ids are destination ids (or the page id for Help), so the active link is marked. */
+export const SIDEBAR_MAIN = [
+  { id: "home", label: "Today", href: "#/home" },
+  { id: "runs", label: "Changes", href: "#/runs" },
+  { id: "refinement", label: "Ideas", href: "#/refinement" },
+  { id: "epics", label: "Releases", href: "#/epics" },
+  { id: "help", label: "Help", href: "#/help" },
+];
+
+/** The extra pages below the divider, by view. Simple has none. */
+export const SIDEBAR_EXTRA = {
+  simple: [],
+  advanced: [{ id: "repos", label: "My repositories", href: "#/repos" }],
+  admin: [
+    { id: "board", label: "Board", href: "#/board" },
+    { id: "repos", label: "Repositories", href: "#/repos" },
+    { id: "flows", label: "Flows", href: "#/flows" },
+    { id: "administration", label: "Administration", href: "#/operations" },
+  ],
+};
+
+/** The one primary button of the top bar. */
+export const NEW_CHANGE = { id: "start", label: "+ New change", href: "#/start" };
+
+/** The sidebar of a view: the shared places, then the extra pages below the divider. An unknown view gets Advanced. */
+export function sidebarFor(view) {
+  const extra = Object.hasOwn(SIDEBAR_EXTRA, view) ? SIDEBAR_EXTRA[view] : SIDEBAR_EXTRA.advanced;
+  return { main: SIDEBAR_MAIN.map((e) => ({ ...e })), extra: extra.map((e) => ({ ...e })) };
+}
 
 /** The groups of the sidebar, in order. */
 export const GROUPS = [{ id: "work", label: "Work" }, { id: "setup", label: "Setup" }];
@@ -169,6 +199,8 @@ const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 const OWNER_OK = /^[\w-]+$/;
 const VALID = { repo: (v) => v === ALL_REPOS || (v.length <= 200 && REPO_OK.test(v)), owner: (v) => v.length <= 64 && OWNER_OK.test(v),
   view: (v) => v === "simple",
+  // the list a Today counter opens on the Simple Home (see GROUPS in runs-filter.js)
+  list: (v) => ["waiting", "building", "check", "ready", "published-week", "finished", "finished-today"].includes(v),
   method: (v) => ["none", "github-token", "https-token", "ssh-deploy-key", "github-app"].includes(v) };
 
 /** Splits an address into its path and the text after the first "?" ("" when there is none). */

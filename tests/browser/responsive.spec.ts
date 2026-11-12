@@ -1,6 +1,75 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expectNoSidewaysScroll, openAs } from "./helpers.js";
+import { asSimple, expectNoSidewaysScroll, openAs, type Role } from "./helpers.js";
 import { VIEW_HEIGHT, WIDTHS, usesDrawer } from "./widths.js";
+
+// Redesign 8 (#847): the shell, Start work and a change page at 375 px in each view and theme, by keyboard, in plain words.
+const VIEWS: { name: string; role: Role; simple: boolean }[] = [
+  { name: "admin", role: "admin", simple: false },
+  { name: "advanced", role: "user", simple: false },
+  { name: "simple", role: "user", simple: true },
+];
+
+for (const view of VIEWS) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`the shell, Start work and a change at 375 px, ${view.name} view, ${theme}, by keyboard`, async ({ browser }) => {
+      const page = await openAs(browser, view.role, 375, "#/home", { theme, before: view.simple ? asSimple : undefined });
+      try {
+        expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(theme === "dark");
+        await expectNoSidewaysScroll(page);
+
+        // The drawer: Enter opens it, Tab stays inside (forward from the last control, back from the first), Escape returns to the button.
+        const menu = page.locator("#menu-btn");
+        await menu.focus();
+        await page.keyboard.press("Enter");
+        await expect(page.locator("#side")).toBeVisible();
+        const inSide = () => page.evaluate(() => !!document.activeElement?.closest("#side"));
+        expect(await inSide()).toBe(true);
+        await page.keyboard.press("Shift+Tab");
+        expect(await inSide(), "Shift+Tab from the first control").toBe(true);
+        for (let i = 0; i < 20; i++) {
+          await page.keyboard.press("Tab");
+          expect(await inSide(), `Tab ${i + 1}`).toBe(true);
+        }
+        await page.keyboard.press("Escape");
+        await expect(menu).toBeFocused();
+
+        // The words of the shell: "change", never "story" or "issue" (the GitHub name is allowed).
+        const words = await page.evaluate(async () => {
+          const { oldWordsIn } = await import("/change-words.js");
+          return oldWordsIn(`${(document.getElementById("side") as HTMLElement).innerText} ${(document.getElementById("top") as HTMLElement).innerText}`);
+        });
+        expect(words).toEqual([]);
+
+        // Start work: Tab reaches the box for the change.
+        await page.goto(page.url().replace(/#.*$/, "") + "#/start");
+        const box = page.getByLabel("What would you like to change?").first();
+        await expect(box).toBeVisible();
+        let reached = false;
+        for (let i = 0; i < 40 && !reached; i++) {
+          await page.keyboard.press("Tab");
+          reached = await box.evaluate((el) => el === document.activeElement);
+        }
+        expect(reached, "Tab reaches the box").toBe(true);
+        await expectNoSidewaysScroll(page);
+
+        // A change page has the five phases and does not scroll sideways (not in the Simple view, which has its own project page).
+        if (!view.simple) {
+          await page.goto(page.url().replace(/#.*$/, "") + "#/runs");
+          const row = page.locator("#main a[href^='#/runs/']").first();
+          await expect(row).toBeVisible();
+          await row.focus();
+          await page.keyboard.press("Enter");
+          const strip = page.locator("ol.scf-phase-strip").first();
+          await expect(strip).toBeVisible();
+          expect((await strip.boundingBox())!.width).toBeLessThanOrEqual(375);
+          await expectNoSidewaysScroll(page);
+        }
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+}
 
 // UI quality 1b (#368): no sideways scroll, 44 px touch targets, and dialogs that are sheets below 768 px.
 
@@ -10,9 +79,59 @@ const PAGES: [string, string, string | RegExp][] = [
   ["Start work", "#/start", "gate"],
   ["Repositories", "#/repos", /No repositories yet/],
   ["Autonomy", "#/autonomy", /Repositories/],
+  ["Epics", "#/epics", /Epics|epic/i],
+  ["Refinement", "#/refinement", /Refinement/i],
+  ["Setup check", "#/setup", /Setup check/],
+  ["Help", "#/help", /Help/i],
 ];
 
-const TARGETS = 'button, a.btn, a[data-nav], .brand, select, textarea, summary, input:not([type=checkbox]):not([type=radio]):not([type=hidden])';
+/** No table box scrolls inside itself: `expectNoSidewaysScroll` looks at the document only, and a `.table-box` can scroll on its own. */
+async function expectNoBoxScroll(page: Page): Promise<void> {
+  const wide = await page.evaluate(() => [...document.querySelectorAll(".table-box")]
+    .filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => `${e.className} ${e.scrollWidth}>${e.clientWidth}`));
+  expect(wide, "a table box scrolls sideways").toEqual([]);
+}
+
+test("no sideways scroll at 375 px in the Advanced view, also in the compact Changes table", async ({ browser }) => {
+  const PAGES_375: [string, string | RegExp][] = [
+    ["#/runs", "Seeded succeeded run"], ["#/epics", /Epics|epic/i], ["#/repos", "acme/app"],
+    ["#/refinement", /Refinement/i], ["#/setup", /Setup check/], ["#/help", /Help/i],
+  ];
+  for (const [hash, text] of PAGES_375) {
+    const page = await openAs(browser, "user", 375, hash);
+    try {
+      await expect(page.locator("#main"), hash).toContainText(text);
+      await expectNoSidewaysScroll(page);
+      await expectNoBoxScroll(page);
+      if (hash === "#/runs") {
+        await page.evaluate(() => localStorage.setItem("scf-runs-density", "compact"));
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("#main")).toContainText(text);
+        await expect(page.locator("#main table.run-table").first()).toBeVisible();
+        await expectNoSidewaysScroll(page);
+        await expectNoBoxScroll(page);
+      }
+    } finally {
+      await page.context().close();
+    }
+  }
+});
+
+test("the compact Changes table does not scroll sideways at 360 px for the admin", async ({ browser }) => {
+  const page = await openAs(browser, "admin", 360, "#/runs");
+  try {
+    await page.evaluate(() => localStorage.setItem("scf-runs-density", "compact"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#main")).toContainText("Seeded failed run");
+    await expect(page.locator("#main table.run-table").first()).toBeVisible();
+    await expectNoSidewaysScroll(page);
+    await expectNoBoxScroll(page);
+  } finally {
+    await page.context().close();
+  }
+});
+
+const TARGETS ='button, a.btn, a[data-nav], .brand, select, textarea, summary, input:not([type=checkbox]):not([type=radio]):not([type=hidden])';
 const ADD = '[data-focus="add-toolbar"]'; // the empty page also has an "+ Add repository" button in its empty state
 const dialog =(page: Page) => page.locator('[role="dialog"]');
 
@@ -28,6 +147,7 @@ for (const width of WIDTHS) {
       try {
         await expect(page.locator("#main"), name).toContainText(text);
         await expectNoSidewaysScroll(page);
+        if (width < 768) await expectNoBoxScroll(page);
         if (name === "Repositories") {
           await openAddDialog(page);
           await expectNoSidewaysScroll(page);
@@ -43,7 +163,8 @@ for (const width of WIDTHS) {
     const log = await openAs(browser, "admin", width, "#/runs/ui-big-log", { large: true });
     try {
       await expect(log.locator("#main")).toContainText("Large seeded log run", { timeout: 30_000 });
-      await log.locator('button[data-tab="log"]').click();
+      await log.locator('button[data-tab="details"]').click();
+      await log.locator('#main [data-section="log"] > summary').click();
       await expect(log.locator("#main pre.log")).toBeVisible({ timeout: 30_000 });
       await expectNoSidewaysScroll(log);
       expect(await log.locator("pre.log").evaluate((e) => e.clientWidth)).toBeLessThanOrEqual(width);

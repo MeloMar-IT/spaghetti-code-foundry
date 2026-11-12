@@ -12,6 +12,8 @@ export const ALL: Cmd[] = [...SYSTEM, ...WORK, ...SETUP, ...PEOPLE, ...REFINE, .
 /** Calls of the server that have no command, each with the reason. A test fails when a call is in neither list. */
 export const API_ONLY: Record<string, string> = {
   "GET your-turn/mine": "the items the Simple view's cards act on (#826); the cards come in the next parts of #607, and an admin reads the whole list with `scf turn list`",
+  "POST runs/:id/checks/add": "adds a check of the person's own to a change that waits (#862); the change page and the Simple card call it, the command line has no command for it",
+  "POST runs/:id/checks": "marks a check of the plan as Works or Not quite (#861); the change page and the Simple card call it, the command line has no command for it",
   "GET setup-check": "the Setup check page; on the machine itself `scf doctor --simple` prints the same",
   "POST onboarding/sign-in": "starts the sign-in of Claude Code or Codex on the server's computer; done from the Setup check page, or in a terminal with `claude` then `/login`, or `codex login`",
   "POST onboarding/test-call": "one tiny call that checks Claude Code or Codex works; done from the Setup check page",
@@ -54,6 +56,8 @@ export const API_ONLY: Record<string, string> = {
   "POST repos/:id/publish-remote": "the owner's Yes, publish for the plain push to the folder's remote (#796); the Run settings dialog under Advanced uses it, so there is no command line use yet",
   "GET repos/:id/epics":"the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
+  "GET repos/:id/safe-points": "the safe points of a project (#863); the project pages and the Simple home read them, the command line has no command for it yet",
+  "POST repos/:id/safe-points/restore": "Restore on a safe point (#864): a preview, then Yes, open the change; the project pages use it, so there is no command line use yet",
   "POST repos/:id/preview": "starts a preview of the project (#789, part of #608); the Try it page that uses it comes in a later part",
   "GET repos/:id/preview": "the state of that preview (#789); no command line use yet",
   "DELETE repos/:id/preview": "stops that preview (#789); no command line use yet",

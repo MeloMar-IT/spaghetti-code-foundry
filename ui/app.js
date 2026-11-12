@@ -31,6 +31,8 @@ import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { needsOf, renderSetupCheck } from "./setup-check.js";
 import { renderOnboardingAgents } from "./onboarding-agents.js";
+import { renderSimpleHelp } from "./simple.js";
+import { renderSimpleChange } from "./simple-change.js";
 import { renderAudit } from "./audit.js";
 import { renderAutonomy } from "./autonomy.js";
 import { renderBoard } from "./board.js";
@@ -247,6 +249,7 @@ async function route() {
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
+    else if (section === "help") await renderInBox(renderSimpleHelp);
     else if (section === "audit") S.cleanup = await renderAudit(main);
     else if (section === "autonomy") await renderInBox((box) => renderAutonomy(box, { readOnly }));
     else if (section === "setup") {
@@ -263,15 +266,23 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
+    else if (section === "change") {
+      // A plan made on #/start opens here for an admin too (the page needs no extra rights: it works on the person's own projects).
+      const box = h("div", {});
+      mount(main, box);
+      const off = await renderSimpleChange(box, { id: arg, onName: (n) => { if (mine === routeGen) namePage(n); } });
+      if (mine === routeGen) S.cleanup = off;
+      else off?.();
+    }
     else if (section === "start") {
       // The page draws into its own box, so a slow load that ends after a hash change cannot touch the page that took over.
       const box = h("div", {});
       mount(main, box);
-      const done = await renderStart(box, { admin: true });
+      const done = await renderStart(box, { admin: true, contextRepo: () => context?.current().repo ?? "" });
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true });
+    else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true, onName: (n) => { if (mine === routeGen) namePage(n); } });
     else if (section === "runs") {
       // The list draws into its own box, so a slow answer that comes after a hash change cannot touch the next page.
       const box = h("div", {});

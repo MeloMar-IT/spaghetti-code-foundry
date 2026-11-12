@@ -132,6 +132,8 @@ describe("actsFor and acted items", () => {
     for (const k of ["approve_plan", "approve_split", "approval"] as NextKind[]) expect(actsFor(k, "a", 1)).toEqual(["approve", "reject"]);
     expect(actsFor("failed", "a", 1)).toEqual(["retry", "retry_hint"]);
     expect(actsFor("failed", "a", 1, true)).toEqual([]);
+    expect(buildTurn([w({ ...rec("failed", { issue: 1 }), splitMade: "some" })]).data.groups[0]!.items[0]!.acts).toEqual([]);
+    expect(buildTurn([w(rec("failed", { issue: 1 }))]).data.groups[0]!.items[0]!.acts).toEqual(["retry", "retry_hint"]);
     expect(actsFor("approval", "a", 1, true)).toEqual(["approve", "reject"]);
     expect(buildTurn([w({ ...rec("failed", { issue: 1 }), retired: true })]).data.groups[0]!.items[0]!.acts).toEqual([]);
     expect(actsFor("questions", undefined, 1)).toEqual([]);

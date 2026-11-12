@@ -314,6 +314,15 @@ In `ui/kit/product.js`, styled in `ui/kit/product.css`. They are built only from
 - `kind`: `run | repo | issue | pr | flow | user`. The kind is visually hidden text ("Run 12 fix login"); `showKind: true` shows it.
 - With `href` it is a link (`http(s)://`, a path, `?query` or `#hash`; other schemes are refused). Without `href`, or with an unsafe one, it is plain text. Leave `href` out for something the user may not open; the component checks no permission.
 
+### phaseStrip
+
+`phaseStrip({ label, phases, current, complete })`
+
+- Returns an `<ol>` with one item per word in `phases` (non-empty strings). `current` is the index of the phase now, or `null` when it has not started. Earlier phases show a **Done** icon, the current one a **Now** icon and `aria-current="step"`; later ones have no mark. `label` names the list (optional).
+- `complete: true` marks every phase **Done** (a finished change). It needs `current: null`; with a current phase it throws.
+- A bad `phases` or `current` throws. Other attributes pass through; `style` is refused.
+- The run page (`ui/run-header.js`) uses it for the five phase words (Understand, Plan, Build, Check, Deliver), which are in `ui/phases.js`.
+
 ### confirmDestructive
 
 `confirmDestructive({ title, text, confirmLabel, cancelLabel, typeToConfirm, send })` returns a promise.

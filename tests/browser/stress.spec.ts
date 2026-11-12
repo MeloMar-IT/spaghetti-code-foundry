@@ -72,9 +72,11 @@ async function expectControlsUsable(page: Page, scope: string): Promise<void> {
 
 /** The big run's log tab or diff tab. */
 async function openTab(page: Page, tab: "log" | "diff"): Promise<void> {
-  const button = page.locator(`button[data-tab="${tab}"]`);
+  // The log is a section of the Details tab: open the tab, then the section.
+  const button = page.locator(`button[data-tab="${tab === "log" ? "details" : tab}"]`);
   await use(page, button);
   await button.click();
+  if (tab === "log") await page.locator('#main [data-section="log"] > summary').click();
 }
 
 const ITEMS: Record<StressName, (browser: Browser) => Promise<void>> = {

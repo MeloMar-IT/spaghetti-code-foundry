@@ -4,7 +4,7 @@ import { h, mount, toast } from "./dom.js";
 import { card } from "./kit/display.js";
 import { pageHeader, statusSummary } from "./kit/product.js";
 import { loadingState, staleNote } from "./states.js";
-import { DIALOGS, LABELS, actionsFor, browserPage, cancelledText, cancelledTotal, lastSignInText, limitsCell, loadUsers, pillClass, statusText } from "./users.js";
+import { DIALOGS, LABELS, actionsFor, browserPage, cancelledText, cancelledTotal, lastSignInText, limitsCell, loadUsers, userStatusPill } from "./users.js";
 import { rememberView } from "./view-as.js";
 
 export const NO_ACCOUNT = "This account does not exist.";
@@ -112,7 +112,7 @@ export async function renderUserDetail(main, id, { me = "", page = browserPage, 
   const items = [
     { label: "E-mail", value: u.email || "—" },
     { label: "Role", value: u.role },
-    { label: "Status", value: h("span", { class: pillClass(u) }, statusText(u)) },
+    { label: "Status", value: userStatusPill(u) },
     { label: "Last sign-in", value: lastSignInText(u) },
     { label: "Runs", value: String(u.runs ?? 0) },
     { label: "Limits", value: h("span", {}, limitsCell(limits, u.id)) },
@@ -122,7 +122,7 @@ export async function renderUserDetail(main, id, { me = "", page = browserPage, 
     ? groupsFor(u).map((g) => ({ ...g, kinds: g.kinds.filter((k) => k === "view") })).filter((g) => g.kinds.length)
     : groupsFor(u);
   mount(main,
-    pageHeader({ title: u.name, back: { label: "Users", href: "#/users" }, meta: [h("span", { class: pillClass(u) }, statusText(u)), u.id === me ? h("span", { class: "muted" }, " (you)") : null] }),
+    pageHeader({ title: u.name, back: { label: "Users", href: "#/users" }, meta: [userStatusPill(u),u.id === me ? h("span", { class: "muted" }, " (you)") : null] }),
     note,
     card({ title: "Account" }, statusSummary({ label: "Account", items })),
     groups.map((g) => card({ title: g.label, tone: g.id === "danger" ? "fail" : "neutral" }, h("div", { class: "row" }, g.kinds.map(button)))));

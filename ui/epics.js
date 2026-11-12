@@ -2,8 +2,9 @@ import { api } from "./api.js";
 import { h, mount, svg, table } from "./dom.js";
 import { ALL_REPOS } from "./ia.js";
 import { defaultGo, filterGone, withQuery } from "./filters.js";
-import { epicHref } from "./epic-page-model.js";
-import { barSegments, finishView, freshText, growthSentence, blockTexts, pickRepo, progressText, repoChoices, sortRows } from "./epics-model.js";
+import { epicHref, storySemantic } from "./epic-page-model.js";
+import { statusPill } from "./icons.js";
+import { SEGMENTS, barSegments, finishView, freshText, growthSentence, blockTexts, pickRepo, progressText, repoChoices, sortRows } from "./epics-model.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 import { collectionPage } from "./templates.js";
 import { pageViews } from "./views.js";
@@ -18,6 +19,13 @@ const BAR_HEIGHT = 8;
 export function progressBar(counts, total) {
   return svg("svg", { class: "epics-bar", viewBox: `0 0 100 ${BAR_HEIGHT}`, preserveAspectRatio: "none", "aria-hidden": "true", focusable: "false" },
     barSegments(counts, total).map((s) => svg("rect", { class: `epics-seg-${s.id}`, x: s.x, y: 0, width: s.width, height: BAR_HEIGHT })));
+}
+
+/** The progress line: "3 of 10 done" and a status pill (icon and word) for each other non-zero state. */
+export function progressNode(counts, total) {
+  if (!total) return h("p", {}, progressText(counts, total));
+  const rest = SEGMENTS.filter((s) => s.id !== "done" && counts?.[s.id] > 0);
+  return h("p", { class: "epics-progress" }, `${counts?.done ?? 0} of ${total} done`, rest.map((s) => [" ", statusPill(storySemantic(s.id), `${s.word} ${counts[s.id]}`)]));
 }
 
 const muted = (text) => (text ? h("p", { class: "muted" }, text) : null);
@@ -39,7 +47,7 @@ export function epicRow(row, { repo, timeZone, now = new Date() } = {}) {
       : "Nothing";
   return h("tr", {},
     h("td", {}, h("strong", {}, name), github),
-    h("td", {}, progressBar(row.counts, row.total), h("p", {}, progressText(row.counts, row.total))),
+    h("td", {}, progressBar(row.counts, row.total), progressNode(row.counts, row.total)),
     h("td", {}, row.noEpic ? "—" : growthSentence(row) || "—"),
     h("td", {}, row.noEpic ? "—" : [h("strong", {}, fin.text, likely), muted(fin.reason), muted(fin.note)]),
     h("td", {}, row.noEpic && !blocks.length ? "Nothing" : heldCell));

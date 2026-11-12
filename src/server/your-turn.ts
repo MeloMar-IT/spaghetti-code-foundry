@@ -21,7 +21,9 @@ const RECENT_MS = 7 * DAY;
 /** A dismissal of something that is gone is kept this long (e.g. across a restart). */
 const KEEP_MS = 30 * DAY;
 
-type Store = Record<string, { since: string; at: string }>;
+/** `aside`: put aside with "Not now" on a stuck card; such an entry is kept for a year, as the run can stay on the Simple page long after it left Your turn. */
+type Store = Record<string, { since: string; at: string; aside?: true }>;
+const ASIDE_KEEP_MS = 365 * DAY;
 
 const storeFile = () => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "your-turn.json");
 
@@ -220,10 +222,28 @@ export function dismissTurn(ctx: ApiContext, key: string, now = new Date()) {
   const current = new Set(all.map((i) => i.key));
   const store: Store = {};
   for (const [k, e] of Object.entries(readStore())) {
-    if (current.has(k) || now.getTime() - Date.parse(e.at) <= KEEP_MS) store[k] = e;
+    if (current.has(k) || now.getTime() - Date.parse(e.at) <= (e.aside ? ASIDE_KEEP_MS : KEEP_MS)) store[k] = e;
   }
   store[key] = { since: item.stamp, at: now.toISOString() };
   writeStore(store);
+}
+
+/** "Not now" on a stuck card: remembers that the failure of this record at this time is put aside. Same store and key as a dismissal. */
+export function putAside(rec: NextStep, since: string, now = new Date()): void {
+  const store = readStore();
+  store[turnKey(rec)] = { since, at: now.toISOString(), aside: true };
+  writeStore(store);
+}
+
+/** Reads the store once; the function says whether a record (at this stamp) is put aside or dismissed. */
+export function asideCheck(): (rec: NextStep, since: string) => boolean {
+  const store = readStore();
+  return (rec, since) => store[turnKey(rec)]?.since === since;
+}
+
+/** A failed record marked `notNow` when it was put aside; any other record unchanged. */
+export function withNotNow(rec: NextStep, since: string, check: (r: NextStep, s: string) => boolean): NextStep {
+  return rec.kind === "failed" && check(rec, since) ? { ...rec, notNow: true } : rec;
 }
 
 /** Brings dismissed items back: the one with `key`, or all of them without a key. An unknown key is not an error. */

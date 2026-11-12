@@ -173,6 +173,102 @@ describe("showFailedOnce", () => {
   });
 });
 
+describe("tab aliases", () => {
+  const withAlias = (initial?: string) => {
+    const reveal = vi.fn();
+    const defs = [
+      { id: "progress", label: "P", aliases: ["overview"], build: () => el() },
+      { id: "details", label: "D", aliases: ["steps", "log"], build: () => el(), reveal },
+    ];
+    return { tabs: mod.createTabs(defs, initial ? { initial } : {}), reveal };
+  };
+  it("selects the tab that holds an old id and reveals the part", () => {
+    const { tabs, reveal } = withAlias();
+    tabs.show("log");
+    expect(tabs.current()).toBe("details");
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(reveal).toHaveBeenCalledWith("log");
+    tabs.show("overview");
+    expect(tabs.current()).toBe("progress");
+  });
+  it("maps an old initial id, and does nothing for an unknown id", () => {
+    expect(withAlias("overview").tabs.current()).toBe("progress");
+    const { tabs, reveal } = withAlias("steps");
+    expect(tabs.current()).toBe("details");
+    expect(reveal).toHaveBeenCalledWith("steps");
+    tabs.show("nope");
+    expect(tabs.current()).toBe("details");
+  });
+  it("a failed run opens Details with Steps open, once", () => {
+    const dp = mod.detailsPanel({ steps: { el: el(), update() {} }, evidence: { build: () => el(), update() {} }, skills: () => null, log: { el: el(), restore() {} } });
+    const t = mod.createTabs([{ id: "progress", label: "P", aliases: ["overview"], build: () => el() }, { id: "details", label: "D", aliases: ["steps"], ...dp }]);
+    const failing = { status: "failed", next: { failure: { tried: "t" } } };
+    mod.showFailedOnce(t, failing, { status: "running" });
+    expect(t.current()).toBe("details");
+    expect(t.el.all("details").find((d: FakeElement) => d.attrs["data-section"] === "steps").open).toBe(true);
+    t.show("progress");
+    mod.showFailedOnce(t, failing, failing);
+    expect(t.current()).toBe("progress");
+  });
+});
+
+describe("detailsPanel", () => {
+  const make2 = (skill: unknown = null) => {
+    const log = { el: el(), restore: vi.fn() };
+    const evidence = { build: vi.fn(() => el()), update: vi.fn() };
+    const steps = { el: el(), update: vi.fn() };
+    const skills = vi.fn(() => skill);
+    const p = mod.detailsPanel({ steps, evidence, skills, log });
+    const node = p.build();
+    const sec = (k: string) => node.all("details").find((d: FakeElement) => d.attrs["data-section"] === k) as FakeElement;
+    return { p, node, sec, log, evidence, steps, skills };
+  };
+  it("has the sections in order, only Steps open, and Skills hidden without a skill view", () => {
+    const { p, node, sec } = make2();
+    p.update({ status: "running" });
+    expect(node.all("details").map((d: FakeElement) => d.attrs["data-section"])).toEqual(["steps", "evidence", "skills", "log"]);
+    expect(node.all("summary").map((s: FakeElement) => s.textContent)).toEqual(["Steps", "Evidence", "Skills", "Log"]);
+    expect(["steps", "evidence", "skills", "log"].map((k) => !!(sec(k) as any).open)).toEqual([true, false, false, false]);
+    expect(sec("skills").hidden).toBe(true);
+  });
+  it("shows Skills when there is a view, and builds it again only when the view changes", () => {
+    const { p, sec, skills } = make2(el());
+    p.update({ skillView: { a: 1 } });
+    expect(sec("skills").hidden).toBe(false);
+    p.update({ skillView: { a: 1 } });
+    expect(skills).toHaveBeenCalledTimes(1);
+    p.update({ skillView: { a: 2 } });
+    expect(skills).toHaveBeenCalledTimes(2);
+  });
+  it("gives updates to the steps and the evidence", () => {
+    const { p, evidence, steps } = make2();
+    const s = { status: "running" };
+    p.update(s, undefined);
+    expect(steps.update).toHaveBeenCalledWith(s);
+    expect(evidence.update).toHaveBeenCalledWith(s, undefined);
+  });
+  it("reveal opens a section; Log restores its scroll", () => {
+    const { p, sec, log } = make2();
+    p.reveal("evidence");
+    expect((sec("evidence") as any).open).toBe(true);
+    expect(log.restore).not.toHaveBeenCalled();
+    p.reveal("log");
+    expect((sec("log") as any).open).toBe(true);
+    expect(log.restore).toHaveBeenCalledTimes(1);
+    expect(() => p.reveal("details")).not.toThrow();
+  });
+  it("onShow restores the log only while it is open", () => {
+    const { p, sec, log } = make2();
+    p.onShow();
+    expect(log.restore).not.toHaveBeenCalled();
+    (sec("log") as any).open = true;
+    p.onShow();
+    expect(log.restore).toHaveBeenCalledTimes(1);
+    sec("log").fire("toggle");
+    expect(log.restore).toHaveBeenCalledTimes(2);
+  });
+});
+
 const USER_RUN = {
   status: "stopped", questions: "Which db?",
   answers: [{ at: "2026-01-01T10:00:00Z", text: "pg" }, { at: "2026-01-01T11:00:00Z", text: "yes" }],
@@ -293,44 +389,55 @@ describe("stepCountText", () => {
   });
 });
 
-describe("overviewPanel", () => {
+describe("progressPanel", () => {
   const RUN = { runId: "r1", flow: "build", task: "Do it\nin full", status: "stopped", questions: "Q?", workdir: "/w", flowDef: { steps: [{ id: "a" }], publish: { enabled: true, version: 3 } }, history: [] };
-  it("shows the task, questions, run, flow and version; the workspace only for an administrator", () => {
-    const user = mod.overviewPanel({ admin: false });
-    const node = user.build();
-    user.update(RUN);
-    for (const t of ["Do it\nin full", "Q?", "r1", "build", "Flow version", "3", "0 of 1 step done"]) expect(node.textContent).toContain(t);
-    expect(node.textContent).not.toContain("Workspace");
-    const admin = mod.overviewPanel({ admin: true });
-    const a = admin.build();
-    admin.update(RUN);
-    expect(a.textContent).toContain("Workspace");
-    expect(a.textContent).toContain("/w");
+  it("shows the task and the questions, and no run, flow, version, step count or workspace", () => {
+    for (const admin of [false, true]) {
+      const p = mod.progressPanel({ admin });
+      const node = p.build();
+      p.update(RUN);
+      for (const t of ["Do it\nin full", "Q?"]) expect(node.textContent).toContain(t);
+      for (const t of ["r1", "build", "Flow version", "Workspace", "step done", "Run", "Flow"]) expect(node.textContent).not.toContain(t);
+    }
   });
-  it("keeps `extra`, its value and the focus over updates; keeps the details nodes for the same summary", () => {
+  it("keeps `extra`, its value and the focus over updates", () => {
     const extra = el();
     const box = el("textarea");
     extra.append(box);
-    const p = mod.overviewPanel({ extra });
+    const p = mod.progressPanel({ extra });
     const node = p.build();
     p.update(RUN);
     box.value = "typing";
     box.focus();
-    const dl = node.all("dl")[0]!;
-    const rows = [...dl.children];
+    const card = node.children[1];
+    const kids = [...card.children];
     for (let i = 0; i < 3; i++) p.update({ ...RUN }, RUN);
     expect(node.children).toContain(extra);
     expect(box.value).toBe("typing");
     expect(document.activeElement).toBe(box);
-    expect(dl.children.every((c, i) => c === rows[i])).toBe(true);
+    expect(card.children.every((c: FakeElement, i: number) => c === kids[i])).toBe(true);
+  });
+  it("lists the acceptance criteria with done and not-done marks, drops bad entries, and hides without any", () => {
+    const p = mod.progressPanel();
+    const node = p.build();
+    const box = node.all("section").find((x: FakeElement) => x.attrs["aria-label"] === "Acceptance criteria")!;
+    p.update(RUN);
+    expect(box.hidden).toBe(true);
+    p.update({ ...RUN, criteria: [{ text: "First", done: true }, { text: "Second", done: false }, { text: "", done: true }, { text: 5 }, null] });
+    expect(box.hidden).toBe(false);
+    const items = box.all("li");
+    expect(items.map((li: FakeElement) => li.textContent)).toEqual([" First", " Second"]);
+    expect(items.map((li: FakeElement) => li.all("svg")[0]!.attrs["aria-label"])).toEqual(["Done", "Not done yet"]);
+    p.update({ ...RUN, criteria: [] });
+    expect(box.hidden).toBe(true);
   });
   it("does not throw for an empty summary", () => {
-    const p = mod.overviewPanel();
+    const p = mod.progressPanel();
     p.build();
     expect(() => p.update({})).not.toThrow();
   });
   it("shows the questions of an administrator's stopped run", () => {
-    const p = mod.overviewPanel({ admin: true });
+    const p = mod.progressPanel({ admin: true });
     const node = p.build();
     p.update({ status: "stopped", reason: 'stopped at step "send_back"', history: [{ id: "send_back", type: "claude", ok: true, output: "Which one?" }] });
     expect(node.textContent).toContain("Which one?");
@@ -357,7 +464,7 @@ describe("decided questions", () => {
     expect(mod.decidedItems({ decidedQuestions: "x" })).toEqual([]);
   });
   it("shows the card to an administrator, with the full text in details", () => {
-    const p = mod.overviewPanel({ admin: true });
+    const p = mod.progressPanel({ admin: true });
     const node = p.build();
     p.update(RUN);
     expect(node.textContent).toContain("Decided by the Foundry");
@@ -368,7 +475,7 @@ describe("decided questions", () => {
     expect(d.textContent).toContain("full text");
   });
   it("shows text as text", () => {
-    const p = mod.overviewPanel({ admin: true });
+    const p = mod.progressPanel({ admin: true });
     const node = p.build();
     p.update({ ...RUN, decidedQuestions: [good({ questions: [{ n: 1, title: "<img src=x onerror=1>", text: "<b>x</b>", decision: "ok" }] })] });
     expect(node.textContent).toContain("<img src=x onerror=1>");
@@ -376,11 +483,11 @@ describe("decided questions", () => {
     expect(node.all("b").map((b: FakeElement) => b.textContent)).not.toContain("x");
   });
   it("shows nothing to a user, and hides the card without rounds", () => {
-    const user = mod.overviewPanel({ admin: false });
+    const user = mod.progressPanel({ admin: false });
     const u = user.build();
     user.update(RUN);
     expect(u.textContent).not.toContain("Decided by the Foundry");
-    const admin = mod.overviewPanel({ admin: true });
+    const admin = mod.progressPanel({ admin: true });
     const a = admin.build();
     admin.update({ ...RUN, decidedQuestions: [] });
     expect(a.textContent).not.toContain("Decided by the Foundry");
@@ -438,5 +545,17 @@ describe("createLog restore in a tab set", () => {
     const t = mod.createTabs([{ id: "a", label: "A", build: () => el() }, { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() }], { initial: "a" });
     t.show("log");
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("progressPanel: request", () => {
+  it("places the request box after the criteria and gives it every summary", () => {
+    const request = { el: el(), update: vi.fn() };
+    const p = mod.progressPanel({ request });
+    const node = p.build();
+    expect(node.children).toContain(request.el);
+    const s = { task: "t", planPoints: [] };
+    p.update(s);
+    expect(request.update).toHaveBeenCalledWith(s);
   });
 });

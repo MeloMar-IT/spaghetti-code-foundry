@@ -113,6 +113,18 @@ describe("pure functions", () => {
   it("has the five states", () => {
     expect(Object.keys(ui.STATE_LABELS)).toEqual(["exploring", "drafting", "ready", "published", "dropped"]);
   });
+  it("gives each state a status pill with an icon, a word and the old state class", () => {
+    const pill = (state: string) => ui.statePill({ state });
+    expect(ui.STATE_SEMANTIC).toEqual({ exploring: "running", drafting: "waiting", ready: "success", published: "success", dropped: "disabled" });
+    expect(pill("exploring").attrs.class).toBe("pill sem-running state-exploring");
+    expect(pill("dropped").attrs.class).toBe("pill sem-disabled state-dropped");
+    expect(pill("ready").textContent).toBe("Ready");
+    expect(pill("ready").all("svg")).toHaveLength(1);
+    expect(pill("strange").textContent).toBe("strange"); // an unknown state shows its raw word, neutral
+    expect(pill("strange").attrs.class).toBe("pill sem-neutral state-strange");
+    expect(pill("__proto__").attrs.class).toContain("sem-neutral");
+    expect(ui.statePill({}).textContent).toBe("Unknown");
+  });
   it("sessionProblem and sessionBody", () => {
     expect(ui.sessionProblem({ repo: "", idea: "x" })).toBe("Choose a repository.");
     expect(ui.sessionProblem({ repo: "a/b", idea: "  " })).toBe("Describe your idea.");
@@ -141,8 +153,8 @@ describe("pure functions", () => {
     expect(ui.logText({ what: "architect-suggested", detail: "notes" })).toBe("The architect made a suggestion for the notes");
     expect(ui.logText({ what: "suggestion-accepted", who: "Ann" })).toBe("Ann accepted a suggestion");
     expect(ui.logText({ what: "suggestion-rejected", who: "Ann", detail: "why" })).toBe("Ann rejected a suggestion for “so that …”");
-    expect(ui.logText({ what: "review-asked", who: "Ann" })).toBe("Ann asked the architect to review a story draft");
-    expect(ui.logText({ what: "architect-reviewed", detail: "2" })).toBe("The architect reviewed a story draft: 2 remarks");
+    expect(ui.logText({ what: "review-asked", who: "Ann" })).toBe("Ann asked the architect to review a change draft");
+    expect(ui.logText({ what: "architect-reviewed", detail: "2" })).toBe("The architect reviewed a change draft: 2 remarks");
     expect(ui.logText({ what: "moved-to-notes", who: "Ann", detail: "what" })).toBe("Ann moved “I want …” to the notes for the builder");
     expect(ui.errorText(new TypeError("x"))).toBe("Could not reach the server.");
     expect(ui.errorText(new Error("sentence"))).toBe("sentence");
@@ -549,7 +561,7 @@ describe("new session", () => {
   it("offers an idea and an existing issue; an idea is the default", async () => {
     await open();
     expect(walk(root()).filter((e) => e.tag === "legend").map((e) => e.textContent)).toEqual(["What do you want to refine?"]);
-    expect(walk(root()).filter((e) => e.tag === "b").map((e) => e.textContent)).toEqual(["An idea", "An existing issue"]);
+    expect(walk(root()).filter((e) => e.tag === "b").map((e) => e.textContent)).toEqual(["An idea", "An existing GitHub issue"]);
     expect(kindRadio("idea").checked).toBe(true);
     expect(kindRadio("issue").checked).toBe(false);
     expect(labels()).toContain("Title (optional)");
@@ -701,7 +713,7 @@ describe("new session", () => {
   it("opens with the issue kind from Refine an existing issue, and a kept repository wins over the filter", async () => {
     repos = ["a/one", "b/two"];
     await showList();
-    press(button(main(), "Refine an existing issue"));
+    press(button(main(), "Refine an existing GitHub issue"));
     expect(kindRadio("issue").checked).toBe(true);
     expect(field(root(), "issue")).toBeDefined();
     root().replaceChildren();
@@ -719,7 +731,7 @@ describe("new session", () => {
   it("shows the hint and the link for the issue kind too", async () => {
     repos = [];
     await showList();
-    press(button(main(), "Refine an existing issue"));
+    press(button(main(), "Refine an existing GitHub issue"));
     expect(root().textContent).toContain("You need a GitHub repository first.");
     expect(walk(root()).some((e) => e.tag === "a" && e.attrs.href === "#/repos")).toBe(true);
     expect(field(root(), "issue")).toBeUndefined();
@@ -733,7 +745,7 @@ describe("the session page", () => {
     const text = main().textContent;
     expect(text).toContain("Line one\nLine two");
     expect(text).toContain("Exploring");
-    expect(text).toContain("No story drafts yet.");
+    expect(text).toContain("No change drafts yet.");
     expect(text).toContain("Ann started the session");
     expect(walk(main()).some((e) => e.tag === "a" && e.textContent === "← All sessions")).toBe(true);
   });
@@ -743,21 +755,21 @@ describe("the session page", () => {
     const text = main().textContent;
     expect(text).toContain("Export");
     expect(text).toContain("Untitled draft");
-    expect(text).not.toContain("No story drafts yet.");
+    expect(text).not.toContain("No change drafts yet.");
   });
   it("says so when the story drafts are hidden", async () => {
     const s = session({ draftsHidden: true }) as any;
     delete s.drafts;
     sessions = [s];
     await showPage();
-    expect(main().textContent).toContain("The story drafts are not shown while the repository is not in My repositories.");
+    expect(main().textContent).toContain("The change drafts are not shown while the repository is not in My repositories.");
   });
   it("writes the log lines of the drafts", () => {
-    expect(ui.logText({ what: "draft-added", who: "Ann" })).toBe("Ann added a story draft");
-    expect(ui.logText({ what: "draft-published", who: "Ann" })).toBe("Ann published a story draft");
-    expect(ui.logText({ what: "draft-published", who: "Ann", detail: "#101 Export" })).toBe("Ann published a story draft: #101 Export");
-    expect(ui.logText({ what: "draft-removed", who: "Ann" })).toBe("Ann removed a story draft");
-    expect(ui.logText({ what: "draft-removed", who: "Ann", detail: "Export" })).toBe('Ann removed a story draft: "Export"');
+    expect(ui.logText({ what: "draft-added", who: "Ann" })).toBe("Ann added a change draft");
+    expect(ui.logText({ what: "draft-published", who: "Ann" })).toBe("Ann published a change draft");
+    expect(ui.logText({ what: "draft-published", who: "Ann", detail: "#101 Export" })).toBe("Ann published a change draft: #101 Export");
+    expect(ui.logText({ what: "draft-removed", who: "Ann" })).toBe("Ann removed a change draft");
+    expect(ui.logText({ what: "draft-removed", who: "Ann", detail: "Export" })).toBe('Ann removed a change draft: "Export"');
     expect(ui.logText({ what: "epic-set", who: "Ann", detail: "#73" })).toBe("Ann set the Epic to #73");
     expect(ui.logText({ what: "epic-set", who: "Ann" })).toBe("Ann set the Epic");
     expect(ui.logText({ what: "epic-cleared", who: "Ann" })).toBe("Ann cleared the Epic");
@@ -1006,11 +1018,11 @@ describe("the session page", () => {
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
   it("links the page", () => {
-    expect(read("index.html")).toContain('href="#/refinement" data-nav="refinement">Refinement<');
+    expect(read("index.html")).toContain('href="#/refinement" data-nav="refinement">Ideas<');
     const app = read("app.js");
     expect(app).toContain('from "./refinement.js"');
     expect(app).toContain('section === "refinement"');
-    expect(read("user/index.html")).toContain('href="#/refinement" data-nav="refinement">Refinement<');
+    expect(read("user/index.html")).toContain('href="#/refinement" data-nav="refinement">Ideas<');
     expect(read("user/app.js")).toContain('from "/refinement.js"');
   });
   it("uses the right routes", async () => {

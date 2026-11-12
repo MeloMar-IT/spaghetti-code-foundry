@@ -1,5 +1,6 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { h, mount, table, toast } from "./dom.js";
+import { statusPill } from "./icons.js";
 
 /** The four quick checks, in the order of the columns. */
 export const CHECKS = [
@@ -9,10 +10,13 @@ export const CHECKS = [
   ["questions", "No open questions"],
 ];
 
-/** One mark: ✓ or ✗, with the check in words for a screen reader and a tooltip. `missing` are the "Depends on" numbers that were not found. */
+/** One check as a status pill: "Yes" or "No" (icon and word), with the check in words as a tooltip. `missing` are the "Depends on" numbers that were not found. */
 export function checkMark(ok, label, missing = []) {
-  const said = `${label}: ${ok ? "yes" : "no"}${!ok && missing.length ? ` — not found: ${missing.map((n) => `#${n}`).join(", ")}` : ""}`;
-  return h("span", { class: ok ? "status has-glyph" : "status bad has-glyph", title: said, "aria-label": said }, ok ? "✓" : "✗");
+  const list = missing.map((n) => `#${n}`).join(", ");
+  const said = `${label}: ${ok ? "yes" : "no"}${!ok && missing.length ? ` — not found: ${list}` : ""}`;
+  return h("span", { class: "check-mark", title: said },
+    statusPill(ok ? "success" : "danger", ok ? "Yes" : "No"),
+    !ok && missing.length ? h("span", { class: "muted" }, ` not found: ${list}`) : null);
 }
 
 let chosen = ""; // the repository chosen last, kept while the person is on other pages
@@ -21,7 +25,7 @@ const SIGN_IN = "Check the repository's sign-in under My repositories.";
 /** The "Backlog readiness" page: a repository chooser and the open issues of it with a mark per check. */
 export async function renderBacklog(main, { repos, readOnly, errorText, current, goTo }) {
   const back = h("a", { href: "#/refinement" }, "← All sessions");
-  const title = h("div", { class: "toolbar" }, h("h1", {}, "Backlog readiness"), h("span", { class: "muted" }, "Which open issues are not ready to be built"));
+  const title = h("div", { class: "toolbar" }, h("h1", {}, "Backlog readiness"), h("span", { class: "muted" }, "Which open GitHub issues are not ready to be built"));
   if (readOnly) {
     mount(main, back, title, h("p", { class: "muted" }, "The backlog is read with the owner's GitHub sign-in, so it is not shown in a preview."));
     return () => {};
@@ -76,10 +80,8 @@ export async function renderBacklog(main, { repos, readOnly, errorText, current,
     const list = answer.issues ?? [];
     mount(body,
       list.length
-        ? h("div", { class: "table-box" }, h("table", { class: "table" },
-          h("thead", {}, h("tr", {}, ["Issue", "Title", ...CHECKS.map(([, l]) => l), ""].map((t) => h("th", {}, t)))),
-          h("tbody", {}, list.map((i) => row(answer.repo, i)))))
-        : h("div", { class: "empty" }, "No open issues to refine here."),
+        ? table(["GitHub issue", "Title", ...CHECKS.map(([, l]) => l), h("span", { class: "sr-only" }, "Actions")], list.map((i) => row(answer.repo, i)), { cards: true, caption: `Open GitHub issues of ${answer.repo}` })
+        : h("div", { class: "empty" }, "No open GitHub issues to refine here."),
       answer.cut ? h("p", { class: "muted" }, "GitHub returned a full page of 100 issues and pull requests, so older open issues may be missing.") : null);
   };
 

@@ -181,6 +181,15 @@ describe("switcherView listeners", () => {
     key("Escape");
     expect(hs.onClose).not.toHaveBeenCalled();
   });
+  it("Escape stops the event, so the drawer around the switcher stays open", () => {
+    open();
+    const stopImmediatePropagation = vi.fn();
+    doc().listeners.keydown.forEach((f: any) => f({ key: "Escape", stopImmediatePropagation }));
+    expect(stopImmediatePropagation).toHaveBeenCalledTimes(1);
+    stopImmediatePropagation.mockClear();
+    doc().listeners.keydown.forEach((f: any) => f({ key: "a", stopImmediatePropagation }));
+    expect(stopImmediatePropagation).not.toHaveBeenCalled();
+  });
   it("a mousedown outside closes without focus; inside does nothing", () => {
     const { hs, view } = open();
     const down = (target: unknown) => doc().listeners.mousedown.forEach((f: any) => f({ target }));

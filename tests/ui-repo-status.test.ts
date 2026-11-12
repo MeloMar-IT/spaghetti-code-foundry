@@ -6,6 +6,19 @@ beforeAll(async () => {
   s = await import("../ui/repo-status.js" as string);
 });
 
+describe("status semantics", () => {
+  it("maps an attention level", () => {
+    expect([s.attentionSemantic("ok"), s.attentionSemantic("warn"), s.attentionSemantic("bad")]).toEqual(["success", "warning", "danger"]);
+    for (const x of ["other", undefined, "__proto__"]) expect(s.attentionSemantic(x)).toBe("neutral");
+  });
+  it("maps a connection: none, ok, failed", () => {
+    expect(s.connectionSemantic(undefined)).toBe("neutral");
+    expect(s.connectionSemantic(null)).toBe("neutral");
+    expect(s.connectionSemantic({ ok: true })).toBe("success");
+    expect(s.connectionSemantic({ ok: false })).toBe("danger");
+  });
+});
+
 const failed = (over: object = {}, checks?: object[]) => ({
   ok: false,
   at: "2026-01-01T00:00:00Z",

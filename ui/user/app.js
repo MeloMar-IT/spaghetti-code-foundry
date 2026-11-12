@@ -98,6 +98,7 @@ async function route() {
     if (to.page.nav === "plugin") done = await renderPluginPage(box, to.page, { user: me, readOnly });
     else if (simple && page.section === "home") {
       done = await renderSimpleHome(box, {
+        list: to.query?.list ?? "",
         alive: () => mine === generation && !stopped,
         openGuide: () => {
           if (guideOffered) return;
@@ -119,13 +120,13 @@ async function route() {
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
     else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });
     else if (page.section === "agents") done = await renderOnboardingAgents(box, { admin: ownAdmin, readOnly, simple, credentialsHref: "/#/credentials" });
-    else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });
+    else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin, simple, contextRepo: () => context?.current().repo ?? "" });
     else if (page.section === "epics" && page.id) done = await renderEpic(box, { id: page.id, admin: false, me, query: to.query, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "epics") done = await renderEpics(box, { admin: false, me, readOnly, query: to.query, go });
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go });
     else if (page.section === "repos" && page.id) done = await renderRepo(box, { id: page.id, admin: false, readOnly, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query, go });
-    else if (page.id) done = renderMyRun(box, page.id, { readOnly });
+    else if (page.id) done = renderMyRun(box, page.id, { readOnly, onName: (n) => { if (mine === generation) namePage(n); } });
     else done = await renderMyRuns(box, { readOnly, query: to.query, go, filter: parseFilter(to.hash), alive: () => mine === generation && !stopped });
   } catch (e) {
     if (mine === generation && !stopped) mount(box, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
@@ -158,8 +159,6 @@ readOnly = view.readOnly;
 shownView = readOnly ? "advanced" : viewOf(me);
 ownAdmin = isAdmin(me) && !readOnly;
 if (!readOnly) showViewNav(shownView);
-// Simple has no repository switcher: its labels ("All repositories") are Advanced words.
-if (shownView === "simple" && !readOnly) document.getElementById("context")?.setAttribute("hidden", "");
 stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });

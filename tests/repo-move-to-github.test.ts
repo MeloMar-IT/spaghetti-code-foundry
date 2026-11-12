@@ -57,7 +57,8 @@ const setup = async () => {
   run(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "hi\n");
   run(dir, "add", "-A");
-  run(dir, "commit", "-q", "-m", "init");
+  // Not the message of the fake remote's own first commit: with the same tree, message, author and second, both would be one commit.
+  run(dir, "commit", "-q", "-m", "init of the local project");
   run(dir, "branch", "feature");
   run(dir, "tag", "v1");
   local = addRepo(admin.id, { url: dir, method: "local" }, { ownerOk: () => true });

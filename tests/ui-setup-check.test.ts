@@ -46,12 +46,26 @@ describe("the Next link", () => {
 });
 
 describe("the rows", () => {
-  it("shows a tick, a cross and a question mark, with command, Copy and link", async () => {
+  it("maps each state to a status semantic and a word", () => {
+    const rows = ui.setupRows(REPORT);
+    expect(rows.map((r: any) => [r.id, r.semantic, r.word])).toEqual([
+      ["git", "success", "Ready"],
+      ["claude", "success", "Ready"],
+      ["claude-sign-in", "danger", "Needs fixing"],
+      ["codex", "warning", "Needs fixing"], // not needed: a warning, not an error
+      ["node", "neutral", "Not checked"],
+    ]);
+    expect(rows[2].mark).toBe("✘"); // mark and tone are kept
+    expect(rows[2].tone).toBe("bad");
+  });
+
+  it("shows an icon and a word for every item, with command, Copy and link", async () => {
     const { box } = await draw();
     const text = box.textContent;
-    expect(text).toContain("✔");
-    expect(text).toContain("✘");
-    expect(text).toContain("?");
+    const pills = box.all("span").filter((s) => String(s.attrs.class).startsWith("pill sem-"));
+    expect(pills.map((p) => p.textContent)).toEqual(["Ready", "Ready", "Needs fixing", "Needs fixing", "Not checked"]);
+    for (const p of pills) expect(p.all("svg")).toHaveLength(1);
+    expect(box.all("span").filter((s) => s.attrs["aria-hidden"] === "true" && /^[✔✘?]$/.test(s.textContent))).toHaveLength(0);
     expect(text).toContain("Claude Code is not signed in.");
     expect(text).toContain("(optional)");
     expect(box.all("code").map((c) => c.textContent)).toEqual(["claude", "npm install -g @openai/codex"]);

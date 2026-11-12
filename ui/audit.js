@@ -1,12 +1,13 @@
 import { api } from "./api.js";
-import { h, markInvalid, mount, tableBox } from "./dom.js";
-import { entityLink, statusSummary } from "./kit/product.js";
+import { h, markInvalid, mount, table } from "./dom.js";
+import { statusPill } from "./icons.js";
+import { entityLink, pageHeader, statusSummary } from "./kit/product.js";
 import { emptyState, errorState, explainError, loadingState } from "./states.js";
 
 /** Every action a line can have; the same names as AUDIT_ACTIONS on the server, by alphabet. */
 export const ACTIONS = ["app-repos-change", "autonomy-demote", "autonomy-promote", "autonomy-promote-request", "block", "component-promote", "create", "credential-add", "credential-remove", "delete", "edit", "flow-publish", "help-action", "help-ask", "help-delete", "help-export", "limits-change", "link",
   "password", "policy-break-glass-end", "policy-break-glass-start", "policy-restore", "refinement-publish", "repo-add", "repo-change", "repo-remove", "repo-transfer", "restart-cancel", "restart-request", "role", "run-answer", "run-approve", "run-archive", "run-cancel", "run-reject",
-  "run-resume", "run-start", "run-unarchive", "settings-change", "sign-in", "skill-auto-approve", "skill-auto-update", "turn-answer", "turn-approve", "turn-reject", "turn-retry", "unblock", "view-as"];
+  "run-resume", "run-start", "run-unarchive", "safe-point-restore", "settings-change", "sign-in", "skill-auto-approve", "skill-auto-update", "turn-answer", "turn-approve", "turn-reject", "turn-retry", "unblock", "view-as"];
 
 /** A day from a date field ("2026-10-02") as an ISO time in the browser's time zone: its first moment, or its last with `end`. "" when it is not a real date. */
 export function dayTime(day, end = false) {
@@ -94,10 +95,12 @@ export function detailFields(e) {
 
 const fieldItem = (f) => ({ label: f.label, value: f.id ? entityLink({ kind: "user", id: f.id, label: f.value, href: f.href }) : f.value });
 
-function table(entries) {
+function auditTable(entries) {
   const open = new Set(); // the lines that are open, by place in this table
   const buttons = [];
-  const body = h("tbody", {});
+  // The shared table draws the box and the head; the rows are mounted into its body again whenever a line opens.
+  const box = table(["Time", "Who", "Action", "Target", "Result", h("span", { class: "sr-only" }, "Details")], [], { caption: "Audit log" });
+  const body = box.querySelector("tbody");
   const toggle = (i) => {
     if (!open.delete(i)) open.add(i);
     draw();
@@ -113,7 +116,7 @@ function table(entries) {
       h("td", { title: isAccount(e.target) ? e.target.id : null },
         targetText(e.target) || h("span", { class: "muted" }, "—"),
         e.detail ? h("div", { class: "muted" }, e.detail) : null),
-      h("td", {}, h("span", { class: e.result === "failed" ? "pill fail" : "pill ok" }, e.result)),
+      h("td", {}, statusPill(e.result === "failed" ? "danger" : "success", String(e.result || "ok"))),
       h("td", {}, buttons[i]));
   };
   const detail = (e) => h("tr", {}, h("td", { colspan: 6 }, statusSummary({ label: "Entry details", items: detailFields(e).map(fieldItem) })));
@@ -121,10 +124,7 @@ function table(entries) {
     mount(body, entries.flatMap((e, i) => (open.has(i) ? [row(e, i), detail(e)] : [row(e, i)])));
   }
   draw();
-  return tableBox(h("table", { class: "table" },
-    h("caption", { class: "sr-only" }, "Audit log"),
-    h("thead", {}, h("tr", {}, ["Time", "Who", "Action", "Target", "Result", h("span", { class: "sr-only" }, "Details")].map((t) => h("th", { scope: "col" }, t)))),
-    body));
+  return box;
 }
 
 /** The Audit page (admins). Draws at once and returns its cleanup at once; the data arrives later. */
@@ -168,13 +168,13 @@ export function renderAudit(main) {
     if (my !== loads || !live()) return;
     mount(result,
       data.more ? h("p", { class: "status" }, moreText(data.entries.length)) : null,
-      data.entries.length ? table(data.entries) : emptyState("No entries."));
+      data.entries.length ? auditTable(data.entries) : emptyState("No entries."));
   };
 
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Audit"), h("span", { class: "muted" }, "Who did what"),
-      labelled("User", user), labelled("Action", action), labelled("From", from), labelled("To", to),
-      h("span", { class: "spacer" }), exportSlot),
+    pageHeader({ layout: "toolbar", title: "Audit", meta: h("span", { class: "muted" }, "Who did what"),
+      actions: [labelled("User", user), labelled("Action", action), labelled("From", from), labelled("To", to),
+        h("span", { class: "spacer" }), exportSlot] }),
     result);
 
   let starts = 0; // the newest users load; Retry can be pressed again before the first answer comes

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { whoText } from "../ui/change-words.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -94,7 +95,7 @@ describe("workCard", () => {
   it("shows each part and the sentence as the title", () => {
     const c = card();
     const el = text();
-    for (const s of ["#89", "Eighty-nine", c.next.who, "Blocked by #88, #87", "acme/app", "Ann", "3 d", "Step 2 of 3"]) expect(el.textContent, s).toContain(s);
+    for (const s of ["#89", "Eighty-nine", whoText(c.next.who), "Blocked by #88, #87", "acme/app", "Ann", "3 d", "Step 2 of 3"]) expect(el.textContent, s).toContain(s);
     if (c.next.action) expect(el.textContent).toContain(c.next.action);
     expect(el.attrs.title).toBe(c.next.text);
     expect(el.children.length).toBeLessThanOrEqual(4);
@@ -102,7 +103,7 @@ describe("workCard", () => {
     expect(hrefs).toEqual(expect.arrayContaining(["https://github.com/acme/app/issues/89", "https://github.com/acme/app/issues/88", "https://github.com/acme/app/issues/87"]));
   });
   it("hides only the part whose property is off", () => {
-    const hide: Record<string, string> = { repo: "acme/app", blockers: "Blocked by", owner: "Ann", age: "3 d", step: "Step 2 of 3", next: card().next.who };
+    const hide: Record<string, string> = { repo: "acme/app", blockers: "Blocked by", owner: "Ann", age: "3 d", step: "Step 2 of 3", next: whoText(card().next.who) };
     for (const [prop, s] of Object.entries(hide)) {
       const el = text(prefs({ props: ALL.filter((x) => x !== prop) }));
       expect(el.textContent, prop).not.toContain(s);

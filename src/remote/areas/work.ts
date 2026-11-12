@@ -208,6 +208,8 @@ export const WORK: Cmd[] = [
     help: "stop a run that runs, is queued, waits for a decision or stopped" },
   { area: "runs", action: "archive", method: "POST", path: "runs/:id/archive", args: ["id"], help: "take a finished run out of the list of runs; nothing is deleted",
     show: (d) => `run ${obj(d).runId} is archived` },
+  { area: "runs", action: "not-now", method: "POST", path: "runs/:id/not-now", args: ["id"], help: "put a run that got stuck aside until it fails again (\"Not now\" in the Simple view)",
+    show: (d) => `run ${obj(d).runId} is put aside until it fails again` },
   { area: "runs", action: "unarchive", method: "POST", path: "runs/:id/unarchive", args: ["id"], show: (d) => `run ${obj(d).runId} is back in the list of runs` },
   { area: "runs", action: "owners", method: "GET", path: "run-owners", help: "the accounts that have runs, with their ids", show: (d) => table(list(d), cols("id", "name", "runs"), "no account has runs") },
   { area: "runs", action: "filters", method: "GET", path: "run-filters", help: "the repositories and flows of the runs you can see",

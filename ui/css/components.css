@@ -3,7 +3,7 @@
    Does not belong here: rules for a class that only one page area uses; layout of a page. */
 
 /* ── controls ── */
-button, .btn { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: var(--radius-md); padding: var(--control-pad-y) var(--control-pad-x); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+button, .btn { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: var(--button-radius); padding: var(--control-pad-y) var(--control-pad-x); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 button:hover { background: var(--panel-2); }
 button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--color-on-accent); font-weight: 550; }
@@ -18,9 +18,9 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--b
 textarea { resize: vertical; font-family: var(--mono); font-size: var(--text-code); line-height: 1.5; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
 .field { display: grid; gap: 4px; }
-.field > span { font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
+.field > span { font-family: var(--font-label); text-transform: var(--label-case); font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
 .field > small { color: var(--muted); font-size: var(--text-meta); }
-.pill { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-meta); padding: 1px 8px; border-radius: var(--radius-pill); background: var(--panel-2); color: var(--muted); font-weight: 550; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: var(--pill-gap); font-size: var(--text-meta); padding: var(--pill-pad-y) var(--pill-pad-x); border-radius: var(--pill-radius); background: var(--panel-2); color: var(--muted); font-weight: 550; white-space: nowrap; }
 .pill.sem-neutral { background: var(--color-neutral-soft); color: var(--color-neutral); }
 .pill.sem-accent { background: var(--color-accent-soft); color: var(--color-accent); }
 .pill.sem-success { background: var(--color-success-soft); color: var(--color-success); }
@@ -53,7 +53,7 @@ a.pill.refinement:hover { text-decoration: underline; }
 /* Not by colour alone: a glyph before the text. Empty lines and marks that already are a glyph get none. */
 .status.ok:not(:empty):not(.has-glyph)::before { content: "✓ "; content: "✓ " / ""; }
 .status.bad:not(:empty):not(.has-glyph)::before { content: "✕ "; content: "✕ " / ""; }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--card-pad); display: grid; gap: var(--stack-gap); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--card-radius); padding: var(--card-pad); display: grid; gap: var(--stack-gap); }
 .card.jump-only { border-style: dashed; }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .chips { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -66,9 +66,9 @@ button.problem-link { border: none; background: transparent; padding: 0; color: 
 .checks { display: grid; gap: 4px; }
 .pill.approval { background: var(--color-waiting-soft); color: var(--color-waiting); }
 .pill.parallel, .pill.flow { background: var(--run-soft); color: var(--run); }
-.table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--table-radius); overflow: hidden; }
 .table th, .table td { text-align: left; padding: var(--cell-pad-y) var(--cell-pad-x); font-size: var(--text-table); border-bottom: 1px solid var(--border); vertical-align: top; }
-.table th { font-size: var(--text-table-head); color: var(--muted); font-weight: 550; background: var(--panel-2); }
+.table th { font-family: var(--font-label); text-transform: var(--label-case); font-size: var(--text-table-head); color: var(--muted); font-weight: 550; background: var(--panel-2); }
 .table tr.link { cursor: pointer; }
 .table tr.link:hover td { background: var(--panel-2); }
 .table .task { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -122,8 +122,8 @@ a.btn.primary:hover { filter: brightness(1.06); }
 .card.failure details.raw summary { cursor: pointer; color: var(--muted); }
 
 /* ── keyboard focus ── */
-a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
+summary:focus-visible, .seg button:focus-visible { outline-offset: calc(var(--focus-width) * -1); }
 .modal:focus-visible { outline: none; }
 
 /* ── target size: at least 24 × 24 CSS px ── */
@@ -149,7 +149,21 @@ button.icon { justify-content: center; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
 .pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }
+/* Not by colour alone: a glyph before the word, unless the pill already has an icon. The second line has empty alt text. */
+.pill:is(.sem-success, .ok, .kind-done, .state-active, .ready-met, .state-ready, .state-published):not(:has(> .ico))::before { content: "✓"; content: "✓" / ""; }
+.pill:is(.sem-danger, .fail, .state-error, .ready-not-met, .who-something-is-wrong):not(:has(> .ico))::before { content: "✕"; content: "✕" / ""; }
+.pill:is(.sem-warning, .locked, .who-a-time-limit):not(:has(> .ico))::before { content: "!"; content: "!" / ""; }
+.pill:is(.sem-running, .kind-running, .state-exploring):not(:has(> .ico))::before { content: "↻"; content: "↻" / ""; }
+.pill:is(.sem-waiting, .approval, .who-you, .state-drafting):not(:has(> .ico))::before { content: "◷"; content: "◷" / ""; }
+.pill:is(.sem-info):not(:has(> .ico))::before { content: "i"; content: "i" / ""; }
+.pill:is(.sem-disabled, .state-dropped):not(:has(> .ico))::before { content: "–"; content: "–" / ""; }
 .check-row { display: flex; gap: 6px; align-items: center; }
+.setup-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
+.setup-row { min-width: 0; padding: var(--space-lg) var(--card-pad); border: var(--border-width) solid var(--border); border-radius: var(--card-radius); background: var(--panel); overflow-wrap: anywhere; }
+.setup-row p { margin: 0; }
+.setup-row code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.setup-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.check-mark { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 
 /* Filters in the address (chips above a list) */
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -161,3 +175,10 @@ button.icon { justify-content: center; }
 .table td.integration, .table td.fingerprint { overflow-wrap: anywhere; }
 .table td.next-step .muted { max-width: 36ch; overflow-wrap: anywhere; font-size: var(--text-small); }
 .table.compact .field small { display: none; }
+
+/* Your request: what was asked and what was assumed (not by colour alone: a tag with an icon, a dashed edge, italic text) */
+.request-points { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.request-point { display: grid; gap: var(--space-xs); padding-left: var(--space-sm); border-left: 3px solid var(--border); overflow-wrap: anywhere; }
+.request-assumed { border-left-style: dashed; }
+.request-assumed .request-text { font-style: italic; }
+.request-tag { display: inline-flex; gap: var(--space-xs); align-items: center; font-weight: 600; font-size: var(--text-small); }

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
+import { userRecord } from "../src/server/user-view.js";
 import { KINDS } from "../src/words.js";
 import { audit } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
@@ -9,8 +10,12 @@ let restore: () => void;
 let words: any;
 let model: any;
 let view: any;
+let homeMod: any;
+let prefs: any;
 beforeAll(async () => {
   restore = installFakeDom();
+  homeMod = await import("../ui/simple-home.js" as string);
+  prefs = await import("../ui/prefs.js" as string);
   words = await import("../ui/simple-words.js" as string);
   model = await import("../ui/simple-model.js" as string);
   view = await import("../ui/simple.js" as string);
@@ -56,7 +61,6 @@ describe("the word list", () => {
     const all = [
       ...Object.entries(words.WORDS).flatMap(([k, v]) => (typeof v === "string" ? [v] : typeof v === "function" ? [v(3)] : k === "actions" ? Object.values(v as object) : [])),
       ...Object.values<any>(words.KIND_WORDS).flatMap((w) => [w.line, w.todo ?? ""]),
-      ...words.PHASES.map((_: string, i: number) => words.progressText(i)),
       words.stateLine({ needsAnswer: true }), words.stateLine({ needs: 1 }), words.stateLine({ building: 2 }), words.stateLine({ planned: 1 }), words.stateLine({ done: 1 }), words.stateLine({}),
     ];
     for (const t of all) expect(words.forbiddenIn(t), t).toEqual([]);
@@ -82,14 +86,8 @@ describe("the word list", () => {
     expect(words.summaryOf("")).toBe("");
   });
 
-  it("names the phase of a step", () => {
-    const p = words.phaseOf;
-    expect([p("implement"), p("fix_tests_2"), p("review_1"), p("plan"), p("pull_ticket"), p("commit")]).toEqual([1, 2, 2, 0, 0, 3]);
-    // steps that come before the work starts, in the real issue flow
-    expect([p("plan_review"), p("baseline_tests"), p("fetch_main")]).toEqual([0, 0, 0]);
-    expect(p("x")).toBe(3);
-    expect(p("")).toBe(0);
-    expect(words.progressText(1)).toBe("Step 2 of 4: building");
+  it("no longer has the four-step phase words", () => {
+    expect([words.PHASES, words.phaseOf, words.progressText]).toEqual([undefined, undefined, undefined]);
   });
 
   it("gives every state line", () => {
@@ -122,7 +120,11 @@ describe("the model", () => {
     const c = model.cardOf({ run: run("a", "running", { state: { next: "implement" }, history: [{ id: "plan" }] }), job: null });
     expect(c.title).toBe("Show the weather");
     expect(c.sentence).toBe("Shows the weather for a city.");
-    expect(c.progress).toBe("Step 2 of 4: building");
+    expect(c.progress).toBe("Build: Making the change.");
+    // an unknown step id takes its phase from its place in the flow
+    const flowDef = { steps: Array.from({ length: 10 }, (_, i) => ({ id: i === 9 ? "zzz" : `s${i}` })) };
+    const late = model.cardOf({ run: run("b", "running", { state: { next: "zzz" }, flowDef }), job: null });
+    expect(late.progress).toBe("Deliver: Adding the change to your project.");
     const check = model.cardOf({ run: run("a", "approve_plan"), job: null });
     expect(check.todo).toBe("Check the plan");
     expect(Object.keys(check.link)).toEqual(["href", "external"]);
@@ -197,7 +199,10 @@ describe("the pages", () => {
   it("lists one card per project with the state and a big button", () => {
     const [home] = pages();
     expect(home!.all("li").length).toBe(2);
-    expect(home!.all("h1")[0]!.textContent).toBe("My projects");
+    // the greeting of Today is the h1 of the page; My projects is a section below it, each project a heading under that
+    expect(home!.all("h1")).toHaveLength(0);
+    expect(home!.all("h2")[0]!.textContent).toBe("My projects");
+    expect(home!.all("h3")).toHaveLength(2);
     expect(texts(home!).join("|")).toContain("Waiting for your answer");
     expect(box(view.projectsView([])).textContent).toContain("No projects yet");
   });
@@ -205,7 +210,7 @@ describe("the pages", () => {
   it("shows what to do, the four groups and progress", () => {
     const page = box(view.projectView(model.projectsModel(repos, forbiddenRuns, [])[0], {}));
     const t = page.textContent;
-    for (const s of ["What you need to do", "What is being made", "Planned", "Being built", "Ready for you to check", "Done", "Step 2 of 4: building"]) expect(t).toContain(s);
+    for (const s of ["What you need to do", "What is being made", "Planned", "Being built", "Ready for you to check", "Done", "Build: Making the change."]) expect(t).toContain(s);
     const calm = box(view.projectView(model.projectsModel(repos, [], [])[0], {}));
     expect(calm.textContent).toContain("Nothing — the Foundry is working.");
   });
@@ -312,6 +317,108 @@ describe("the pages", () => {
   });
 });
 
+describe("the Simple Home is Today with My projects below it", () => {
+  const api = (runs: any[], list: any[] = repos): any => ({ repos: vi.fn(async () => list), runs: vi.fn(async () => runs), queue: vi.fn(async () => ({ active: [], pending: [] })), run: vi.fn() });
+  const open = async (runs: any[], opts: any = {}) => {
+    const main = new FakeElement("div");
+    const stop = await view.renderSimpleHome(main, { a: api(runs), openGuide: vi.fn(), ...opts });
+    return { main, stop };
+  };
+  const stuck = (id: string, flags: any = {}) => run(id, "failed", { status: "failed", next: { ...nextStep("failed", { runId: id, repo: "o/app", title: "Fix the colours" } as any), why: "The branch could not be merged; the tests failed.", ...flags } });
+  const sections = (root: FakeElement) => root.all("h2").map((e) => e.textContent);
+  const forbiddenRuns = [
+    run("a", "questions", { next: { ...nextStep("questions", { runId: "a", repo: "o/app" } as any), text: "waiting for you — release pull request issue #12", where: { label: "issue #12", url: "#/runs/a" } } }),
+    run("b", "running", { state: { next: "implement" }, cost: 12.5, model: "opus", agent: "claude", branch: "feature/12-x" }),
+    run("c", "done", { finishedAt: iso(1), label: "scf:done", transcript: "log" }),
+    run("d", "approve_plan"),
+  ];
+
+  it("shows the greeting, Today and then My projects with the project headings", async () => {
+    const { main, stop } = await open([run("q", "approve_plan"), run("b", "running", { state: { next: "implement" } }), run("d", "done", { finishedAt: new Date().toISOString() })]);
+    expect(main.all("h1").map((e) => e.textContent)).toEqual([expect.stringMatching(/^Good /)]);
+    expect(sections(main)).toEqual(["What do you want to build?", "Needs you", "Running now", "Your project", "My projects"]);
+    expect(main.all("section").find((s) => s.attrs.class?.includes("simple-home-project"))!.all("ol")[0]!.attrs.class).toContain("scf-phase-strip");
+    expect(main.all("a").filter((a) => a.attrs.href === "#/start").map((a) => a.textContent)).toEqual(["Start"]);
+    expect(main.all("h3").map((e) => e.textContent)).toEqual(expect.arrayContaining(["app", "other"]));
+    expect(main.all("ol")[0]!.attrs.class).toContain("scf-phase-strip");
+    expect(main.all("p").find((p) => p.attrs.class === "today-summary")!.textContent).toBe("1 thing needs you, 1 change is being built, 1 finished today");
+    stop();
+  });
+
+  it("links the work and the card button to the project page, and the counters to lists on Home", async () => {
+    const { main, stop } = await open([run("q", "approve_plan")]);
+    const card = main.all("li").find((l) => l.attrs.class?.includes("today-card"))!;
+    expect(card.all("a").find((a) => a.attrs.class === "btn primary")!.attrs.href).toBe("#/repos/r1");
+    expect(main.all("nav")[0]!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=check", "#/home?list=building", "#/home?list=ready", "#/home?list=published-week"]);
+    stop();
+  });
+
+  it("opens the list a counter points to, without leaving Simple", async () => {
+    const { main, stop } = await open([run("b", "running")], { list: "building" });
+    const section = main.all("section").find((s) => s.attrs.class === "today-list")!;
+    expect(section.all("h2")[0]!.textContent).toBe("Running");
+    expect(section.all("li")).toHaveLength(1);
+    expect(section.all("a").some((a) => a.attrs.href === "#/home")).toBe(true);
+    stop();
+  });
+
+  it("still opens the lists of the old addresses, and none for an unknown key", async () => {
+    for (const [key, title] of [["waiting", "Planned"], ["finished", "Done"], ["finished-today", "Done today"], ["ready", "Ready to check"]]) {
+      const { main, stop } = await open([run("d", "done", { finishedAt: new Date().toISOString() })], { list: key });
+      expect(main.all("section").find((s) => s.attrs.class === "today-list")!.all("h2")[0]!.textContent).toBe(title);
+      stop();
+    }
+    const { main, stop } = await open([], { list: "bogus" });
+    expect(main.all("section").some((s) => s.attrs.class === "today-list")).toBe(false);
+    stop();
+  });
+
+  it("does not show work of a project that is not in the list", async () => {
+    const { main, stop } = await open([run("x", "approve_plan", { vars: { github_repo: "o/stranger" } })]);
+    expect(main.all("li").filter((l) => l.attrs.class?.includes("today-card"))).toHaveLength(0);
+    expect(main.all("p").find((p) => p.attrs.class === "today-summary")!.textContent).toBe("Nothing needs you");
+    stop();
+  });
+
+  it("gives a stuck change a card with plain words, and no card or count for one that is closed or put aside", async () => {
+    const { main, stop } = await open([stuck("s"), stuck("c", { issueClosed: true }), stuck("n", { notNow: true })]);
+    const cards = main.all("li").filter((l) => l.attrs.class?.includes("today-card"));
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.textContent).toContain("This got stuck");
+    expect(main.all("nav")[0]!.all("a")[0]!.textContent).toBe("1 Needs you");
+    stop();
+  });
+
+  it("shows no forbidden term in any text, aria-label or title of the whole Home", async () => {
+    const { main, stop } = await open([...forbiddenRuns, stuck("s"), run("b2", "running", { state: { next: "implement" }, task: "Fix failed release", next: { ...nextStep("running", { runId: "b2", repo: "o/app" } as any), title: "Fix failed release" } })]);
+    expect(words.forbiddenIn(texts(main).join("\n")), texts(main).join("|")).toEqual([]);
+    expect(main.all("button").filter((b) => b.attrs.class?.includes("help-mark"))).toEqual([]);
+    expect(main.textContent).not.toContain("Open the run");
+    stop();
+  });
+
+  it("passes the audit and its headings step by one", async () => {
+    const { main, stop } = await open([...forbiddenRuns, stuck("s")]);
+    expect(audit(main)).toEqual([]);
+    const levels = walk(main).filter((e) => /^h\d$/.test(e.tag)).map((e) => Number(e.tag[1]));
+    levels.forEach((l, i) => { if (i) expect(l - levels[i - 1]!).toBeLessThanOrEqual(1); });
+    const names = walk(main).filter((e) => e.tag === "a" || e.tag === "summary").map((e) => e.attrs["data-focus"]);
+    expect(names.every(Boolean)).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+    stop();
+  });
+
+  it("with no project it still shows Today, My projects and the guide opens once", async () => {
+    const openGuide = vi.fn();
+    const main = new FakeElement("div");
+    (await view.renderSimpleHome(main, { a: api([], []), openGuide }))();
+    expect(openGuide).toHaveBeenCalledTimes(1);
+    expect(main.all("h1")).toHaveLength(1);
+    expect(sections(main)).toEqual(["What do you want to build?", "Running now", "My projects"]);
+    expect(main.textContent).toContain("No projects yet");
+  });
+});
+
 describe("Make this version final (a local project)", () => {
   const LOCAL = "local:demo-0123abcd";
   const local = [{ id: "r3", url: "/home/me/demo", method: "local", localName: LOCAL }];
@@ -388,6 +495,238 @@ describe("Make this version final (a local project)", () => {
     for (const v of Object.values<string>(words.FINAL)) expect(words.forbiddenIn(v), v).toEqual([]);
     const page = box(view.projectView(model.projectsModel(local, [finalRun()], [])[0], { onDecide: async () => true }));
     expect(words.forbiddenIn(texts(page).join("\n"))).toEqual([]);
+  });
+});
+
+describe("the Simple home layouts", () => {
+  const LOOKS: string[] = ["calm", "midnight", "friendly", "editorial", "bento"];
+  const rich = [
+    run("a", "questions"), run("p", "approve_plan"), run("s", "failed", { status: "failed" }),
+    run("b", "running", { state: { next: "implement" } }), run("d", "done", { finishedAt: new Date().toISOString(), history: [{ id: "merge", ok: true }] }),
+  ];
+  const hm = (runs: any[] = rich, opts: any = {}) => model.homeModel(runs, [], repos, model.projectsModel(repos, runs, []), opts);
+  const signature = (root: FakeElement) => ({
+    controls: walk(root).filter((e) => e.tag === "a" || e.tag === "button").map((e) => JSON.stringify([e.tag, e.attrs.href ?? "", e.textContent])).sort(),
+    h3: walk(root).filter((e) => e.tag === "h3").map((e) => e.textContent),
+  });
+  const on = (id: string, repo: string, kind: any, over: any = {}) => run(id, kind, { vars: { github_repo: repo, issue: "1" }, ...over });
+  const paused = (id: string, repo: string, over: any = {}) => run(id, "dependency", { status: "waiting", vars: { github_repo: repo, issue: "1" }, history: [{ id: "implement" }], state: { next: "implement" }, ...over });
+
+  it("has words that pass the forbidden-term check", () => {
+    for (const v of Object.values<any>(words.HOME)) {
+      for (const t of typeof v === "string" ? [v] : typeof v === "function" ? [v(3)] : Object.values<string>(v)) expect(words.forbiddenIn(t), t).toEqual([]);
+    }
+  });
+
+  it("maps every look to a layout, and an unknown or inherited name to cards", () => {
+    expect([...prefs.LOOKS]).toEqual(LOOKS);
+    expect(Object.keys(homeMod.LAYOUT_OF_LOOK).sort()).toEqual([...LOOKS].sort());
+    expect(["calm", "friendly"].map(homeMod.layoutOf)).toEqual(["cards", "cards"]);
+    expect(["midnight", "editorial"].map(homeMod.layoutOf)).toEqual(["list", "list"]);
+    expect(homeMod.layoutOf("bento")).toBe("tiles");
+    for (const x of ["x", undefined, null, "", "constructor", "toString", "__proto__", "hasOwnProperty", 3]) expect(homeMod.layoutOf(x), String(x)).toBe("cards");
+  });
+
+  it("reads the look from the page and falls back to calm", () => {
+    expect(homeMod.currentLook({ getAttribute: () => "bento" })).toBe("bento");
+    const bad: any[] = [{ getAttribute: () => "nope" }, { getAttribute: () => null }, { getAttribute: () => "constructor" }, {}, undefined, null, { getAttribute: () => { throw new Error("x"); } }];
+    for (const root of bad) expect(homeMod.currentLook(root)).toBe("calm");
+  });
+
+  it("builds the counters with their keys, labels, counts and addresses", () => {
+    const m = hm();
+    expect(m.counters.map((c: any) => [c.key, c.label, c.count, c.href])).toEqual([
+      ["check", "Needs you", 3, "#/home?list=check"], ["building", "Running", 1, "#/home?list=building"],
+      ["ready", "Ready to check", 1, "#/home?list=ready"], ["published-week", "Published this week", 1, "#/home?list=published-week"],
+    ]);
+    expect(m.counters[0].count).toBe(m.attention.length);
+    expect(m.summary).toBe("3 things need you, 1 change is being built, 1 finished today");
+  });
+
+  it("keeps a known list and drops an unknown one", () => {
+    expect(hm(rich, { list: "bogus" }).list).toBe("");
+    expect(hm(rich, { list: "constructor" }).list).toBe("");
+    expect(hm(rich, { list: "waiting" }).list).toBe("waiting");
+    expect(hm(rich, { list: "ready" })).toMatchObject({ list: "ready", listTitle: "Ready to check" });
+  });
+
+  it("picks the current project: newest running work, else the first card, else the first project, else none", () => {
+    const running = [on("a", "o/app", "running", { startedAt: iso(30), state: { next: "plan" } }), on("b", "o/other", "running", { startedAt: iso(5), state: { next: "implement" } }), on("q", "o/app", "approve_plan")];
+    const m = hm(running);
+    expect(m.project).toMatchObject({ id: "r2", name: "other", href: "#/repos/r2" });
+    expect(m.project.phase).toBe(m.building.find((b: any) => b.id === "b").phase.index);
+    expect(m.project.phase).toBeGreaterThan(0);
+    expect(hm([on("q", "o/other", "approve_plan")]).project).toMatchObject({ id: "r2", phase: null });
+    expect(hm([]).project).toMatchObject({ id: "r1", phase: null });
+    expect(model.homeModel([], [], [], [], {}).project).toBeNull();
+  });
+
+  it("does not let paused work be the current project or give it a phase", () => {
+    const go = on("go", "o/app", "running", { startedAt: iso(60), state: { next: "plan" } });
+    // a newer paused item does not win over an older running one
+    expect(hm([go, paused("p", "o/other", { startedAt: iso(1) })]).project.id).toBe("r1");
+    // a project with only paused work has no current phase, and the first card decides the project
+    const only = hm([paused("p", "o/app")]);
+    expect(only.building).toHaveLength(1);
+    expect(only.project).toMatchObject({ id: "r1", phase: null });
+    expect(hm([paused("p", "o/app"), on("q", "o/other", "approve_plan")]).project).toMatchObject({ id: "r2", phase: null });
+  });
+
+  // the layout a look really gets: its own, or cards while it has no view yet
+  const drawnOf = (look: string) => (Object.hasOwn(homeMod.VIEWS, homeMod.layoutOf(look)) ? homeMod.layoutOf(look) : "cards");
+
+  it("draws the cards layout, in order, for every look that uses it", () => {
+    const pages = [...LOOKS.filter((l) => drawnOf(l) === "cards").map((look) => box(homeMod.homeLayout(hm(), look))), box(homeMod.drawLayout(hm(), "cards"))];
+    for (const page of pages) {
+      const wrap = page.all("div")[0]!;
+      expect(wrap.attrs.class).toBe("simple-home");
+      expect(wrap.attrs["data-layout"]).toBe("cards");
+      const order = wrap.children.filter((c: any) => c instanceof FakeElement).map((c: any) => c.tag + (c.attrs.class ? "." + c.attrs.class.split(" ")[0] : ""));
+      expect(order).toEqual(["h1.today-greeting", "p.today-summary", "section.simple-card", "nav.today-counters", "section.today-attention", "section.today-building", "section.simple-card"]);
+      expect(page.all("a").filter((a) => a.attrs.href === "#/start")).toHaveLength(1);
+      expect(page.all("nav")[0]!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=check", "#/home?list=building", "#/home?list=ready", "#/home?list=published-week"]);
+      expect(page.all("nav")[0]!.all("a").map((a) => a.textContent)).toEqual(["3 Needs you", "1 Running", "1 Ready to check", "1 Published this week"]);
+      expect(page.all("section").find((s) => s.attrs.class?.includes("today-attention"))!.all("a").filter((a) => a.attrs.class === "btn primary")).toHaveLength(3);
+      expect(page.all("section").find((s) => s.attrs.class?.includes("today-building"))!.all("ol")).toHaveLength(1);
+      expect(page.all("section").find((s) => s.attrs.class?.includes("simple-home-project"))!.all("ol")[0]!.all("li")).toHaveLength(5);
+    }
+  });
+
+  it("dispatches by layout name, and falls back to cards where there is no view yet", () => {
+    const layoutOfDrawn = (layout: any) => box(homeMod.drawLayout(hm(), layout)).all("div")[0]!.attrs["data-layout"];
+    for (const layout of ["cards", "nope", undefined, "constructor"]) expect(layoutOfDrawn(layout), String(layout)).toBe("cards");
+    expect(layoutOfDrawn("list")).toBe("list");
+    expect(layoutOfDrawn("tiles")).toBe("tiles");
+    expect(box(homeMod.homeLayout(hm(), "midnight")).all("div")[0]!.attrs["data-layout"]).toBe("list");
+    expect(box(homeMod.homeLayout(hm(), "bento")).all("div")[0]!.attrs["data-layout"]).toBe("tiles");
+    expect(box(homeMod.homeLayout(hm(), "calm")).all("div")[0]!.attrs["data-layout"]).toBe("cards");
+    // a view that is added later is used for its layout, and only for it
+    expect(layoutOfDrawn("later")).toBe("cards");
+    homeMod.VIEWS.later = (m: any) => [homeMod.cardsLayout(m)[0]];
+    try {
+      expect(layoutOfDrawn("later")).toBe("later");
+      expect(box(homeMod.homeLayout(hm(), "calm")).all("div")[0]!.attrs["data-layout"]).toBe("cards");
+    } finally {
+      delete homeMod.VIEWS.later;
+    }
+  });
+
+  it("has the same items and buttons under every look and every layout", async () => {
+    const seen: any[] = [];
+    const expected: any = { calm: "cards", friendly: "cards", midnight: "list", editorial: "list", bento: "tiles" };
+    for (const look of LOOKS) {
+      const main = new FakeElement("div");
+      const a: any = { repos: async () => repos, runs: async () => rich, queue: async () => ({ active: [], pending: [] }), run: () => {} };
+      (await view.renderSimpleHome(main, { a, openGuide: () => {}, look: () => look }))();
+      seen.push(signature(main));
+      expect(main.all("div").find((d) => d.attrs["data-layout"])!.attrs["data-layout"]).toBe(expected[look]);
+    }
+    for (const s of seen) expect(s).toEqual(seen[0]);
+    expect(seen[0].controls.length).toBeGreaterThan(8);
+    // with an opened list, and with more items than are shown
+    const more = [...rich, ...["m1", "m2", "m3", "m4"].map((id) => run(id, "questions"))];
+    // seven approvals (the Needs you overflow) and seven running runs (the Running overflow)
+    const many = [
+      ...Array.from({ length: 7 }, (_, i) => on(`ap${i}`, "o/app", "approval")),
+      ...Array.from({ length: 7 }, (_, i) => on(`rn${i}`, "o/app", "running", { startedAt: iso(i + 1), state: { next: "implement" } })),
+    ];
+    const manyModel = hm(many);
+    const moreLinks = (m: any, l: string) => box(homeMod.drawLayout(m, l)).all("a").filter((a) => /^\+?\d+ more|more$/i.test(a.textContent ?? "")).map((a) => a.attrs.href);
+    expect(moreLinks(manyModel, "cards")).toEqual(["#/home?list=check", "#/home?list=building"]);
+    expect(moreLinks(manyModel, "tiles")).toEqual(["#/home?list=check", "#/home?list=building"]);
+    expect(moreLinks(manyModel, "list")).toEqual(["#/home?list=check", "#/home?list=building"]);
+    for (const m of [hm(), hm(rich, { list: "check" }), hm([]), hm(more), manyModel]) {
+      const sigs = ["cards", "list", "tiles"].map((l) => signature(box(homeMod.drawLayout(m, l))));
+      for (const s of sigs) expect(s).toEqual(sigs[0]);
+    }
+  });
+
+  it("draws the tiles layout in order", () => {
+    const page = box(homeMod.homeLayout(hm(), "bento"));
+    const wrap = page.all("div")[0]!;
+    expect(wrap.attrs["data-layout"]).toBe("tiles");
+    const kids = wrap.children.filter((c: any) => c instanceof FakeElement) as FakeElement[];
+    expect(kids.map((c) => c.tag + "." + c.attrs.class.split(" ").slice(1).join("."))).toEqual([
+      "section.simple-tile-large.simple-tile-dark", "section.simple-tile-large.simple-tile-needs", "div.simple-tile-small", "div.simple-tile-small",
+      "section.simple-tile-small", "section.simple-tile-small", "section.simple-tile-wide", "section.simple-tile-wide",
+    ]);
+    const [hero, needs, building, week] = kids;
+    expect(hero!.all("h1")).toHaveLength(1);
+    expect(hero!.all("p")[0]!.attrs.class).toBe("today-summary");
+    expect(hero!.all("a").map((a) => a.attrs.href)).toEqual(["#/start"]);
+    expect(needs!.all("a").map((a) => a.attrs.href).slice(0, 2)).toEqual(["#/home?list=check", "#/home?list=ready"]);
+    expect(needs!.all("a").filter((a) => a.attrs.class === "btn primary")).toHaveLength(3);
+    expect(building!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=building"]);
+    expect(week!.all("a").map((a) => a.attrs.href)).toEqual(["#/home?list=published-week"]);
+    expect(kids[7]!.all("ol")[0]!.all("li")).toHaveLength(5);
+    expect(kids[6]!.all("ol")).toHaveLength(1);
+    // an opened list adds a wide tile with Back
+    const opened = box(homeMod.homeLayout(hm(rich, { list: "check" }), "bento")).all("div")[0]!.children.filter((c: any) => c instanceof FakeElement) as FakeElement[];
+    expect(opened).toHaveLength(9);
+    expect(opened[6]!.all("a").some((a) => a.attrs.href === "#/home" && a.textContent === words.HOME.back)).toBe(true);
+    // nothing needs the person
+    const none = box(homeMod.homeLayout(hm([]), "bento")).all("section").find((s) => s.attrs.class.includes("simple-tile-needs"))!;
+    expect(none.textContent).toContain(words.HOME.needsNone);
+  });
+
+  it("shows the last safe point and today's limit without an amount or a link", () => {
+    const tile = (m: any, title: string) => box(homeMod.homeLayout(m, "bento")).all("section").find((s) => s.all("h2")[0]?.textContent === title)!;
+    const safe = tile(hm(), words.HOME.safeTitle);
+    expect(safe.textContent).toContain("Show the weather");
+    expect(safe.textContent).toContain("Published today");
+    expect(tile(hm([]), words.HOME.safeTitle).textContent).toContain(words.HOME.safeNone);
+    // a push to main counts through the flag the user payload keeps (its output is removed)
+    const pushed = on("pu", "o/app", "done", { finishedAt: new Date().toISOString(), history: [{ id: "push_main", ok: true, pushed: true }] });
+    expect(hm([pushed]).safePoint).toMatchObject({ line: "Published today" });
+    const skipped = on("sk", "o/app", "done", { finishedAt: new Date().toISOString(), history: [{ id: "push_main", ok: true }] });
+    expect(hm([skipped]).safePoint).toBeNull();
+    // a daily budget as a user gets it (usage_limit that keeps "tomorrow"), as the raw kind, and a project cap
+    const userDaily = { ...userRecord(nextStep("daily_budget", { runId: "q", repo: "o/app", title: "T", forUser: true } as any)) };
+    const limited = [
+      on("l1", "o/app", "usage_limit", { status: "waiting", history: [{ id: "implement" }], next: userDaily }),
+      on("l2", "o/app", "daily_budget", { status: "waiting", history: [{ id: "implement" }] }),
+      on("l3", "o/app", "project_limit", { status: "waiting", history: [{ id: "implement" }] }),
+    ];
+    expect(userDaily.kind).toBe("usage_limit");
+    for (const r of limited) expect(hm([r]).limitReached, r.runId).toBe(true);
+    // an ordinary usage limit (it resets later) and no limit at all
+    const ordinary = on("o1", "o/app", "usage_limit", { status: "waiting", history: [{ id: "implement" }] });
+    expect(hm([ordinary]).limitReached).toBe(false);
+    expect(hm().limitReached).toBe(false);
+    const limitTile = tile(hm([limited[0]!]), words.HOME.limitTitle);
+    expect(limitTile.textContent).toContain(words.HOME.limitReached);
+    expect(tile(hm(), words.HOME.limitTitle).textContent).toContain(words.HOME.limitNormal);
+    for (const t of [safe, limitTile, tile(hm(), words.HOME.limitTitle)]) {
+      expect(t.all("a").length + t.all("button").length).toBe(0);
+      expect(words.forbiddenIn(t.textContent)).toEqual([]);
+      expect(t.textContent).not.toMatch(/\d+\s*\$|\$\s*\d/);
+    }
+  });
+
+  it("says how long ago the safe point was published", () => {
+    expect([0, 1, 5].map(words.HOME.published)).toEqual(["Published today", "Published yesterday", "Published 5 days ago"]);
+  });
+
+  it("stacks the tiles in one column on a phone", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync(new URL("../ui/css/pages/simple.css", import.meta.url), "utf8");
+    const flat = (s: string) => s.replace(/\s+/g, " ");
+    const phone = flat(css.slice(css.indexOf("@media (max-width: 767px)")));
+    expect(flat(css)).toContain('.simple-home[data-layout="tiles"] { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));');
+    expect(phone).toContain('.simple-home[data-layout="tiles"] { grid-template-columns: minmax(0, 1fr); }');
+    expect(phone).toContain(".simple-tile { grid-column: 1 / -1; }");
+    expect(flat(css)).toMatch(/\.simple-tile \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
+  });
+
+  it("has no forbidden term, passes the audit and has unique focus names on the whole home", () => {
+    const page = box([...homeMod.homeLayout(hm(rich, { list: "check" }), "bento"), ...view.projectsView(model.projectsModel(repos, rich, []))]);
+    expect(words.forbiddenIn(texts(page).join("\n"))).toEqual([]);
+    expect(audit(page)).toEqual([]);
+    const levels = walk(page).filter((e) => /^h\d$/.test(e.tag)).map((e) => Number(e.tag[1]));
+    levels.forEach((l, i) => { if (i) expect(l - levels[i - 1]!).toBeLessThanOrEqual(1); });
+    const names = walk(page).filter((e) => e.tag === "a" || e.tag === "summary").map((e) => e.attrs["data-focus"]);
+    expect(names.every(Boolean)).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
   });
 });
 

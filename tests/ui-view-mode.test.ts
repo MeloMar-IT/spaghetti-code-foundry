@@ -63,6 +63,11 @@ describe("the rules", () => {
     expect(vm.inView("simple", "#/change")).toBe(false);
   });
 
+  it("has the start composer (+ New change) in Simple and in Advanced", () => {
+    expect(vm.inView("simple", "#/start")).toBe(true);
+    expect(vm.inView("advanced", "#/start")).toBe(true);
+  });
+
   it("has the Help page in Simple and in Advanced", () => {
     expect(vm.inView("simple", "#/help")).toBe(true);
     expect(vm.inView("advanced", "#/help")).toBe(true);
@@ -88,7 +93,7 @@ describe("the rules", () => {
     expect(o("simple", "user", "#/refinement/backlog")).toBe("advanced");
     expect(o("simple", "user", "#/runs?repo=a/b")).toBe("advanced");
     expect(o("simple", "user", "#/runs/abc")).toBe("advanced");
-    expect(o("simple", "user", "#/start")).toBe("advanced");
+    expect(o("simple", "user", "#/start")).toBeNull(); // + New change opens the composer in Simple
     expect(o("simple", "user", "#/repos/x")).toBeNull();
     expect(o("simple", "user", "#/home")).toBeNull();
     expect(o("simple", "user", "#/help")).toBeNull();
@@ -569,14 +574,36 @@ describe("offerCard", () => {
 });
 
 describe("showViewNav", () => {
-  it("hides every link but Home and Help in Simple, and only Help for Advanced", () => {
+  // The links of ui/user/index.html: the five shared places, the divider and My repositories (data-extra), and + New change.
+  const nav = () => {
     const side = new FakeElement("nav");
-    const links = ["start", "home", "help", "epics", "runs", "repos", "refinement"].map((n) => box("a", { "data-nav": n }));
-    side.append(...links);
+    const links = ["start", "home", "runs", "refinement", "epics", "help", "repos"].map((n) => box("a", n === "repos" ? { "data-nav": n, "data-extra": "" } : { "data-nav": n }));
+    const divider = box("div", { "data-extra": "" });
+    side.append(...links, divider);
+    return { side, links, divider };
+  };
+
+  it("shows the five places and + New change in Simple, and hides the divider and the extra pages", () => {
+    const { side, links, divider } = nav();
     vm.showViewNav("simple", side);
-    expect(links.filter((l) => !l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["home", "help"]);
-    vm.showViewNav("advanced", side);
-    expect(links.filter((l) => l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["help"]);
+    expect(links.filter((l) => !l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["start", "home", "runs", "refinement", "epics", "help"]);
+    expect(divider.hidden).toBe(true);
+  });
+
+  it("shows everything in Advanced and Admin, also after Simple hid it", () => {
+    const { side, links, divider } = nav();
+    vm.showViewNav("simple", side);
+    for (const view of ["advanced", "admin"]) {
+      vm.showViewNav(view, side);
+      expect(links.filter((l) => l.hidden)).toEqual([]);
+      expect(divider.hidden).toBe(false);
+    }
+  });
+
+  it("SIMPLE_NAV matches the sidebar of ui/ia.js", async () => {
+    const ia: any = await import("../ui/ia.js" as string);
+    expect([...vm.SIMPLE_NAV].sort()).toEqual(["start", ...ia.sidebarFor("simple").main.map((e: any) => e.id)].sort());
+    expect(vm.SIMPLE_NAV).not.toContain("repos");
   });
 });
 
@@ -605,26 +632,63 @@ describe("mountBusySwitch", () => {
     expect(box.hidden).toBe(true);
   });
 
-  it("shows No when off, and the box when on", async () => {
+  const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const flag = () => byId("busy-flag");
+
+  it("is labelled Pause the Foundry while I work and offers Off, 1 h and 2 h", async () => {
+    const { select, box } = await setup({ role: "admin" });
+    expect(walk(select).map((o) => [o.value, o.textContent])).toEqual([["off", "Off"], ["1", "1 h"], ["2", "2 h"]]);
+    expect(select.attrs["aria-label"]).toBe("Pause the Foundry while I work");
+    expect(box.textContent).toContain("Pause the Foundry while I work");
+  });
+
+  it("shows Off when off, and the box when on", async () => {
     const { select, box } = await setup({ role: "admin" });
     expect(select.value).toBe("off");
     expect(box.hidden).toBe(false);
     expect(box.classList.contains("on")).toBe(false);
   });
 
-  it("switches on for an hour, and off again", async () => {
+  it("switches on for an hour, and off again; the Paused flag follows", async () => {
     const { a, select, box } = await setup({ role: "admin" });
+    expect(flag().hidden).toBe(true);
     await choose(select, "1");
     expect(a.setBusy).toHaveBeenCalledWith(1);
     expect(box.classList.contains("on")).toBe(true);
-    expect(walk(select).map((o) => o.textContent)).toContain(`Until ${new Date("2026-03-01T11:00:00.000Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    expect(flag().hidden).toBe(false);
+    expect(walk(select).map((o) => o.textContent)).toContain(`Until ${clock("2026-03-01T11:00:00.000Z")}`);
     expect(select.value).toBe("until");
     await choose(select, "off");
     expect(a.endBusy).toHaveBeenCalled();
     expect(select.value).toBe("off");
     expect(box.classList.contains("on")).toBe(false);
-    await choose(select, "on");
-    expect(a.setBusy).toHaveBeenLastCalledWith(undefined);
+    expect(flag().hidden).toBe(true);
+  });
+
+  it("shows a state set elsewhere and makes no call when it is picked", async () => {
+    const until = await setup({ role: "admin" }, view({ on: true, hand: { since: "2026-03-01T07:00:00.000Z", until: "2026-03-01T11:00:00.000Z" } }));
+    expect(until.select.value).toBe("until");
+    expect(walk(until.select).map((o) => o.textContent)).toContain(`Until ${clock("2026-03-01T11:00:00.000Z")}`);
+    expect(flag().hidden).toBe(false);
+    await choose(until.select, "until");
+    expect(until.a.setBusy).not.toHaveBeenCalled();
+    expect(until.a.endBusy).not.toHaveBeenCalled();
+    expect(until.select.value).toBe("until");
+    const open = await setup({ role: "admin" }, view({ on: true, hand: { since: "2026-03-01T07:00:00.000Z" } }));
+    expect(open.select.value).toBe("on");
+    expect(walk(open.select).map((o) => o.textContent)).toContain("On, until switched off");
+    await choose(open.select, "on");
+    expect(open.a.setBusy).not.toHaveBeenCalled();
+    expect(open.a.endBusy).not.toHaveBeenCalled();
+    expect(open.select.value).toBe("on");
+  });
+
+  it("shows the flag also when a program turned it on, and hides it again when it is off", async () => {
+    await setup({ role: "admin" }, view({ on: true, apps: { why: "Zoom running" } }));
+    expect(flag().hidden).toBe(false);
+    expect(flag().title).toContain("Zoom running");
+    await setup({ role: "admin" });
+    expect(flag().hidden).toBe(true);
   });
 
   it("names the program that turned it on", async () => {
@@ -644,32 +708,30 @@ describe("mountBusySwitch", () => {
 });
 
 describe("the pages", () => {
-  it("both displays have the busy switch box in the top bar, before the view switch", () => {
+  it("both displays have the View and busy switch in the account menu, and the Paused flag in the top bar", () => {
     for (const file of ["ui/index.html", "ui/user/index.html"]) {
       const html = readFileSync(file, "utf8");
-      expect(html, file).toMatch(/<span id="busy-switch" class="busy-switch" hidden><\/span>\s*<span id="view-switch"/);
+      const menu = html.slice(html.indexOf('<div class="account-menu">'), html.indexOf("</details>"));
+      expect(menu, file).toMatch(/<span id="user" class="user" hidden><\/span>\s*<span id="view-switch" class="view-switch" hidden><\/span>\s*<span id="busy-switch" class="busy-switch" hidden><\/span>\s*<a href="\/accessibility.html">/);
+      expect(html.match(/id="view-switch"/g), file).toHaveLength(1);
+      expect(html.match(/id="busy-switch"/g), file).toHaveLength(1);
+      expect(html, file).toContain('<span id="busy-flag" class="pill sem-warning busy-flag" hidden>Paused</span>');
     }
   });
 
-  it("the CSS keeps the busy switch on narrow screens and shrinks it", () => {
-    const css = readFileSync("ui/css/pages/shell.css", "utf8");
-    const narrow = css.slice(css.indexOf("@media (max-width: 767px)", css.indexOf(".view-switch-menu { display: none; }")));
-    expect(narrow).not.toContain(".busy-switch { display: none; }");
-    expect(narrow).toContain(".busy-switch select { max-width: 11ch; }");
+  it("has no second View box: view-switch-menu is gone from the pages and the CSS", () => {
+    for (const file of ["ui/index.html", "ui/user/index.html", "ui/css/pages/shell.css", "ui/view-mode.js"]) expect(readFileSync(file, "utf8"), file).not.toContain("view-switch-menu");
   });
 
-  it("both displays have the two switch boxes, and the menu box ends the sidebar", () => {
-    for (const file of ["ui/index.html", "ui/user/index.html"]) {
-      const html = readFileSync(file, "utf8");
-      expect(html, file).toContain('<span id="view-switch" class="view-switch" hidden></span>');
-      expect(html, file).toMatch(/<div id="view-switch-menu" class="view-switch-menu" hidden><\/div>\s*<\/nav>/);
-    }
+  it("the View selector mounts into the account menu box only by default", () => {
+    const sel = vm.mountViewSwitch({ role: "user" }, { a: {}, go: vi.fn() });
+    expect(sel).toHaveLength(1);
   });
 
-  it("the CSS hides the top bar switch below 768 px and shows the menu one", () => {
+  it("the CSS shows the busy switch in the menu on every width and has the Paused flag", () => {
     const css = readFileSync("ui/css/pages/shell.css", "utf8");
-    const narrow = css.slice(css.indexOf("@media (max-width: 767px)", css.indexOf(".view-switch-menu { display: none; }")));
-    expect(narrow).toContain(".view-switch { display: none; }");
-    expect(narrow).toContain(".view-switch-menu:not([hidden])");
+    expect(css).not.toContain(".busy-switch .busy-label");
+    expect(css).toContain(".busy-flag { white-space: nowrap; }");
+    expect(css).toContain(".account-menu > .view-switch, .account-menu > .busy-switch { display: block; }");
   });
 });

@@ -38,9 +38,9 @@ export function workBody(data, prefs, handlers) {
   if (!items.length && data?.empty && !isFiltered(prefs)) return [h("div", { class: "empty" }, data.empty)];
   const shown = applyFilters(items, prefs);
   const nodes = [];
-  if (shown.length < items.length) nodes.push(h("div", { class: "muted work-count" }, `${shown.length} of ${items.length} stories`));
+  if (shown.length < items.length) nodes.push(h("div", { class: "muted work-count" }, `${shown.length} of ${items.length} changes`));
   if (!shown.length && isFiltered(prefs)) {
-    nodes.push(h("div", { class: "empty" }, "No story matches the filters.", " ",
+    nodes.push(h("div", { class: "empty" }, "No change matches the filters.", " ",
       h("button", { class: "small", "data-focus": "work-clear", onClick: () => handlers.onClear() }, "Clear filters")));
     return nodes;
   }
@@ -75,16 +75,16 @@ export function workView(data, prefs, handlers) {
   const toolbar = h("div", { class: "toolbar work-bar" },
     h("h1", {}, "Work"),
     pick("work-repo", "Show one repository", prefs.repo, repos, (repo) => onChange({ repo })),
-    pick("work-owner", "Show the stories of one account", prefs.owner, owners, (owner) => onChange({ owner })),
+    pick("work-owner", "Show the changes of one account", prefs.owner, owners, (owner) => onChange({ owner })),
     useButton,
     save,
-    pick("work-who", "Show the stories by who has the next move", prefs.who, withAll("Any next move", f.who), (who) => onChange({ who })),
+    pick("work-who", "Show the changes by who has the next move", prefs.who, withAll("Any next move", f.who), (who) => onChange({ who })),
     columnsOf(data).map((c) => h("button", {
       class: status.has(c.id) ? "small primary" : "small", "data-focus": `work-status-${c.id}`, "aria-pressed": status.has(c.id) ? "true" : "false",
       title: `Show only ${c.title}`, onClick: () => toggle(c.id),
     }, c.title)),
     h("input", {
-      type: "search", placeholder: "Title or #issue", title: "Find a story by title or issue number", "aria-label": "Find a story", "data-focus": "work-text",
+      type: "search", placeholder: "Title or #issue", title: "Find a change by title or issue number", "aria-label": "Find a change", "data-focus": "work-text",
       value: prefs.text, onInput: (e) => handlers.onText(e.target.value),
     }),
     h("div", { class: "seg", role: "group", "aria-label": "Layout" },

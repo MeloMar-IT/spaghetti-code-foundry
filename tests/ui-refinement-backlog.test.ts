@@ -79,7 +79,17 @@ describe("the backlog page", () => {
     expect(main().textContent).toContain("Backlog readiness");
     expect(walk(main()).filter((e) => e.tag === "option").map((e) => e.textContent)).toEqual(["acme/app", "acme/two"]);
     expect(backlogRequests().map((s) => s.url)).toEqual(["/api/refinement/backlog?repo=acme%2Fapp"]);
-    const marks = walk(main()).filter((e) => e.tag === "span" && e.attrs["aria-label"]).map((e) => e.attrs["aria-label"]);
+    const marks = walk(main()).filter((e) => e.tag === "span" && e.attrs.class === "check-mark").map((e) => e.attrs.title);
+    const pills = walk(main()).filter((e) => e.tag === "span" && e.attrs.class === "check-mark").map((e) => e.all("span").find((s) => String(s.attrs.class).startsWith("pill sem-"))!);
+    expect(pills.slice(0, 4).map((p) => p.textContent)).toEqual(["Yes", "No", "No", "Yes"]);
+    for (const p of pills) expect(p.all("svg")).toHaveLength(1);
+    const tables = walk(main()).filter((e) => e.tag === "table");
+    expect(tables).toHaveLength(1);
+    expect(tables[0]!.attrs.class).toBe("table cards");
+    expect(tables[0]!.attrs.role).toBe("table");
+    const cells = tables[0]!.all("tr")[1]!.all("td");
+    expect(cells.map((c) => c.attrs["data-label"])).toEqual(["GitHub issue", "Title", "Acceptance criteria", "Value sentence", "Depends on", "No open questions", "Actions"]);
+    expect(cells.every((c) => c.attrs.role === "cell")).toBe(true);
     expect(marks.slice(0, 4)).toEqual([
       "Acceptance criteria: yes",
       "Value sentence: no",
@@ -141,7 +151,7 @@ describe("the backlog page", () => {
     cut = false;
     issues = [];
     await show();
-    expect(main().textContent).toContain("No open issues to refine here.");
+    expect(main().textContent).toContain("No open GitHub issues to refine here.");
     repos = [];
     await show();
     expect(main().textContent).toContain("You need a GitHub repository first.");
@@ -157,7 +167,14 @@ describe("the backlog page", () => {
 
 describe("checkMark", () => {
   it("says the check and the missing issues", () => {
-    expect(backlog.checkMark(true, "Depends on").attrs["aria-label"]).toBe("Depends on: yes");
-    expect(backlog.checkMark(false, "Depends on", [3]).attrs["aria-label"]).toBe("Depends on: no — not found: #3");
+    expect(backlog.checkMark(true, "Depends on").attrs.title).toBe("Depends on: yes");
+    expect(backlog.checkMark(false, "Depends on", [3]).attrs.title).toBe("Depends on: no — not found: #3");
+    const yes = backlog.checkMark(true, "Depends on", [3]);
+    const no = backlog.checkMark(false, "Depends on", [3]);
+    expect(yes.textContent).toBe("Yes"); // missing numbers are shown for "No" only
+    expect(no.textContent).toBe("No not found: #3");
+    expect(String(no.all("span")[0]!.attrs.class)).toContain("sem-danger");
+    expect(String(yes.all("span")[0]!.attrs.class)).toContain("sem-success");
+    expect(no.all("svg")).toHaveLength(1);
   });
 });

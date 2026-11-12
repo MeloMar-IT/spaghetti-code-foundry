@@ -34,20 +34,20 @@ export function contextFor(where, attach) {
   return { context: { page: where.page }, text: `Sent with your question: the page you are on (${where.title}, ${where.page}). Nothing else of the page is sent.` };
 }
 
-const GENERAL = ["What can Ask SCF help me with?", "Where do I start work on an issue?"];
+const GENERAL = ["What can Ask SCF help me with?", "Where do I start work on a change?"];
 const BY_PAGE = {
   home: ["What does Home show me?", "What should I look at first?"],
   runs: ["What do the statuses of a run mean?", "Why can a run wait?"],
   run: ["How do I read the steps of a run?", "What can I do when a run failed?"],
-  start: ["How do I start work on an issue?", "Which flow fits my task?"],
+  start: ["How do I start work on a change?", "Which flow fits my task?"],
   repos: ["How do I connect a repository?", "What does a watcher do?"],
   repo: ["What do the settings of a repository mean?", "What does a watcher do?"],
-  board: ["How do I read the Board?", "Why does an issue wait for another one?"],
+  board: ["How do I read the Board?", "Why does a change wait for another one?"],
   problems: ["What is a finding of the monitor?", "What happens when I mute a finding?"],
   problem: ["What is a finding of the monitor?", "What happens when I mute a finding?"],
 };
 const BY_AREA = {
-  work: ["How does Refinement work?", "When is a story ready to build?"],
+  work: ["How does Refinement work?", "When is a change ready to build?"],
   build: ["What is a flow?", "How do I add a step to a flow?"],
   administration: ["What does this page set?", "Where do I set limits for runs?"],
   repositories: ["How do I connect a repository?", "What does a watcher do?"],

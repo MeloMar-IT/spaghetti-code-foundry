@@ -198,11 +198,12 @@ describe("runs of other accounts", () => {
 
   it("lets the owner and the admin through", async () => {
     // The answer route has its own tests (tests/run-answer.test.ts): it needs a run that stopped with questions.
-    for (const rule of own.filter((r) => !r.path.endsWith("/answer"))) {
+    // The checks routes need a body (a check of the plan; the text of a new check): tests/permissions.test.ts ("own runs") covers the owner.
+    for (const rule of own.filter((r) => !r.path.endsWith("/answer") && !r.path.endsWith("/checks") && !r.path.endsWith("/checks/add"))) {
       const mine = await waitingRun(ann);
       const r = await ask(ann, rule, mine);
       // A waiting run cannot be archived (409); tests/run-archive.test.ts covers finished runs.
-      if (/\/(un)?archive$/.test(rule.path)) expect(r.status, ruleKey(rule)).toBe(409);
+      if (/\/((un)?archive|not-now)$/.test(rule.path)) expect(r.status, ruleKey(rule)).toBe(409);
       else expect(r.status, ruleKey(rule)).toBeLessThan(300);
       await s.ctx.scheduler.idle();
     }

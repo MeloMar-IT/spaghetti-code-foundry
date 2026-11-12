@@ -1,8 +1,9 @@
 import { api } from "./api.js";
 import { chartPoints, chartRows, chainNotes, criticalPathView, forecastView, historyLines, paceView, storyItems } from "./epic-page-model.js";
 import { h, mount, svg, table } from "./dom.js";
-import { progressBar } from "./epics.js";
-import { freshText, growthSentence, pickRepo, progressText, repoChoices } from "./epics-model.js";
+import { progressBar, progressNode } from "./epics.js";
+import { statusPill } from "./icons.js";
+import { freshText, growthSentence, pickRepo, repoChoices } from "./epics-model.js";
 import { withQuery } from "./filters.js";
 import { chainGraph } from "./graph.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
@@ -30,10 +31,10 @@ export function epicChart(points) {
   const labels = points.labels.map((l) => svg("text", { x: l.x, y: H - 6, "text-anchor": l.anchor, class: "axis" }, l.text));
   return h("div", {},
     h("div", { class: "chart epic-chart" },
-      svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Stories in the epic and stories done, per day" },
+      svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Changes in the epic and changes done, per day" },
         grid, svg("line", { x1: left, x2: W, y1: H - bottom, y2: H - bottom, class: "base-line" }),
         svg("path", { class: "line-stories", d: points.paths.stories }), svg("path", { class: "line-done", d: points.paths.done }), dots, labels)),
-    h("div", { class: "legend" }, h("span", {}, h("i", { class: "seg-stories" }), "Stories"), h("span", {}, h("i", { class: "seg-done" }), "Done")));
+    h("div", { class: "legend" }, h("span", {}, h("i", { class: "seg-stories" }), "Changes"), h("span", {}, h("i", { class: "seg-done" }), "Done")));
 }
 
 const section = (id, title, ...body) => h("section", { class: "card epic-section", "aria-labelledby": `epic-${id}` }, h("h2", { id: `epic-${id}` }, title), ...body);
@@ -63,15 +64,15 @@ function pathSection(d) {
 
 function storiesSection(d, repo) {
   const items = storyItems(d.stories, d.chains, repo);
-  return section("stories", "Stories in build order",
+  return section("stories", "Changes in build order",
     items.length
       ? h("ol", { class: "epic-stories" }, items.map((s) => h("li", {},
         s.href ? h("a", { href: s.href, target: "_blank", rel: "noopener" }, `#${s.issue} ${s.title}`) : `#${s.issue} ${s.title}`,
-        h("span", { class: "epic-words" }, ` — ${s.words}`),
+        s.words ? [" ", statusPill(s.semantic, s.words, "epic-words")] : null,
         s.status ? h("p", { class: "muted" }, s.status) : null,
         s.help ? h("p", { class: "muted" }, s.help) : null,
         s.notes.length ? h("p", { class: "muted" }, s.notes.join("; ")) : null)))
-      : h("p", { class: "muted" }, "This epic has no stories yet."));
+      : h("p", { class: "muted" }, "This epic has no changes yet."));
 }
 
 function chainsSection(d, repo) {
@@ -79,16 +80,16 @@ function chainsSection(d, repo) {
   const by = new Map(d.stories.map((s) => [s.issue, s]));
   const notes = chainNotes(d.chains);
   return section("chains", "Dependency chains",
-    h("p", { class: "muted" }, "Left to right is the build order. Each box links to its issue. Below 768 px the graph scrolls sideways."),
+    h("p", { class: "muted" }, "Left to right is the build order. Each box links to its GitHub issue. Below 768 px the graph scrolls sideways."),
     chainGraph(d.chains, { hrefOf: (n) => (repo ? `https://github.com/${repo}/issues/${n}` : ""), wordsOf: (n) => by.get(n)?.words }),
     notes.length ? h("ul", {}, notes.map((n) => h("li", {}, n))) : null);
 }
 
 function chartSection(d, now) {
   const chart = epicChart(chartPoints(d.series, { now }));
-  return section("chart", "Stories over time",
+  return section("chart", "Changes over time",
     chart ?? h("p", { class: "muted" }, "No history yet."),
-    chart ? details("Show as table", table(["Day", "Stories", "Done"], chartRows(d.series, { now }).map((r) => tr(r.day, r.stories, r.done)), { class: "compact", label: "Stories and done stories per day" })) : null,
+    chart ? details("Show as table", table(["Day", "Changes", "Done"], chartRows(d.series, { now }).map((r) => tr(r.day, r.stories, r.done)), { class: "compact", label: "Changes and done changes per day" })) : null,
     h("p", { class: "muted" }, "The chart counts per UTC day."));
 }
 
@@ -96,7 +97,7 @@ function paceSection(d) {
   const v = paceView(d.pace, d.medianStoryMs);
   return section("pace", "Pace",
     h("p", {}, v.perDay), h("p", {}, v.median),
-    v.rows.length ? details("Show per day", table(["Period", "Finished"], v.rows.map((r) => tr(r.label, r.done)), { class: "compact", label: "Stories finished per day" })) : null);
+    v.rows.length ? details("Show per day", table(["Period", "Finished"], v.rows.map((r) => tr(r.label, r.done)), { class: "compact", label: "Changes finished per day" })) : null);
 }
 
 /** Draws the page of one epic into `box`. Returns the cleanup function. */
@@ -129,7 +130,7 @@ export async function renderEpic(box, { id, admin = false, me, query = {}, a = a
       ],
       notices: notice,
       meta: epic ? [
-        progressBar(epic.counts, epic.total), h("p", {}, progressText(epic.counts, epic.total)),
+        progressBar(epic.counts, epic.total), progressNode(epic.counts, epic.total),
         growthSentence(epic) ? h("p", { class: "muted" }, growthSentence(epic)) : null,
         epic.issue != null && choice ? h("p", {}, h("a", { href: `https://github.com/${choice.name}/issues/${epic.issue}`, target: "_blank", rel: "noopener" }, "On GitHub")) : null,
       ] : null,

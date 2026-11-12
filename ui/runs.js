@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { plainServerText, whoText } from "./change-words.js";
 import { h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo } from "./filters.js";
 import { pageViews } from "./views.js";
@@ -6,6 +7,7 @@ import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
 import { createRunHeader } from "./run-header.js";
+import { approveLabel } from "./run-checks.js";
 import { createLog, diffView } from "./run-output.js";
 import { evidenceRecordSection } from "./run-evidence.js";
 import { contextSourcesSection } from "./run-sources.js";
@@ -13,13 +15,16 @@ import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
 import { adminRunActions } from "./run-dialogs.js";
 import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
-import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
+import { createRequestBox } from "./request-box.js";
+import { changesPanel, createTabs, detailsPanel, evidencePanel, progressPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
 import { archivedSections, readDensity, renderSections, runSections, sectionOf, writeDensity } from "./runs-list.js";
 import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "./runs-bar.js";
 // This module and ./user/runs.js import each other: neither uses the other at the top level, only inside functions.
 import { confirmDialog } from "./user/runs.js";
+// Home counts the same groups with the same predicate (./today.js): the list a counter opens holds exactly what it counted.
+import { inGroup } from "./today.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, filterQuery, isActive, isServerActive, jobMatches, serverKey } from "./runs-filter.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
@@ -259,6 +264,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
       if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
       if (admin && !e.run && !jobMatches(e.job, f, { ownerName, now })) return false;
       if (f.needs && sectionOf(e) !== "needs") return false;
+      if (f.group && !inGroup(f.group, e, now)) return false;
       if (arch) return true;
       return !f.view || sectionOf(e) === f.view;
     };
@@ -385,14 +391,14 @@ export function failureCard(s, { onStep } = {}) {
   if (!f) return null;
   const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
   return h("div", { class: `card next-step failure ${whoClass(n)}` },
-    h("div", { class: "next-parts" }, h("b", {}, "This run failed"), h("span", { class: `pill ${whoClass(n)}` }, n.who), h("span", { class: `pill kind-${f.cause}` }, f.kind)),
+    h("div", { class: "next-parts" }, h("b", {}, "This run failed"), h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)), h("span", { class: `pill kind-${f.cause}` }, plainServerText(f.kind))),
     h("dl", { class: "meta" },
-      row("What happened", f.what),
-      row("Why", f.byModel ? [f.why, h("div", { class: "muted" }, "A model read the output of the failing step to write this sentence. It can be wrong.")] : f.why),
-      row("Already tried", f.tried),
-      n.action ? row("Do first", n.action) : null),
+      row("What happened", plainServerText(f.what)),
+      row("Why", f.byModel ? [plainServerText(f.why), h("div", { class: "muted" }, "A model read the output of the failing step to write this sentence. It can be wrong.")] : plainServerText(f.why)),
+      row("Already tried", plainServerText(f.tried)),
+      n.action ? row("Do first", plainServerText(n.action)) : null),
     h("b", {}, "Your options"),
-    h("ul", { class: "options" }, f.options.map((o) => h("li", {}, o))),
+    h("ul", { class: "options" }, f.options.map((o) => h("li", {}, plainServerText(o)))),
     onStep ? h("button", { class: "small", "data-focus": "failed-step", onClick: onStep }, "Show the failed step") : null,
     s.reason ? h("details", { class: "raw" }, h("summary", { "data-focus": "raw-details" }, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
 }
@@ -413,13 +419,14 @@ export const retiredLine = (s) => (s?.next?.retired ? h("p", { class: "muted flo
 export function actions(s, run = () => {}) {
   const b = [];
   // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
-  const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
+  // A split that already made new issues: a retry would make them twice.
+  const closed = s.next?.kind === "issue_closed" || s.next?.retired === true || !!s.next?.splitMade;
   if (s.status === "waiting" && !closed) {
-    b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, "✔ Approve"));
+    b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, `✔ ${approveLabel(s)}`));
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => run("reject") }, "✘ Reject"));
   }
   if (s.status === "stopped" && /^the issue's spending limit /.test(s.reason ?? "") && !closed) {
-    b.push(h("button", { "data-focus": "act-raise-limit", onClick: () => run("raise-limit") }, "Raise the issue's limit"));
+    b.push(h("button", { "data-focus": "act-raise-limit", onClick: () => run("raise-limit") }, "Raise the change's limit"));
   }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
     b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => run("resume") }, "Retry from the failing step"));
@@ -433,13 +440,13 @@ export function actions(s, run = () => {}) {
     } }, h("option", { value: "" }, "Retry from step…"), s.flowDef.steps.map((st) => h("option", { value: st.id }, st.id))));
   }
   if (["running", "waiting"].includes(s.status) || (s.status === "stopped" && !s.refinement)) {
-    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => run("cancel") }, "■ Cancel"));
+    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => run("cancel") }, "■ Stop this change…"));
   }
   return b;
 }
 
 /** Live run page. Returns a cleanup function that closes the event stream. */
-export function renderRunDetail(main, runId, { admin = true } = {}) {
+export function renderRunDetail(main, runId, { admin = true, onName = null } = {}) {
   const log = createLog();
   const status = statusAnnouncer();
   const head = h("div");
@@ -459,18 +466,19 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   let open = true;
 
   const timeline = createTimeline({ runId, admin });
-  // The reader's tab is never moved by an update; a failed run opens on Steps once (see showFailedOnce).
+  // The reader's tab is never moved by an update; a failed run opens on Details › Steps once (see showFailedOnce).
+  const evidence = evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }), sources: contextSourcesSection({ load: () => api.context(runId), admin, runId }) });
   const tabs = createTabs([
-    { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
-    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update(s) },
-    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
-    { id: "evidence", label: "Evidence", ...evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }), sources: contextSourcesSection({ load: () => api.context(runId), admin, runId }) }) },
-    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin, request: createRequestBox({ a: api, runId }) }) },
+    { id: "diff", label: "What changed", aliases: ["changes"], ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
+    {
+      id: "details", label: "Details", aliases: ["steps", "evidence", "skills", "log"],
+      ...detailsPanel({ steps: { el: timeline.el, update: (s) => timeline.update(s) }, evidence, skills: (s) => skillsCard(s.skillView, { admin, repo: s.vars?.github_repo, heading: false }), log }),
+    },
   ], { initial: "overview" });
   const tabsBox = tabs.el;
 
-  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to Runs" });
-  const skillsBox = h("div");
+  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onMark: async (cid, mark, rev) => { const r = await api.markCheck(runId, cid, mark, rev); load(); return r; }, onSendBack: async (note) => { await api.rejectRun(runId, note); load(); }, onAddCheck: async (t, e, rev) => { const r = await api.addCheck(runId, t, e, rev); load(); return r; }, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to Runs" });
   let load;
   const stream = runStream({
     open: () => api.events(runId),
@@ -501,11 +509,10 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const showQueued = (found) => {
     if (dialogOpen()) { held = null; heldView = () => showQueued(found); arm(); return; }
     heldView = null;
-    if (mode === "state") mount(head, header.el, skillsBox);
+    if (mode === "state") mount(head, header.el);
     mode = "queued";
     job = found;
     stateKey = null;
-    mount(skillsBox);
     header.update(null, { job });
     tabsBox.hidden = true;
     stream.el.hidden = false;
@@ -552,7 +559,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     held = null;
     heldView = null;
     if (mode !== "page") {
-      if (mode === "state") mount(head, header.el, skillsBox);
+      if (mode === "state") mount(head, header.el);
       mode = "page";
       job = null;
       stateKey = null;
@@ -562,7 +569,6 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     const prev = summary;
     summary = s;
     header.update(s, { names });
-    mount(skillsBox, skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
     showFailedOnce(tabs, s, prev);
     tabs.update(s, prev);
   };

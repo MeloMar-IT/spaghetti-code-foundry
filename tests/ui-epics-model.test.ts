@@ -79,7 +79,7 @@ describe("progress", () => {
   it("writes the text alternative", () => {
     expect(m.progressText(counts, 10)).toBe("3 of 10 done; Working 2, Waiting 4, Failed 1");
     expect(m.progressText({ done: 5 }, 5)).toBe("5 of 5 done");
-    expect(m.progressText({}, 0)).toBe("No stories yet");
+    expect(m.progressText({}, 0)).toBe("No changes yet");
   });
   it("cuts the bar into parts that add up to 100", () => {
     const parts = m.barSegments(counts, 10);
@@ -98,8 +98,8 @@ describe("growthSentence", () => {
   it("follows the server's growthText for no, one and many splits", () => {
     for (const split of [0, 1, 16]) {
       const growth = { atStart: 21, now: 95, split };
-      expect(m.growthSentence({ growth, growthText: growthText(growth) })).toBe(`Stories: ${growthText(growth)}`);
-      expect(m.growthSentence({ growth })).toBe(`Stories: ${growthText(growth)}`);
+      expect(m.growthSentence({ growth, growthText: growthText(growth) })).toBe(`Changes: ${growthText(growth)}`);
+      expect(m.growthSentence({ growth })).toBe(`Changes: ${growthText(growth)}`);
     }
   });
   it("is empty without data", () => {
@@ -122,8 +122,8 @@ describe("holds", () => {
       { kind: "limit", issues: [5], status: "a time limit", help: "", waiting: [6, 7] },
     ]);
     expect(out[0]).toEqual({ kind: "person", text: "Waiting for you — questions: #12 and #14", help: "Answer on the issue." });
-    expect(out[1].text).toBe("Failed: #3; 1 more story waits for it");
-    expect(out[2].text).toBe("A time limit: #5; 2 more stories wait for them");
+    expect(out[1].text).toBe("Failed: #3; 1 more change waits for it");
+    expect(out[2].text).toBe("A time limit: #5; 2 more changes wait for them");
     expect(m.blockTexts(undefined)).toEqual([]);
   });
 });
@@ -147,11 +147,11 @@ describe("sortRows", () => {
 describe("freshText", () => {
   const data = (ageMs: number, cut = false) => ({ state: "fresh", readAt: new Date(now.getTime() - ageMs).toISOString(), cut, ageMs });
   it("says how old the issue data is", () => {
-    expect(m.freshText(data(10_000))).toBe("Issues read just now");
-    expect(m.freshText(data(12 * 60_000))).toBe("Issues read 12 min ago");
+    expect(m.freshText(data(10_000))).toBe("GitHub issues read just now");
+    expect(m.freshText(data(12 * 60_000))).toBe("GitHub issues read 12 min ago");
   });
   it("warns when not every issue was read", () => {
-    expect(m.freshText(data(10_000, true))).toBe("Issues read just now. Not every issue was read, so the counts can be too low");
+    expect(m.freshText(data(10_000, true))).toBe("GitHub issues read just now. Not every GitHub issue was read, so the counts can be too low");
   });
   it("says nothing without data", () => {
     expect(m.freshText({ state: "no-data", why: "no-watcher", text: "x" })).toBe("");

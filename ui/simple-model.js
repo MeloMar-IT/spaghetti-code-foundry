@@ -1,8 +1,12 @@
 import { sameRepo } from "./filters.js";
 import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
+import { planPoints, plainPoints } from "./request-model.js";
 import { plannedCards } from "./simple-change-model.js";
-import { FINAL, WORDS, kindWords, phaseOf, progressText, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { lastGoodText } from "./safe-points.js";
+import { FINAL, HOME, WORDS, kindWords, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { daysAgo, greeting, groupHref, summaryLine, todayModel } from "./today.js";
+import { phaseText, stepPhase } from "./phases.js";
 
 // The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
 // Grouping uses the next-step record (`run.next` or `job.next`), never the run status, as Home does.
@@ -51,10 +55,29 @@ const finishedMs = (e) => Date.parse(e.run?.finishedAt ?? e.run?.startedAt ?? ""
 export function groupOf(entry) {
   const n = recordOf(entry);
   if (!n || HIDDEN.has(n.kind)) return null;
+  // Stuck work nobody needs to look at: its change is closed, or the person put it aside with "Not now".
+  if (n.kind === "failed" && (n.issueClosed || n.notNow)) return null;
+  // A split that made all its parts is finished, though its last step failed.
+  if (n.kind === "failed" && n.splitMade === "all") return "done";
   if (needsUser(n)) return "check";
   if (n.kind === "done" || n.kind === "release") return "done";
   if (n.kind === "running" || (entry.run?.history?.length ?? 0) > 0) return "building";
   return "planned";
+}
+
+/** The phase of a run's current step ({ key, index, word, line, source }), or null when it has no step yet. */
+export function runPhase(run) {
+  const step = run?.state?.next ?? run?.history?.at(-1)?.id ?? "";
+  if (!step) return null;
+  const steps = Array.isArray(run.flowDef?.steps) ? run.flowDef.steps : [];
+  const index = steps.findIndex((s) => s?.id === step);
+  return stepPhase(step, index >= 0 ? { index, total: steps.length } : undefined);
+}
+
+/** → (entry) => the id of the project the work belongs to, or null (also for work of a repository not in the list). */
+export function projectOfWork(repos) {
+  const all = (Array.isArray(repos) ? repos : []).map((repo) => ({ repo, key: projectKey(repo) })).filter((x) => x.key);
+  return (entry) => all.find((x) => workOf(entry, x.key, x.repo))?.repo.id ?? null;
 }
 
 /** One card: only word-list text and the person's own title and summary. Never the server's `text`, `status` or `where.label`. */
@@ -63,7 +86,8 @@ export function cardOf(entry) {
   const { run, job } = entry;
   const task = String(run?.task ?? job?.task ?? "");
   const group = groupOf(entry);
-  const words = kindWords(n.kind, n.who);
+  // A split that made all its parts reads as done, not as stuck.
+  const words = kindWords(n.kind === "failed" && n.splitMade === "all" ? "done" : n.kind, n.who);
   const card = {
     id: idOf(entry),
     title: safeText(n.title || task.split(/\r?\n/)[0], WORDS.untitled),
@@ -71,8 +95,8 @@ export function cardOf(entry) {
     line: words.line,
   };
   if (group === "building" && run) {
-    const step = run.state?.next ?? run.history?.at(-1)?.id ?? "";
-    if (step) card.progress = progressText(phaseOf(step));
+    const phase = runPhase(run);
+    if (phase) card.progress = phaseText(phase);
   }
   if (group === "check") {
     card.todo = words.todo;
@@ -87,13 +111,23 @@ export function cardOf(entry) {
       card.approve = idOf(entry);
       // the server refuses approve and reject of a refinement run (409), so such a run is not the person's own
       if (run?.status === "waiting" && !n.watched && !run.refinement) card.own = true;
+      // "Your request": what the plan took from the request and what it assumed, on the card of a plan that waits for a decision
+      if (n.kind === "approve_plan" && run) {
+        const pts = plainPoints(planPoints(run));
+        if (pts.length) card.points = pts;
+      }
+      // the checks the plan wrote for a person to try, with their marks (the card draws them)
+      // (also when there are none yet: the person may add the first one)
+      if (run?.status === "waiting") {
+        card.checkRun = { status: run.status, checks: run.checks, checkMarks: run.checkMarks, checksRev: run.checksRev };
+      }
     }
     // A failed run: "stuck". `resume`: the run itself can be resumed; `stuckAt` tells one failure from the next.
     if (n.kind === "failed" && idOf(entry)) {
       card.stuck = idOf(entry);
       card.stuckAt = String(run?.finishedAt ?? "");
       // the server refuses resume of a refinement run (409): such a run gets Ask for help only
-      if (run && !n.watched && !run.refinement && run.state?.next != null && !n.retired) card.resume = true;
+      if (run && !n.watched && !run.refinement && run.state?.next != null && !n.retired && !n.splitMade) card.resume = true;
     }
     // "Make this version final": the card decides by itself (the run page is not a Simple page); the stories in plain words.
     if (n.final && idOf(entry)) {
@@ -134,6 +168,42 @@ export function projectModel(repo, all, runs, pending, changes = []) {
     todo: groups.check,
     groups,
     state: stateLine({ needs: groups.check.length, needsAnswer: answer, building: groups.building.length, planned: groups.planned.length, done: groups.done.length }),
+  };
+}
+
+/** The counters of the Simple home, in order; each is also the key of the list it opens. */
+export const HOME_COUNTERS = ["check", "building", "ready", "published-week"];
+
+/**
+ * The Simple home as plain data, the same for every layout (a layout only arranges it).
+ * `projects`: the output of projectsModel. `list`: the list a counter opened ("" or an unknown key shows none).
+ * `safePoint`: the newest published change ({ title, line }) or null. `limitReached`: some work waits on today's limit (never an amount).
+ * The current project is the project of the newest work that really runs (paused work does not count), else of the first card
+ * that needs the person, else the first project; null when there is no project.
+ */
+export function homeModel(runs, pending, repos, projects, { now = Date.now(), list = "", safe } = {}) {
+  const today = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos), now });
+  const all = Array.isArray(projects) ? projects : [];
+  const newest = (items) => items.reduce((best, b) => (!best || b.startedMs > best.startedMs ? b : best), null);
+  const runningOf = (id) => newest(today.building.filter((b) => b.running && (id === undefined || String(b.project) === String(id))));
+  const candidates = [runningOf()?.project, today.attention[0]?.project, all[0]?.id];
+  const p = candidates.map((id) => (id === undefined || id === null ? undefined : all.find((x) => String(x.id) === String(id)))).find(Boolean);
+  const running = p ? runningOf(p.id) : null;
+  return {
+    now,
+    greeting: greeting(now),
+    summary: summaryLine({ check: today.attention.length, building: today.counts.building, finishedToday: today.counts["finished-today"] }),
+    counters: HOME_COUNTERS.map((key) => ({ key, label: HOME.counters[key], count: today.counts[key] ?? 0, href: groupHref(key, true) })),
+    lists: today.lists,
+    list: Object.hasOwn(today.lists, list) ? list : "",
+    listTitle: Object.hasOwn(HOME.lists, list) ? HOME.lists[list] : "",
+    attention: today.attention,
+    building: today.building,
+    safePoint: today.lastPublished ? { title: today.lastPublished.title, line: HOME.published(daysAgo(today.lastPublished.finishedMs, now)) } : null,
+    limitReached: today.limitedToday > 0,
+    project: p
+      ? { id: p.id, name: p.name, state: p.state, href: `#/repos/${encodeURIComponent(p.id)}`, phase: running?.phase?.index ?? null, line: running?.line ?? "", lastGood: String(safe?.id) === String(p.id) ? lastGoodText(safe?.answer, now) : "" }
+      : null,
   };
 }
 

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { chooseFlow, flowRadios } from "./helpers/start-flow.js";
 import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -47,14 +48,20 @@ let main: FakeElement;
 let calls: any;
 let go: ReturnType<typeof vi.fn>;
 let dialog: ReturnType<typeof vi.fn>;
-let data: { flows: any[]; repos: any[]; reposAfter?: any[]; reposFail?: boolean; startFail?: unknown; hold?: boolean; holdRepos?: boolean; refFail?: boolean; holdRef?: boolean; refRepos?: string[] };
+let data: {
+  flows: any[]; repos: any[]; reposAfter?: any[]; reposFail?: boolean; startFail?: unknown; hold?: boolean; holdRepos?: boolean; holdFlows?: boolean; refFail?: boolean; holdRef?: boolean; refRepos?: string[];
+  sessions?: any[]; planFail?: unknown; holdPlan?: boolean; changes?: any[]; changesFail?: boolean;
+};
+let releasePlan: () => void;
 let release: () => void;
 let releaseRef: () => void;
 let releaseRepos: () => void;
+let releaseFlows: () => void;
 
 const fakeApi = () => ({
   flows: async (p?: unknown) => {
     calls.flows.push(p);
+    if (data.holdFlows) await new Promise<void>((r) => (releaseFlows = r));
     return data.flows;
   },
   repos: async () => {
@@ -68,7 +75,23 @@ const fakeApi = () => ({
     calls.refinement++;
     if (data.holdRef) await new Promise<void>((r) => (releaseRef = r));
     if (data.refFail) throw Object.assign(new Error("GitHub could not be reached"), { status: 502 });
-    return { sessions: [], repos: data.refRepos ?? ["acme/app"] };
+    return { sessions: data.sessions ?? [], repos: data.refRepos ?? ["acme/app"] };
+  },
+  createChange: async (body: unknown) => {
+    calls.plan.push(["createChange", body]);
+    if (data.holdPlan) await new Promise<void>((r) => (releasePlan = r));
+    if (data.planFail) throw data.planFail;
+    return { id: "c1" };
+  },
+  createRefinement: async (body: unknown) => {
+    calls.plan.push(["createRefinement", body]);
+    if (data.planFail) throw data.planFail;
+    return { id: "s1" };
+  },
+  changes: async (name: string) => {
+    calls.changes.push(name);
+    if (data.changesFail) throw Object.assign(new Error("no answer"), { status: 503 });
+    return data.changes ?? [];
   },
   startRun: async (body: unknown) => {
     calls.start.push(body);
@@ -78,9 +101,15 @@ const fakeApi = () => ({
   },
 });
 
-async function open(admin?: boolean) {
+async function open(admin?: boolean, plan = false) {
   main = document.createElement("div") as unknown as FakeElement;
   const cleanup = await ui.renderStart(main, { a: fakeApi(), dialog, go, ...(admin === undefined ? {} : { admin }) });
+  if (!plan) {
+    // the page starts without a flow ("Make a plan"): these tests are about a flow, chosen under Advanced
+    const had = draft.readDraft() !== null;
+    await chooseFlow(main);
+    if (!had) draft.clearDraft(); // choosing the flow is not the work these tests look at
+  }
   return cleanup as () => void;
 }
 
@@ -88,7 +117,7 @@ beforeEach(() => {
   draft.clearDraft();
   fresh.clearKeptSession();
   (document as any).getElementById("modal-root").replaceChildren();
-  calls = { repos: 0, start: [], flows: [], refinement: 0 };
+  calls = { repos: 0, start: [], flows: [], refinement: 0, plan: [], changes: [] };
   go = vi.fn();
   dialog = vi.fn(async () => undefined);
   data = { flows: [], repos: [] };
@@ -96,32 +125,36 @@ beforeEach(() => {
 });
 
 describe("renderStart: flows", () => {
-  it("says so when there are no flows", async () => {
-    await open();
-    expect(main.textContent).toContain(ui.NO_FLOWS);
-    expect(find(main, "form")).toHaveLength(0);
+  it("shows the composer and no empty or error box with no flows; the note is inside Advanced", async () => {
+    await open(undefined, true);
+    expect(find(main, "textarea", { name: "task" })).toHaveLength(1);
+    expect(find(main, "div", { class: "empty" })).toHaveLength(0);
+    expect(find(main, "div", { role: "alert" })).toHaveLength(0);
+    expect(main.textContent).not.toContain(ui.NO_FLOWS);
+    const adv = one(main, "details", { class: "composer-advanced" });
+    expect(adv.textContent).toContain(draft.NO_FLOWS_NOTE);
+    expect(adv.attrs.open).toBeUndefined();
     expect(calls.start).toHaveLength(0);
   });
 
-  it("lists flows as radios with title and description, the first chosen", async () => {
+  it("lists flows under Advanced as radios with a no-flow choice first; none is chosen at first", async () => {
     data.flows = [flow("a"), flow("b")];
-    await open();
-    const radios = find(main, "input", { type: "radio", name: "flow" });
-    expect(radios.map((r) => r.value)).toEqual(["a", "b"]);
-    expect((radios[0] as any).checked).toBe(true);
-    expect(main.textContent).toContain("Title b");
-    expect(main.textContent).toContain("About b");
-    expect(one(main, "legend").textContent).toBe(ui.PICK_FLOW);
+    await open(undefined, true);
+    const all = find(main, "input", { type: "radio", name: "flow" });
+    expect(all.map((r) => r.value)).toEqual(["", "a", "b"]);
+    expect((all[0] as any).checked).toBe(true);
+    const adv = one(main, "details", { class: "composer-advanced" });
+    expect(adv.textContent).toContain(draft.FLOW_NONE);
+    expect(adv.textContent).toContain("Title b");
+    expect(adv.textContent).toContain("About b");
+    expect(one(adv, "legend").textContent).toBe(ui.PICK_FLOW);
     expect(main.textContent).not.toMatch(/\d\. /);
   });
 
-  it("draws no picker and no flow name with one flow, and still sends that flow", async () => {
+  it("offers the one flow under Advanced too, and sends it once it is chosen", async () => {
     data.flows = [flow("a")];
     await open();
-    expect(find(main, "input", { name: "flow" })).toHaveLength(0);
-    expect(find(main, "legend")).toHaveLength(0);
-    expect(main.textContent).not.toContain("Title a");
-    expect(main.textContent).not.toContain("About a");
+    expect(flowRadios(main)).toHaveLength(1);
     await submit(main);
     expect(calls.start[0].flow).toBe("a");
   });
@@ -131,12 +164,12 @@ describe("renderStart: flows", () => {
     await open();
     one(main, "input", { name: "x" }).value = "typed";
     one(main, "textarea", { name: "task" }).value = "my task";
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     expect(find(main, "input", { name: "x" })).toHaveLength(0);
     expect(find(main, "input", { name: "y" })).toHaveLength(1);
     expect(one(main, "textarea", { name: "task" }).value).toBe("my task");
-    find(main, "input", { name: "flow" })[0]!.fire("change");
+    flowRadios(main)[0]!.fire("change");
     await flush();
     expect(one(main, "input", { name: "x" }).value).toBe("typed");
   });
@@ -145,7 +178,6 @@ describe("renderStart: flows", () => {
     data.flows = [flow("a")];
     data.reposFail = true;
     await open();
-    expect(calls.repos).toBe(0);
     await submit(main);
     expect(calls.start).toEqual([{ flow: "a", task: "", vars: {} }]);
   });
@@ -176,38 +208,43 @@ describe("renderStart: repository", () => {
     data.repos = [repo("1", "a/a"), repo("2", "b/b"), repo("3", "c/c")];
     await open();
     expect(one(main, "select").value).toBe("a/a");
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     expect(one(main, "select").value).toBe("b/b");
     one(main, "select").value = "c/c";
-    find(main, "input", { name: "flow" })[0]!.fire("change");
+    flowRadios(main)[0]!.fire("change");
     await flush();
     expect(one(main, "select").value).toBe("a/a");
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     expect(one(main, "select").value).toBe("c/c");
   });
 
   it("keeps Start off until the repositories of the new flow have loaded", async () => {
+    // the repositories are read once, when the page opens; a flow that needs one waits for that read
     data.flows = [flow("a", [field("x")]), flow("b", [field("github_repo")])];
     data.repos = [repo("1", "a/a")];
-    await open();
     data.holdRepos = true;
+    main = document.createElement("div") as unknown as FakeElement;
+    const opening = ui.renderStart(main, { a: fakeApi(), dialog, go });
+    await flush();
+    await chooseFlow(main, "a");
     one(main, "input", { name: "x" }).value = "typed";
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     expect(main.textContent).toContain("Loading your repositories");
     expect(submitBtn(main).disabled).toBe(true);
     await submit(main);
     expect(calls.start).toHaveLength(0);
     // a switch back while waiting keeps the typed value of the first flow
-    find(main, "input", { name: "flow" })[0]!.fire("change");
+    flowRadios(main)[0]!.fire("change");
     await flush();
     expect(submitBtn(main).disabled).toBe(false);
     releaseRepos();
+    await opening;
     await flush();
     expect(one(main, "input", { name: "x" }).value).toBe("typed");
-    expect(find(main, "select")).toHaveLength(0);
+    expect(find(main, "select", { name: "github_repo" })).toHaveLength(0);
     await submit(main);
     expect(calls.start).toEqual([{ flow: "a", task: "", vars: { x: "typed" } }]);
   });
@@ -311,7 +348,6 @@ describe("renderStart: repository", () => {
     expect(main.textContent).toContain("me/fixed");
     expect(find(main, "select")).toHaveLength(0);
     expect(find(main, "button", { type: "button" }).map((b) => b.textContent)).toEqual(["Clear"]);
-    expect(calls.repos).toBe(0);
     await submit(main);
     expect(calls.start[0].vars).toEqual({});
   });
@@ -322,10 +358,10 @@ describe("renderStart: fields and start", () => {
     data.flows = [flow("a", [], { usesTask: true }), flow("b", [], { usesTask: undefined }), flow("c", [field("x")], { usesTask: false })];
     await open();
     expect(find(main, "textarea")).toHaveLength(1);
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     expect(find(main, "textarea")).toHaveLength(1);
-    find(main, "input", { name: "flow" })[2]!.fire("change");
+    flowRadios(main)[2]!.fire("change");
     await flush();
     expect(find(main, "textarea")).toHaveLength(0);
   });
@@ -347,8 +383,8 @@ describe("renderStart: fields and start", () => {
     expect(main.textContent).toContain("Which one");
     expect(main.textContent).toContain("Fixed y");
     expect(find(main, "input", { name: "y" })).toHaveLength(0);
-    expect(one(main, "details").textContent).toContain("Fixed y");
-    expect(find(one(main, "details"), "input", { name: "x" })).toHaveLength(0);
+    expect(one(main, "details", { class: "start-more" }).textContent).toContain("Fixed y");
+    expect(find(one(main, "details", { class: "start-more" }), "input", { name: "x" })).toHaveLength(0);
   });
 
   it("shows nothing about costs, models, agents, steps or YAML, for a user and an admin", async () => {
@@ -414,7 +450,7 @@ describe("renderStart: fields and start", () => {
     await open();
     await submit(main);
     expect(alertText(main)).not.toBe("");
-    find(main, "input", { name: "flow" })[1]!.fire("change");
+    flowRadios(main)[1]!.fire("change");
     await flush();
     expect(alertText(main)).toBe("");
     expect(find(main, "input").some((el) => "aria-invalid" in el.attrs)).toBe(false);
@@ -494,7 +530,7 @@ describe("renderStart: fields and start", () => {
       while (p && p.tag !== "label") p = p.parent;
       expect(p, `${el.tag} ${el.attrs.name}`).toBeDefined();
     }
-    expect(submitBtn(main).textContent).toBe("Review");
+    expect(submitBtn(main).textContent).toBe("Make a plan");
     expect(one(main, "button", { "data-focus": "add-repo" }).attrs.type).toBe("button");
   });
 
@@ -518,12 +554,12 @@ describe("renderStart: required first, More options", () => {
     data.flows = [mixed()];
     data.repos = [repo("1", "a/a")];
     await open();
-    const more = one(main, "details");
+    const more = one(main, "details", { class: "start-more" });
     expect(find(more, "select")).toHaveLength(0);
     expect(find(more, "textarea")).toHaveLength(0);
     expect(find(more, "input", { name: "x" })).toHaveLength(0);
     expect(find(more, "input", { name: "o" })).toHaveLength(1);
-    for (const t of ["Repository (required)", "Task (required)", "x (required)"]) expect(main.textContent).toContain(t);
+    for (const t of ["Repository (required)", "What would you like to change?", "x (required)"]) expect(main.textContent).toContain(t);
     expect(one(main, "textarea").attrs["aria-required"]).toBeUndefined();
     expect(one(main, "input", { name: "x" }).attrs["aria-required"]).toBe("true");
   });
@@ -532,7 +568,7 @@ describe("renderStart: required first, More options", () => {
     data.flows = [mixed()];
     data.repos = [repo("1", "a/a")];
     await open();
-    const more = one(main, "details");
+    const more = one(main, "details", { class: "start-more" });
     expect(more.attrs.open).toBeUndefined();
     expect(one(more, "summary").textContent).toBe(ui.moreSummary(1, 1));
   });
@@ -540,11 +576,11 @@ describe("renderStart: required first, More options", () => {
   it("draws no disclosure when nothing is optional or fixed, and no Task without usesTask", async () => {
     data.flows = [flow("a", [field("x", { required: true })], { usesTask: false })];
     await open();
-    expect(find(main, "details")).toHaveLength(0);
+    expect(find(main, "details", { class: "start-more" })).toHaveLength(0);
     expect(find(main, "textarea")).toHaveLength(0);
     data.flows = [flow("a")];
     await open();
-    expect(find(main, "details")).toHaveLength(0);
+    expect(find(main, "details", { class: "start-more" })).toHaveLength(0);
     await submit(main);
     expect(calls.start).toHaveLength(1);
   });
@@ -556,7 +592,7 @@ describe("renderStart: required first, More options", () => {
     const input = one(main, "input", { name: "o" });
     input.value = "typed";
     await submit(main);
-    expect(one(main, "details").attrs.open).toBe("");
+    expect(one(main, "details", { class: "start-more" }).attrs.open).toBe("");
     expect(one(main, "input", { name: "o" })).toBe(input);
     expect(input.value).toBe("typed");
     expect(submitBtn(main).disabled).toBe(false);
@@ -569,7 +605,7 @@ describe("renderStart: required first, More options", () => {
     data.flows = [flow("a", [field("x", { required: true }), field("o")])];
     await open();
     await submit(main);
-    expect(one(main, "details").attrs.open).toBeUndefined();
+    expect(one(main, "details", { class: "start-more" }).attrs.open).toBeUndefined();
     expect(calls.start).toHaveLength(0);
   });
 
@@ -578,9 +614,9 @@ describe("renderStart: required first, More options", () => {
     data.startFail = Object.assign(new Error("bad"), { status: 400 });
     await open();
     await submit(main);
-    expect(one(main, "details").attrs.open).toBe("");
-    find(main, "input", { name: "flow" })[1]!.fire("change");
-    expect(one(main, "details").attrs.open).toBeUndefined();
+    expect(one(main, "details", { class: "start-more" }).attrs.open).toBe("");
+    flowRadios(main)[1]!.fire("change");
+    expect(one(main, "details", { class: "start-more" }).attrs.open).toBeUndefined();
   });
 
   it("keeps the flow picker off while sending, so a late refusal opens the sent flow's options", async () => {
@@ -589,7 +625,7 @@ describe("renderStart: required first, More options", () => {
     data.hold = true;
     await open();
     one(main, "input", { name: "o" }).value = "typed";
-    const radios = find(main, "input", { name: "flow" });
+    const radios = flowRadios(main);
     const sent = submit(main);
     await flush();
     expect(radios.every((r) => (r as any).disabled)).toBe(true);
@@ -598,9 +634,9 @@ describe("renderStart: required first, More options", () => {
     await sent;
     release();
     await flush();
-    expect(one(main, "details").attrs.open).toBe("");
+    expect(one(main, "details", { class: "start-more" }).attrs.open).toBe("");
     expect(one(main, "input", { name: "o" }).value).toBe("typed");
-    expect(find(main, "input", { name: "flow" }).every((r) => !(r as any).disabled)).toBe(true);
+    expect(flowRadios(main).every((r) => !(r as any).disabled)).toBe(true);
   });
 
   it("shows a note with a link to My repositories for a failed repository, following the selection", async () => {
@@ -629,8 +665,10 @@ describe("renderStart: required first, More options", () => {
   it("names the repository while it loads", async () => {
     data.flows = [flow("a", [field("github_repo")])];
     data.holdRepos = true;
-    const opened = open();
+    main = document.createElement("div") as unknown as FakeElement;
+    const opened = ui.renderStart(main, { a: fakeApi(), dialog, go });
     await flush();
+    await chooseFlow(main);
     expect(main.textContent).toContain("Repository (required)");
     releaseRepos();
     await opened;
@@ -639,7 +677,7 @@ describe("renderStart: required first, More options", () => {
   it("puts a fixed repository into the disclosure, without a select", async () => {
     data.flows = [flow("a", [field("github_repo", { mode: "fixed", value: "me/fixed" })])];
     await open();
-    expect(one(main, "details").textContent).toContain("me/fixed");
+    expect(one(main, "details", { class: "start-more" }).textContent).toContain("me/fixed");
     expect(find(main, "select")).toHaveLength(0);
   });
 
@@ -647,7 +685,8 @@ describe("renderStart: required first, More options", () => {
     data.flows = [flow("a", [field("o")])];
     main = document.createElement("div") as unknown as FakeElement;
     await ui.renderStart(main, { a: fakeApi(), dialog, go, readOnly: true });
-    expect(find(main, "details")).toHaveLength(1);
+    await chooseFlow(main);
+    expect(find(main, "details", { class: "start-more" })).toHaveLength(1);
     expect(find(main, "button", { type: "submit" })).toHaveLength(0);
   });
 });
@@ -727,9 +766,10 @@ describe("renderStart: admin", () => {
   });
 
   it("says to publish a flow when there are none", async () => {
-    await open(true);
-    expect(main.textContent).toContain(ui.NO_FLOWS_ADMIN);
-    expect(main.textContent).not.toContain(ui.NO_FLOWS);
+    await open(true, true);
+    expect(main.textContent).toContain(draft.NO_FLOWS_NOTE);
+    expect(one(main, "a", { href: "#/flows" }).textContent).toBe("Open the flow editor");
+    expect(find(main, "div", { class: "empty" })).toHaveLength(0);
   });
 
   it("sends likeUser: true and goes to the run page", async () => {
@@ -760,23 +800,24 @@ describe("renderStart: a wish from the command palette", () => {
     wishes.resetWishes();
     data.flows = [flow("a"), flow("b")];
   });
-  const checkedIn = (root: FakeElement) => find(root, "input", { name: "flow" }).filter((r) => r.checked).map((r) => r.value);
+  const checkedIn = (root: FakeElement) => find(root, "input", { name: "flow" }).filter((r) => (r as any).checked).map((r) => (r as any).value);
   const checked = () => checkedIn(main);
 
   it("chooses the flow that was wished before the page was drawn", async () => {
     wishes.sendWish("start", { flow: "b" });
-    await open();
+    await open(undefined, true);
     expect(checked()).toEqual(["b"]);
+    expect(one(main, "details", { class: "composer-advanced" }).attrs.open).toBe("");
     expect(wishes.takeWish("start")).toBeNull();
   });
 
-  it("falls back to the first flow for an unknown name, and uses the wish up when there are no flows", async () => {
+  it("makes a plan for an unknown name, and uses the wish up when there are no flows", async () => {
     wishes.sendWish("start", { flow: "nope" });
-    await open();
-    expect(checked()).toEqual(["a"]);
+    await open(undefined, true);
+    expect(checked()).toEqual([""]);
     data.flows = [];
     wishes.sendWish("start", { flow: "b" });
-    await open();
+    await open(undefined, true);
     expect(wishes.takeWish("start")).toBeNull();
   });
 
@@ -798,7 +839,7 @@ describe("renderStart: a wish from the command palette", () => {
   it("does not lose a wish that arrives while repositories are loading", async () => {
     data.flows = [flow("a", [field("github_repo")]), flow("b")];
     data.holdRepos = true;
-    const opening = open();
+    const opening = open(undefined, true);
     await flush();
     wishes.sendWish("start", { flow: "b" });
     releaseRepos();
@@ -819,12 +860,12 @@ describe("renderStart: a wish from the command palette", () => {
     const mainOld = document.createElement("div") as unknown as FakeElement;
     wishes.sendWish("start", { flow: "b" });
     const oldRender = ui.renderStart(mainOld, { a: slow, dialog, go });
-    await open();
+    await open(undefined, true);
     expect(checked()).toEqual(["b"]);
     finishOld();
     const cleanOld = await oldRender;
-    // the older render did not take the wish: it shows the first flow
-    expect(checkedIn(mainOld)).toEqual(["a"]);
+    // the older render did not take the wish: it makes a plan
+    expect(checkedIn(mainOld)).toEqual([""]);
     cleanOld();
     // the older render's cleanup does not remove the handler of the newer page
     wishes.sendWish("start", { flow: "a" });
@@ -833,270 +874,338 @@ describe("renderStart: a wish from the command palette", () => {
   });
 });
 
-describe("renderStart: entry choices", () => {
-  const group = (root: FakeElement) => find(root, "div", { role: "group", "aria-label": "How do you want to begin?" });
-  const texts = (root: FakeElement) => [...find(group(root)[0]!, "button"), ...find(group(root)[0]!, "a")].map((e) => e.textContent);
-  const modalRoot = () => (document as any).getElementById("modal-root") as FakeElement;
-  const choice = (name: string) => one(main, "button", { "data-focus": name });
-  const toastText = () => (document as any).getElementById("toast").textContent as string;
-  const realFetch = globalThis.fetch;
-  const posts: any[] = [];
-  const stubPost = (status = 201, body: unknown = { id: "new1", title: "T" }) => {
-    posts.length = 0;
-    (globalThis as any).fetch = async (url: string, init: any) => {
-      posts.push({ url, method: init.method, body: JSON.parse(init.body) });
-      return { ok: status < 400, status, statusText: "x", json: async () => body };
-    };
-  };
-  const reset = () => { globalThis.fetch = realFetch; };
-  const radio = (kind: string) => modalRoot().all("input").find((e) => e.attrs.name === "kind" && e.value === kind)!;
+describe("renderStart: make a plan", () => {
   const press = (el: FakeElement | undefined) => {
     expect(el, "control").toBeDefined();
     el!.click();
   };
-
-  it("comes before the form with the four choices in order, and asks for nothing yet", async () => {
-    data.flows = [flow("a")];
-    await open();
-    expect(group(main)).toHaveLength(1);
-    const children = main.children as FakeElement[];
-    expect(children.indexOf(group(main)[0]!)).toBeLessThan(children.indexOf(one(main, "form")));
-    expect(texts(main)).toEqual([entry.ENTRY_TASK, entry.ENTRY_IDEA, entry.ENTRY_ISSUE, entry.ENTRY_CONTINUE]);
-    expect(choice("entry-task").attrs["aria-current"]).toBe("true");
-    expect(calls.refinement).toBe(0);
-  });
-
-  it("is also there with no flows and when the flows fail, without the task choice", async () => {
-    await open();
-    expect(texts(main)).toEqual([entry.ENTRY_IDEA, entry.ENTRY_ISSUE, entry.ENTRY_CONTINUE]);
-    expect(main.textContent).toContain(ui.NO_FLOWS);
-    const failing = { ...fakeApi(), flows: async () => { throw Object.assign(new Error("x"), { status: 500 }); } };
-    main = document.createElement("div") as unknown as FakeElement;
-    await ui.renderStart(main, { a: failing, dialog, go });
-    expect(texts(main)).toEqual([entry.ENTRY_IDEA, entry.ENTRY_ISSUE, entry.ENTRY_CONTINUE]);
-  });
-
-  it("starts a refinement from the no-flows page", async () => {
-    await open();
-    press(choice("entry-issue"));
-    await flush();
-    expect(radio("issue").checked).toBe(true);
-  });
-
-  it("is on the form again after Back and not on the review", async () => {
-    data.flows = [flow("a")];
-    await open();
-    one(main, "textarea", { name: "task" }).value = "t";
+  const type = (text: string) => {
+    const box = one(main, "textarea", { name: "task" });
+    box.value = text;
+    box.fire("input");
+  };
+  const kind = (k: string) => {
+    const r = find(main, "input", { name: "start-point" }).find((x) => x.value === k)!;
+    (r as any).checked = true;
+    r.fire("change");
+  };
+  const plan = async () => {
     one(main, "form").fire("submit", { preventDefault() {} });
     await flush();
-    expect(group(main)).toHaveLength(0);
-    one(main, "button", { "data-focus": "start-back" }).click();
-    expect(group(main)).toHaveLength(1);
-    expect(find(main, "form")).toHaveLength(1);
+  };
+  const advanced = () => one(main, "details", { class: "composer-advanced" });
+  const unsure = () => Object.assign(new Error("down"), { status: 503 });
+
+  it("draws the composer before the flows or the repositories have answered", async () => {
+    data.flows = [flow("a")];
+    data.holdRepos = true;
+    main = document.createElement("div") as unknown as FakeElement;
+    let finishFlows!: () => void;
+    const slow = { ...fakeApi(), flows: () => new Promise<any[]>((r) => { finishFlows = () => r(data.flows); }) };
+    const opening = ui.renderStart(main, { a: slow, dialog, go });
+    expect(one(main, "textarea", { name: "task" })).toBeDefined();
+    expect(one(main, "label", { class: "field composer" }).textContent).toContain("What would you like to change?");
+    expect(submitBtn(main).textContent).toBe("Make a plan");
+    expect(find(main, "input", { name: "start-point" }).map((r) => r.value)).toEqual(["idea", "issue", "conversation"]);
+    expect(find(main, "div", { class: "empty" })).toHaveLength(0);
+    expect(find(main, "div", { role: "alert" })).toHaveLength(0);
+    finishFlows();
+    releaseRepos();
+    await opening;
   });
 
-  it("says a kept draft is carried on, until Clear", async () => {
-    data.flows = [flow("a")];
-    draft.writeDraft({ flow: "a", task: "kept task", values: { a: {} } });
-    await open();
-    expect(choice("entry-task").textContent).toBe(entry.ENTRY_TASK_DRAFT);
-    expect(one(main, "textarea", { name: "task" }).value).toBe("kept task");
-    one(main, "button", { type: "button" }).click();
-    expect(choice("entry-task").textContent).toBe(entry.ENTRY_TASK);
+  it("a new idea sends the change request and opens the change page of the repository", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    await open(undefined, true);
+    expect(main.textContent).toContain("In acme/app");
+    type("  Add dark mode  ");
+    await plan();
+    expect(calls.plan).toEqual([["createChange", { repo: "acme/app", text: "Add dark mode" }]]);
+    expect(go).toHaveBeenCalledWith("#/change/r1");
+    expect(draft.readDraft()).toBeNull();
   });
 
-  it("moves the focus into the form on Start a task now", async () => {
-    data.flows = [flow("a")];
-    await open();
-    press(choice("entry-task"));
-    expect((document as any).activeElement).toBe(one(main, "textarea", { name: "task" }));
+  it("asks for text first, and for nothing else before there is text", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    await open(undefined, true);
+    await plan();
+    expect(one(main, "p", { role: "alert" }).textContent).toBe(entry.NEED_TEXT);
+    expect(calls.plan).toHaveLength(0);
   });
 
-  it("opens the idea form after one read, and goes to the session after Start session", async () => {
-    data.flows = [flow("a")];
-    stubPost();
+  it("an existing change sends the issue number and opens the session; a 409 opens the existing one", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    await open(undefined, true);
+    kind("issue");
+    type("#12");
+    await plan();
+    expect(calls.plan).toEqual([["createRefinement", { repo: "acme/app", issue: 12 }]]);
+    expect(go).toHaveBeenCalledWith("#/refinement/s1");
+    // the server answers 409 with the id of the session that is there (a string)
+    go.mockClear();
+    data.planFail = Object.assign(new Error("exists"), { status: 409, data: { error: "exists", session: "old 1" } });
+    await open(undefined, true);
+    kind("issue");
+    type("12");
+    await plan();
+    expect(go).toHaveBeenCalledWith("#/refinement/old%201");
+    expect(document.getElementById("toast")!.textContent).toBe(entry.SESSION_EXISTS);
+  });
+
+  it("refuses a text that is not an issue number, and a local repository for an issue", async () => {
+    data.repos = [{ id: "l1", url: "/x", method: "local", owner: "u1", localName: "mine" }];
+    await open(undefined, true);
+    kind("issue");
+    type("abc");
+    await plan();
+    expect(one(main, "p", { role: "alert" }).textContent).toBe(entry.NEED_ISSUE_NUMBER);
+    type("#0");
+    await plan();
+    expect(one(main, "p", { role: "alert" }).textContent).toBe(entry.NEED_ISSUE_NUMBER);
+    type("#5");
+    await plan();
+    expect(one(main, "p", { role: "alert" }).textContent).toBe(entry.NEEDS_GITHUB);
+    expect(advanced().attrs.open).toBe("");
+    expect(calls.plan).toHaveLength(0);
+  });
+
+  it("a conversation lists the open sessions as links and has no Make a plan; a failed list has Retry", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    data.sessions = [
+      { id: "s1", title: "Old", state: "open", updated: "2026-01-01T00:00:00Z", mine: true },
+      { id: "s2", title: "New", state: "open", updated: "2026-02-01T00:00:00Z", mine: true },
+      { id: "s3", title: "Gone", state: "dropped", updated: "2026-03-01T00:00:00Z" },
+      { id: "s4", title: "Not mine", state: "open", mine: false },
+    ];
+    await open(undefined, true);
+    kind("conversation");
+    await flush();
+    expect(find(main, "a").filter((x) => String(x.attrs.href).startsWith("#/refinement/")).map((x) => [x.attrs.href, x.textContent])).toEqual([["#/refinement/s2", "New"], ["#/refinement/s1", "Old"]]);
+    expect(find(main, "button", { type: "submit" })).toHaveLength(0);
+    expect(find(main, "textarea")).toHaveLength(0);
+    data.refFail = true;
+    kind("idea");
+    kind("conversation");
+    await flush();
+    expect(one(main, "button", { "data-focus": "retry" }).textContent).toBe("Retry");
+    data.refFail = false;
+    one(main, "button", { "data-focus": "retry" }).click();
+    await flush();
+    expect(find(main, "a", { href: "#/refinement/s2" })).toHaveLength(1);
+  });
+
+  it("starts in the repository of the top bar; Change opens Advanced at the repository choice", async () => {
+    data.repos = [repo("r1", "acme/one"), repo("r2", "acme/two")];
+    main = document.createElement("div") as unknown as FakeElement;
+    await ui.renderStart(main, { a: fakeApi(), dialog, go, contextRepo: () => "ACME/two" });
+    expect(main.textContent).toContain("In acme/two");
+    expect(advanced().attrs.open).toBeUndefined();
+    const select = one(main, "select", { name: "plan_repo" });
+    expect(select.value).toBe("acme/two");
+    press(one(main, "button", { "data-focus": "change-repo" }));
+    expect(advanced().attrs.open).toBe("");
+    expect((document as any).activeElement).toBe(select);
+    select.value = "acme/one";
+    select.fire("change");
+    expect(main.textContent).toContain("In acme/one");
+    type("x");
+    await plan();
+    expect(calls.plan[0][1].repo).toBe("acme/one");
+  });
+
+  it("says to add the repository only after Make a plan is pressed, and Add repository chooses the new one", async () => {
+    data.repos = [];
+    data.reposAfter = [repo("n1", "new/repo")];
+    dialog = vi.fn(async () => ({ id: "n1", github: "new/repo" }));
+    await open(undefined, true);
+    expect(main.textContent).not.toContain(entry.NO_PLAN_REPO);
+    type("An idea");
+    await plan();
+    expect(main.textContent).toContain(entry.NO_PLAN_REPO);
+    expect(calls.plan).toHaveLength(0);
+    press(one(main, "button", { "data-focus": "add-repo" }));
+    await flush();
+    await flush();
+    expect(main.textContent).toContain("In new/repo");
+    expect(one(main, "textarea", { name: "task" }).value).toBe("An idea");
+    await plan();
+    expect(calls.plan).toEqual([["createChange", { repo: "new/repo", text: "An idea" }]]);
+  });
+
+  it("keeps the text and turns the button on again when the plan is refused", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    data.planFail = Object.assign(new Error("not allowed"), { status: 403 });
+    await open(undefined, true);
+    type("Keep me");
+    await plan();
+    expect(one(main, "div", { role: "alert" }).textContent).toContain(entry.PLAN_FAILED);
+    expect(one(main, "textarea", { name: "task" }).value).toBe("Keep me");
+    expect(submitBtn(main).disabled).toBe(false);
+    expect(draft.readDraft()?.task).toBe("Keep me");
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("sends once for two presses", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    data.holdPlan = true;
+    await open(undefined, true);
+    type("Once");
+    await plan();
+    expect(submitBtn(main).disabled).toBe(true);
+    await plan();
+    releasePlan();
+    await flush();
+    expect(calls.plan).toHaveLength(1);
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ctrl+Enter in the text box makes the plan", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    await open(undefined, true);
+    type("By key");
+    one(main, "textarea", { name: "task" }).fire("keydown", { key: "Enter", ctrlKey: true, preventDefault() {} });
+    await flush();
+    expect(calls.plan).toHaveLength(1);
+  });
+
+  it("has no Make a plan in the read-only preview", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    main = document.createElement("div") as unknown as FakeElement;
+    await ui.renderStart(main, { a: fakeApi(), dialog, go, readOnly: true });
+    expect(find(main, "button", { type: "submit" })).toHaveLength(0);
+    type("preview");
+    expect(draft.readDraft()).toBeNull();
+  });
+
+  it("keeps kind, repository and text across a new page, and Clear empties them", async () => {
+    data.repos = [repo("r1", "acme/one"), repo("r2", "acme/two")];
+    const cleanup = await open(undefined, true);
+    kind("issue");
+    one(main, "select", { name: "plan_repo" }).value = "acme/two";
+    one(main, "select", { name: "plan_repo" }).fire("change");
+    type("#7");
+    cleanup();
+    await open(undefined, true);
+    expect(draft.readDraft()).toMatchObject({ kind: "issue", repo: "acme/two", task: "#7", flow: "" });
+    expect(find(main, "input", { name: "start-point" }).filter((r) => (r as any).checked).map((r) => r.value)).toEqual(["issue"]);
+    expect(one(main, "textarea", { name: "task" }).value).toBe("#7");
+    expect(main.textContent).toContain("In acme/two");
+    press(find(main, "button", { type: "button" }).find((b) => b.textContent === "Clear"));
+    expect(draft.readDraft()).toBeNull();
+    expect(one(main, "textarea", { name: "task" }).value).toBe("");
+  });
+
+  it("follows a change request the server saved although the answer was lost, and never makes a second one", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    data.planFail = unsure();
+    data.changes = [{ id: "c9", state: "questions", text: "Lost answer", updated: "2026-01-01T00:00:00Z" }];
+    await open(undefined, true);
+    type("Lost answer");
+    await plan();
+    expect(calls.plan).toHaveLength(1);
+    expect(calls.changes).toEqual(["acme/app"]);
+    expect(go).toHaveBeenCalledWith("#/change/r1");
+  });
+
+  it("keeps the text and reads again before another request when the outcome is not known", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    data.planFail = unsure();
+    data.changesFail = true;
+    await open(undefined, true);
+    type("Maybe saved");
+    await plan();
+    expect(one(main, "div", { role: "alert" }).textContent).toContain(ui.PLAN_UNSURE);
+    expect(one(main, "textarea", { name: "task" }).value).toBe("Maybe saved");
+    expect(draft.readDraft()?.task).toBe("Maybe saved");
+    // pressing again does not create a second request while it cannot be told
+    await plan();
+    expect(calls.plan).toHaveLength(1);
+    // nothing was saved: now it may be sent again
+    data.changesFail = false;
+    data.changes = [];
+    data.planFail = undefined;
+    await plan();
+    expect(calls.plan).toHaveLength(2);
+    expect(go).toHaveBeenCalledWith("#/change/r1");
+  });
+
+  it("a page that leaves late does not remove the guard of the page that replaced it", async () => {
+    const reload = vi.fn();
+    (globalThis as any).location = { hash: "#/start", reload };
+    const { api, keepPage } = await import("../ui/api.js" as string);
+    const realFetch = globalThis.fetch;
+    (globalThis as any).fetch = async () => ({ ok: false, status: 401, statusText: "x", json: async () => ({ error: "Sign in again." }) });
     try {
-      await open();
-      press(choice("entry-idea"));
-      await flush();
-      expect(calls.refinement).toBe(1);
-      expect(radio("idea").checked).toBe(true);
-      one(modalRoot(), "textarea", { name: "idea" }).value = "An idea";
-      press(find(modalRoot(), "button").find((b) => b.textContent === "Start session"));
-      await flush();
-      expect(posts).toEqual([{ url: "/api/refinement", method: "POST", body: { repo: "acme/app", idea: "An idea" } }]);
-      expect(go).toHaveBeenCalledWith("#/refinement/new1");
+      const releaseOld = keepPage(() => false);
+      const releaseNew = keepPage(() => true); // the newer page is typing
+      releaseOld(); // the old page leaves late
+      await api.repos().catch(() => undefined);
+      expect(reload).not.toHaveBeenCalled();
+      releaseNew();
+      await api.repos().catch(() => undefined);
+      expect(reload).toHaveBeenCalled();
     } finally {
-      reset();
+      globalThis.fetch = realFetch;
     }
   });
 
-  it("opens the issue form", async () => {
-    data.flows = [flow("a")];
-    await open();
-    press(choice("entry-issue"));
-    await flush();
-    expect(radio("issue").checked).toBe(true);
-    expect(find(modalRoot(), "input", { name: "issue" })).toHaveLength(1);
-  });
-
-  it("links to the refinement sessions", async () => {
-    data.flows = [flow("a")];
-    await open();
-    expect(one(main, "a", { href: "#/refinement" }).textContent).toBe(entry.ENTRY_CONTINUE);
-  });
-
-  it("shows a failed read as a toast, opens nothing and works again", async () => {
-    data.flows = [flow("a")];
-    await open();
-    data.refFail = true;
-    press(choice("entry-idea"));
-    await flush();
-    expect(toastText()).toContain("GitHub could not be reached");
-    expect(modalRoot().children).toHaveLength(0);
-    data.refFail = false;
-    press(choice("entry-idea"));
-    await flush();
-    expect(modalRoot().children.length).toBeGreaterThan(0);
-  });
-
-  it("reads once for two fast presses", async () => {
-    data.flows = [flow("a")];
-    data.holdRef = true;
-    await open();
-    press(choice("entry-idea"));
-    press(choice("entry-idea"));
-    releaseRef();
-    await flush();
-    expect(calls.refinement).toBe(1);
-  });
-
-  it("opens no dialog when the page was left before the answer", async () => {
-    data.flows = [flow("a")];
-    data.holdRef = true;
-    const cleanup = await open();
-    press(choice("entry-idea"));
-    cleanup();
-    releaseRef();
-    await flush();
-    expect(modalRoot().children).toHaveLength(0);
-  });
-
-  it("has no entry that makes a session in a preview and reads nothing", async () => {
-    data.flows = [flow("a")];
+  it("Clear cancels a flow restored from the cleared draft, even when the flows arrive later", async () => {
+    data.repos = [repo("r1", "acme/app")];
+    data.flows = [flow("f1")];
+    draft.writeDraft({ flow: "f1", task: "Typed", kind: "idea", repo: "acme/app", values: {} });
+    data.holdFlows = true;
     main = document.createElement("div") as unknown as FakeElement;
-    await ui.renderStart(main, { a: fakeApi(), dialog, go, readOnly: true });
-    expect(texts(main)).toEqual([entry.ENTRY_CONTINUE]);
-    expect(calls.refinement).toBe(0);
+    const opening = ui.renderStart(main, { a: fakeApi(), dialog, go });
+    await flush();
+    press(find(main, "button", { type: "button" }).find((b) => b.textContent === "Clear"));
+    releaseFlows();
+    await opening;
+    expect(flowRadios(main).some((r) => (r as any).checked)).toBe(false);
+    expect(submitBtn(main).textContent).toBe("Make a plan");
   });
 
-  it("keeps the typed text when the form is closed and opened again from the page", async () => {
-    data.flows = [flow("a")];
-    await open();
-    press(choice("entry-idea"));
-    await flush();
-    const area = one(modalRoot(), "textarea", { name: "idea" });
-    area.value = "Typed";
-    area.fire("input");
-    (document as any).listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
-    press(choice("entry-issue"));
-    await flush();
-    expect(radio("issue").checked).toBe(true);
-    radio("idea").checked = true;
-    radio("idea").fire("change");
-    expect(one(modalRoot(), "textarea", { name: "idea" }).value).toBe("Typed");
+  it("does not reload the page on a 401 of a background read while text is typed", async () => {
+    const reload = vi.fn();
+    (globalThis as any).location = { hash: "#/start", reload };
+    const { api } = await import("../ui/api.js" as string);
+    const realFetch = globalThis.fetch;
+    let answer!: () => void;
+    (globalThis as any).fetch = () => new Promise((r) => { answer = () => r({ ok: false, status: 401, statusText: "x", json: async () => ({ error: "Sign in again." }) }); });
+    try {
+      main = document.createElement("div") as unknown as FakeElement;
+      const opening = ui.renderStart(main, { a: { ...fakeApi(), repos: api.repos }, dialog, go });
+      await flush();
+      type("Typed before the answer");
+      answer();
+      const cleanup = await opening;
+      expect(reload).not.toHaveBeenCalled();
+      expect(one(main, "textarea", { name: "task" }).value).toBe("Typed before the answer");
+      cleanup();
+      // after the page is left the guard is off again
+      const late = api.repos().catch(() => undefined);
+      answer();
+      await late;
+      expect(reload).toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
-  it("opens no dialog when the address changed before the answer, also while the flows still load", async () => {
+  it("does not go to the new page when the address changed while the plan was made", async () => {
     (globalThis as any).location = { hash: "#/start" };
-    data.flows = [flow("a")];
-    data.holdRef = true;
-    let finishFlows!: () => void;
-    const slow = { ...fakeApi(), flows: () => new Promise<any[]>((r) => { finishFlows = () => r(data.flows); }) };
-    main = document.createElement("div") as unknown as FakeElement;
-    const rendering = ui.renderStart(main, { a: slow, dialog, go });
-    press(choice("entry-idea")); // pressed while the flows load
+    data.repos = [repo("r1", "acme/app")];
+    data.holdPlan = true;
+    await open(undefined, true);
+    type("Slow");
+    await plan();
     (globalThis as any).location.hash = "#/runs";
-    releaseRef();
+    releasePlan();
     await flush();
-    expect(modalRoot().children).toHaveLength(0);
-    finishFlows();
-    await rendering;
-    expect(modalRoot().children).toHaveLength(0);
+    expect(go).not.toHaveBeenCalled();
+    expect(document.getElementById("toast")!.textContent).toBe("Your change was sent");
     (globalThis as any).location.hash = "#/start";
   });
 
-  it("does not go to a session when the address changed while it was made", async () => {
-    (globalThis as any).location = { hash: "#/start" };
-    data.flows = [flow("a")];
-    stubPost();
-    try {
-      await open();
-      press(choice("entry-idea"));
-      await flush();
-      one(modalRoot(), "textarea", { name: "idea" }).value = "An idea";
-      (globalThis as any).location.hash = "#/runs";
-      press(find(modalRoot(), "button").find((b) => b.textContent === "Start session"));
-      await flush();
-      expect(go).not.toHaveBeenCalled();
-      expect(toastText()).toContain("Refinement session started");
-    } finally {
-      reset();
-      (globalThis as any).location.hash = "#/start";
-    }
-  });
-
-  it("keeps the page and the kept idea when the session ended while the repositories were read", async () => {
-    const reload = vi.fn();
-    (globalThis as any).location = { hash: "#/start", reload };
-    data.flows = [flow("a")];
-    const { api } = await import("../ui/api.js" as string);
-    (globalThis as any).fetch = async () => ({ ok: false, status: 401, statusText: "x", json: async () => ({ error: "Sign in again." }) });
-    try {
-      main = document.createElement("div") as unknown as FakeElement;
-      await ui.renderStart(main, { a: { ...fakeApi(), refinement: api.refinement }, dialog, go });
-      press(choice("entry-idea"));
-      await flush();
-      expect(reload).toHaveBeenCalled(); // nothing is kept yet: a 401 may reload
-      reload.mockClear();
-      // an idea is kept: open the form through the API-free path, type, close, then the 401 must not reload
-      (globalThis as any).fetch = async () => ({ ok: true, status: 200, statusText: "x", json: async () => ({ sessions: [], repos: ["acme/app"] }) });
-      press(choice("entry-idea"));
-      await flush();
-      const area = one(modalRoot(), "textarea", { name: "idea" });
-      area.value = "Kept idea";
-      area.fire("input");
-      (document as any).listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
-      (globalThis as any).fetch = async () => ({ ok: false, status: 401, statusText: "x", json: async () => ({ error: "Sign in again." }) });
-      press(choice("entry-idea"));
-      await flush();
-      expect(reload).not.toHaveBeenCalled();
-      expect(toastText()).toContain("Sign in again.");
-      expect(fresh.keptSession()).toMatchObject({ idea: "Kept idea" });
-    } finally {
-      reset();
-    }
-  });
-
-  it("keeps the page and the text when the session ended during Start session", async () => {
-    data.flows = [flow("a")];
-    const reload = vi.fn();
-    (globalThis as any).location = { hash: "#/start", reload };
-    stubPost(401, { error: "Sign in again." });
-    try {
-      await open();
-      press(choice("entry-idea"));
-      await flush();
-      one(modalRoot(), "textarea", { name: "idea" }).value = "Typed";
-      press(find(modalRoot(), "button").find((b) => b.textContent === "Start session"));
-      await flush();
-      expect(reload).not.toHaveBeenCalled();
-      expect(modalRoot().textContent).toContain("Sign in again.");
-      expect(one(modalRoot(), "textarea", { name: "idea" }).value).toBe("Typed");
-    } finally {
-      reset();
-    }
-  });
 });
 
 describe("renderStart: the repository context", () => {

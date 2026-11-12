@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
 import { defaultGo } from "./filters.js";
+import { statusPill } from "./icons.js";
 import { plainError, renderRepos } from "./repos.js";
 import { repoAttention } from "./repo-status.js";
 import { table } from "./kit/display.js";
@@ -103,7 +104,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       testCommand: ["Test command"], docs: ["Docs to update (one path per line)"], protectedBranches: ["Protected branches (one pattern per line)", PATTERN_HINT],
       mainBranch: ["Main branch"], developBranch: ["Develop branch"],
       releaseRecipe: ["Release-build recipe (YAML)", "Used by release-build when the commit has no .factory/release-build.yaml. A file in the repository wins."],
-      decideTechnical: ["Decide technical questions itself", "The Foundry takes its own recommendation on technical questions and says so on the issue. Off: you are asked every question."],
+      decideTechnical: ["Decide technical questions itself", "The Foundry takes its own recommendation on technical questions and says so on the GitHub issue. Off: you are asked every question."],
       pushRemote: ["Also push to the remote", "After each merge into develop, the Foundry pushes develop to your folder's remote with plain git. A failed push is reported; the merge stays."],
     };
     const err = h("p", { class: "status bad flush", role: "alert" });
@@ -306,7 +307,7 @@ export function transferDialog(repo) {
 }
 
 /** The owner cell of a row on the All list: the owner, and a pill when the account is blocked. */
-const ownerCell = (repo) => [ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null];
+const ownerCell = (repo) => [ownerText(repo), repo.account?.status === "blocked" ? [" ", statusPill("danger", "blocked")] : null];
 
 /**
  * What needs attention on a row of the All list: the usual states for the owner's role, then (when those are fine) a repository
@@ -322,7 +323,7 @@ export function allAttention(repo, { options } = {}) {
 
 /** The scope of the Repositories list for all accounts (an admin only). */
 export const ALL_SCOPE = {
-  id: "all", page: "all-repos", title: "Repositories", hint: "The repositories of all accounts", caption: "Repositories of all accounts",
+  id: "all", page: "all-repos", title: "All repositories", hint: "The repositories of all accounts", caption: "Repositories of all accounts",
   loading: "Loading the repositories", failed: "The repositories could not be loaded.", denied: "Only an admin can see the repositories of all accounts.",
   empty: "No repositories yet.", back: { href: "#/repos", label: "My repositories" }, own: false, load: () => api.allRepos(), ownerCell,
   attention: allAttention, asAdmin: (r) => r.account?.role === "admin", sort: sortRepos,

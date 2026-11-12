@@ -3,7 +3,7 @@
    Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. */
 
 .scf-field { display: grid; gap: var(--space-xs); min-width: 0; }
-.scf-field__label { overflow-wrap: anywhere; font-size: var(--text-meta); color: var(--color-text-muted); font-weight: var(--weight-medium); }
+.scf-field__label { font-family: var(--font-label); text-transform: var(--label-case); overflow-wrap: anywhere; font-size: var(--text-meta); color: var(--color-text-muted); font-weight: var(--weight-medium); }
 .scf-field__required { color: var(--color-danger); }
 .scf-field__hint { font-size: var(--text-meta); color: var(--color-text-muted); }
 .scf-field__error { font-size: var(--text-meta); color: var(--color-danger); }
@@ -28,7 +28,7 @@
 .scf-checkbox { display: inline-flex; align-items: center; gap: var(--space-sm); max-width: 100%; }
 .scf-checkbox__label { min-width: 0; overflow-wrap: anywhere; }
 .scf-checkbox__input { width: auto; padding: 0; margin: 0; accent-color: var(--color-accent); }
-.scf-checkbox__input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-checkbox__input:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
 .scf-rows > .scf-btn { justify-self: start; }
 .scf-rows__row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
 .scf-rows__row > .scf-input { flex: 1 1 0; min-width: 0; }

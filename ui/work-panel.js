@@ -3,6 +3,7 @@ import { whereLink, whereTarget, whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { issueLink } from "./work-list.js";
 import { ageText, keyOf } from "./work-model.js";
+import { plainServerText, whoText } from "./change-words.js";
 
 // The side panel of the Work page: what is in the way of one story, in the order it must finish. Every word
 // comes from the server's record (the same GET /api/board answer); this file only orders and draws.
@@ -39,7 +40,7 @@ export function chainOrder(item, items) {
 /** The next move of a story: who, action and the where link. */
 function moveParts(n, leave, focus) {
   return [
-    n.who ? h("span", { class: `pill ${whoClass(n)}` }, n.who) : null, n.who ? " " : null, n.action ?? "",
+    n.who ? h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)) : null, n.who ? " " : null, plainServerText(n.action ?? ""),
     n.where?.label ? h("span", { onClick: () => { if (whereTarget(n.where)?.external) leave(); } }, " ", whereLink(n.where, focus)) : null,
   ];
 }
@@ -59,7 +60,7 @@ export function panelView(item, items, handlers = {}) {
     return h("li", {},
       e.item
         ? [h("button", { type: "button", class: "ghost small", "data-focus": `work-panel-chain-${e.issue}`, onClick: () => handlers.onPick?.(e.item) }, `#${e.issue} ${e.item.title}`),
-          " ", m.status || e.item.columnTitle, " ", ...moveParts(m, own, `work-panel-chain-where-${e.issue}`)]
+          " ", plainServerText(m.status) || e.item.columnTitle, " ", ...moveParts(m, own, `work-panel-chain-where-${e.issue}`)]
         : [issueLink(item.repo, e.issue, leave, `work-panel-chain-${e.issue}`), " ", h("span", { class: "muted" }, "not on the board")],
       e.direct ? [" ", h("span", { class: "pill" }, "directly")] : null);
   });
@@ -70,8 +71,8 @@ export function panelView(item, items, handlers = {}) {
       handlers.onBack ? h("button", { type: "button", class: "small", "data-focus": "work-panel-back", onClick: () => handlers.onBack() }, "Back") : null,
       h("button", { type: "button", class: "small", "data-focus": "work-panel-close", onClick: () => handlers.onClose?.() }, "Close")),
     h("div", {}, issueLink(item.repo, item.issue, leave, "work-panel-issue")),
-    h("div", {}, h("span", { class: "pill" }, n.status || item.columnTitle)),
-    n.text ? h("p", {}, n.text) : null,
+    h("div", {}, h("span", { class: "pill" }, plainServerText(n.status) || item.columnTitle)),
+    n.text ? h("p", {}, plainServerText(n.text)) : null,
     h("div", {}, ...moveParts(n, leave, "work-panel-where")),
     ownerLabel(item.ownerName) ? h("div", { class: "muted" }, ownerLabel(item.ownerName)) : null,
     age ? h("div", { class: "muted" }, h("span", { "data-since": item.since }, age)) : null,

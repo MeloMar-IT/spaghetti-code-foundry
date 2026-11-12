@@ -201,14 +201,14 @@ describe("api", () => {
 describe("new and remove", () => {
   it("adds a draft, opens it with the Title focused, and logs it", async () => {
     await show();
-    expect(section().textContent).toContain("No story drafts yet.");
+    expect(section().textContent).toContain("No change drafts yet.");
     await press(button("New draft"));
     expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/drafts", body: {} }]);
     expect(section().textContent).toContain("Untitled draft");
     expect(field("title").value).toBe("");
     expect(field("who").value).toBe("");
     expect((document as any).activeElement).toBe(field("title"));
-    expect(main().textContent).toContain("Ann added a story draft");
+    expect(main().textContent).toContain("Ann added a change draft");
   });
   it("removes a draft after a confirmation", async () => {
     await withDraft({ title: { text: "Export", from: "typed" } });
@@ -219,8 +219,8 @@ describe("new and remove", () => {
     await press(button("Remove draft"));
     expect(sent[0]!.method).toBe("DELETE");
     expect(walk(section()).some((e) => e.tag === "textarea")).toBe(false);
-    expect(section().textContent).toContain("No story drafts yet.");
-    expect(main().textContent).toContain('Ann removed a story draft: "Export"');
+    expect(section().textContent).toContain("No change drafts yet.");
+    expect(main().textContent).toContain('Ann removed a change draft: "Export"');
   });
   it("a removed draft with unsaved text leaves no Not saved card", async () => {
     await withDraft();
@@ -629,14 +629,14 @@ describe("depends on and the Epic", () => {
     await withDraft();
     const input = field("depends-issue");
     type(input, "#12");
-    await press(button("Add issue"));
+    await press(button("Add GitHub issue"));
     expect(sent[0]!.body).toEqual({ dependsOn: [{ issue: 12 }] });
     expect(section().textContent).toContain("#12");
-    await press(button("Add issue"));
+    await press(button("Add GitHub issue"));
     expect(toastText()).not.toBe("");
     expect(sent).toHaveLength(1);
     type(field("depends-issue"), "abc");
-    await press(button("Add issue"));
+    await press(button("Add GitHub issue"));
     expect(sent).toHaveLength(1);
     await press(buttons().filter((b) => b.textContent === "Remove").at(-1));
     expect(sent[1]!.body).toEqual({ dependsOn: [] });
@@ -773,7 +773,7 @@ describe("who sees fields", () => {
   it("a gone repository with no drafts has no New draft", async () => {
     over = { repoAvailable: false };
     await show();
-    expect(section().textContent).toContain("No story drafts yet.");
+    expect(section().textContent).toContain("No change drafts yet.");
     expect(button("New draft")).toBeUndefined();
   });
   it("shows the same controls on the admin display for an own session", async () => {
@@ -1062,7 +1062,7 @@ describe("parts of a split", () => {
       expect(areas()).toContain("Rows are exported");
       expect(areas()).toContain("Other works");
       expect(labels(mergeSel())).toEqual(["Choose columns"]);
-      expect(main().textContent).toContain('Ann merged two story drafts: "Other story" and "Export a file"');
+      expect(main().textContent).toContain('Ann merged two change drafts: "Other story" and "Export a file"');
     });
     it("typed text is saved first", async () => {
       family();

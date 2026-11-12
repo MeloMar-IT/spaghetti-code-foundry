@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { nextStep } from "../src/next-step.js";
 import { audit, auditHtml, parseHtml, type Violation } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { chooseFlow } from "./helpers/start-flow.js";
 import { click as flowClick, dropBrowser, edit as flowEdit, flowJson, launchApp, main as flowMain } from "./helpers/flow-app.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -184,6 +185,8 @@ const JOURNEYS: Journey[] = [
     title: "Start work", roles: BOTH, hash: { admin: "#/start", user: "#/start" },
     async run(role, s) {
       await m.start.renderStart(s.main, { a: startApi, admin: role === "admin", go: () => {} });
+      gate(s, "What would you like to change?");
+      await chooseFlow(s.main); // the flow and its fields are under Advanced
       gate(s, "branch");
       s.main.all("form")[0]!.fire("submit", { preventDefault() {} });
       await flush();
@@ -198,21 +201,21 @@ const JOURNEYS: Journey[] = [
         answers["/api/queue"] = { pending: [], active: [], concurrency: 2 };
         answers["/api/run-owners"] = [{ id: "u1", name: "Ann", runs: 1 }];
         await stopper(m.runs.renderRunsList(s.main));
-        gate(s, "flow-r1");
+        gate(s, "do it"); // a row is titled with the task, not the flow
         s.main.replaceChildren();
         await stopper(m.runs.renderRunDetail(s.main, "r1"));
         esHandlers.update!({ data: JSON.stringify({ summary: RUN("r1", { status: "running", next: nextStep("running", { runId: "r1" }, {}) }) }) });
       } else {
-        const a = { runs: async () => [myRun("r1")], queue: async () => ({ pending: [] }) };
+        const a = { runs: async () => [myRun("r1", { task: "Open the door" })], queue: async () => ({ pending: [] }) };
         await stopper(m.mine.renderMyRuns(s.main, { a }));
-        gate(s, "flow-r1");
+        gate(s, "Open the door");
         s.main.replaceChildren();
         const b = { run: async () => myRun("r1"), queue: async () => ({ pending: [] }), events: () => ({ addEventListener: (t: string, f: any) => { esHandlers[t] = f; }, close() {}, readyState: 1 }) };
         await stopper(m.mine.renderMyRun(s.main, "r1", { a: b }));
         await flush();
       }
       esHandlers.log!({ data: JSON.stringify({ line: "▶ first" }) });
-      s.main.all("button").find((b) => b.attrs["data-tab"] === "log")!.click();
+      s.main.all("button").find((b) => b.attrs["data-tab"] === "details")!.click();
       gate(s, "▶ first");
     },
   },
@@ -366,7 +369,7 @@ describe("the accessibility page", () => {
     expect(auditHtml(page)).toEqual([]);
     expect(page.match(/<h1\b/g)).toHaveLength(1);
     const refs = [...page.matchAll(/<(?:link|script)\b[^>]*\b(?:href|src)="([^"]+)"/g)].map((r) => r[1]!);
-    expect(refs).toHaveLength(3);
+    expect(refs).toHaveLength(4); // prefs-boot.js, tokens.css, looks.css, style.css
     for (const r of refs) expect(r.startsWith("/")).toBe(true);
   });
   it("names WCAG 2.2 AA and the reporting address from package.json", () => {

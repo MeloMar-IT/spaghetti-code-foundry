@@ -218,7 +218,8 @@ describe("user router", () => {
     });
 
     it("offers the Advanced view for the pages Simple dropped", async () => {
-      for (const at of ["#/runs", "#/start", "#/epics", "#/refinement"]) {
+      // #/start stays in Simple: + New change opens the composer there
+      for (const at of ["#/runs", "#/epics", "#/refinement"]) {
         setup(at);
         await loadRouter("user/app.js", deps({ ...simpleMe, "/user/runs.js": runsStub() }));
         expect(main().textContent, at).toContain("Open this in the Advanced view");
@@ -262,12 +263,12 @@ describe("user router", () => {
       const renderStart = vi.fn();
       const me = { id: "a", role: "admin", view: "advanced" };
       await loadRouter("user/app.js", deps({ ...as(me), "/user/start.js": { homeHash: async () => "#/runs", renderStart } }));
-      expect(renderStart).toHaveBeenCalledWith(expect.anything(), { readOnly: false, admin: true });
+      expect(renderStart).toHaveBeenCalledWith(expect.anything(), { readOnly: false, admin: true, simple: false, contextRepo: expect.any(Function) });
       renderStart.mockClear();
       setup("#/start");
       const beginView = () => ({ readOnly: true, ready: true });
       await loadRouter("user/app.js", deps({ ...as(me), "/view-as.js": { beginView }, "/user/start.js": { homeHash: async () => "#/runs", renderStart } }));
-      expect(renderStart).toHaveBeenCalledWith(expect.anything(), { readOnly: true, admin: false });
+      expect(renderStart).toHaveBeenCalledWith(expect.anything(), { readOnly: true, admin: false, simple: false, contextRepo: expect.any(Function) });
       expect(main().textContent).not.toContain("Open this in");
     });
   });
@@ -489,7 +490,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js", "./simple.js", "./simple-change.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -713,7 +714,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js", "./simple.js", "./simple-change.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,

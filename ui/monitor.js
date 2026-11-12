@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { confirmDialog, fieldFor, h, modal, showError, tableBox, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, modal, showError, table, toast } from "./dom.js";
 
 /** Asks before the monitor is switched on over a state file that cannot be read; resolves true on "Switch on". */
 export const confirmUnreadable = () => confirmDialog({
@@ -65,8 +65,8 @@ export function muteForm(target, detectors, { notProblem = false } = {}) {
     };
     return h("div", { class: "modal-body" },
       h("p", {}, notProblem
-        ? "The monitor still records it, but never makes a bug story for it. You can end this on the Problems page."
-        : `No bug story is made for ${what} while it is muted. It is still recorded.`),
+        ? "The monitor still records it, but never makes a bug-fix change for it. You can end this on the Problems page."
+        : `No bug-fix change is made for ${what} while it is muted. It is still recorded.`),
       detector ? field("Detector", detector) : null,
       field("Reason", reason),
       notProblem ? null : field("For", hours),
@@ -88,32 +88,32 @@ export const mutesTable = (m, reload, { readOnly = false } = {}) => {
     }
     await reload();
   };
-  return tableBox(h("table", { class: "table compact", "aria-label": "Mutes" },
-    h("thead", {}, h("tr", {}, ["What", "Reason", "Since", "Until", ...(readOnly ? [] : [h("span", { class: "sr-only" }, "Actions")])].map((c) => h("th", { scope: "col" }, c)))),
-    h("tbody", {}, m.mutes.map((x) => h("tr", {},
+  return table(["What", "Reason", "Since", "Until", ...(readOnly ? [] : [h("span", { class: "sr-only" }, "Actions")])],
+    m.mutes.map((x) => h("tr", {},
       h("td", {}, x.kind === "finding" ? `${x.detector}: ${x.summary ?? x.finding}` : x.detector),
       h("td", {}, x.reason),
       h("td", {}, when(x.since)),
       h("td", {}, x.until ? when(x.until) : "for good"),
-      readOnly ? null : h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute")))))));
+      readOnly ? null : h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute")))),
+    { label: "Mutes", class: "compact" });
 };
 
 // A row has no buttons: each finding's page (#/problems/:id) has its actions.
 const findingsTable = (m, redraw) => {
   const rows = m.findings.slice(0, shown);
-  const table = h("table", { class: "table compact", "aria-label": "Findings" },
-    h("thead", {}, h("tr", {}, ["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted"].map((c) => h("th", { scope: "col" }, c)))),
-    h("tbody", {}, rows.map((f) => h("tr", {},
+  const grid = table(["Severity", "Detector", "What", "First seen", "Last seen", "Change", "Muted"],
+    rows.map((f) => h("tr", {},
       h("td", {}, f.severity),
       h("td", {}, f.detector),
       h("td", {}, h("a", { href: "#/problems/" + encodeURIComponent(f.id) }, f.summary)),
       h("td", {}, when(f.firstSeen)),
       h("td", {}, when(f.lastSeen)),
       h("td", {}, storyCell(f.story, f.needsYou)),
-      h("td", {}, f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : "")))));
+      h("td", {}, f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : ""))),
+    { label: "Findings", class: "compact" });
   const left = m.findings.length - rows.length;
   return h("div", {},
-    tableBox(table),
+    grid,
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 };
 

@@ -10,9 +10,16 @@ export const setCsrf = (t) => {
 };
 
 let keepOnAuthFail = () => false;
-/** `fn()` true: typed text is waiting, so a 401 does not reload the page (the call still fails). Pass null to remove it. */
+/**
+ * `fn()` true: typed text is waiting, so a 401 does not reload the page (the call still fails). Pass null to remove it.
+ * Returns a release that removes only this guard, so a page that leaves late cannot remove a newer page's guard.
+ */
 export const keepPage = (fn) => {
-  keepOnAuthFail = fn || (() => false);
+  const guard = fn || (() => false);
+  keepOnAuthFail = guard;
+  return () => {
+    if (keepOnAuthFail === guard) keepOnAuthFail = () => false;
+  };
 };
 
 export const PREVIEW_TEXT = "This is a preview. Nothing can be changed here.";
@@ -111,11 +118,14 @@ export const api = {
   run: (id) => req("GET", `/api/runs/${enc(id)}`),
   startRun: (body) => req("POST", "/api/runs", body),
   cancelRun: (id) => req("POST", `/api/runs/${enc(id)}/cancel`, {}),
+  notNowRun: (id) => req("POST", `/api/runs/${enc(id)}/not-now`, {}),
   resumeRun: (id, from) => req("POST", `/api/runs/${enc(id)}/resume`, { from }),
   issueLimit: (id) => req("GET", `/api/runs/${enc(id)}/issue-limit`),
   setIssueLimit: (id, usd) => req("PUT", `/api/runs/${enc(id)}/issue-limit`, { limitUsd: usd }),
   approveRun: (id, note) => req("POST", `/api/runs/${enc(id)}/approve`, { note }),
   rejectRun: (id, note) => req("POST", `/api/runs/${enc(id)}/reject`, { note }),
+  addCheck: (id, t, e, rev) => req("POST", `/api/runs/${enc(id)}/checks/add`, { try: t, expect: e, ...(rev ? { rev } : {}) }),
+  markCheck: (id, check, mark, rev) => req("POST", `/api/runs/${enc(id)}/checks`, { check, mark, ...(rev ? { rev } : {}) }),
   answerRun: (id, text) => req("POST", `/api/runs/${enc(id)}/answer`, { text }),
   transcript: (id, n) => req("GET", `/api/runs/${enc(id)}/transcript/${n}`),
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
@@ -123,6 +133,8 @@ export const api = {
   context: (id) => req("GET", `/api/runs/${enc(id)}/context`),
   repos: () => req("GET", "/api/repos"),
   epics: (id) => req("GET", `/api/repos/${enc(id)}/epics`),
+  safePoints: (id) => req("GET", `/api/repos/${enc(id)}/safe-points`),
+  restoreSafePoint: (id, body) => req("POST", `/api/repos/${enc(id)}/safe-points/restore`, body),
   epic: (id, epicId) => req("GET", `/api/repos/${enc(id)}/epics/${enc(epicId)}`),
   repoMethods: () => req("GET", "/api/repos/methods"),
   addRepo: (body) => req("POST", "/api/repos", body),

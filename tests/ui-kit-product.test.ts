@@ -476,17 +476,60 @@ describe("confirmDestructive", () => {
   });
 });
 
+describe("phaseStrip", () => {
+  const FIVE = ["Understand", "Plan", "Build", "Check", "Deliver"];
+  const labels = (li: FakeElement) => li.all("svg").map((s) => s.getAttribute("aria-label"));
+  it("marks the current phase and the done ones", () => {
+    const el = p.phaseStrip({ label: "Progress", phases: FIVE, current: 2 }) as FakeElement;
+    expect(el.tag).toBe("ol");
+    expect(el.getAttribute("aria-label")).toBe("Progress");
+    const items = el.all("li");
+    expect(items).toHaveLength(5);
+    expect(items.map((li) => li.getAttribute("aria-current"))).toEqual([null, null, "step", null, null]);
+    expect(classOf(items[2]!)).toContain("scf-phase-strip__item--current");
+    expect(labels(items[2]!)).toEqual(["Now"]);
+    expect(items[2]!.textContent).toContain("Build");
+    expect([0, 1].map((i) => labels(items[i]!))).toEqual([["Done"], ["Done"]]);
+    expect([3, 4].map((i) => labels(items[i]!))).toEqual([[null], [null]]);
+  });
+  it("marks none when not started", () => {
+    const el = p.phaseStrip({ phases: FIVE }) as FakeElement;
+    expect(el.all("li").every((li) => li.getAttribute("aria-current") === null)).toBe(true);
+    expect(el.getAttribute("aria-label")).toBeNull();
+  });
+  it("marks every phase done, with no current one, when complete", () => {
+    const el = p.phaseStrip({ phases: FIVE, complete: true }) as FakeElement;
+    expect(el.all("li")).toHaveLength(5);
+    expect(el.all("li").every((li) => li.getAttribute("aria-current") === null)).toBe(true);
+    expect(el.all("li").every((li) => (li.attrs.class ?? "").includes("--done"))).toBe(true);
+    expect(() => p.phaseStrip({ phases: FIVE, complete: true, current: 2 })).toThrow();
+  });
+  it("throws on bad input", () => {
+    for (const phases of [undefined, [], "x", ["a", " "], ["a", 1]]) expect(() => p.phaseStrip({ phases })).toThrow();
+    for (const current of [5, -1, 1.5, "1"]) expect(() => p.phaseStrip({ phases: FIVE, current })).toThrow();
+    expect(() => p.phaseStrip({ phases: FIVE, style: "color: red" })).toThrow();
+  });
+  it("merges the class and passes other attributes through", () => {
+    const el = p.phaseStrip({ phases: FIVE, class: "mine", id: "strip" }) as FakeElement;
+    expect(classOf(el)).toEqual(expect.arrayContaining(["scf-phase-strip", "mine"]));
+    expect(el.getAttribute("id")).toBe("strip");
+  });
+  it("passes the accessibility audit", () => {
+    expect(audit(p.phaseStrip({ label: "Progress", phases: FIVE, current: 3 }))).toEqual([]);
+  });
+});
+
 describe("the module and its CSS", () => {
   const read = (f: string) => readFileSync(f, "utf8");
-  it("exports exactly the six components", () => {
-    expect(Object.keys(p).sort()).toEqual(["confirmDestructive", "entityLink", "filters", "nextAction", "pageHeader", "statusSummary"]);
+  it("exports exactly the seven components", () => {
+    expect(Object.keys(p).sort()).toEqual(["confirmDestructive", "entityLink", "filters", "nextAction", "pageHeader", "phaseStrip", "statusSummary"]);
   });
   it("has no inline styles and imports only the dom helper and kit modules", () => {
     const src = read("ui/kit/product.js");
     expect(kitSourceProblems(src)).toEqual([]);
     const imports = [...src.matchAll(/import[^;]*?from "([^"]+)"/g)].map((m) => m[1]!);
     expect(imports.length).toBeGreaterThan(0);
-    for (const i of imports) expect(i).toMatch(/^\.\.\/dom\.js$|^\.\/(actions|display|forms|overlays|core)\.js$/);
+    for (const i of imports) expect(i).toMatch(/^\.\.\/(dom|icons)\.js$|^\.\/(actions|display|forms|overlays|core)\.js$/);
   });
   it("product.css passes the selector and colour test, and is imported by kit.css", () => {
     const css = read("ui/kit/product.css");

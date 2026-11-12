@@ -62,7 +62,7 @@ describe("switched off", () => {
     const host = new FakeElement("body");
     const d = await ask.initAsk("admin", { api: { helpConversations: async () => ({ enabled: true, conversations: [] }) }, host, win: {} });
     expect(slot.hidden).toBe(false);
-    expect((slot.children[0] as FakeElement).textContent).toBe("Ask SCF");
+    expect((slot.children[0] as FakeElement).textContent).toBe("Ask Foundry");
     expect(host.children).toHaveLength(2);
     d.stop();
     expect(slot.hidden).toBe(true);
@@ -97,7 +97,7 @@ describe("names for a screen reader", () => {
   it("names the button, the dialog and every control in it", () => {
     const { d } = make();
     expect(d.button.attrs).toMatchObject({ type: "button", "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "ask-drawer" });
-    expect(d.button.textContent).toBe("Ask SCF");
+    expect(d.button.textContent).toBe("Ask Foundry");
     expect(d.ui.drawer.attrs).toMatchObject({ id: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title" });
     const all = walk(d.ui.drawer);
     expect(all.find((e) => e.attrs.id === "ask-title")!.textContent).toBe("Ask SCF");
@@ -230,7 +230,7 @@ describe("the question", () => {
   it("shows what is attached before Send, follows the checkbox and the page behind", () => {
     const { d, setHash } = make({ hash: "#/runs/r-1?repo=a%2Fb" });
     d.open();
-    expect(d.ui.context.textContent).toBe("Sent with your question: the page you are on (Run r-1, #/runs/r-1). Nothing else of the page is sent.");
+    expect(d.ui.context.textContent).toBe("Sent with your question: the page you are on (Change, #/runs/r-1). Nothing else of the page is sent.");
     d.ui.attach.fire("change", { target: { checked: false } });
     expect(d.ui.context.textContent).toBe("Nothing about this page is sent with your question.");
     d.ui.attach.fire("change", { target: { checked: true } });

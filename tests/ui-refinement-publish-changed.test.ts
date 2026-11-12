@@ -132,7 +132,7 @@ describe("the question", () => {
     drafts = [mk(D1, "One"), mk(D2, "Two")];
     plan = makePlan({ items: [item(1, drafts[0], { updates: 7 }), item(2, drafts[1])], willCreate: [D2] });
     await openPlan();
-    expect(dialog()!.textContent).toContain("Keep GitHub's writes nothing and publishes none of the stories listed below");
+    expect(dialog()!.textContent).toContain("Keep GitHub's writes nothing and publishes none of the changes listed below");
     await press(button(pub.KEEP_GITHUB, dialog()));
     expect(posts()[0]!.body).toEqual({ source: { keep: "github", seen: SEEN1 } });
   });

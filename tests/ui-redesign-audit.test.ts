@@ -56,6 +56,8 @@ function userRoutes(authSource: string): string[] {
   return out;
 }
 
+const ID_ONLY = ["change"];
+
 /** Admin routes from route() in ui/app.js: `#/x`, and `#/x/:` for sections whose line uses `arg`. */
 function adminRoutes(appSource: string): { sections: string[]; detail: string[] } {
   const sections = new Set<string>();
@@ -63,6 +65,11 @@ function adminRoutes(appSource: string): { sections: string[]; detail: string[] 
   for (const line of appSource.split("\n")) {
     const m = /^\s*(?:else )?if \(section === "([\w-]+)"/.exec(line);
     if (!m) continue;
+    // a page that only exists with an id (#/change/<project id>) has no bare address
+    if (ID_ONLY.includes(m[1]!)) {
+      detail.add(`#/${m[1]}/:`);
+      continue;
+    }
     sections.add(`#/${m[1]}`);
     if (/\barg\b/.test(line)) detail.add(`#/${m[1]}/:`);
   }
@@ -183,14 +190,15 @@ describe("the inventory matches the code", () => {
     }
   });
 
-  it("has a data-nav link in each HTML file for every primary destination and action", async () => {
-    const { primaryFor, actionsFor } = (await import("../ui/ia.js" as string)) as {
-      primaryFor: (r: string) => { id: string; label: string }[];
-      actionsFor: (r: string) => { id: string; label: string }[];
+  it("has a data-nav link in each HTML file for the new-change action and every link of the sidebar", async () => {
+    const { sidebarFor, NEW_CHANGE } = (await import("../ui/ia.js" as string)) as {
+      sidebarFor: (v: string) => { main: { id: string }[]; extra: { id: string }[] };
+      NEW_CHANGE: { id: string };
     };
-    for (const [file, role] of [["ui/index.html", "admin"], ["ui/user/index.html", "user"]] as const) {
+    for (const [file, view] of [["ui/index.html", "admin"], ["ui/user/index.html", "advanced"]] as const) {
       const links = navLinks(read(file)).map((l) => ({ id: l.name, label: l.text }));
-      const want = [...actionsFor(role), ...primaryFor(role)].map((l) => l.id);
+      const { main, extra } = sidebarFor(view);
+      const want = [NEW_CHANGE, ...main, ...extra].map((l) => l.id);
       expect(links.map((l) => l.id).sort(), file).toEqual(want.sort());
     }
   });

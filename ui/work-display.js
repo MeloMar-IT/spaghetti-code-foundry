@@ -13,12 +13,12 @@ export function displayMenu(prefs, onChange, { open = false, onToggle } = {}) {
   const check = (focus, label, checked, onPick) =>
     h("label", {}, h("input", { type: "checkbox", "data-focus": focus, checked, onChange: (e) => onPick(e.target.checked) }), label);
   return h("details", { class: "work-display", open, onToggle: (e) => onToggle?.(!!e?.target?.open) },
-    h("summary", { "data-focus": "work-display", title: "What the stories show, grouping and order" }, "Display"),
+    h("summary", { "data-focus": "work-display", title: "What the changes show, grouping and order" }, "Display"),
     h("div", { class: "work-display-panel" },
       PROPS.map((p) => check(`work-prop-${p.id}`, p.label, props.includes(p.id),
         (on) => onChange({ props: PROPS.map((x) => x.id).filter((id) => (id === p.id ? on : props.includes(id))) }))),
       check("work-compact", "Compact cards", !!prefs.compact, (compact) => onChange({ compact })),
-      select("work-group", "Group the stories", prefs.group, GROUPS, (group) => onChange({ group })),
-      select("work-order", "Order the stories", prefs.order, ORDERS, (order) => onChange({ order })),
+      select("work-group", "Group the changes", prefs.group, GROUPS, (group) => onChange({ group })),
+      select("work-order", "Order the changes", prefs.order, ORDERS, (order) => onChange({ order })),
       prefs.layout !== "list" && prefs.group === "none" ? h("p", { class: "muted work-display-note" }, "The board groups by status when no grouping is chosen.") : null));
 }

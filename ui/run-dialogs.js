@@ -57,7 +57,7 @@ export async function issueLimitDialog(info, send) {
   let busy = false;
   const spent = Number(info?.spentUsd ?? 0);
   const limit = Number(info?.limitUsd ?? info?.defaultUsd ?? 0);
-  const answer = await modal("Raise the issue's limit", (close) => {
+  const answer = await modal("Raise the change's limit", (close) => {
     const field = h("input", { type: "number", name: "limit", step: "0.01", min: String(Math.round((spent + 0.01) * 100) / 100), value: String(Math.round((limit + (info?.defaultUsd ?? limit)) * 100) / 100), "aria-label": "New limit in dollars" });
     const err = h("p", { class: "status bad flush", role: "alert" });
     const submitBtn = h("button", { type: "submit", class: "primary" }, "Save and continue");
@@ -79,7 +79,7 @@ export async function issueLimitDialog(info, send) {
       }
     };
     return h("form", { class: "run-dialog", onSubmit: submit },
-      h("p", {}, `This issue, its split parts and retries cost ${usd(spent)}; the limit is ${usd(limit)}.`),
+      h("p", {}, `This change, its split parts and retries cost ${usd(spent)}; the limit is ${usd(limit)}.`),
       h("label", { class: "field" }, h("span", {}, "New limit ($)"), field),
       err,
       h("div", { class: "row" }, submitBtn, closeBtn));
@@ -119,7 +119,7 @@ export function adminRunActions(runId, { a = api, ask = confirmDialog, decide = 
         if (!saved) return false;
         toast("Limit raised — continuing");
       } else if (kind === "cancel") {
-        if (!(await asked({ title: "Cancel this run?", text: "You can resume it later.", confirm: "Cancel the run", cancel: "Keep running" }))) return false;
+        if (!(await asked({ title: "Stop this change?", text: "It stops now. You can retry it later.", confirm: "Stop the change", cancel: "Keep it running" }))) return false;
         try {
           const r = await a.cancelRun(runId);
           if (r?.cancelled === false) { setAlert(NOT_CANCELLED); return false; }

@@ -1,8 +1,10 @@
+import { checkMarksOf, checksRevision, publicChecks } from "../engine/plan-checks.js";
 import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
 import { retriesOf, type RunRetries } from "../engine/auto-retry.js";
-import type { RunStatus, RunSummary } from "../engine/state.js";
+import { PLAN_POINT_LIMITS, type PlanPoint } from "../engine/plan-points.js";
+import { TASK_LINE_MAX, ticketTitleOf, type RunStatus, type RunSummary } from "../engine/state.js";
 import { isExplanationLine, LOG_NOTES } from "../policy/explain.js";
 import { REASON_CODES } from "../policy/reasons.js";
 import { BOUNDARIES } from "../policy/schema.js";
@@ -17,9 +19,20 @@ import type { RunSkillView } from "./skill-view.js";
  * to the run later stays hidden until it is added here: no costs, no tokens, no agent or model, no step output, no
  * transcripts, no settings, no folders. The log is rebuilt line by line from known shapes.
  */
-export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; slotWaitMs?: number; parent?: string }
+export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; slotWaitMs?: number; parent?: string;
+  /** True when this step is a push to main that worked (its output said PUSHED:); the output itself is never sent. */
+  pushed?: true }
+
+/** One line of an issue's acceptance criteria. */
+export interface Criterion { text: string; done: boolean }
+export const CRITERIA_MAX = 30;
+export const CRITERION_CHARS = 300;
 
 export interface UserRun {
+  /** The title of the issue the run works on, and its acceptance criteria (plain issue text, capped). */
+  issueTitle?: string; criteria?: Criterion[];
+  /** Checks a person can try, their marks and the revision of the check set (sent back with a mark); no account ids. */
+  checks?: { id: string; try: string; expect: string; source: "plan" | "person"; worked?: string }[]; checksRev?: string; checkMarks?: Record<string, { mark: "works" | "not-quite"; at: string }>;
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
   branch?: string; resumes?: number; owner?: string; superseded?: boolean;
   /** When the run was archived; absent when it is not. */
@@ -32,6 +45,8 @@ export interface UserRun {
   flowDef: { name: string; steps: { id: string; type: string; description?: string }[]; publish?: { enabled: boolean; version: number } };
   history: UserStep[]; state: { next: string | null };
   waiting?: { stepId: string; message: string; since: string }; next?: NextStep;
+  /** What the plan took from the request (`asked`) and what it assumed (`assumed`): only the kind and the text. Absent when there are none. */
+  planPoints?: PlanPoint[];
   /** What a step handed on in outputs.json (release-build: release_url, release_tag, release_files). Already limited and redacted. */
   outputs?: Record<string, string>;
   /** The questions of a run that stopped to ask them: the output of that one step, nothing else. */
@@ -58,6 +73,20 @@ export function userSkills(s: Pick<RunSummary, "skillPlan">): UserRun["skills"] 
     warnings: (Array.isArray(p.warnings) ? p.warnings : []).filter((w) => typeof w === "string"),
     unresolved: (Array.isArray(p.unresolved) ? p.unresolved : []).map((u) => ({ id: u.id, code: u.code, message: u.message })),
   };
+}
+
+/** The plan points of a run for a user: well-formed entries only, `kind` and `text` copied, at most the limit; undefined when none are left. */
+export function userPlanPoints(s: { planPoints?: unknown }): PlanPoint[] | undefined {
+  if (!Array.isArray(s.planPoints)) return undefined;
+  const out: PlanPoint[] = [];
+  for (const p of s.planPoints as unknown[]) {
+    const q = p as { kind?: unknown; text?: unknown } | null;
+    if (!q || typeof q !== "object") continue;
+    if ((q.kind !== "asked" && q.kind !== "assumed") || typeof q.text !== "string" || q.text.trim() === "") continue;
+    out.push({ kind: q.kind, text: q.text });
+    if (out.length >= PLAN_POINT_LIMITS.points) break;
+  }
+  return out.length ? out : undefined;
 }
 
 const QUESTION_STEPS = ["send_back", "ask_for_info"];
@@ -125,7 +154,41 @@ export function userRecord(n: NextStep): NextStep {
 export function adminRun<T extends RunSummary>(r: T) {
   const refinement = refinementSessionOf(r.source);
   const retries = retriesOf(r);
-  return { ...r, ...(refinement ? { refinement } : {}), ...(retries ? { retries } : {}) };
+  // The revision the page sends back with a mark (see userRun): a stale administrator page is refused too.
+  const rev = Array.isArray(r.checks) && r.checks.length ? { checksRev: checksRevision(r.checks) } : {};
+  return { ...r, ...(refinement ? { refinement } : {}), ...(retries ? { retries } : {}), ...rev };
+}
+
+/**
+ * The acceptance criteria of a ticket text: the bullets under a heading "Acceptance criteria", before the first comment.
+ * Pure. A heading or an unindented paragraph ends the list; blank and indented lines are skipped.
+ */
+export function criteriaOf(text: unknown): Criterion[] {
+  if (typeof text !== "string") return [];
+  const lines = text.split(/\r?\n/);
+  const cut = lines.findIndex((l) => /^--- comment by /.test(l));
+  const body = cut < 0 ? lines : lines.slice(0, cut);
+  const start = body.findIndex((l) => /^#{1,6}\s+acceptance criteria\s*:?\s*$/i.test(l));
+  if (start < 0) return [];
+  const out: Criterion[] = [];
+  for (const line of body.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(line)) break;
+    if (line.trim() === "" || /^(\s{4,}|\t)/.test(line)) continue;
+    const m = /^ {0,3}[-*]\s+(?:\[([ xX])\]\s+)?(.*\S)\s*$/.exec(line);
+    if (!m) break;
+    out.push({ text: [...m[2]!].slice(0, CRITERION_CHARS).join(""), done: /x/i.test(m[1] ?? "") });
+    if (out.length >= CRITERIA_MAX) break;
+  }
+  return out;
+}
+
+/** The issue title and the acceptance criteria of a run, for its page. Each is left out when there is none. */
+export function storyOf(s: RunSummary): { issueTitle?: string; criteria?: Criterion[] } {
+  const ticket = s.state?.steps?.pull_ticket?.output;
+  const title = [...ticketTitleOf(ticket)].slice(0, TASK_LINE_MAX).join("");
+  let criteria = criteriaOf(ticket);
+  if (criteria.length === 0 && !refinementSessionOf(s.source)) criteria = criteriaOf(s.task);
+  return { ...(title !== "" ? { issueTitle: title } : {}), ...(criteria.length ? { criteria } : {}) };
 }
 
 /** The session id in "refinement <uuid>", else undefined. */
@@ -143,7 +206,7 @@ export const userTask = (flow: string | undefined, source: string | undefined, t
   flow === REFINE_ROUND_FLOW && refinementSessionOf(source) ? (task.split("\n", 1)[0] ?? "") : task;
 
 /** The user's view of a run (see the note at the top). Tolerates runs of older versions. */
-export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string } }): UserRun {
+export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string }; issueTitle?: string; criteria?: Criterion[] }): UserRun {
   const shown = new Set(["github_repo", "issue"]);
   for (const [k, spec] of Object.entries(s.flowDef?.publish?.vars ?? {})) if (spec.mode === "fixed" || spec.mode === "input") shown.add(k);
   const vars = Object.fromEntries(Object.entries(s.vars ?? {}).filter(([k]) => shown.has(k)));
@@ -170,6 +233,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
       startedAt: h.startedAt, durationMs: h.durationMs,
       ...(h.slotWaitMs ? { slotWaitMs: h.slotWaitMs } : {}),
       ...(h.parent !== undefined ? { parent: h.parent } : {}),
+      ...(h.ok && String(h.id ?? "").split("/").at(-1) === "push_main" && /^PUSHED:/m.test(h.output ?? "") ? { pushed: true as const } : {}),
     })),
     state: { next: s.state?.next ?? null },
     ...(s.waiting ? { waiting: { stepId: s.waiting.stepId, message: s.waiting.message, since: s.waiting.since } } : {}),
@@ -181,6 +245,11 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(typeof s.paused?.since === "string" ? { paused: { since: s.paused.since } } : {}),
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),
+    ...(userPlanPoints(s) ? { planPoints: userPlanPoints(s) } : {}),
+    ...(Array.isArray(s.checks) && s.checks.length ? { checks: publicChecks(s.checks), checksRev: checksRevision(s.checks) } : {}),
+    ...(Object.keys(checkMarksOf(s)).length ? { checkMarks: checkMarksOf(s) } : {}),
+    ...(s.issueTitle ? { issueTitle: s.issueTitle } : {}),
+    ...(s.criteria?.length ? { criteria: s.criteria.map((c) => ({ text: c.text, done: c.done })) } : {}),
   };
   return hidePaths(out, s);
 }

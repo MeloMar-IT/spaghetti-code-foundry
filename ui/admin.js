@@ -68,12 +68,14 @@ export function restartBox(view, { onRequest, onCancel, readOnly = false } = {})
   return h("div", { class: "card mb-14" },
     h("p", { class: "status bad flush", role: "status" }, `A restart is needed: ${list}.`),
     view.canRestart
-      ? (readOnly ? null : h("button", { class: "primary", onClick: () => onRequest?.() }, "Restart when no story is running"))
+      ? (readOnly ? null : h("button", { class: "primary", onClick: () => onRequest?.() }, "Restart when no change is running"))
       : h("p", { class: "muted flush" }, view.manual ?? "Stop the server and start it again to use the new values."));
 }
 
+const SETTINGS_LINE = "How this server runs: limits, notifications, GitHub and safety";
+
 export async function renderSettings(main, { readOnly = false } = {}) {
-  mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
+  mount(main, settingsPage({ title: "Settings", status: h("span", { class: "muted" }, SETTINGS_LINE), sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
   const [c, info, s, restart] = await Promise.all([api.config(), api.info(), api.settings(), api.restartState().catch(() => undefined)]);
   const described = Array.isArray(s?.settings) ? s.settings : [];
   const startup = Array.isArray(s?.startup) ? s.startup : [];
@@ -109,7 +111,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const sbxClaude = check(c.sandbox.claude, "Sandbox agents' shell commands by default");
   const sbxOff = check(c.sandbox.user_runs === "off", "Allow user runs without the OS sandbox");
   const secrets = check(c.secret_scan !== false, "Block pushes that add secrets (API keys, tokens, private keys, .env files)");
-  const hotfix = check(c.hotfix_to_main === true, "Hotfixes: build bug stories on a hotfix branch and merge them into main without a person (only the unchanged built-in issue-gitflow)");
+  const hotfix = check(c.hotfix_to_main === true, "Hotfixes: build bug-fix changes on a hotfix branch and merge them into main without a person (only the unchanged built-in issue-gitflow)");
   const sbxImage = input(c.sandbox.docker_image ?? "", { class: "mono", placeholder: "e.g. node:22" });
   const selfUpdate = check(c.self_update?.enabled === true, "Self-update: when main of the Foundry's own repository has new commits, build and test them and restart on the new version without a person");
   const selfRepo = input(c.self_update?.repo ?? "", { class: "mono", placeholder: "owner/name" });
@@ -281,6 +283,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
 
   mount(main, settingsPage({
     title: "Settings",
+    status: h("span", { class: "muted" }, SETTINGS_LINE),
     actions: [h("span", { class: "muted mono" }, info.configPath), ...(readOnly ? [] : [h("span", { class: "spacer" }), saveNote, saveBtn])],
     notices: [err, restartSlot],
     sections: [

@@ -7,9 +7,9 @@ html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--text); font: var(--text-body)/var(--leading-body) var(--sans); }
 a { color: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 600; }
-h1 { font-size: var(--text-page); }
-h2 { font-size: var(--text-section); }
-h3 { font-size: var(--text-small); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+h1 { font-family: var(--font-display); font-size: var(--text-heading); }
+h2 { font-family: var(--font-display); font-size: var(--text-section); }
+h3 { font-family: var(--font-label); font-size: var(--text-small); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 code, pre, .mono { font-family: var(--mono); font-size: var(--text-code); }
 details > summary { cursor: pointer; color: var(--muted); font-size: var(--text-small); user-select: none; }
 details[open] > summary { margin-bottom: 10px; }

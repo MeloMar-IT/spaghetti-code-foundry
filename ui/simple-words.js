@@ -19,7 +19,7 @@ export const TERM_MEANINGS = {
   project: "One thing the Foundry makes for you, such as an app or a website.",
   planned: "The work waits its turn and starts soon.",
   done: "The change is finished and part of your project.",
-  step: "One part of the work: planning, building, testing or finishing.",
+  step: "One part of the work: understanding, planning, building, checking or delivering.",
 };
 
 /** The text of the Help page. */
@@ -299,6 +299,8 @@ export const STUCK = {
   sending: "Starting again…",
   sent: "The Foundry tries again.",
   failed: "That did not work. Try again, or ask for help.",
+  notNow: "Not now",
+  asideFailed: "That did not work. Try again in a moment.",
 };
 
 const NEEDS_YOU = { todo: "Take a look", line: "It needs you." };
@@ -372,19 +374,6 @@ export function safeText(s, fallback = "") {
   return t && forbiddenIn(t).length === 0 ? t : fallback;
 }
 
-export const PHASES =["planning", "building", "testing", "finishing"];
-
-/** The phase (0–3) of a step id of a flow. Steps before the work starts count as planning, whatever their name has in it. */
-export function phaseOf(stepId) {
-  const s = String(stepId ?? "");
-  if (/implement|guard|address_review/.test(s)) return 1;
-  if (/plan|ticket|branch|baseline|clone|split|size|risk|claim|wait_for|send_back|approve|fetch/.test(s)) return 0;
-  if (/test|review/.test(s)) return 2;
-  return s ? 3 : 0;
-}
-
-export const progressText = (i) => `Step ${i + 1} of 4: ${PHASES[i]}`;
-
 const things = (n) => `${n} ${n === 1 ? "thing" : "things"}`;
 
 /** The one-line state of a project. */
@@ -457,6 +446,34 @@ export const ASK = {
   noAnswer: "Ask SCF could not answer.",
   checkTitle: "A check",
   checkOutcomes: { read: "Read again", passed: "Works", failed: "Does not work" },
+};
+
+/** The words of the Simple home (Today) in every layout. Fixed text: a test keeps it free of forbidden terms. */
+export const HOME = {
+  buildTitle: "What do you want to build?",
+  buildText: "Say it in your own words. The Foundry plans it and asks when it needs you.",
+  start: "Start",
+  countersLabel: "Your work",
+  counters: { check: "Needs you", building: "Running", ready: "Ready to check", "published-week": "Published this week" },
+  lists: { check: "Needs you", building: "Running", ready: "Ready to check", "published-week": "Published this week", waiting: "Planned", finished: "Done", "finished-today": "Done today" },
+  needsTitle: "Needs you",
+  needsNone: "Nothing needs you right now.",
+  safeTitle: "Last safe point",
+  safeNone: "Nothing published yet.",
+  published: (days) => (days <= 0 ? "Published today" : days === 1 ? "Published yesterday" : `Published ${days} days ago`),
+  limitTitle: "Today's limit",
+  limitReached: "The Foundry has done enough for today; it continues tomorrow.",
+  limitNormal: "The work goes on as normal today.",
+  runningTitle: "Running now",
+  nothingRunning: "Nothing is running right now.",
+  projectTitle: "Your project",
+  steps: "Steps",
+  back: "Back to Today",
+  nothingInList: "Nothing here.",
+  more: (n) => `+${n} more`,
+  buildingTitle: "Building now",
+  progress: "Progress",
+  tags: { question: "Question", check: "To check", stuck: "Stuck", todo: "To do" },
 };
 
 /** The first sentence of the first prose line after the title; "" when there is none. */

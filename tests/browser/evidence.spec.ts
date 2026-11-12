@@ -27,7 +27,8 @@ const answer = (runId: string, admin: boolean) => ({
 async function openEvidence(page: Page, runId: string, admin: boolean): Promise<void> {
   await page.route(/\/api\/runs\/[^/]+\/evidence$/, (route) => route.fulfill({ json: answer(runId, admin) }));
   await page.goto(page.url().replace(/#.*$/, "") + `#/runs/${runId}`, { waitUntil: "domcontentloaded" });
-  await page.locator('button[data-tab="evidence"]').click();
+  await page.locator('button[data-tab="details"]').click();
+  await page.locator('#main [data-section="evidence"] > summary').click();
   await expect(page.locator("#main").getByRole("heading", { name: "Evidence record" })).toBeVisible();
 }
 

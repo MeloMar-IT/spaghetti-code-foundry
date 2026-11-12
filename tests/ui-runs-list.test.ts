@@ -73,18 +73,52 @@ describe("activityAt", () => {
 
 describe("listRow", () => {
   it("shows the parts in order and the admin parts last", () => {
-    const li = rl.listRow({ run: run("r1"), job: null }, { admin: true });
+    const full = (id: string) => run(id, { task: `Fix login\nsecond`, state: { next: "implement" }, next: { ...rec("Foundry"), title: "Add login", timing: { progress: "Step 3 of 9", estimate: "about 5 min" } } });
+    const li = rl.listRow({ run: full("r1"), job: null }, { admin: true });
     const labels = walk(li).map((e) => e.attrs["data-label"]).filter(Boolean);
-    expect(labels).toEqual(["What happens next", "Task", "Repository", "Owner", "Steps", "Cost"]);
-    expect(li.textContent).toContain("task r1");
+    expect(labels).toEqual(["What happens next", "Phase", "Task", "Repository", "Owner", "Cost"]);
+    expect(li.textContent).toContain("Fix login");
     expect(li.textContent).not.toContain("second");
+    expect(li.textContent).not.toContain("flow-r1");
+    expect(li.textContent).not.toContain("Steps");
+    expect(li.textContent).not.toContain("Step 3 of 9"); // the step count gives way to the phase
+    expect(li.textContent).toContain("about 5 min");
     expect(li.textContent).toContain("o/r#7");
     expect(li.textContent).toContain("Updated ");
-    const user = rl.listRow({ run: run("r1"), job: null });
-    expect(walk(user).map((e) => e.attrs["data-label"]).filter(Boolean)).toEqual(["What happens next", "Task", "Repository"]);
+    const user = rl.listRow({ run: full("r1"), job: null });
+    expect(walk(user).map((e) => e.attrs["data-label"]).filter(Boolean)).toEqual(["What happens next", "Phase", "Task", "Repository"]);
     const link = li.all("a")[0]!;
     expect(link.attrs.href).toBe("#/runs/r1");
     expect(link.attrs["data-focus"]).toBe("open-r1");
+  });
+
+  it("titles the row with the change: next.title, else the first line of the task, else the flow, else Queued run", () => {
+    const title = (e: any) => rl.listRow(e).all("a")[0]!.textContent;
+    expect(title({ run: run("r1", { next: { ...rec("Foundry"), title: "  Add dark mode " } }), job: null })).toBe("Add dark mode");
+    expect(title({ run: run("r1"), job: null })).toBe("task r1");
+    expect(title({ run: run("r1", { task: "" }), job: null })).toBe("flow-r1");
+    expect(title({ run: null, job: job("q1", { task: "", flow: undefined }) })).toBe("Queued run");
+    expect(title({ run: null, job: job("q1", { task: "", flow: "queued-flow" }) })).toBe("queued-flow");
+  });
+
+  it("shows the task only when it adds to the title, and the phase only for a run", () => {
+    const titled = rl.listRow({ run: run("r1", { next: { ...rec("Foundry"), title: "Add dark mode" }, history: [{ id: "run_tests" }] }), job: null });
+    expect(titled.textContent).toContain("task r1");
+    expect(walk(titled).some((e) => e.attrs["data-label"] === "Phase" && e.textContent === "Check")).toBe(true);
+    const same = rl.listRow({ run: run("r1"), job: null });
+    expect(walk(same).some((e) => e.attrs["data-label"] === "Task")).toBe(false);
+    expect(walk(same).some((e) => e.attrs["data-label"] === "Phase")).toBe(false);
+    const queued = rl.listRow({ run: null, job: job("q1") });
+    expect(walk(queued).some((e) => e.attrs["data-label"] === "Phase")).toBe(false);
+  });
+
+  it("has a status pill with an icon and the word, and no ? button", () => {
+    for (const li of [rl.listRow({ run: run("r1"), job: null }), rl.listRow({ run: run("r1"), job: null }, { admin: true }), rl.listRow({ run: null, job: job("q1") })]) {
+      expect(li.all("button").filter((b) => b.attrs["aria-label"] === "What does this mean?")).toHaveLength(0);
+      const pill = li.all("span").find((s) => String(s.attrs.class).includes("pill") && String(s.attrs.class).includes("sem-"))!;
+      expect(pill.all("svg").length).toBeGreaterThan(0);
+      expect(pill.textContent).toMatch(/status$/);
+    }
   });
 
   it("shows the queue position, goes first and the runs ahead, and Remove last", () => {
@@ -286,7 +320,7 @@ describe("the checkboxes", () => {
     const ids = draw(b, mixed(), { select: picker() });
     expect(ids.sort()).toEqual(["c1", "f1"]);
     expect(boxes(b).map((i) => i.attrs["data-focus"]).sort()).toEqual(["select-c1", "select-f1"]);
-    expect(boxes(b)[0]!.attrs["aria-label"]).toBe("Select run flow-f1 o/r#7");
+    expect(boxes(b)[0]!.attrs["aria-label"]).toBe("Select run task f1 o/r#7");
     const bare = box();
     expect(draw(bare, mixed())).toEqual([]);
     expect(boxes(bare)).toHaveLength(0);
@@ -295,7 +329,7 @@ describe("the checkboxes", () => {
   it("fall back to the run id when there is no work", () => {
     const b = box();
     draw(b, rl.runSections([run("f1", { status: "failed", vars: {} })], []), { select: picker() });
-    expect(boxes(b)[0]!.attrs["aria-label"]).toBe("Select run flow-f1 f1");
+    expect(boxes(b)[0]!.attrs["aria-label"]).toBe("Select run task f1 f1");
   });
 
   it("are on the Archived section", () => {

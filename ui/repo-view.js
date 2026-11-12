@@ -4,12 +4,14 @@ import { splitHash } from "./filters.js";
 import { card } from "./kit/display.js";
 import { pageHeader, statusSummary } from "./kit/product.js";
 import { integrationBlock, integrationOf } from "./integration.js";
-import { repoAttention, repoName } from "./repo-status.js";
+import { statusPill } from "./icons.js";
+import { attentionSemantic, connectionSemantic, repoAttention, repoName } from "./repo-status.js";
 import {
   appBlock, connectionLines, connectionStatus, fillRuns, installLink, keyBlock, loadActiveRuns, loadFailed,
   newKey, readyView, remove, repoDialog, repoWebUrl, test,
 } from "./repos.js";
 import { outcomesSection } from "./outcomes.js";
+import { SAFE, safePointsPart } from "./safe-points.js";
 import { errorState, explainError, loadingState, staleNote } from "./states.js";
 
 export const NO_REPO = "No such repository.";
@@ -31,7 +33,7 @@ const onRepo = (id) => {
 
 const failedTest = (ctx) => !!ctx.testError || (ctx.repo.connection && !ctx.repo.connection.ok);
 
-const pill = (att) => h("span", { class: att.level === "ok" ? "pill ok" : att.level === "warn" ? "pill locked" : "pill fail" }, att.text);
+const pill = (att) => statusPill(attentionSemantic(att.level), att.text, att.level === "ok" ? "ok" : att.level === "warn" ? "locked" : "fail");
 
 const testButton = (ctx, focus) =>
   h("button", { "data-action": "test", "data-focus": focus, onClick: ctx.act.test }, failedTest(ctx) ? "Test again" : "Test connection");
@@ -87,7 +89,7 @@ function connection(ctx) {
     h("div", { class: "field mt-6" },
       h("strong", {}, "Last test"),
       h("div", {},
-        h("span", { class: c ? (c.ok ? "pill ok" : "pill fail") : "pill" }, connectionStatus(repo)),
+        statusPill(connectionSemantic(c), connectionStatus(repo), c ? (c.ok ? "ok" : "fail") : ""),
         c ? [" ", h("span", { class: "muted", title: new Date(c.at).toLocaleString() }, `tested ${timeAgo(c.at)}`)] : null),
       connectionLines(repo, { all: true }).map((l) => h("div", { class: l.ok ? "status ok" : "status bad" }, l.text)),
       ctx.testError ? h("div", { class: "status bad" }, ctx.testError) : null),
@@ -145,12 +147,13 @@ function previewPart(id) {
       mount(el, h("p", { class: "muted" }, "No preview is running."), h("button", { type: "button", onClick: reload }, "Read again"));
       return;
     }
-    const ok = v.state === "ready" ? "pill ok" : v.state === "failed" ? "pill fail" : "pill";
+    const stateWord = String(v.state || "unknown");
+    const stateOf = v.state === "ready" ? ["success", "ok"] : v.state === "failed" ? ["danger", "fail"] : ["neutral", ""];
     const url = typeof v.url === "string" && PREVIEW_URL.test(v.url)
       ? h("a", { href: v.url, target: "_blank", rel: "noopener noreferrer" }, v.url)
       : "—";
     const items = [
-      { label: "State", value: h("span", { class: ok }, String(v.state ?? "unknown")) },
+      { label: "State", value: statusPill(stateOf[0], stateWord, stateOf[1]) },
       { label: "Version", value: v.version === "checking" && v.runId ? `checking (run ${v.runId})` : String(v.version) },
       v.reason ? { label: "Reason", value: v.detail ? `${v.reason}: ${v.detail}` : String(v.reason) } : null,
       { label: "Address", value: url },
@@ -179,6 +182,7 @@ export const SECTIONS = [
   { id: "connection", title: "Connection", show: () => true, draw: connection },
   { id: "outcomes", title: "Outcomes", show: () => true, draw: outcomes },
   { id: "preview", title: "Preview", show: () => true, draw: (ctx) => ctx.part(`preview:${ctx.repo.id}`, () => previewPart(ctx.repo.id)).el },
+  { id: "safe-points", title: SAFE.title, show: () => true, draw: (ctx) => ctx.part(`safe:${ctx.repo.id}`, () => safePointsPart(ctx.repo.id)).el },
   { id: "danger", title: "Dangerous actions", tone: "fail", show: () => true, draw: danger },
 ];
 

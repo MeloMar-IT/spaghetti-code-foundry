@@ -159,8 +159,8 @@ describe("the list", () => {
     expect(cells[0]![1]!.attrs.title).toBe("u1");
     expect(cells[1]![1]!.attrs.title).toBeUndefined();
     expect(cells[3]![3]!.attrs.title).toBe("u9");
-    expect(cells[0]![4]!.all("span")[0]!.attrs.class).toBe("pill ok");
-    expect(cells[2]![4]!.all("span")[0]!.attrs.class).toBe("pill fail");
+    expect(cells[0]![4]!.all("span")[0]!.attrs.class).toBe("pill sem-success");
+    expect(cells[2]![4]!.all("span")[0]!.attrs.class).toBe("pill sem-danger");
     expect(gets).toEqual(["/api/users", "/api/audit"]);
   });
 });
@@ -238,7 +238,7 @@ describe("filters", () => {
   it("has the user and action choices", async () => {
     await show();
     expect(field("user").all("option").map((o) => o.textContent)).toEqual(["All users", "Ann (ann@example.com)", "Bob (bob@example.com)"]);
-    expect(field("action").all("option")).toHaveLength(49);
+    expect(field("action").all("option")).toHaveLength(50);
     expect(field("action").all("option")[0]!.textContent).toBe("All actions");
   });
   it("reloads on every change without redrawing the bar", async () => {

@@ -6,12 +6,10 @@ import { confirmDialog, h, mount, toast } from "./dom.js";
 import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
-/** The pages of the Simple view (the first part of the hash path): My projects, the project page and the setup check. Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help", "change"];
-/** The navigation links Simple keeps (`data-nav` names), in the menu and the top bar. */
-export const SIMPLE_NAV = ["home", "help"];
-/** Links only Simple shows; the other views hide them. */
-export const SIMPLE_ONLY_NAV = ["help"];
+/** The pages of the Simple view (the first part of the hash path): My projects, the project page, the setup check, and + New change (the start composer). Later parts of the Easy epic may change this. */
+export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help", "change", "start"];
+/** The navigation links Simple keeps (`data-nav` names): the five shared places and + New change. Simple hides the divider and the extra pages (`data-extra`). */
+export const SIMPLE_NAV = ["start", "home", "runs", "refinement", "epics", "help"];
 
 export const UNSAVED_TEXT = "You have unsaved changes. Save them first, then switch view.";
 export const UNSENT_TEXT = "You have text that is not sent. It is kept only on this page and is lost when you switch view.";
@@ -180,10 +178,10 @@ export async function chooseView(next, { a = api, go = goTo, hash = () => locati
 }
 
 /**
- * Fills the switch boxes (the top bar and the menu); CSS shows one of them. All boxes share one state.
+ * Fills the View selector in the account menu. Every box in `ids` shares one state.
  * `opts` go to chooseView.
  */
-export function mountViewSwitch(user, { ids = ["view-switch", "view-switch-menu"], ...opts } = {}) {
+export function mountViewSwitch(user, { ids = ["view-switch"], ...opts } = {}) {
   trackTyping();
   let shown = viewOf(user);
   let busy = false;
@@ -217,19 +215,22 @@ export function mountViewSwitch(user, { ids = ["view-switch", "view-switch-menu"
   return selects;
 }
 
-const BUSY_CHOICES = [["off", "No"], ["on", "Until I switch it off"], ["1", "For 1 hour"], ["2", "For 2 hours"], ["4", "For 4 hours"]];
-const BUSY_LABEL = "I'm using this machine";
+const BUSY_CHOICES = [["off", "Off"], ["1", "1 h"], ["2", "2 h"]];
+const BUSY_LABEL = "Pause the Foundry while I work";
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /**
- * "I'm using this machine" in the top bar (admins only; the server decides every call too). While it is on, fewer runs
- * start at once and new run processes start at background priority. Shows why it is on: by hand (with the end time) or
- * the program that is running. Polls the server, so a change made elsewhere shows up. Returns the select, or null.
+ * "Pause the Foundry while I work" in the account menu (admins only; the server decides every call too). While it is on,
+ * fewer runs start at once and new run processes start at background priority. A "Paused" flag in the top bar shows it
+ * while the menu is closed. Shows why it is on: by hand (with the end time) or the program that is running. Polls the
+ * server, so a change made elsewhere shows up; a state set elsewhere (until a time, or until switched off) is shown but
+ * is not a choice. Returns the select, or null.
  */
-export function mountBusySwitch(user, { id = "busy-switch", a = api, everyMs = 60_000 } = {}) {
+export function mountBusySwitch(user, { id = "busy-switch", flagId = "busy-flag", a = api, everyMs = 60_000 } = {}) {
   if (user?.role !== "admin") return null;
   const box = document.getElementById(id);
   if (!box) return null;
+  const flag = document.getElementById(flagId);
   const select = h("select", { name: "busy", "aria-label": BUSY_LABEL, title: BUSY_LABEL });
   const note = h("span", { class: "busy-note" });
   let state = null;
@@ -237,6 +238,7 @@ export function mountBusySwitch(user, { id = "busy-switch", a = api, everyMs = 6
   const draw = () => {
     const hand = state?.hand;
     const options = BUSY_CHOICES.map(([value, text]) => h("option", { value }, text));
+    if (hand && !hand.until) options.push(h("option", { value: "on" }, "On, until switched off"));
     if (hand?.until) options.push(h("option", { value: "until" }, `Until ${clock(hand.until)}`));
     select.replaceChildren(...options);
     select.value = hand ? (hand.until ? "until" : "on") : "off";
@@ -244,6 +246,10 @@ export function mountBusySwitch(user, { id = "busy-switch", a = api, everyMs = 6
     note.textContent = !hand && apps ? `On: ${apps.why}` : "";
     box.classList.toggle("on", Boolean(state?.on));
     select.title = state?.on ? `${BUSY_LABEL}: ${hand ? "set by you" : apps?.why ?? ""}` : BUSY_LABEL;
+    if (flag) {
+      flag.hidden = !state?.on;
+      flag.title = state?.on ? (hand ? "Paused by you" : `Paused: ${apps?.why ?? ""}`) : "";
+    }
   };
   const refresh = async () => {
     try {
@@ -255,10 +261,10 @@ export function mountBusySwitch(user, { id = "busy-switch", a = api, everyMs = 6
   };
   select.addEventListener("change", async () => {
     const value = select.value;
-    if (working || value === "until") return draw();
+    if (working || value === "until" || value === "on") return draw();
     working = true;
     try {
-      state = value === "off" ? await a.endBusy() : await a.setBusy(value === "on" ? undefined : Number(value));
+      state = value === "off" ? await a.endBusy() : await a.setBusy(Number(value));
     } catch (e) {
       toast(problemText(e), "error");
     } finally {
@@ -299,13 +305,13 @@ export function offerCard(box, offer, view, opts = {}) {
     h("p", {}, `This page is not in the ${VIEW_LABELS[view]} view.`),
     error,
     button,
-    h("p", { class: "muted" }, "This switches your view. You can switch back with View in the top bar or the menu.")));
+    h("p", { class: "muted" }, "This switches your view. You can switch back with View in the account menu.")));
 }
 
-/** Simple hides every navigation link (menu and top bar) except those in SIMPLE_NAV. Other views hide only SIMPLE_ONLY_NAV. */
+/** Simple shows the five shared links and + New change, and hides the divider and the extra pages (`data-extra`). Other views show everything. */
 export function showViewNav(view, root = document) {
   for (const a of root?.querySelectorAll?.("a[data-nav]") ?? []) {
-    const n = a.getAttribute("data-nav");
-    a.hidden = view === "simple" ? !SIMPLE_NAV.includes(n) : SIMPLE_ONLY_NAV.includes(n);
+    a.hidden = view === "simple" && !SIMPLE_NAV.includes(a.getAttribute("data-nav"));
   }
+  for (const x of root?.querySelectorAll?.("[data-extra]") ?? []) x.hidden = view === "simple";
 }

@@ -43,6 +43,7 @@ import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isSto
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
+import { endCheckRound, recordPlanChecks } from "./plan-checks.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
@@ -855,6 +856,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
           engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
           res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
           if (!d.approved) res.error = "rejected";
+          if (!d.approved && top) endCheckRound(summary); // the round ends: what worked is kept as "worked", the marks go
         }
       } else {
         visits[step.id] = visit - 1; // waiting is not a visit
@@ -917,6 +919,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (top && !res.ok) markPlanCheckFailed(summary, step.id);
     const carryStop = top && res.ok ? carryRunSkills(summary, config, step.id, engine.log) : undefined;
     const skillStop = carryStop ?? (top && res.ok ? planRunSkills(summary, config, step.id, engine.log) : undefined);
+    if (top && res.ok) recordPlanChecks(summary, step.id, engine.log);
     // after a retry: once the areas are claimed again, go on at the step that ran out of time (a WAIT_AREA route keeps it)
     const retryStep = top && res.ok && !routed && step.id === "claim_areas" && summary.retryStep && indexOf.has(summary.retryStep) ? summary.retryStep : undefined;
     if (retryStep) summary.retryStep = undefined;

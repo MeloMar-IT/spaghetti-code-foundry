@@ -100,7 +100,7 @@ const showPage = async (id = "s1", admin = false) => {
 };
 
 const SOURCE = { issue: 12, url: "https://github.com/acme/app/issues/12", title: "T", body: "", updatedAt: "2026-01-01T00:00:00.000Z" };
-const WARNING = /This issue has the build label "Factory_go"/;
+const WARNING = /This GitHub issue has the build label "Factory_go"/;
 
 describe("pure functions", () => {
   it("issueNumber", () => {
@@ -110,10 +110,10 @@ describe("pure functions", () => {
     for (const v of ["", "0", "1.5", "abc", "-3", "99999999999", "2147483648"]) expect(imp.issueNumber(v), v).toBeUndefined();
   });
   it("importLogText", () => {
-    expect(imp.importLogText({ what: "imported", who: "Ann", detail: "#12" })).toBe("Ann started the session from issue #12");
-    expect(imp.importLogText({ what: "source-label-removed", who: "Ann", detail: "Factory_go" })).toBe('Ann removed the build label "Factory_go" from the issue');
+    expect(imp.importLogText({ what: "imported", who: "Ann", detail: "#12" })).toBe("Ann started the session from GitHub issue #12");
+    expect(imp.importLogText({ what: "source-label-removed", who: "Ann", detail: "Factory_go" })).toBe('Ann removed the build label "Factory_go" from the GitHub issue');
     expect(imp.importLogText({ what: "created" })).toBe("");
-    expect(ui.logText({ what: "imported", who: "Ann", detail: "#12" })).toBe("Ann started the session from issue #12");
+    expect(ui.logText({ what: "imported", who: "Ann", detail: "#12" })).toBe("Ann started the session from GitHub issue #12");
   });
   it("removeBuildLabel calls the route", async () => {
     await api.removeBuildLabel("a b");
@@ -124,7 +124,7 @@ describe("pure functions", () => {
 describe("the dialog", () => {
   const open = async () => {
     await showList();
-    press(button(main(), "Refine an existing issue"));
+    press(button(main(), "Refine an existing GitHub issue"));
   };
   const ask = async (issue: string) => {
     await open();
@@ -136,9 +136,9 @@ describe("the dialog", () => {
   };
   it("is on the list, and not in a preview", async () => {
     await showList();
-    expect(button(main(), "Refine an existing issue")).toBeDefined();
+    expect(button(main(), "Refine an existing GitHub issue")).toBeDefined();
     await showList(true);
-    expect(button(main(), "Refine an existing issue")).toBeUndefined();
+    expect(button(main(), "Refine an existing GitHub issue")).toBeUndefined();
   });
   it("offers the repositories", async () => {
     repos = ["a/one", "b/two"];
@@ -204,20 +204,20 @@ describe("the source line and the warning", () => {
   it("shows where the session came from, with a link", async () => {
     sessions = [session({ source: SOURCE })];
     await showPage();
-    expect(main().textContent).toContain("From issue #12");
+    expect(main().textContent).toContain("From GitHub issue #12");
     const a = walk(main()).find((e) => e.tag === "a" && e.attrs.href === SOURCE.url);
     expect(a?.textContent).toBe("#12");
   });
   it("shows no link for a url that is not https", async () => {
     sessions = [session({ source: { ...SOURCE, url: "javascript:alert(1)" } })];
     await showPage();
-    expect(main().textContent).toContain("From issue #12");
+    expect(main().textContent).toContain("From GitHub issue #12");
     expect(walk(main()).some((e) => e.tag === "a" && e.textContent === "#12")).toBe(false);
   });
   it("shows nothing for a session from an idea", async () => {
     sessions = [session()];
     await showPage();
-    expect(main().textContent).not.toContain("From issue");
+    expect(main().textContent).not.toContain("From GitHub issue");
   });
   it("warns about the build label and removes it only on the press", async () => {
     sessions = [session({ source: { ...SOURCE, buildLabel: "Factory_go" } })];

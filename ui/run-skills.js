@@ -22,7 +22,7 @@ export function evidenceItem(e, repo) {
   if (e?.kind === "issue" && /^\d{1,9}$/.test(text) && /^[\w.-]+\/[\w.-]+$/.test(repo ?? "") && !repo.split("/").some((p) => p === "." || p === "..")) {
     return h("a", { href: `https://github.com/${repo}/issues/${text}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": `skill-issue-${text}` }, `issue #${text}`);
   }
-  const shown = e?.kind === "issue" ? (/^\d+$/.test(text) ? `issue #${text}` : `issue ${text}`) : `${typeof e?.kind === "string" ? e.kind : "evidence"} ${text}`;
+  const shown = e?.kind === "issue" ? (/^\d+$/.test(text) ? `issue #${text}` : `GitHub issue ${text}`) : `${typeof e?.kind === "string" ? e.kind : "evidence"} ${text}`;
   return h("span", { class: "mono" }, shown);
 }
 
@@ -36,15 +36,15 @@ const status = (view) => {
 };
 
 export const PLAN_RECORD_NOTES = {
-  none: "No plan record was found for this issue on this Foundry.",
+  none: "No plan record was found for this change on this Foundry.",
   "record-purged": "The plan record was cleaned up.",
   "comment-missing": "The plan comment is gone.",
   "comment-changed": "The plan comment was edited.",
   "newer-plan": "A newer plan has no record on this Foundry.",
   "check-unreadable": "The plan comments could not be read.",
-  invalid: "The plan records of this issue are not valid.",
+  invalid: "The plan records of this change are not valid.",
   failed: "The plan record could not be checked.",
-  record: "The skills come from the plan record of this issue.",
+  record: "The skills come from the plan record of this change.",
 };
 const CHANGE_NOTES = new Set(["comments", "code", "technology"]);
 
@@ -59,7 +59,7 @@ export function planRecordNote(view) {
   }
   if (rec.outcome === "none") return `${base} The run codes without the plan's skills.`;
   if (rec.outcome === "check-unreadable" && rec.stopped) return `${base} The run could not code. Make sure the comments can be read, then resume to check again.`;
-  return `${base} ${rec.stopped ? "Plan the issue again, then resume." : "The run goes on without the plan's skills."}`;
+  return `${base} ${rec.stopped ? "Plan the change again, then resume." : "The run goes on without the plan's skills."}`;
 }
 
 function requestedItem(r, repo) {
@@ -172,7 +172,7 @@ export function selectionSection(sel, admin = false) {
 }
 
 /** The Skills card of a run page, or null when the run has no skill information. */
-export function skillsCard(view, { admin = false, repo = "" } = {}) {
+export function skillsCard(view, { admin = false, repo = "", heading = true } = {}) {
   if (!view || typeof view !== "object") return null;
   const requested = Array.isArray(view.requested) ? view.requested : [];
   const resolved = Array.isArray(view.resolved) ? view.resolved : [];
@@ -181,7 +181,7 @@ export function skillsCard(view, { admin = false, repo = "" } = {}) {
   const checked = typeof view.checkedAt === "string" ? `Integrity checked ${view.checkedAt}.` : null;
   const heads = ["Skill", "Category", "Why", "Context estimate", "Integrity", "In the session", ...(admin ? ["Source", "Digest"] : [])];
   return h("section", { class: "card mb-16", "aria-label": "Skills" },
-    h("h2", {}, "Skills"),
+    heading ? h("h2", {}, "Skills") : null,
     note ? h("p", { class: "muted" }, note) : null,
     recordNote ? h("p", { class: "muted" }, recordNote) : null,
     typeof view.estimatedTokens === "number" && resolved.length ? h("p", { class: "muted" }, `About ${view.estimatedTokens} tokens of skill context.`) : null,

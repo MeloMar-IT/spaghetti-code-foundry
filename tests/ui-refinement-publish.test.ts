@@ -133,7 +133,7 @@ describe("pure functions", () => {
   });
   it("dependsText", () => {
     expect(pub.dependsText({ issue: 12 })).toBe("#12");
-    expect(pub.dependsText({ item: 2, title: "B" })).toBe("new issue 2: B");
+    expect(pub.dependsText({ item: 2, title: "B" })).toBe("new GitHub issue 2: B");
   });
   it("offeredLabels leaves out the build and the review label in any case", () => {
     expect(pub.offeredLabels({ repoLabels: ["bug", "BUILD", "Review", "docs"], buildLabel: "build", reviewLabel: "review" })).toEqual(["bug", "docs"]);
@@ -233,7 +233,7 @@ describe("the plan", () => {
     const lis = walk(dialog()!).filter((e) => e.attrs["data-plan"] !== undefined).map((e) => e.attrs["data-plan"]);
     expect(lis).toEqual([D2, D1, D3, d4.id]);
     expect(planItem(D2).textContent).toContain("BODY of Two");
-    expect(planItem(D1).textContent).toContain("new issue 1: Two");
+    expect(planItem(D1).textContent).toContain("new GitHub issue 1: Two");
     expect(planItem(D1).textContent).toContain("#5");
     expect(planItem(D2).textContent).toContain("None (can be built on its own).");
     expect(planItem(D3).textContent).toContain("No acceptance criteria yet.");
@@ -253,7 +253,7 @@ describe("the plan", () => {
     const box = startBox(D1)!;
     expect(box).toBeDefined();
     expect(box.checked).toBeFalsy();
-    expect(planItem(D1).textContent).toContain("Start building this story");
+    expect(planItem(D1).textContent).toContain("Start building this change");
     expect(planItem(D1).textContent).toContain('"build"');
     await press(button("Cancel", dialog()));
     plan = makePlan({ buildLabel: undefined });
@@ -310,7 +310,7 @@ describe("the plan", () => {
     await openPlan();
     for (const l of many) tick(labelBox(D1, l));
     await press(button(pub.CONFIRM, dialog()));
-    expect(dialog()!.textContent).toContain("Choose at most 20 labels for a story.");
+    expect(dialog()!.textContent).toContain("Choose at most 20 labels for a change.");
     expect(posts()).toHaveLength(0);
   });
   it("sets titles as text", async () => {
@@ -347,7 +347,7 @@ describe("after publishing", () => {
     const all = walk(draftsBox());
     expect(all.some((e) => e.tag === "textarea" || e.attrs.name === "title")).toBe(false);
     expect(draftsBox().textContent).toContain("cannot be changed here");
-    expect(walk(main()).some((e) => e.attrs.class === "pill state-published" && e.textContent === "Published")).toBe(true);
+    expect(walk(main()).some((e) => String(e.attrs.class).startsWith("pill sem-success") && String(e.attrs.class).endsWith("state-published") && e.textContent === "Published" && e.all("svg").length > 0)).toBe(true);
     expect(button("New draft")).toBeUndefined();
     expect(publishButton()).toBeUndefined();
     expect(button("Set Epic")).toBeUndefined();
@@ -407,9 +407,9 @@ describe("a session that came from an issue", () => {
   it("willPublish, confirmText and doneText", () => {
     expect(pub.willPublish({ willUpdate: [D1], willCreate: [D2] })).toEqual([D1, D2]);
     expect(pub.willPublish({ willCreate: [D2] })).toEqual([D2]);
-    expect(pub.confirmText({ willCreate: [D2] })).toBe("Create the issues");
-    expect(pub.confirmText({ willUpdate: [D1], willCreate: [] })).toBe("Update the issue");
-    expect(pub.confirmText({ willUpdate: [D1], willCreate: [D2] })).toBe("Update and create the issues");
+    expect(pub.confirmText({ willCreate: [D2] })).toBe("Create the GitHub issues");
+    expect(pub.confirmText({ willUpdate: [D1], willCreate: [] })).toBe("Update the GitHub issue");
+    expect(pub.confirmText({ willUpdate: [D1], willCreate: [D2] })).toBe("Update and create the GitHub issues");
     expect(pub.doneText({ created: [{}] })).toBe("1 issue is on GitHub");
     expect(pub.doneText({ created: [{}, {}] })).toBe("2 issues are on GitHub");
     expect(pub.doneText({ created: [], updated: [{ issue: 7 }] })).toBe("Issue #7 is updated");
@@ -434,7 +434,7 @@ describe("a session that came from an issue", () => {
     expect(dialog()!.textContent).toContain("Issue #7 is updated, not created again.");
     expect(button(pub.CONFIRM, dialog())).toBeUndefined();
     tick(labelBox(D1, "bug"));
-    await press(button("Update the issue", dialog()));
+    await press(button("Update the GitHub issue", dialog()));
     expect(posts()[0]!.body).toEqual({ drafts: [{ draft: D1, labels: ["bug"], startBuilding: false }] });
     expect((document as any).getElementById("toast").textContent).toBe("Issue #7 is updated");
   });
@@ -442,7 +442,7 @@ describe("a session that came from an issue", () => {
     over = { source };
     plan = makePlan({ notChanged: 7 });
     await openPlan();
-    expect(dialog()!.textContent).toContain("Issue #7 is not changed: no story draft stands for it.");
+    expect(dialog()!.textContent).toContain("Issue #7 is not changed: no change draft stands for it.");
   });
   it("shows what the section does with the issue, before and after", async () => {
     over = { source };
@@ -695,9 +695,9 @@ describe("replacing a split issue", () => {
       expect(pub.canPublish(s({ source: { issue: 7, replace: "due" }, state: "dropped" }))).toBe(false);
     });
     it("confirmText", () => {
-      expect(pub.confirmText({ replaces: { ready: true }, willCreate: [] })).toBe("Replace the issue");
-      expect(pub.confirmText({ replaces: { ready: true }, willCreate: [D2] })).toBe("Create the issues and replace the original");
-      expect(pub.confirmText({ replaces: { ready: false }, willCreate: [D2] })).toBe("Create the issues");
+      expect(pub.confirmText({ replaces: { ready: true }, willCreate: [] })).toBe("Replace the GitHub issue");
+      expect(pub.confirmText({ replaces: { ready: true }, willCreate: [D2] })).toBe("Create the GitHub issues and replace the original");
+      expect(pub.confirmText({ replaces: { ready: false }, willCreate: [D2] })).toBe("Create the GitHub issues");
     });
     it("doneText", () => {
       expect(pub.doneText({ created: [], replaced })).toBe("Issue #7 is replaced");
@@ -711,9 +711,9 @@ describe("replacing a split issue", () => {
       expect(pub.doneText({ created: [{}, {}], replaced: { ...replaced, closed: "open" } })).toBe("2 issues are on GitHub and issue #7 is not closed: check and close it by hand");
     });
     it("replacesText", () => {
-      expect(pub.replacesText(rep())).toBe("Issue #7 is replaced by its parts and closed as not planned. Issues that depend on it are changed to depend on the parts, and a comment on #7 names them.");
+      expect(pub.replacesText(rep())).toBe("Issue #7 is replaced by its parts and closed as not planned. GitHub issues that depend on it are changed to depend on the parts, and a comment on #7 names them.");
       const stays = pub.replacesText(rep({ staysOpen: true }));
-      expect(stays).toBe("Issue #7 is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #7 names them. #7 stays open: check it and close it by hand.");
+      expect(stays).toBe("Issue #7 is replaced by its parts: GitHub issues that depend on it are changed to depend on the parts, and a comment on #7 names them. #7 stays open: check it and close it by hand.");
       expect(stays).not.toContain("closed as not planned");
       expect(pub.replacesText(rep({ ready: false }))).toBe("Issue #7 is replaced by its parts when every part is on GitHub. Nothing changes for it now.");
     });
@@ -730,19 +730,19 @@ describe("replacing a split issue", () => {
     it("replacesNode", async () => {
       const { h } = await import("../ui/dom.js" as string);
       const text = (r: any) => h("div", {}, pub.replacesNode(r)) as FakeElement;
-      const cut = "This repository has more than 1,000 open issues and pull requests. Some issues that depend on #7 may be missing.";
+      const cut = "This repository has more than 1,000 open issues and pull requests. Some GitHub issues that depend on #7 may be missing.";
       expect(text(rep({ cut: true })).textContent).toContain(cut);
       expect(text(rep()).textContent).not.toContain("1,000");
       const el = text(rep({ dependants: [{ issue: 20, title: "Twenty", before: "- #7", after: "- #101\n- #102" }, { issue: 21, title: "Other", byHand: true }] }));
-      expect(el.textContent).toContain("Issues that depend on #7");
+      expect(el.textContent).toContain("GitHub issues that depend on #7");
       const lis = walk(el).filter((e) => e.tag === "li");
       expect(lis).toHaveLength(2);
       expect(lis[0]!.textContent).toContain("#20 Twenty");
       expect(walk(lis[0]!).filter((e) => e.tag === "pre").map((e) => e.textContent)).toEqual(["- #7", "- #101\n- #102"]);
-      expect(lis[1]!.textContent).toContain("Change by hand: it names the issue by its title.");
+      expect(lis[1]!.textContent).toContain("Change by hand: it names the GitHub issue by its title.");
       expect(walk(lis[1]!).some((e) => e.tag === "pre")).toBe(false);
       const none = text(rep());
-      expect(none.textContent).not.toContain("Issues that depend on #7");
+      expect(none.textContent).not.toContain("GitHub issues that depend on #7");
       expect(walk(none).some((e) => e.tag === "ul")).toBe(false);
     });
   });
@@ -752,10 +752,10 @@ describe("replacing a split issue", () => {
     postAnswer = () => ({ status: 200, body: { repo: "acme/app", created: [{}, {}], replaced, state: "published" } });
     await openPlan();
     expect(dialog()!.textContent).toContain(pub.replacesText(rep()));
-    expect(dialog()!.textContent).toContain("Issues that depend on #7");
+    expect(dialog()!.textContent).toContain("GitHub issues that depend on #7");
     expect(dialog()!.textContent).not.toContain("is not changed");
-    expect(button("Create the issues", dialog())).toBeUndefined();
-    await press(button("Create the issues and replace the original", dialog()));
+    expect(button("Create the GitHub issues", dialog())).toBeUndefined();
+    await press(button("Create the GitHub issues and replace the original", dialog()));
     expect(posts()[0]!.body.drafts.map((x: any) => x.draft)).toEqual([D2, D3]);
     expect(toast()).toBe("2 issues are on GitHub and issue #7 is replaced");
   });
@@ -764,12 +764,12 @@ describe("replacing a split issue", () => {
     plan.willCreate = [D2];
     await openPlan();
     expect(dialog()!.textContent).toContain(pub.replacesText(rep({ ready: false })));
-    expect(button("Create the issues", dialog())).toBeDefined();
+    expect(button("Create the GitHub issues", dialog())).toBeDefined();
   });
   it("the dialog warns when the list is cut", async () => {
     createPlan(rep({ cut: true }));
     await openPlan();
-    expect(dialog()!.textContent).toContain("Some issues that depend on #7 may be missing.");
+    expect(dialog()!.textContent).toContain("Some GitHub issues that depend on #7 may be missing.");
   });
   it("shows a dependant title and texts as text, never as HTML", async () => {
     createPlan(rep({ dependants: [{ issue: 20, title: XSS, before: XSS, after: XSS }] }));
@@ -786,7 +786,7 @@ describe("replacing a split issue", () => {
     expect(publishBox().textContent).not.toContain(pub.NO_READY_YET);
     await press(publishButton());
     expect(dialog()!.textContent).not.toContain(pub.NOTHING_READY);
-    await press(button("Replace the issue", dialog()));
+    await press(button("Replace the GitHub issue", dialog()));
     expect(posts()[0]!.body).toEqual({ drafts: [] });
     expect(toast()).toBe("Issue #7 is replaced");
   });
@@ -836,7 +836,7 @@ describe("replacing a split issue", () => {
       return { status: 502, body: { error: "GitHub did not change the issue: boom." } };
     };
     await openPlan();
-    await press(button("Create the issues and replace the original", dialog()));
+    await press(button("Create the GitHub issues and replace the original", dialog()));
     expect(publishBox().textContent).toContain("boom");
     expect(publishBox().textContent).toContain("Issue #7 is not replaced yet. Publish again to finish.");
     expect(toast()).toBe("");
@@ -848,7 +848,7 @@ describe("replacing a split issue", () => {
       return { status: 200, body: { repo: "acme/app", created: [], replaced, state: "published" } };
     };
     await press(publishButton());
-    await press(button("Replace the issue", dialog()));
+    await press(button("Replace the GitHub issue", dialog()));
     expect(posts()[1]!.body).toEqual({ drafts: [] });
     expect(toast()).toBe("Issue #7 is replaced");
     expect(publishBox().textContent).toContain("Issue #7 was replaced by #101, #102. It is still open");

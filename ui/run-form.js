@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { COMPOSER, advancedBox, composerBox } from "./composer.js";
 import { h, mount } from "./dom.js";
 import { errorState, explainError } from "./states.js";
 
@@ -9,7 +10,12 @@ import { errorState, explainError } from "./states.js";
 export function runForm({ flow, yaml, cur, repo: repoPath, close, onBusy = () => {}, a = api }) {
   let starting = false;
   const usesTask = /\{\{\s*task\s*\}\}|(FACTORY|SCF)_TASK/.test(yaml);
-  const task = h("textarea", { rows: 5, placeholder: "Describe the task, e.g. “Add a --json flag to the export command”" });
+  const composer = composerBox({
+    label: flow.workspace === "empty" ? "Extra instructions (optional)" : COMPOSER.what,
+    placeholder: "Describe the task, e.g. “Add a --json flag to the export command”",
+    onSubmit: () => start.click(),
+  });
+  const task = composer.box;
   const repo = h("input", { class: "mono", value: repoPath });
   const vars = Object.entries(flow.vars).map(([k, v]) => [k, h("input", { class: "mono", value: v })]);
   const warn = h("p", { class: "status bad flush", role: "status" });
@@ -47,15 +53,18 @@ export function runForm({ flow, yaml, cur, repo: repoPath, close, onBusy = () =>
     warn.textContent = "";
     start.textContent = "▶ Start run";
   });
-  task.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && start.click());
-  return h("div", { class: "stack" },
-    h("label", { class: "field" }, h("span", {}, flow.workspace === "empty" ? "Extra instructions (optional)" : "Task"), task,
-      !usesTask ? h("small", {}, "This flow doesn't use the task text.") : null),
-    flow.workspace === "empty"
-      ? h("small", { class: "muted" }, "Runs in a fresh empty folder — the flow fetches its own code (e.g. clones from GitHub).")
-      : h("label", { class: "field" }, h("span", {}, "Repository"), repo,
-          h("small", {}, flow.workspace === "worktree" ? "Runs in a fresh git worktree + branch — your checkout is not touched." : "⚠ in-place: Claude edits this directory directly.")),
+  const empty = flow.workspace === "empty";
+  const advanced = [
+    empty ? null : h("label", { class: "field" }, h("span", {}, "Repository"), repo),
     vars.length ? h("div", { class: "grid" }, vars.map(([k, el]) => h("label", { class: "field" }, h("span", { class: "mono" }, k), el))) : null,
+  ].filter(Boolean);
+  return h("div", { class: "stack" },
+    composer.field,
+    !usesTask ? h("small", {}, "This flow doesn't use the task text.") : null,
+    empty
+      ? h("small", { class: "muted" }, "Runs in a fresh empty folder — the flow fetches its own code (e.g. clones from GitHub).")
+      : h("small", { class: "muted" }, flow.workspace === "worktree" ? "Runs in a fresh git worktree + branch — your checkout is not touched." : "⚠ in-place: Claude edits this directory directly."),
+    advanced.length ? advancedBox(h("div", { class: "stack" }, advanced)) : null,
     cur.dirty ? h("small", { class: "muted" }, "Runs your unsaved edits.") : null,
     warn, err,
     h("div", { class: "row" }, h("span", { class: "spacer" }), h("small", { class: "muted" }, "⌘↵"), start));

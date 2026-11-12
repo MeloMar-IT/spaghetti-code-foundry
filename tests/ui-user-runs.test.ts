@@ -86,14 +86,19 @@ describe("helpers", () => {
 
 describe("runCard labels", () => {
   it("labels the task, repository and next text of a run; the link is first in the row", () => {
-    const card = ui.runCard({ run: run("a", { vars: { github_repo: "o/r", issue: 7 } }), job: null }, () => {});
+    const card = ui.runCard({ run: run("a", { vars: { github_repo: "o/r", issue: 7 }, next: { ...rec("running", "a"), title: "Add it" } }), job: null }, () => {});
     expect(find(card, "div", { "data-label": "Task" })[0]!.textContent).toBe("task a");
+    expect(one(card, "a", { class: "run-link" }).textContent).toBe("Add it");
+    // the task is the title here: it is not said twice
+    const same = ui.runCard({ run: run("a"), job: null }, () => {});
+    expect(find(same, "div", { "data-label": "Task" })).toHaveLength(0);
+    expect(one(same, "a", { class: "run-link" }).textContent).toBe("task a");
     expect(find(card, "div", { "data-label": "Repository" })).toHaveLength(1);
     expect(find(card, "p", { "data-label": "What happens next" })).toHaveLength(1);
     expect(one(card, "a", { class: "run-link" }).attrs.href).toBe("#/runs/a");
   });
   it("labels a queued card the same way and puts Remove last", () => {
-    const card = ui.runCard({ run: null, job: job("q", { githubRepo: "o/r", issue: 3 }) }, () => {});
+    const card = ui.runCard({ run: null, job: job("q", { githubRepo: "o/r", issue: 3, next: { ...rec("queued", "q"), title: "Add it" } }) }, () => {});
     expect(find(card, "div", { "data-label": "Task" })[0]!.textContent).toBe("queued q");
     expect(find(card, "div", { "data-label": "Repository" })).toHaveLength(1);
     expect(find(card, "p", { "data-label": "What happens next" })).toHaveLength(1);
@@ -215,8 +220,9 @@ describe("renderMyRuns", () => {
     const first = items[0]!;
     expect(first.attrs.class).toContain("who-you");
     expect(first.textContent).toContain(data.runs[0].next.status);
-    expect(find(first, "button", { "aria-label": "What does this mean?" })).toHaveLength(1);
-    expect(first.textContent).toContain("flow-r1");
+    expect(find(first, "button", { "aria-label": "What does this mean?" })).toHaveLength(0); // rows have no "?"
+    expect(find(first, "svg").length).toBeGreaterThan(0);
+    expect(first.textContent).not.toContain("flow-r1");
     expect(first.textContent).toContain("task r1");
     expect(first.textContent).not.toContain("second line");
     expect(first.textContent).toContain("o/r#7");
@@ -234,9 +240,9 @@ describe("renderMyRuns", () => {
     expect(main.textContent).toContain("2 runs ahead of you");
     expect(main.textContent).toContain("1 run ahead of you");
     expect(main.textContent).not.toContain("0 runs ahead");
-    expect(main.textContent).toContain("Queued run");
     expect(main.textContent).toContain("queued q3");
-    expect(main.textContent).toContain("named");
+    expect(main.textContent).toContain("queued q4"); // the task is the title, not the flow name
+    expect(main.textContent).not.toContain("named");
     const remove = (id: string) => one(main, "button", { "data-focus": `remove-${id}` });
 
     ask.mockResolvedValueOnce(false);
@@ -317,6 +323,9 @@ describe("renderMyRun", () => {
     await flush();
     return cleanup;
   };
+  const STOP = "Stop this change…";
+  // The details inside the panels: not the Technical details of the header and not the sections of the Details tab.
+  const plainDetails = () => find(main, "details").filter((d) => !d.attrs["data-part"] && !d.attrs["data-section"]);
   const labels = () => find(one(main, "div", { class: "run-actions" }), "button").map((b) => b.textContent);
   const button = (kind: string) => one(main, "button", { "data-focus": `act-${kind}` });
   const summaryOf = (over: any = {}) => ({
@@ -355,6 +364,30 @@ describe("renderMyRun", () => {
   const box = () => one(main, "textarea");
   const send = async (text: string) => { box().value = text; form().fire("submit", { preventDefault() {} }); await flush(); };
 
+  it("marks a check of a waiting run, reads the run again, and offers no marks when read-only", async () => {
+    const checks = [{ id: "plan-1", try: "Open it", expect: "It opens" }];
+    state.summary = summaryOf({ status: "waiting", next: rec("approval"), checks, checksRev: "v1" });
+    a.markCheck = vi.fn(async () => ({ runId: "r1", checkMarks: { "plan-1": { mark: "works", at: "t" } } }));
+    const stop = await open();
+    expect(button("approve").textContent).toBe("Approve — 1 check not marked yet");
+    const runs = a.run.mock.calls.length;
+    one(main, "button", { "data-focus": "check-works-plan-1" }).click();
+    await flush();
+    expect(a.markCheck).toHaveBeenCalledWith("r1", "plan-1", "works", "v1");
+    expect(a.run.mock.calls.length).toBeGreaterThan(runs);
+    stop();
+  });
+
+  it("shows the checks as words, without marking buttons, when read-only", async () => {
+    state.summary = summaryOf({ status: "waiting", next: rec("approval"), checks: [{ id: "plan-1", try: "Open it", expect: "It opens" }] });
+    main = document.createElement("div") as unknown as FakeElement;
+    const off = ui.renderMyRun(main, "r1", { a, ask, go, readOnly: true }) as () => void;
+    await flush();
+    expect(find(main, "button", { "data-focus": "check-works-plan-1" })).toHaveLength(0);
+    expect(main.textContent).toContain("Try: Open it");
+    off();
+  });
+
   it("shows the Skills card from the skill view, without a digest, and none without it", async () => {
     const skillView = {
       lock: "ok", requested: [{ id: "a", version: "1.0.0", by: "plan", state: "selected" }],
@@ -362,12 +395,18 @@ describe("renderMyRun", () => {
     };
     state.summary = summaryOf({ skillView });
     await open();
-    const section = one(main, "section", { "aria-label": "Skills" });
+    const detailsTab = () => find(main, "button").find((b) => b.attrs["data-tab"] === "details")!.click();
+    detailsTab();
+    const section = one(main, "details", { "data-section": "skills" });
+    expect(section.hidden).toBeFalsy();
     expect(section.textContent).toContain("a@1.0.0");
     expect(section.textContent).not.toContain("Digest");
+    // Skills is a section of Details, not part of the page head.
+    expect(one(main, "div", { class: "run-header" }).contains(section)).toBe(false);
     state.summary = summaryOf();
     await open();
-    expect(find(main, "section", { "aria-label": "Skills" })).toHaveLength(0);
+    detailsTab();
+    expect(one(main, "details", { "data-section": "skills" }).hidden).toBe(true);
   });
 
   it("shows the answer form under the questions", async () => {
@@ -556,11 +595,11 @@ describe("renderMyRun", () => {
   it("lists the answers, oldest first, as plain text; also after a cancelled resume", async () => {
     state.summary = asking({ answers: [{ at: "a", text: "first <b>x</b>" }, { at: "b", text: "second" }] });
     await open();
-    const items = find(main, "li").map((li) => li.textContent);
-    expect(items).toEqual(["first <b>x</b>", "second"]);
+    const given = () => find(one(main, "section", { "aria-label": "Answers given" }), "li").map((li) => li.textContent);
+    expect(given()).toEqual(["first <b>x</b>", "second"]);
     state.summary = summaryOf({ status: "cancelled", answers: [{ at: "a", text: "one" }] });
     await open();
-    expect(find(main, "li").map((li) => li.textContent)).toEqual(["one"]);
+    expect(given()).toEqual(["one"]);
     expect(form().hidden).toBe(true);
     button("retry").click();
     await flush();
@@ -584,14 +623,14 @@ describe("renderMyRun", () => {
 
   it("shows the right buttons for each status", async () => {
     const cases: [any, string[]][] = [
-      [{ status: "waiting", next: rec("approval") }, ["Approve", "Reject", "Cancel"]],
-      [{ status: "running" }, ["Cancel"]],
+      [{ status: "waiting", next: rec("approval") }, ["Approve", "Reject", STOP]],
+      [{ status: "running" }, [STOP]],
       [{ status: "failed" }, ["Retry from the failing step"]],
-      [{ status: "stopped" }, ["Retry from the failing step", "Cancel"]],
+      [{ status: "stopped" }, ["Retry from the failing step", STOP]],
       [{ status: "stopped", refinement: "s1" }, []],
       [{ status: "cancelled" }, ["Retry from the failing step"]],
       [{ status: "succeeded" }, []],
-      [{ status: "queued" }, ["Cancel"]],
+      [{ status: "queued" }, [STOP]],
       [{ status: "failed", refinement: "s1" }, []],
     ];
     for (const [over, want] of cases) {
@@ -649,7 +688,7 @@ describe("renderMyRun", () => {
     state.summary = summaryOf({ status: "failed", next: { ...rec("failed"), failure } });
     state.pending = [job("r1", { ahead: 1 })];
     await open();
-    expect(labels()).toEqual(["Cancel"]);
+    expect(labels()).toEqual([STOP]);
   });
 
   it("sends with Ctrl+Enter in the note", async () => {
@@ -676,7 +715,7 @@ describe("renderMyRun", () => {
     expect(one(modalRoot(), "textarea").value).toBe("note");
     find(modalRoot(), "button").find((b) => b.attrs["aria-label"] === "Close")!.click();
     await flush();
-    expect(labels()).toEqual(["Approve", "Reject", "Cancel"]);
+    expect(labels()).toEqual(["Approve", "Reject", STOP]);
     expect(button("approve").disabled).toBe(false);
   });
 
@@ -706,18 +745,19 @@ describe("renderMyRun", () => {
     expect(button("retry").disabled).toBe(false);
   });
 
-  it("cancels after a confirmation", async () => {
+  it("stops the change after a confirmation", async () => {
     await open();
     ask.mockResolvedValueOnce(false);
     button("cancel").click();
     await flush();
+    expect(ask.mock.calls[0]![0]).toBe("Stop this change");
     expect(a.cancelRun).not.toHaveBeenCalled();
     const reads = a.run.mock.calls.length;
     button("cancel").click();
     await flush();
     expect(a.cancelRun).toHaveBeenCalledWith("r1");
     expect(a.run.mock.calls.length).toBeGreaterThan(reads);
-    expect(toastText()).toBe("Cancelled");
+    expect(toastText()).toBe("Stopped");
   });
 
   it("treats cancelled:false as a refusal and stays on the page", async () => {
@@ -734,15 +774,51 @@ describe("renderMyRun", () => {
     state.runError = refused("run not found", 404);
     state.pending = [job("r1", { ahead: 2, flow: "named" })];
     await open();
-    expect(main.textContent).toContain("Queued run");
+    expect(main.textContent).toContain("Waiting in the queue");
     expect(main.textContent).toContain(state.pending[0].next.status);
     expect(main.textContent).toContain("2 runs ahead of you");
-    expect(labels()).toEqual(["Cancel"]);
+    expect(labels()).toEqual([STOP]);
     button("cancel").click();
     await flush();
     expect(ask.mock.calls[0]![1]).toContain("leaves the queue");
     expect(a.cancelRun).toHaveBeenCalledWith("r1");
     expect(go).toHaveBeenCalledWith("#/runs");
+  });
+
+  it("names the page after the change, and never shows the flow or run ID outside Technical details", async () => {
+    state.summary = summaryOf({ issueTitle: "Fix login", criteria: [{ text: "Works on mobile", done: true }, { text: "Has a test", done: false }] });
+    const onName = vi.fn();
+    main = document.createElement("div") as unknown as FakeElement;
+    const stop = ui.renderMyRun(main, "r1", { a, ask, go, onName }) as () => void;
+    await flush();
+    expect(onName).toHaveBeenCalledTimes(1);
+    expect(onName).toHaveBeenCalledWith("Fix login");
+    expect(one(main, "h1").textContent).toBe("Fix login");
+    const tech = one(main, "details", { "data-part": "tech" });
+    expect(tech.open).toBeFalsy();
+    expect(tech.textContent).toContain("r1");
+    const outside = main.textContent.replace(tech.textContent, "");
+    expect(outside).not.toContain("r1");
+    expect(outside).not.toContain("build");
+    // The criteria are a read-only checklist on Progress.
+    const list = one(main, "section", { "aria-label": "Acceptance criteria" });
+    expect(find(list, "li").map((li) => li.textContent.trim())).toEqual(["Works on mobile", "Has a test"]);
+    expect(find(list, "input")).toHaveLength(0);
+    stop();
+  });
+
+  it("shows the queued sentence and no phase for a retry that is queued again", async () => {
+    state.summary = summaryOf({ status: "failed", next: { ...rec("failed"), failure } });
+    state.pending = [job("r1", { ahead: 1 })];
+    await open();
+    expect(main.textContent).toContain("Waiting in the queue");
+    expect(find(main, "li").filter((li) => li.attrs["aria-current"] === "step")).toHaveLength(0);
+    state.pending = [];
+    state.summary = summaryOf({ status: "running" });
+    emit("update", { summary: state.summary });
+    await flush();
+    expect(find(main, "li").filter((li) => li.attrs["aria-current"] === "step")).toHaveLength(1);
+    expect(main.textContent).not.toContain("Waiting in the queue");
   });
 
   it("says not found, and shows an error for any other failure", async () => {
@@ -774,39 +850,40 @@ describe("renderMyRun", () => {
     expect(main.textContent).toContain("Your options");
     expect(main.textContent).not.toContain("Raw details");
     expect(main.textContent).not.toContain("/srv/x");
-    expect(find(main, "details")).toHaveLength(0);
+    expect(plainDetails()).toHaveLength(0);
   });
 
-  it("'Show the failed step' selects Steps without a transcript request", async () => {
+  it("'Show the failed step' opens Details with Steps, without a transcript request", async () => {
     state.summary = summaryOf({ status: "failed", reason: "raw", next: { ...rec("failed"), failure }, history: [
       { id: "b", type: "claude", visit: 1, ok: false, durationMs: 50, error: "exit 1", output: "secret" },
     ] });
     await open();
     find(main, "button").find((b) => b.textContent === "Show the failed step")!.click();
     await flush();
-    const steps = find(main, "button").find((b) => b.attrs["data-tab"] && b.textContent === "Steps")!;
-    expect(steps.attrs["aria-selected"]).toBe("true");
+    const details = find(main, "button").find((b) => b.attrs["data-tab"] && b.textContent === "Details")!;
+    expect(details.attrs["aria-selected"]).toBe("true");
+    expect((find(main, "details", { "data-section": "steps" })[0] as any).open).toBe(true);
     expect(main.textContent).toContain("exit 1");
     expect(main.textContent).not.toContain("secret");
     expect(a.transcript).not.toHaveBeenCalled();
   });
 
-  it("has Overview, Steps, Changes, Evidence and Logs", async () => {
+  it("has Progress, What changed and Details, with Steps, Evidence, Skills and Log inside Details", async () => {
     state.summary = summaryOf({ history: [
       { id: "a", type: "claude", visit: 1, ok: true, durationMs: 1000, output: "secret", agent: "claude", model: "opus-x" },
       { id: "b", type: "shell", visit: 1, ok: false, durationMs: 50, error: "exit 1" },
     ] });
     await open();
     const tabs = find(main, "button").filter((b) => b.attrs["data-tab"]);
-    expect(tabs.map((b) => b.textContent)).toEqual(["Overview", "Steps", "Changes", "Evidence", "Logs"]);
+    expect(tabs.map((b) => b.textContent)).toEqual(["Progress", "What changed", "Details"]);
     emit("log", { line: "▶ a (shell)" });
     emit("log", "not json");
-    tabs[4]!.click();
+    tabs[2]!.click();
+    expect(find(main, "details", { "data-section": "evidence" })).toHaveLength(1);
+    expect(find(main, "details", { "data-section": "log" })).toHaveLength(1);
     expect(one(main, "pre", { class: "log" }).textContent).toContain("▶ a (shell)");
 
-    tabs[1]!.click();
-    expect(find(main, "details")).toHaveLength(0);
-    expect(find(main, "summary")).toHaveLength(0);
+    expect(plainDetails()).toHaveLength(0);
     expect(main.textContent).not.toContain("secret");
     expect(main.textContent).toContain("Agent");
     expect(main.textContent).toContain("Run started");
@@ -815,13 +892,13 @@ describe("renderMyRun", () => {
 
     // Changes loads on the first open, not on later opens or updates, and again on Refresh
     expect(a.diff).not.toHaveBeenCalled();
-    tabs[2]!.click();
+    tabs[1]!.click();
     await flush();
     expect(a.diff).toHaveBeenCalledTimes(1);
     one(main, "pre", { class: "diff" });
     emit("update", { summary: summaryOf({ history: state.summary.history }) });
     tabs[0]!.click();
-    tabs[2]!.click();
+    tabs[1]!.click();
     await flush();
     expect(a.diff).toHaveBeenCalledTimes(1);
     const refreshBtn = () => find(main, "button").find((b) => b.attrs["data-focus"] === "diff-refresh")!;
@@ -837,10 +914,10 @@ describe("renderMyRun", () => {
     expect(main.textContent).toContain("no access");
   });
 
-  it("loads the evidence record when the Evidence tab opens", async () => {
+  it("loads the evidence record when the Details tab opens", async () => {
     await open();
     expect(a.evidence).not.toHaveBeenCalled();
-    find(main, "button").filter((b) => b.attrs["data-tab"])[3]!.click();
+    find(main, "button").filter((b) => b.attrs["data-tab"])[2]!.click();
     await flush();
     expect(a.evidence).toHaveBeenCalledTimes(1);
     expect(a.evidence).toHaveBeenCalledWith("r1");
@@ -855,34 +932,34 @@ describe("renderMyRun", () => {
 
     it("keeps the selected tab over a stream update and a refresh", async () => {
       await open();
-      expect(selected()).toEqual(["Overview"]);
-      tabButtons()[4]!.click();
+      expect(selected()).toEqual(["Progress"]);
+      tabButtons()[2]!.click();
       emit("update", { summary: summaryOf({ task: "changed" }) });
-      expect(selected()).toEqual(["Logs"]);
+      expect(selected()).toEqual(["Details"]);
       emit("update", { summary: summaryOf({ task: "changed again" }) });
-      expect(selected()).toEqual(["Logs"]);
+      expect(selected()).toEqual(["Details"]);
     });
 
-    it("opens Steps once when the run fails, and not after the reader picked a tab", async () => {
+    it("opens Details once when the run fails, and not after the reader picked a tab", async () => {
       await open();
       emit("update", { summary: summaryOf(failed) });
-      expect(selected()).toEqual(["Steps"]);
+      expect(selected()).toEqual(["Details"]);
       tabButtons()[0]!.click();
       emit("update", { summary: summaryOf({ ...failed, task: "again" }) });
-      expect(selected()).toEqual(["Overview"]);
+      expect(selected()).toEqual(["Progress"]);
     });
 
-    it("keeps the answer text over a switch to Logs and back, and over an update", async () => {
+    it("keeps the answer text over a switch to Details and back, and over an update", async () => {
       state.summary = asking();
       await open();
       box().value = "half an answ";
-      tabButtons()[4]!.click();
+      tabButtons()[2]!.click();
       tabButtons()[0]!.click();
       emit("update", { summary: asking({ task: "changed" }) });
       expect(box().value).toBe("half an answ");
     });
 
-    it("has the form and the answers given in the Overview panel", async () => {
+    it("has the form and the answers given in the Progress panel", async () => {
       state.summary = asking({ answers: [{ at: "2026-01-01T00:00:00Z", text: "first" }] });
       await open();
       const overview = find(main, "div").find((d) => d.attrs.role === "tabpanel")!;

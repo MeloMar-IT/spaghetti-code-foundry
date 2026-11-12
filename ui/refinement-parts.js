@@ -7,7 +7,7 @@ import { NOWHERE } from "./refinement-split.js";
 export const SPLIT_INTO = "Split into";
 export const ALL_PLACED = "Every criterion has a place.";
 export const HINT_LABEL = "Hint from the architect";
-export const HINT_NOTE = "(not part of the story)";
+export const HINT_NOTE = "(not part of the change)";
 export const MOVE_TO = "Move to…";
 export const MERGE = "Merge with";
 export const MERGE_BUTTON = "Merge";

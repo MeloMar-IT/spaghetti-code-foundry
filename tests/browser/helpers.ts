@@ -19,6 +19,20 @@ export function seed(which: "default" | "large" = "default"): Seed {
 /** "/" for an admin, "/user/" for a user. */
 export const displayPath = (role: Role): string => (role === "admin" ? "/" : "/user/");
 
+/**
+ * The Simple view. The shared seed account is never changed: the page's own GET /api/session answer is
+ * edited on the way (view = simple), so only this page sees the Simple view.
+ */
+export async function asSimple(page: Page): Promise<void> {
+  await page.route("**/api/session", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const body = (await res.json()) as { user: Record<string, unknown> };
+    body.user = { ...body.user, view: "simple" };
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
 export interface OpenOptions {
   /** sets data-theme on <html> before the page scripts run */
   theme?: Theme;
@@ -423,8 +437,9 @@ export async function startedId(res: { json(): Promise<unknown> }): Promise<stri
   return typeof id === "string" ? id : undefined;
 }
 
-/** The primary links and actions of a role, from ui/ia.js. */
+/** The sidebar links (the five places, then the extra pages) and the + New change action of a display, from ui/ia.js. */
 export async function navFor(role: Role): Promise<{ primary: NavItem[]; actions: NavItem[] }> {
   const ia = await import("../../ui/ia.js" as string);
-  return { primary: ia.primaryFor(role), actions: ia.actionsFor(role) };
+  const { main, extra } = ia.sidebarFor(role === "admin" ? "admin" : "advanced");
+  return { primary: [...main, ...extra], actions: [ia.NEW_CHANGE] };
 }

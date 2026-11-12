@@ -1,0 +1,60 @@
+/* Editorial (#854): black and white, square, with black rules instead of shadows. Only token values; imported after
+   calm.css so it wins. Orange (#FF4F00) is only for what needs the person: --color-waiting and --color-waiting-soft.
+   Automatic routing shares those tokens in the base, so --route is set apart here.
+   Administration pages are inverted (black ground, white text). That is the dark variant, so one rule below switches
+   color-scheme to dark for that area; ui/shell.js sets data-area on <html>. */
+
+html[data-look="editorial"] {
+  --color-bg: light-dark(#ffffff, #000000);
+  --color-surface: light-dark(#ffffff, #0a0a0a);
+  --color-surface-2: light-dark(#f2f2f2, #1a1a1a);
+  --color-border: light-dark(#1a1a1a, #e6e6e6);
+  --color-border-strong: light-dark(#000000, #ffffff);
+  --color-text: light-dark(#0a0a0a, #ffffff);
+  --color-text-muted: light-dark(#4a4a4a, #b3b3b3);
+  --color-neutral: light-dark(#4a4a4a, #b3b3b3);
+  --color-neutral-soft: light-dark(#f2f2f2, #1a1a1a);
+  --color-disabled-soft: light-dark(#f2f2f2, #1a1a1a);
+  --color-accent: light-dark(#0a0a0a, #ffffff);
+  --color-accent-soft: light-dark(#f2f2f2, #1f1f1f);
+  --color-on-accent: light-dark(#ffffff, #000000);
+  --color-on-danger: light-dark(#ffffff, #000000);
+  --color-warning: light-dark(#6b5500, #facc15);
+  --color-warning-soft: light-dark(#fff3b0, #2e2700);
+  --color-waiting: light-dark(#0a0a0a, #000000);
+  --color-waiting-soft: light-dark(#ff4f00, #ff4f00);
+  --color-log-bg: #000000;
+  --color-log-step: #ffffff;
+  --route: var(--color-accent);
+
+  --font-body: "Helvetica Neue", Helvetica, Arial, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Neue Haas Grotesk Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-numeric: var(--font-body);
+  --font-label: var(--font-mono);
+  --label-case: uppercase;
+
+  --text-heading: clamp(36px, 6vw, 56px);
+
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-pill: 0;
+
+  --shadow-sm: none;
+  --shadow-low: 0 0 0 1px var(--color-text);
+  --shadow-high: 0 0 0 2px var(--color-text);
+
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+  --space-2xl: 20px;
+  --space-3xl: 24px;
+  --space-4xl: 32px;
+}
+
+html[data-look="editorial"][data-area="administration"] { color-scheme: dark; }

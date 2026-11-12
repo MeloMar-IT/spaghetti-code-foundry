@@ -53,7 +53,7 @@ afterEach(() => {
 
 // The monitor's page: the findings and mutes are drawn on it (it was a card on the list before).
 const cards = (main: FakeElement) => [main];
-const buttonOf = (c: FakeElement) => c.all("button").find((b) => /Switch bug stories/.test(b.textContent));
+const buttonOf = (c: FakeElement) => c.all("button").find((b) => /Switch bug-fix changes/.test(b.textContent));
 const draw = async (id = "mon") => {
   const main = new FakeElement("div");
   await watchersMod.renderWatcherDetail(main, id);
@@ -67,16 +67,16 @@ const drawRO = async (id = "mon") => {
 
 describe("storiesLine", () => {
   it("says on, and when no repository is set", () => {
-    expect(admin.storiesLine({ state: "on", reportTo: true }, NOW)).toBe("Bug stories: on");
-    expect(admin.storiesLine({ state: "on", reportTo: false }, NOW)).toBe("Bug stories: on (no repository is set: monitor.report_to)");
+    expect(admin.storiesLine({ state: "on", reportTo: true }, NOW)).toBe("Bug-fix changes: on");
+    expect(admin.storiesLine({ state: "on", reportTo: false }, NOW)).toBe("Bug-fix changes: on (no repository is set: monitor.report_to)");
   });
   it("says off since, quiet until, and stopped", () => {
-    expect(admin.storiesLine({ state: "off", since: iso(14, 5) }, NOW)).toMatch(/^Bug stories: off since .*14|2:05/);
-    expect(admin.storiesLine({ state: "quiet", until: iso(14, 45) }, NOW)).toMatch(/^Bug stories: quiet until .* after the restart$/);
-    expect(admin.storiesLine({ state: "unreadable" }, NOW)).toBe("Bug stories: stopped. The state file monitor-guard.json cannot be read.");
+    expect(admin.storiesLine({ state: "off", since: iso(14, 5) }, NOW)).toMatch(/^Bug-fix changes: off since .*14|2:05/);
+    expect(admin.storiesLine({ state: "quiet", until: iso(14, 45) }, NOW)).toMatch(/^Bug-fix changes: quiet until .* after the restart$/);
+    expect(admin.storiesLine({ state: "unreadable" }, NOW)).toBe("Bug-fix changes: stopped. The state file monitor-guard.json cannot be read.");
   });
   it("says stopped by the circuit breaker, with the reason", () => {
-    expect(admin.storiesLine({ state: "breaker", since: iso(14, 5), why: "7 new findings within 60 minutes" }, NOW)).toMatch(/^Bug stories: stopped by the circuit breaker since .* \(7 new findings within 60 minutes\)$/);
+    expect(admin.storiesLine({ state: "breaker", since: iso(14, 5), why: "7 new findings within 60 minutes" }, NOW)).toMatch(/^Bug-fix changes: stopped by the circuit breaker since .* \(7 new findings within 60 minutes\)$/);
   });
   it("adds the day when the time is on another day, and the reset sentence", () => {
     const other = new Date(2026, 9, 3, 9, 0, 0).toISOString();
@@ -90,11 +90,11 @@ describe("the monitor's card", () => {
   it("only the monitor's page has the line and the button", async () => {
     const mon = await draw();
     const other = await draw("w");
-    expect(mon.textContent).toContain("Bug stories: on");
-    expect(buttonOf(mon)!.textContent).toBe("Switch bug stories off");
-    expect(other.textContent).not.toContain("Bug stories");
+    expect(mon.textContent).toContain("Bug-fix changes: on");
+    expect(buttonOf(mon)!.textContent).toBe("Switch bug-fix changes off");
+    expect(other.textContent).not.toContain("Bug-fix changes");
     expect(buttonOf(other)).toBeUndefined();
-    expect(mon.textContent.indexOf("Bug stories: on")).toBeLessThan(mon.textContent.indexOf("a note"));
+    expect(mon.textContent.indexOf("Bug-fix changes: on")).toBeLessThan(mon.textContent.indexOf("a note"));
   });
 
   it("the list sends no GET /api/monitor", async () => {
@@ -115,7 +115,7 @@ describe("the monitor's card", () => {
     state = { state: "off", since: iso(14, 5) };
     const main = await draw();
     const b = buttonOf(cards(main)[0]!)!;
-    expect(b.textContent).toBe("Switch bug stories on");
+    expect(b.textContent).toBe("Switch bug-fix changes on");
     sent = [];
     b.click();
     await new Promise((r) => setTimeout(r, 20));
@@ -126,7 +126,7 @@ describe("the monitor's card", () => {
     state = { state: "breaker", since: iso(14, 5), why: "x" };
     const main = await draw();
     const b = buttonOf(cards(main)[0]!)!;
-    expect(b.textContent).toBe("Switch bug stories on");
+    expect(b.textContent).toBe("Switch bug-fix changes on");
     sent = [];
     b.click();
     await new Promise((r) => setTimeout(r, 20));
@@ -153,7 +153,7 @@ describe("the monitor's card", () => {
   it("a failing GET /api/monitor still draws the page: the monitor card has a note with Retry", async () => {
     stateFails = true;
     const main = await draw();
-    expect(main.textContent).not.toContain("Bug stories");
+    expect(main.textContent).not.toContain("Bug-fix changes");
     const errs = main.all("div").filter((d) => /\bstate-error\b/.test(d.attrs.class ?? ""));
     expect(errs).toHaveLength(1);
     expect(errs[0]!.textContent).toContain("Could not load the monitor's state.");
@@ -163,7 +163,7 @@ describe("the monitor's card", () => {
     retry.click();
     await new Promise((r) => setTimeout(r, 20));
     expect(main.all("div").filter((d) => /\bstate-error\b/.test(d.attrs.class ?? ""))).toHaveLength(0);
-    expect(main.textContent).toContain("Bug stories");
+    expect(main.textContent).toContain("Bug-fix changes");
   });
 });
 
@@ -256,7 +256,7 @@ describe("the findings and mutes of the monitor's card", () => {
     withLists([finding(1), finding(2)], [{ id: "m1", kind: "detector", detector: "restart-loop", reason: "noise", since: iso(9, 0), by: "u" }]);
     const main = await drawRO();
     expect(buttonOf(main)).toBeUndefined();
-    expect(main.textContent).toContain("Bug stories: on");
+    expect(main.textContent).toContain("Bug-fix changes: on");
     const p = panel(main);
     expect(button(p, "Mute a detector")).toBeUndefined();
     expect(button(p, "End mute")).toBeUndefined();

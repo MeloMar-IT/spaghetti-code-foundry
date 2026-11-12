@@ -94,7 +94,10 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { startBadge: async () => 0, startHash: () => null },
     "./flow-problems.js": await import("../../ui/flow-problems.js" as string),
-    "./run-form.js": await loadUiSource("run-form.js", { "./api.js": { api }, "./dom.js": real.dom, "./states.js": real.states }, ["runForm"]),
+    "./run-form.js": await loadUiSource("run-form.js", {
+      "./api.js": { api }, "./dom.js": real.dom, "./states.js": real.states,
+      "./composer.js": await loadUiSource("composer.js", { "./dom.js": real.dom }, ["COMPOSER", "composerBox", "advancedBox"]),
+    }, ["runForm"]),
     "./promotions.js": await loadUiSource("promotions.js", {
       "./api.js": { api }, "./dom.js": real.dom, "./states.js": real.states,
       "./kit/actions.js": await import("../../ui/kit/actions.js" as string), "./kit/display.js": await import("../../ui/kit/display.js" as string),
@@ -107,7 +110,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./work.js": never,
   };
   for (const n of ["./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
-    "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js"]) deps[n] = never;
+    "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js", "./simple.js", "./simple-change.js"]) deps[n] = never;
   // The flow page is its own module: load it with the same stubs and hand the app the page it makes.
   deps["./viewport.js"] = await import("../../ui/viewport.js" as string);
   deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);

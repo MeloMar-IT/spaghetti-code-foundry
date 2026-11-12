@@ -6,6 +6,7 @@
   <title>Accessibility — Spaghetti Code Foundry</title>
   <script src="/prefs-boot.js"></script>
   <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/looks.css">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -16,9 +17,26 @@
     <p>Spaghetti Code Foundry aims to meet WCAG 2.2 AA.</p>
     <h2>What is checked</h2>
     <p>An automatic test checks the screens of nine critical journeys for both roles on every change. It fails on a serious problem.</p>
+    <p>Other tests check the sidebar, the phase strip and the box for a change in all three views, and that the main pages do not scroll sideways at 375 px in light and dark mode.</p>
+    <h2>Layout</h2>
+    <p>Every page has the same frame: a sidebar on the left with Today, Changes, Ideas, Releases and Help, and a top bar with search, Ask Foundry, + New change and the account menu. The Advanced and Admin views add their extra pages below a divider in the sidebar.</p>
+    <p>Below 768 px the sidebar is a menu that opens from the menu button. Pages have one column, and nothing scrolls sideways at 375 px.</p>
+    <p>Every label calls one piece of work a change. The word issue is used only for an issue on GitHub.</p>
+    <h2>Light and dark</h2>
+    <p>The Foundry follows the light or dark setting of your system. To choose yourself, open the account menu, then Appearance, and pick System, Light or Dark. The choice is kept in this browser.</p>
+    <p>Both themes use the same colour tokens, and a test checks the contrast of every pair in both.</p>
+    <h2>Keyboard</h2>
+    <ul>
+      <li>Skip to content is the first control. It moves focus to the page.</li>
+      <li>Tab goes through the top bar, the sidebar and the page in order. The current page is marked in the sidebar.</li>
+      <li>On a narrow screen the menu button opens the sidebar. Tab stays inside it, and Escape closes it and returns focus to the menu button.</li>
+      <li>The progress of a change is a list of five phases: Understand, Plan, Build, Check and Deliver. The current phase is marked for screen readers.</li>
+      <li>In the box What would you like to change?, Ctrl+Enter or ⌘+Enter sends what you wrote.</li>
+      <li>A dialog keeps focus inside it. Escape closes it and returns focus to where you were.</li>
+    </ul>
     <h2>Known limits</h2>
     <ul>
-      <li>The accessibility checks do not run in a browser, and nothing was tested with a screen reader.</li>
+      <li>The rule checker does not run in a browser, and nothing was tested with a screen reader. The width, theme and keyboard checks run in Chromium with Playwright.</li>
       <li>The rule checker is our own small one. It is not axe and it covers seven rules.</li>
       <li>The flow graph is a visual editor. The form editor and the YAML editor do the same work.</li>
       <li>Colour contrast is computed for the colour tokens only, not for every screen.</li>

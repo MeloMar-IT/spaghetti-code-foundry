@@ -13,11 +13,13 @@ import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
 import { decisionDialog } from "../run-dialogs.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
-import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce, withQuestions } from "../run-tabs.js";
+import { createRequestBox } from "../request-box.js";
+import { changesPanel, createTabs, detailsPanel, evidencePanel, progressPanel, showFailedOnce, withQuestions } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
 import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
 import { archivedSections, listRow, myRunsEntries, readDensity, renderSections, runSections, sectionOf, writeDensity } from "../runs-list.js";
 import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "../runs-bar.js";
+import { inGroup } from "../today.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, isActive, isServerActive, jobMatches, serverKey } from "../runs-filter.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
@@ -161,6 +163,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
       if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
       if (!e.run && !jobMatches(e.job, f, { now })) return false;
       if (f.needs && sectionOf(e) !== "needs") return false;
+      if (f.group && !inGroup(f.group, e, now)) return false;
       if (arch) return true;
       return !f.view || sectionOf(e) === f.view;
     };
@@ -253,7 +256,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
 const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, slotWaitMs: s.slotWaitMs, error: s.error, startedAt: s.startedAt, parent: s.parent, type: s.type === "claude" ? "agent" : s.type });
 
 /** The run page. Returns a cleanup that stops the stream and the timer. */
-export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false } = {}) {
+export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false, onName = null } = {}) {
   let summary = null;
   let job = null;
   let runError = null;
@@ -269,9 +272,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   const head = h("div");
   // The header is built once; its buttons carry aria-disabled, not disabled, so a button keeps the focus while a call is out.
-  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to My runs" });
+  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onMark: readOnly ? null : async (cid, mark, rev) => { const r = await a.markCheck(runId, cid, mark, rev); refresh(); return r; }, onSendBack: readOnly ? null : async (note) => { await a.rejectRun(runId, note); refresh(); }, onAddCheck: readOnly ? null : async (t, e, rev) => { const r = await a.addCheck(runId, t, e, rev); refresh(); return r; }, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, onTitle: onName, backLabel: "Back to My runs" });
   const taskBox = h("div");
-  const skillsBox = h("div");
   let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
   let stateKey = null; // the state drawn in `head`: an unchanged one is not drawn again
   const alertEl = h("p", { class: "status bad", role: "alert" });
@@ -301,12 +303,19 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
   const timeline = createTimeline({ runId, admin: false, a });
+  const evidence = evidencePanel({ record: evidenceRecordSection({ load: () => a.evidence(runId), admin: false, runId }), sources: contextSourcesSection({ load: () => a.context(runId), admin: false, runId }) });
   const tabs = createTabs([
-    { id: "overview", label: "Overview", ...overviewPanel({ admin: false, extra: answerBox }) },
-    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update({ ...s, history: (s.history ?? []).map(plain) }) },
-    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
-    { id: "evidence", label: "Evidence", ...evidencePanel({ record: evidenceRecordSection({ load: () => a.evidence(runId), admin: false, runId }), sources: contextSourcesSection({ load: () => a.context(runId), admin: false, runId }) }) },
-    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+    { id: "progress", label: "Progress", aliases: ["overview"], ...progressPanel({ admin: false, extra: answerBox, request: createRequestBox({ a, runId, readOnly }) }) },
+    { id: "diff", label: "What changed", aliases: ["changes"], ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
+    {
+      id: "details", label: "Details", aliases: ["steps", "evidence", "skills", "log"],
+      ...detailsPanel({
+        steps: { el: timeline.el, update: (s) => timeline.update({ ...s, history: (s.history ?? []).map(plain) }) },
+        evidence,
+        skills: (s) => skillsCard(s.skillView, { repo: s.vars?.github_repo, heading: false }),
+        log,
+      }),
+    },
   ], { initial: "overview" });
   mount(tabsBox, tabs.el);
   // The stream is made here, started below. A closed stream asks the server: a refusal or a missing run ends the view.
@@ -424,12 +433,11 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     // `head` is mounted again only when it changes from one mode to the other, so the header nodes stay in the page.
     if (mode !== "header") {
       mode = "header";
-      mount(head, header.el, taskBox, skillsBox);
+      mount(head, header.el, taskBox);
     }
     header.update(summary, { job, busy });
     // With a run, the task and the questions are in the Overview tab; a queued job has only its task.
     mount(taskBox, summary || !job.task?.trim() ? null : h("div", { class: "card mb-16" }, h("p", { class: "flush pre-wrap" }, job.task)));
-    mount(skillsBox, skillsCard(summary?.skillView, { repo: summary?.vars?.github_repo }));
   }
 
   async function refresh() {
@@ -497,14 +505,14 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
           setAlert(errorText(e));
         }
       } else {
-        const yes = await withDialog(() => ask("Cancel this run", job ? "Cancel this run? It leaves the queue and does not start." : "Cancel this run? You can retry it later.", "Cancel the run", "Keep it"));
+        const yes = await withDialog(() => ask("Stop this change", job ? "Stop this change? It leaves the queue and does not start." : "Stop this change? You can retry it later.", "Stop the change", "Keep it"));
         if (!yes) return;
         busy = true;
         draw();
         try {
           const r = await a.cancelRun(runId);
           if (r?.cancelled === false) setAlert(NOT_CANCELLED);
-          else toast("Cancelled");
+          else toast("Stopped");
         } catch (e) {
           setAlert(errorText(e));
         }

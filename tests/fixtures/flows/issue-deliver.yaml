@@ -202,6 +202,10 @@ steps:
         ## Requirements — what the work must do, as a list.
         ## Constraints — what it must respect (rules, compatibility, limits), as a list.
         ## Acceptance criteria — a checklist that can be verified.
+        ## Asked and assumed — one line per point, each starting at the first column:
+           ASKED: <a point taken from the issue text, its comments or the task above>
+           ASSUMED: <a choice you made yourself that the issue does not settle, for example a file location, a default value, who may see something>
+           Never mark a guess as ASKED. Write no ASSUMED line only when you assumed nothing.
         ## Design — the approach, and why it fits the existing architecture. Alternatives you rejected, briefly.
         ## Changes — per module/file (existing paths, or marked NEW): what changes. Include signatures of
            new public types/functions.
@@ -216,6 +220,13 @@ steps:
         [source: s-<16 hex>] (several: [source: s-…, s-…]). Use only ids from that list.
         ## Missing context — the left-out entries of the CONTEXT list the plan needed, each with its reason, or "none".
         Without a CONTEXT list, leave the [source: …] citations out.
+      For READY, also add a "## Try it" section right after ## Acceptance criteria: 2 to 4 things that the person who
+        approves the change can try, taken from the acceptance criteria, in plain words, each as one list item:
+        - CHECK: Try: <what to do> — Expect: <what they should see>
+        For example: - CHECK: Try: export chapter 3 — Expect: an MP3 named after the chapter
+        When there is nothing a person can try (for example a refactor), write instead one line in that section:
+        NO_CHECKS: <one line why>
+        Start these lines at the first column, outside any code block; no other line starts with CHECK: or NO_CHECKS:.
 
       Also score how risky it is to build this plan without a human checking it first (0-100):
       - 0-25: a local change, well covered by tests, easy to undo.
@@ -266,6 +277,8 @@ steps:
       - Does it fit the existing architecture and patterns, or is there a simpler way that fits better?
       - Are the tests enough (edge cases, failure paths)? Security, data loss, concurrency risks?
       - Is the SKILL_REQUEST line valid JSON in the asked form, and is each requested skill justified by its evidence?
+      - Is every choice the issue does not settle marked ASSUMED, and no guess marked ASKED?
+      - Are the CHECK lines (or the NO_CHECKS reason) things a person can really try, taken from the acceptance criteria?
       Report only real problems, each with what is wrong and what the plan should say instead.
 
       {{steps.pull_ticket.output}}
@@ -323,6 +336,15 @@ steps:
         [source: s-<16 hex>] (several: [source: s-…, s-…]). Use only ids from that list.
         ## Missing context — the left-out entries of the CONTEXT list the plan needed, each with its reason, or "none".
         Without a CONTEXT list, leave the [source: …] citations out.
+      Keep the ## Asked and assumed section with its ASKED: and ASSUMED: lines, updated to the final plan.
+      For READY, also add a "## Try it" section right after ## Acceptance criteria: 2 to 4 things that the person who
+        approves the change can try, taken from the acceptance criteria, in plain words, each as one list item:
+        - CHECK: Try: <what to do> — Expect: <what they should see>
+        For example: - CHECK: Try: export chapter 3 — Expect: an MP3 named after the chapter
+        When there is nothing a person can try (for example a refactor), write instead one line in that section:
+        NO_CHECKS: <one line why>
+        Start these lines at the first column, outside any code block; no other line starts with CHECK: or NO_CHECKS:.
+      Keep the "## Try it" section of the draft (its CHECK lines, or the NO_CHECKS line), updated to the final plan.
       Keep the citations of the draft that are still right; fix the ones the review changed.
       Write the skill line again for the final plan, in the same form: SKILL_REQUEST: {"version":1,"skills":[…]}
       It replaces the draft's line; do not keep skills the final plan no longer needs.
