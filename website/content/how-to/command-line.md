@@ -1,19 +1,19 @@
 ---
 title: "How to use the Foundry from the command line"
-description: "Sign in with scf login, list runs and what waits for you, script with --json, and make any server call with scf api from your terminal."
+description: "Sign in with scf login, list changes and what waits for you, script with --json, and make any server call with scf api from your terminal."
 slug: command-line
 order: 6
 group: "Get started"
 time: "PT10M"
 ---
 
-This page is for you if you prefer a terminal, or want to script the Foundry. Everything the web interface does goes through the server's API, and every call of that API is also a command. These commands talk to the running Foundry with your account and its rights.
+This page is for you if you prefer a terminal, or want to script the Foundry. Everything the web interface does goes through the server's API, and every call of that API is also a command. These commands talk to the running Foundry with your account and its rights. In the commands, a change is still called a run.
 
 ## Before you start
 
 - The Foundry is installed and running, with `scf ui`, `scf serve` or the login service (see [Run as a service](/how-to/run-as-service/)).
 - You have an account on that Foundry, admin or user.
-- Older commands such as `scf run`, `scf resume` and `scf user` work on the files of the data folder and need no server. They are not covered here.
+- Older commands such as `scf run`, `scf resume`, `scf user` and `scf doctor` work on this machine and its data folder and need no server. They are not covered here; `scf --help` lists them.
 
 ## Steps
 
@@ -37,15 +37,15 @@ scf whoami
 scf turn list
 ```
 
-The `turn` area covers what waits for you, and answering it: answers, defaults, approve, reject and retry.
+The `turn` area covers what waits for you, and answering it: answers, defaults, approve, reject and retry. In the web UI, these items wait for you on **Today**.
 
-### 4. List and filter runs
+### 4. List and filter changes
 
 ```bash
 scf runs list --status failed
 ```
 
-The `runs` area lists, shows, starts, answers, approves, rejects, resumes, cancels and archives runs, and shows a step's log and the diff. Other areas are `board`, `find`, `repos`, `refine`, `ask`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers` and `server`.
+The `runs` area lists, shows, starts, answers, approves, rejects, resumes, cancels and archives runs, and shows a step's log and the diff. Other areas are `board`, `find`, `repos`, `refine`, `ask`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers`, `server` and `autonomy`.
 
 ### 5. Find the commands of an area
 
@@ -94,7 +94,7 @@ scf logout
 ## Check that it worked
 
 - `scf whoami` shows your account and the Foundry you are signed in to.
-- `scf runs list` prints the same runs you see under **Runs** (or **My runs** for a user) in the web UI.
+- `scf runs list` prints the same changes you see under **Changes** in the sidebar (the page is called **Runs** in the Admin view and **My runs** on the user display).
 - In a script, the exit code is 0 when a command succeeded, and 4 when you are not signed in or not allowed.
 
 ## Next steps

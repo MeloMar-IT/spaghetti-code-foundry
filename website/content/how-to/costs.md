@@ -1,6 +1,6 @@
 ---
 title: "How to control costs and read the dashboard"
-description: "Set a daily budget, run and step limits and per-user limits, read spend on the dashboard, and compare models on your own code with evals."
+description: "Set a daily budget, limits per issue, month, workspace and user, read spend on the Dashboard, and compare models on your own code with evals."
 slug: costs
 order: 5
 group: "Configure and extend"
@@ -11,29 +11,41 @@ This page is for admins who pay for the models or share them with a team. You se
 
 ## Before you start
 
-- You are signed in as an admin.
+- You are signed in as an admin, in the Admin view.
 - You know how your agents are logged in: a Claude subscription, an API key, a ChatGPT login or a local model.
 
 ## Steps
 
 ### 1. Know what the amounts mean
 
-The costs shown are estimates at API prices, as reported by Claude Code. Whether you pay them depends on the login:
+The costs shown are estimates at API prices. Whether you pay them depends on the login:
 
 - Claude Code with a Claude subscription (Pro/Max): no per-token charges; usage counts toward your plan's limits.
 - Claude Code with an API key (`ANTHROPIC_API_KEY`): billed per token, so the amounts are real.
-- Codex with your ChatGPT login: recorded as $0 with the token count.
+- Codex with your ChatGPT login: included in your plan. The Foundry prices each step from its model's price, so the amount is an estimate. Set `usage.prices` to match what you pay, or to 0 to record $0.
 - Local models: free, recorded as $0.
 
 Budgets use these amounts either way, so they also protect your subscription limits.
 
 ### 2. Set the daily budget
 
-Open **Administration** → **Settings** → **Budget & capacity**. The daily budget stops new work when today's estimated spend reaches it. Paused runs continue the next day, or when you raise the budget and resume them.
+Open **Administration** in the sidebar, then **Settings** under **System**. On **Budget & capacity**, the daily budget stops new work when today's estimated spend reaches it. Paused runs continue the next day, or when you raise the budget and resume them.
 
 On a fixed-price subscription you can turn off **Enforce cost limits** (`cost_limits: false`). Costs are still recorded, but nothing is stopped because of money. The usage limits that Claude and Codex report themselves still pause runs.
 
-### 3. Cap runs and steps in a flow
+### 3. Set limits per issue and per month
+
+Under **Spending limits** on the same page, an empty field means no limit:
+
+```yaml
+limits:
+  issue_cost_usd: 5       # one issue, with its split parts and all their retries
+  monthly_budget_usd: 150 # all runs in one UTC month
+```
+
+A run whose issue reached its limit stops before its next agent step. To let it go on, press **Raise the change's limit** on the change's page. When the month's budget is reached, new work waits until the next month.
+
+### 4. Cap runs and steps in a flow
 
 ```yaml
 limits:
@@ -44,15 +56,21 @@ defaults:
 
 A run that reaches its budget fails with a message that says so. A change to the flow counts only for a new run; a resumed run keeps the flow it started with.
 
-### 4. Set limits per user
+### 5. Set limits per user and per workspace
 
-On **Administration** → **Users**, **Default limits** sets three limits for every account: runs at the same time, runs per day and the daily budget in USD. Open an account and use **Limits** to give it its own values. An empty field means "no limit". A job over a limit waits in the queue and starts by itself when the limit allows.
+Open **Administration** → **Users**. **Default limits** sets three limits for every account: runs at the same time, runs per day and the daily budget in USD. Open an account and use **Limits** to give it its own values. An empty field means "no limit". A job over a limit waits in the queue and starts by itself when the limit allows.
 
-### 5. Read the dashboard
+A workspace (a team) can have its own `max_concurrent`, `test_slots` and `monthly_budget_usd` in `config.yaml`. Its runs wait with "waiting — the workspace's monthly budget" once its month is spent.
 
-Open **Administration** → **Dashboard**. It shows spend today and over 30 days, the success rate, **Needs a human**, the **Waiting** card, cost per day, the **By user** card, results per flow and per repository, the steps where runs fail most, and eval results. An account at a limit gets an **at limit** mark. For a quick look, **Administration** → **Overview** has a **Limits** card with today's spending and the accounts at a limit.
+### 6. Read the dashboard
 
-### 6. Compare models with an eval
+Open **Administration**, then **Dashboard** under **Operations**.
+
+![The Dashboard with spend, success rate and the cost per day](../../docs/images/dashboard.png)
+
+It shows spend today and over 30 days, the success rate, **Needs a human**, the **Waiting** card, cost per day, the **By user** card, results per flow and per repository, the steps where runs fail most, and eval results. An account at a limit gets an **at limit** mark. For a quick look, the **Overview** page of **Administration** has a **Limits** card with today's spending and the accounts at a limit.
+
+### 7. Compare models with an eval
 
 An eval suite runs sample tasks through flows and models and scores them:
 
@@ -84,5 +102,5 @@ The report shows pass rate, average cost, tokens, time and fix loops per variant
 
 - [Choose models and routing rules](/how-to/models-and-routing/)
 - [Invite users and set roles](/how-to/users-and-roles/)
-- [Guide: Costs, dashboard and evals](/guide/#8-costs-dashboard-and-evals)
+- [Guide: Spending limits per issue and per month](/guide/#spending-limits-per-issue-and-per-month)
 - [Guide: Dashboard](/guide/#dashboard)

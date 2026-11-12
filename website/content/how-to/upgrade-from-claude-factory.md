@@ -84,7 +84,11 @@ This moves the service's log and settings to the new folder, and replaces the ol
 scf service status
 ```
 
-### 7. Clean up when everything works
+### 7. Find your way in the new interface
+
+Every page now has the same frame: a sidebar on the left and a top bar. The sidebar has **Today**, **Changes**, **Ideas**, **Releases** and **Help**; admins in the Admin view also see **Board**, **Repositories**, **Flows** and **Administration**. **+ New change** in the top bar opens **Start work**. The pages keep their names, so **Changes** opens **Runs** and **Ideas** opens **Refinement**. All old addresses keep working.
+
+### 8. Clean up when everything works
 
 `~/.claude-factory` is never changed or deleted, except for a note file `MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt`. Nothing there is used any more. You can delete the folder once everything works.
 
@@ -92,7 +96,7 @@ scf service status
 
 - `~/.spaghetti-code-foundry` exists, and your settings are in `~/.spaghetti-code-foundry/config.yaml`.
 - The old folder holds the note file `MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt`.
-- Your earlier runs show under **Runs**, and your watchers show on **Administration** → **Watchers**.
+- Your earlier runs show under **Changes** in the sidebar, and your watchers show on **Administration** → **Watchers** (Admin view).
 - `scf service status` no longer says that `scf service install` is needed.
 
 If `scf` refuses to run because the new folder is missing, restore it, set `SCF_HOME` to the folder you want, or delete the note file to copy again.

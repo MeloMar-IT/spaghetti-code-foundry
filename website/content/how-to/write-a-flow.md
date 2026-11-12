@@ -1,6 +1,6 @@
 ---
 title: "How to write your own flow"
-description: "Create a flow from a template, edit it visually or as YAML, reuse library blocks, let any AI write one, and check it with scf validate."
+description: "Create a flow from a template, edit it visually or as YAML, reuse Library blocks, let any AI write one, and check it with scf validate."
 slug: write-a-flow
 order: 1
 group: "Configure and extend"
@@ -30,13 +30,15 @@ Add `--from <flow>` to start from another flow, or `--global` for a flow outside
 
 ### 2. Open it in the editor
 
-Open **Flows** → **Flows** and pick your flow. Switch between the **visual** editor and **YAML** at the top. The header shows the scope, **Saved** or **Unsaved changes**, and whether the flow is **Valid**. The **Overview** button shows the graph of how the steps connect.
+Choose **Flows** in the sidebar (Admin view). The row at the top has two tabs, **Flows** and **Library**. On **Flows**, pick your flow; the search box filters by name and description. Switch between the **visual** editor and **YAML** at the top. The header shows the scope, **Saved** or **Unsaved changes**, and whether the flow is **Valid**. The **Overview** button shows the graph of how the steps connect.
 
-In the visual editor, select a row in the structure list to edit **Flow settings** or one step. Less used options are in groups such as **Routing**, **Limits** and **Sandbox & access**.
+![The flow editor: the structure list and the inspector of the selected step](../../docs/images/flows.png)
+
+In the visual editor, select a row in the structure list to edit **Flow settings** or one step in the inspector next to it. Less used options are in groups such as **Routing**, **Limits**, **Sandbox & access** and **Model & agent settings**. Editing needs a screen at least 1024 px wide.
 
 ### 3. Add and connect steps
 
-Use **Add step** for an Agent or Shell step, or **+ From library** to insert a ready-made block, for example a test loop, a code review or a secret scan. Each step decides where to go next with **On success**, **On failure** and **Routes**. A typical fix loop:
+Use **Add step** for an Agent or Shell step, or **+ From library** to insert a ready-made block, for example a test loop, a code review or a secret scan. A preview shows the steps and variables the block adds; nothing changes until you press **Insert**. The **Library** tab lists every block, and **☆ Save as block** turns a step into your own. Each step decides where to go next with **On success**, **On failure** and **Routes**. A typical fix loop:
 
 ```yaml
 steps:
@@ -61,6 +63,8 @@ steps:
 
 Shell commands may only template `{{vars.*}}`, `{{workdir}}` and `{{run.*}}`. Read the task and step outputs from environment variables such as `$FACTORY_TASK`. Tick **Needs repository access** (`repo_access: true`) on every shell step that calls `gh` or pushes.
 
+![The Library tab: blocks with search and a category filter](../../docs/images/library.png)
+
 ### 4. Or let any AI write the flow
 
 Print the flow guide and give it to any assistant, such as ChatGPT, Claude, Gemini, Codex or a local model:
@@ -69,7 +73,9 @@ Print the flow guide and give it to any assistant, such as ChatGPT, Claude, Gemi
 scf flow-guide > flow-guide.md
 ```
 
-Describe the flow you want, then save the YAML it answers with as `<repo>/.claude-factory/flows/<name>.yaml`. In the editor, **Draft flow with Claude** uses the same guide.
+Describe the flow you want, then save the YAML it answers with as `<repo>/.claude-factory/flows/<name>.yaml`. In the editor, **✨ Draft flow with Claude** uses the same guide, and **Ask Claude** in the **More** menu changes the open flow the same way.
+
+![The same flow in the YAML tab](../../docs/images/flow-yaml.png)
 
 ### 5. Check the flow
 
@@ -81,7 +87,7 @@ It names the field and step for anything that is wrong. Paste that back to the a
 
 ### 6. Save and try it
 
-Press **Save** (or Ctrl/Cmd+S), then **Test run**. From the terminal:
+Press **Save** (or Ctrl/Cmd+S). Once the flow is saved, the main button is **Test run**: describe the task, pick the repository and press **Start run**. It runs in a fresh git worktree, so your checkout is not touched, and the change's page opens. From the terminal:
 
 ```bash
 scf run my-flow --task "Add a --json flag to the export command" --var test_cmd="npm test"
@@ -95,7 +101,7 @@ In **Flow settings**, open **Publish to users** and tick "Available to users". F
 
 - The editor header says **Valid** and **Saved**.
 - `scf validate my-flow` reports no problems.
-- `scf flows` lists your flow, and a test run shows its steps on the run page.
+- `scf flows` lists your flow, and a test run shows its steps under **Details** → **Steps** on the change's page.
 
 ## Next steps
 

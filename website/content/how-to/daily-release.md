@@ -20,7 +20,7 @@ This page is for admins and repository owners who use the gitflow pipeline. Each
 
 ### 1. Add the daily release watcher
 
-Open **Administration** → **Watchers** → **Add watcher**. Choose the repository, the source **Schedule** and the flow `release-daily`. Set **Once a day at** `17:00` with your time zone. For a schedule, the text becomes the run's task, for example "Daily release pull request develop → main".
+In the Admin view, open **Administration** → **Watchers** and press **+ Add watcher**. Choose the repository, the source **Schedule** and the flow `release-daily`. Set **Once a day at** `17:00` with your time zone. For a schedule, the text becomes the run's task, for example "Daily release pull request develop → main".
 
 ### 2. Let the stories go into develop
 
@@ -30,7 +30,9 @@ A finished story has the status "in develop (ships with the 17:00 release)" and,
 
 ### 3. Merge the release pull request
 
-Every day at the set time, `release-daily` runs the full tests and build on `develop` and opens (or updates) one pull request `develop` → `main`. It lists and closes the day's issues. When the checks pass, the pull request shows under **Needs you** on **Home**, and its comment starts with **What you need to do:** Merge the release pull request when you like. Merge it on GitHub.
+Every day at the set time, `release-daily` runs the full tests and build on `develop` and opens (or updates) one pull request `develop` → `main`. It lists and closes the day's issues. When the checks pass, the pull request shows under **Needs you** on **Today**, and its comment starts with **What you need to do:** Merge the release pull request when you like. Merge it on GitHub.
+
+A release run that has not started an hour after its time shows a late warning on **Today** and in the health line, with the reason it waits.
 
 ### 4. Handle a draft release pull request
 
@@ -52,13 +54,13 @@ If `develop` cannot take a hotfix, the fix is still on `main` and the comment on
 
 ## Check that it worked
 
-- After the release time, **Home** shows the release pull request under **Needs you**.
-- After you merge it, the "Since you last looked" strip lists it under **Releases to main**.
+- After the release time, **Today** shows the release pull request under **Needs you**.
+- After you merge it, the **Since you last looked** box on Today (Admin view) lists it under **Releases to main**.
 - Feature branches of finished stories are gone from the repository.
 
 ## Next steps
 
-- [Follow your work on Home and the board](/how-to/board/)
+- [Follow your work on Today and the board](/how-to/board/)
 - [Keep the Foundry safe](/how-to/safety/)
 - [Branches: gitflow in the user guide](/guide/#branches-gitflow-recommended-or-one-rolling-pull-request)
 - [The label pipeline](/guide/#the-label-pipeline-one-label--plan--code--one-pull-request)

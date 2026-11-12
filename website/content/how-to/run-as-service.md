@@ -38,17 +38,17 @@ After an upgrade from claude-factory, `scf service status` also tells you when `
 
 When a new version is built with `npm run build`, the running server restarts itself as soon as no run is active. You do not need to stop and start it. To turn this off, set `SCF_NO_SUPERVISE=1`.
 
-Some settings, such as **Listen on**, take effect only after a restart. After you save one, the Settings page says "A restart is needed" and offers **Restart when no story is running**.
+Some settings, such as **Listen on**, take effect only after a restart. After you save one, the Settings page says "A restart is needed" and offers **Restart when no change is running**. While it waits, **Cancel the restart** stops it.
 
 ### 4. Switch on self-update (optional)
 
-Self-update is off by default, because it lets merged code run on this machine without a person looking. To switch it on, open **Administration** → **Settings** → **Safety** and name the Foundry's own repository. In `config.yaml` this is `self_update: { enabled: true, repo: owner/name }`. Then stop and start the Foundry once, so that it can go back after a bad update.
+Self-update is off by default, because it lets merged code run on this machine without a person looking. To switch it on, open **Administration** in the sidebar, then **Settings** under **System**. In the **Safety** section, tick **Self-update** and name the Foundry's own repository in **Repository the Foundry may update from**. In `config.yaml` this is `self_update: { enabled: true, repo: owner/name }`. Then stop and start the Foundry once, so that it can go back after a bad update.
 
 How it works:
 
 - Every 5 minutes it checks whether `main` on GitHub has a new commit, and whether the checkout is on `main`, has no local changes and can fast-forward.
-- It builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). Failed tests are tried again after 20 minutes, up to 3 tries. The old version keeps running meanwhile.
-- When all pass, no new runs start, and the server restarts when the active runs are done.
+- It builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`) before anything is installed. The tests take a test slot like the tests of changes, and have 30 minutes. Failed tests are tried again after 20 minutes, up to 3 tries. The old version keeps running meanwhile.
+- When all pass, no new runs start, and the server restarts when the active runs are done. Runs that look stuck are named on **Today** and in the health line; when every active run is stuck, they are interrupted, and their watchers resume them after the restart.
 - If the new server stops or does not answer within 3 minutes, the previous version is put back once and reported.
 - It never updates from a branch other than `main` or from another repository.
 
@@ -62,12 +62,12 @@ scf service uninstall
 
 - `scf service status` reports the service.
 - Close the terminal, then open `http://localhost:4777`. The UI still answers.
-- On the **Watchers** page, each watcher shows a recent **last successful check**.
-- With self-update on, the health line shows why it is waiting. When it says "Self-update is stopped", the checkout needs a person: run `git status`, `npm ci` and `npm run build`, then delete `self-update.json` in the data folder.
+- On **Administration** → **Watchers**, each watcher shows a recent **last successful check**.
+- With self-update on, the health line (press the health chip in the top bar) shows why it is waiting. When it says "Self-update is stopped", the checkout needs a person: run `git status`, `npm ci` and `npm run build`, then delete `self-update.json` in the data folder.
 
 ## Next steps
 
 - [Let the Foundry build your GitHub issues](/how-to/github-issues/)
 - [Use the command line](/how-to/command-line/)
-- [Troubleshoot the Foundry](/how-to/troubleshoot/)
+- [Fix common problems](/how-to/troubleshoot/)
 - [User guide: Keep it running](/guide/#keep-it-running)

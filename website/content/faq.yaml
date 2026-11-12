@@ -2,8 +2,23 @@
 - q: What is Spaghetti Code Foundry?
   a: |
     A source-available AI coding factory that runs on your own machine. It runs **flows**: pipelines of steps that code,
-    test, review and ship changes with AI coding agents. Its main use: put one label on a GitHub issue, and the
-    Foundry asks the open questions, plans, codes, tests, reviews and merges the story.
+    test, review and ship changes with AI coding agents. Its main use: put one label on a GitHub issue, or press
+    **+ New change** and say what you want, and the Foundry asks the open questions, plans, codes, tests, reviews and
+    merges the change.
+- q: Do I need to be a developer?
+  a: |
+    No. The **Simple** view shows your projects in plain words: what you want to build, the questions as cards with a
+    suggested answer, and results to check with **This is good** or **Something is not right**. It shows no logs,
+    costs, branches or flow names. **Get started** walks you through a first project, and the **Help** page explains
+    the words. Someone has to install the Foundry and set up Claude Code once; the [setup check](/guide/#setup-check)
+    says what is missing.
+- q: How do I know it built the right thing?
+  a: |
+    The plan keeps what you asked apart from what it assumed, and you can correct an assumption before anything is
+    built. It also writes checks you can try, each with what you should see; mark them **Works** or **Not quite**, and
+    **Not quite** sends the change back with your words. Each project lists its recent versions that worked, and
+    **Restore** takes the code back to one of them as a normal, reviewed change. See [checks to try](/guide/#checks-to-try)
+    and [safe points](/guide/#safe-points).
 - q: Which AI agents and models does it use?
   a: |
     Steps run on Claude Code or OpenAI's Codex CLI, on Anthropic, OpenAI or local models (Ollama, LM Studio).
@@ -17,12 +32,24 @@
 - q: Does my code leave my machine?
   a: |
     The Foundry runs on your own machine and works on a copy of your repository for every run. The agents it starts
-    use the AI providers you configure, the same way they do when you use Claude Code or Codex yourself.
+    use the AI providers you configure, the same way they do when you use Claude Code or Codex yourself. A local
+    project without GitHub stays on the machine unless you turn on pushing.
 - q: How do I stay in control of what it changes?
   a: |
     Every plan gets a risk score; risky plans wait for your approval. Pushes to protected branches and pushes that
     contain secrets are blocked, and all work lands on `develop` first. You merge one pull request a day to `main`.
-    See [keeping your code and secrets safe](/how-to/safety/).
+    Autonomy levels set how far runs may go, per repository and per flow. See
+    [keeping your code and secrets safe](/how-to/safety/).
+- q: Can several people or teams share one Foundry?
+  a: |
+    Yes. An admin adds accounts; users see only their own work. Workspaces keep teams apart on one shared Mac: each
+    team sees only its own repositories and runs, every step of its runs is sandboxed, and each workspace can have
+    its own limits. See [users and roles](/how-to/users-and-roles/) and [workspaces](/guide/#workspaces).
+- q: Can I change how it looks?
+  a: |
+    Yes. **Appearance** in the account menu offers five looks (Calm, Midnight, Friendly, Editorial and Bento), light
+    or dark, and a compact density. Each person picks their own. In the Simple view the look also picks the layout of
+    Today: cards, a list or tiles.
 - q: Can I write my own pipelines?
   a: |
     Yes. Flows are YAML files you edit visually or as text, with a block library of reusable steps. Any AI assistant
@@ -31,9 +58,10 @@
   a: |
     The Foundry itself is free to use and self-host under the Functional Source License (FSL-1.1-MIT): you may
     use and change it for anything except a competing commercial service, and each version becomes MIT two years
-    after its release. You pay for the AI subscriptions or API usage
-    of the agents and models you choose. The dashboard shows what each run cost. See [controlling costs](/how-to/costs/).
+    after its release. You pay for the AI subscriptions or API usage of the agents and models you choose. The
+    dashboard shows what each run cost, and spending limits keep it in bounds. See [controlling costs](/how-to/costs/).
 - q: Is it only for GitHub?
   a: |
-    The issue watchers and the daily release pull request work with GitHub. You can also run any flow by hand on a
-    local repository with `scf run`. See [your first run](/how-to/first-run/).
+    No. The issue watchers and the daily release pull request work with GitHub, but a local project on your own
+    machine is planned, built, reviewed and released without GitHub. You can also run any flow by hand on a local
+    repository with `scf run`. See [local projects](/guide/#local-projects) and [your first run](/how-to/first-run/).

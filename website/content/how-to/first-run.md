@@ -1,84 +1,72 @@
 ---
-title: "How to run your first flow by hand"
-description: "Create a small flow, run it on a local git repository in its own worktree, then check the steps and the diff in the web UI."
+title: "How to start your first change"
+description: "Start a change with + New change or run a flow by hand on a local repository, then follow its five phases and check what it changed."
 slug: first-run
 order: 2
 group: "Get started"
 time: "PT15M"
 ---
 
-This page is for you if you have installed the Foundry and want to see it work before you connect GitHub. You run one flow by hand on a local repository. The run works in its own copy of the code, so your checkout is not touched.
+This page is for you if you have installed the Foundry and want to see it work before you connect GitHub watchers. You start one change, follow it through its five phases and look at what it changed. The run works in its own copy of the code, so your checkout is not touched.
 
 ## Before you start
 
-- The Foundry is installed and the `scf` command works (see [Install](/how-to/install/)).
-- Claude Code (`claude`) is installed and logged in on this Mac.
-- A local git repository to try it on, for example `~/code/my-project`.
+- The Foundry is installed, you are signed in and the Setup check is green (see [Install](/how-to/install/)).
+- A repository the Foundry can work in: added under **My repositories** (or **Repositories** in the Admin view), or a local git repository on this Mac, for example `~/code/my-project`.
 - You know the command that runs its tests, for example `npm test`. If not, the Foundry can detect it.
 
 ## Steps
 
-### 1. Go to your repository
+### 1. Press + New change
+
+![The Start work page, opened with + New change](../../docs/images/new-change.png)
+
+**+ New change** in the top bar opens the **Start work** page. Type what you want in the box "What would you like to change?", for example "Add a --json flag to the export command". The line "In owner/name" shows the repository; **Change** picks another one.
+
+### 2. Make a plan
+
+Keep the starting point **A new idea** and press **Make a plan** (or Ctrl/⌘+Enter). The Foundry opens the page of your change request. It asks its questions first, then shows its plan. No flow is needed for this.
+
+Other starting points: **An existing change** takes an issue number and opens a session on **Ideas**; **A conversation** lists your open sessions.
+
+### 3. Or pick a flow yourself
+
+Open **Advanced** on the same page to choose a flow. Pick the flow, pick the repository, and fill in the **Task** and the fields the flow asks for. **Review** shows everything that will be sent; **Start** starts the run and opens its page.
+
+An admin can also run a flow from the editor: open **Flows**, choose a flow and press **Test run**. In the **Run** dialog, type the task, open **Advanced** for the repository and the variables, and press **▶ Start run**.
+
+### 4. Or use the command line
 
 ```bash
 cd ~/code/my-project
-```
-
-### 2. Create a small flow from the template
-
-```bash
 scf new my-flow
-```
-
-This creates a small flow that implements, tests and fixes. You can check a flow at any time:
-
-```bash
 scf validate my-flow
-```
-
-It names the field and step for anything that is wrong.
-
-### 3. Start the run
-
-Describe the task in plain language and name the test command:
-
-```bash
 scf run my-flow --task "Add a --json flag to the export command" --var test_cmd="npm test"
 ```
 
-The task is what you want done; flows use it in their prompts. Variables are settings the flow exposes, such as `test_cmd`. Leave it at `auto` to let the Foundry detect the test command (npm, pnpm, yarn, pytest, Go, Cargo, Gradle, Maven, Make).
+`scf new` creates a small flow that implements, tests and fixes. `scf validate` names the field and step for anything that is wrong. Leave `test_cmd` at `auto` to let the Foundry detect the test command.
 
-The run happens in a fresh git worktree on a `factory/<run-id>` branch of your repository. Your checkout is not touched.
+The run happens in a fresh git worktree on a `factory/<run-id>` branch of your repository.
 
-### 4. Or start it from the web UI
+### 5. Follow the change
 
-If you prefer the UI, start it with `scf ui`, open **Flows**, pick the flow on the left and press **▶ Run**. Fill in the **Task**, the **Repository** and the **Variables**, and start it.
+Open **Changes** in the sidebar and click the change. Its title is the task or the issue title. Under it is the phase strip: **Understand**, **Plan**, **Build**, **Check** and **Deliver**. The current phase is marked **Now**, with one sentence on what is happening. **What happens next** says who has the next move.
 
-### 5. Follow the run
-
-Start the UI if it is not running yet:
-
-```bash
-scf ui
-```
-
-Open **Runs** and then the run. At the top, **What happens next** says who has the next move. The **Steps** tab is a timeline of every step, and the live log shows each step as it starts and ends. An admin can open an agent step to read the whole conversation.
+The page has three tabs. **Progress** shows the acceptance criteria and the task. **Details** holds **Steps**, a timeline of every step, and **Log**, the live log. An admin can open an agent step to read the whole conversation. The run ID and the flow are under **Technical details**.
 
 ### 6. Look at the result and decide
 
-Open the **Changes** tab. It shows the complete diff the run made. When the run finishes, its branch stays in your repository. Review it, merge it, or delete it.
+![What changed: the diff of a change, one file open](../../docs/images/run-diff.png)
 
-If the run failed, the page shows a failure card with what happened, why, and what you can do. **Retry from the failing step** continues the run at that step. From the terminal you can do the same:
+Open the **What changed** tab. It shows the complete diff the run made. When the run finishes, its branch stays in your repository. Review it, merge it, or delete it.
 
-```bash
-scf resume <run-id>
-```
+If the run failed, the page shows a failure card with what happened, why and what you can do. **Retry from the failing step** continues the run at that step. In a terminal, `scf resume <run-id>` does the same.
 
 ## Check that it worked
 
-- The run shows in **Runs** with its status, and the **Steps** tab lists each finished step as passed or failed.
-- **Changes** shows the diff of the run.
-- Your repository has a new `factory/<run-id>` branch, and your own checkout is unchanged.
+- The change shows in **Changes** with its status, and all five phases are marked done when it succeeded.
+- **Details** › **Steps** lists each finished step as passed or failed.
+- **What changed** shows the diff, and your own checkout is unchanged.
 
 ## Next steps
 

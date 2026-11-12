@@ -1,13 +1,13 @@
 ---
 title: "How to turn an idea into ready stories"
-description: "Use a Refinement session and the architect to grow a rough idea or an existing issue into stories that meet the Definition of Ready."
+description: "Use a session on Ideas and the architect to grow a rough idea or an existing issue into stories that meet the Definition of Ready."
 slug: refine-ideas
 order: 4
 group: "Daily work"
 time: "PT30M"
 ---
 
-This page is for anyone who writes stories for the Foundry. A story that is clear before it is built is built right the first time. In **Refinement** the architect reads the code and the open issues, asks questions and proposes text. You stay in charge: you write the story, you decide, and you press **Publish**.
+This page is for anyone who writes stories for the Foundry. A story that is clear before it is built is built right the first time. On **Ideas** the architect reads the code and the open issues, asks questions and proposes text. You stay in charge: you write the story, you decide, and you press **Publish**.
 
 ## Before you start
 
@@ -19,16 +19,22 @@ This page is for anyone who writes stories for the Foundry. A story that is clea
 
 ### 1. Start a session
 
-Open **Refinement** and press **New session**, or on **Start work** choose **Refine an idea first** or **Refine an existing issue**. Choose the kind:
+![The Ideas page with the list of sessions and the New session button](../../docs/images/ideas.png)
+
+Open **Ideas** in the sidebar and press **New session**. Choose the kind:
 
 - **An idea**: choose a repository and write the idea (up to 10,000 characters). A title is optional.
-- **An existing issue**: choose a repository and give the issue number, for example `12` or `#12`. Read the note under the kind about publishing such a session. If the issue has the build label, the page warns you and offers **Remove the build label**.
+- **An existing GitHub issue**: choose a repository and give the issue number, for example `12` or `#12`. If the issue has the build label, the page warns you and offers **Remove the build label**.
 
-Nothing is written to GitHub. To find issues that are not ready yet, use **Backlog readiness** and press **Refine** on a row.
+Press **Start session**. Nothing is written to GitHub. You can also start from **+ New change**: **An existing change** takes an issue number and opens a session, and **A conversation** lists your open sessions. To find issues that are not ready yet, use **Backlog readiness** and press **Refine** on a row.
+
+![A session page with the row of parts: Idea and brief, Conversation, Story drafts, Hand off and Log](../../docs/images/refinement-session.png)
+
+The session page has a row of five parts: **Idea and brief**, **Conversation**, **Story drafts**, **Hand off** and **Log**. One part is shown at a time. A line "Next:" names the next step; it is advice only.
 
 ### 2. Ask the architect to look at the code
 
-In the part **Idea and brief**, press **Ask the architect to look at the code**. The architect only reads. It writes a **context brief** in five parts: *What already exists*, *Code the idea would touch*, *Open issues that overlap*, *Rules that apply* and *Could not find out*. Every claim names its file or issue.
+In **Idea and brief**, press **Ask the architect to look at the code**. The architect only reads. It writes a **context brief** in five parts: *What already exists*, *Code the idea would touch*, *Open issues that overlap*, *Rules that apply* and *Could not find out*. Every claim names its file or issue.
 
 ### 3. Answer the architect's questions
 
@@ -40,7 +46,7 @@ In **Story drafts**, press **New draft**. Fill in the title, "As â€¦", "I want â
 
 ### 5. Check the Definition of Ready
 
-In **Definition of Ready**, press **Check readiness**. Each item shows **Met**, **Not met**, **Unsure** or **Not checked yet**, with a reason. A story with an open question or an implementation plan is not ready. You may use **Accept anyway** on another item, with a reason. When every item is met or accepted, the draft shows **Ready**.
+Each open draft has a part **Definition of Ready**. Press **Check readiness**. Each item shows **Met**, **Not met**, **Unsure** or **Not checked yet**, with a reason. A story with an open question or an implementation plan is not ready. You may use **Accept anyway** on another item, with a reason. When every item is met or accepted, the draft shows **Ready**.
 
 ### 6. Split a story that is too big
 
@@ -60,5 +66,5 @@ In **Hand off**, press **Publish**. A window lists the issues in the order they 
 
 - [Hand the Foundry a whole epic](/how-to/split-epic/)
 - [Ask Foundry for help in the app](/how-to/ask-scf/)
-- [Refinement in the user guide](/guide/#12-ideas-refinement)
+- [Ideas in the user guide](/guide/#12-ideas-refinement)
 - [Ideas in short](/guide/#ideas-in-short)

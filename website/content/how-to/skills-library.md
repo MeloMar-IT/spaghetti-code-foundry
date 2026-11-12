@@ -1,19 +1,19 @@
 ---
 title: "How to add skills from an open-source library safely"
-description: "Declare a skill source, import a reviewed commit into quarantine, scan, review and check it, then publish and approve a catalogue release."
+description: "Declare a skill source, import a reviewed commit into quarantine, scan it, measure its effect, then publish and approve a catalogue release."
 slug: skills-library
 order: 3
 group: "Configure and extend"
 time: "PT45M"
 ---
 
-This page is for the admin who keeps the skill catalogue. An open-source skill library is never loaded straight into runs. You declare it in a reviewed file, import one exact commit into quarantine, check it offline, and only then publish a catalogue release that your installation approves.
+This page is for the admin who keeps the skill catalogue. An open-source skill library is never loaded straight into runs. You declare it in a reviewed file, import one exact commit into quarantine, check it offline, measure whether each skill helps, and only then publish a catalogue release that your installation approves.
 
 ## Before you start
 
 - You are an admin with a terminal on the machine that runs the Foundry.
 - You have a catalogue repository under git, where `skill-sources.yaml` lives and changes go in by pull request.
-- You know the library's `https://` git address, the full commit id you want to use and its licence. Private sources are not supported.
+- You know the library's `https://` git address, the full commit id you want to use and its licence. A private source is possible only for your own repository (`trust: first-party`), registered under **My repositories** with the GitHub App.
 
 ## Steps
 
@@ -59,23 +59,24 @@ It works offline and ends with `OK <n> sources, <m> enabled`, or prints one `PRO
 scf skills import example-skills
 ```
 
-It fetches only `ref.approved` over https and stages the skills in `<data folder>/skill-quarantine/`, with the licence and notice files. Nothing is loaded or run. Rejected skills (a symbolic link, a submodule, too large) print a `REJECTED` line.
+It fetches only `ref.approved` and stages the skills in `<data folder>/skill-quarantine/`, with the licence and notice files. Nothing is loaded or run. Rejected skills (a symbolic link, a submodule, too large) print a `REJECTED` line.
 
-### 4. Scan the import
+### 4. Scan and review the import
 
 ```bash
 scf skills scan example-skills
-```
-
-The report is offline and read-only. A high finding that is not accepted blocks its skill; a secret finding can never be accepted. Skills that need network access, live integrations or MCP configuration are `EXCLUDED`. Findings you have reviewed go into `skill-scan-exceptions.yaml` by pull request, each with a reason, an owner and an expiry date.
-
-### 5. Review the import
-
-```bash
 scf skills review example-skills --markdown > review.md
 ```
 
-One report per import: licence verdict, attribution files, scan result and collisions with the skills you already have, grouped by category. Use the Markdown for a pull-request body. Nothing is promoted.
+The scan is offline and read-only. A high finding that is not accepted blocks its skill; a secret finding can never be accepted. Findings you have reviewed go into `skill-scan-exceptions.yaml` by pull request, each with a reason, an owner and an expiry date. The review is one report per import: licence verdict, attribution files, scan result and collisions with the skills you already have. Use the Markdown for a pull-request body.
+
+### 5. Measure whether a skill helps
+
+```bash
+scf skills effect example-skills example-skill
+```
+
+It runs the skill's sample tasks twice in the macOS sandbox, once with the skill and once without, and stores the verdict: `helps`, `no-measurable-effect` or `harms`. `harms` always blocks promotion; `no-measurable-effect` needs an owner decision. The `effect` column of `scf skills` shows the newest verdict. Each run costs agent sessions, so check the number of scenarios first.
 
 ### 6. Check the promotion
 
@@ -83,7 +84,7 @@ One report per import: licence verdict, attribution files, scan result and colli
 scf skills promote check example-skills
 ```
 
-Each path prints `PROMOTABLE` or `REFUSED` with the reason, such as a missing or ambiguous licence or an open high finding. For a source that needs a licence review, read the lines, then set `licence.reviewed` to the printed digest by pull request.
+Each path prints `PROMOTABLE` or `REFUSED` with the reason, such as a missing licence, an open high finding, a failed evaluation or a harmful effect. For a source that needs a licence review, read the lines, then set `licence.reviewed` to the printed digest by pull request.
 
 ### 7. Publish a catalogue release
 
@@ -98,20 +99,24 @@ Publishing refuses and writes nothing when a skill is not promotable, its evalua
 
 ### 8. Approve the release
 
-Copy the `APPROVE` line into `skills.releases.approved` (catalogue, version and digest). You can do this on the Skills card of **Administration** → **Settings**, under **Approved releases**. Before you approve a newer release, see what it changes:
+Copy the `APPROVE` line into `skills.releases.approved` (catalogue, version and digest). You can do this on the **Skills** card of **Administration** → **Settings**, under **Approved releases**. Before you approve a newer release, see what it changes:
 
 ```bash
 scf skills release diff scf-skills@0.1.0 scf-skills@0.2.0
 ```
 
+### 9. Let your own library update itself (optional)
+
+A first-party source can have `update: { cadence: weekly, auto: true }`. A due update then stages the new commit, runs the licence, scan and profile gates and the catalogue's evaluation suite, and publishes and approves a release without a pull request. A skill that fails a gate is left out, and gets one issue in the source's own repository, titled `Skill <id> failed the <gate> gate`. The issue has the label of the `skill-write` flow, so the Foundry can fix the skill: it writes and checks the skill, measures its effect with and without it, and only then publishes it to the library.
+
 ## Check that it worked
 
 - `scf skills release list` shows the release as approved.
-- `scf skills` lists its packages and exits 0 when there are no problems.
+- `scf skills` lists its packages, with their effect, and exits 0 when there are no problems.
 
 ## Next steps
 
 - [Keep your code and secrets safe](/how-to/safety/)
 - [Guide: Skill library sources](/guide/#skill-library-sources)
+- [Guide: Measure the effect of a skill](/guide/#measure-the-effect-of-a-skill)
 - [Guide: Publish a catalogue release](/guide/#publish-a-catalogue-release)
-- [Guide: Scan an import](/guide/#scan-an-import)
