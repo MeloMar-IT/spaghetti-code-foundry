@@ -1,7 +1,10 @@
 name: Website
 
-# Builds spaghetti-code-foundry.com from docs/ and website/ and checks it (a broken link, anchor or image fails the build).
-# The site is hosted on the owner's own web host: download the "website" artifact of a run and upload its contents there.
+# Builds spaghetti-code-foundry.com from docs/ and website/ and checks it (a broken link, anchor or image fails the build),
+# keeps it as the "website" artifact, and on main uploads it to the owner's own web host with rsync over SSH.
+# The upload needs the secret WEBSITE_DEPLOY_KEY (a private SSH key that the host allows only to rsync into the site's
+# folder) and the variables WEBSITE_DEPLOY_HOST (user@host) and WEBSITE_DEPLOY_KNOWN_HOSTS (the host's key line).
+# Without them, or in a fork or on a pull request, it is skipped.
 on:
   push:
     branches: [main]
@@ -40,3 +43,48 @@ jobs:
           name: website
           path: website/dist
           retention-days: 30
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == 'MeloMar-IT/spaghetti-code-foundry'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: website-deploy
+      cancel-in-progress: false
+    environment:
+      name: website
+      url: https://spaghetti-code-foundry.com/
+    steps:
+      - name: Check the deploy settings
+        id: check
+        env:
+          KEY: ${{ secrets.WEBSITE_DEPLOY_KEY }}
+          HOST: ${{ vars.WEBSITE_DEPLOY_HOST }}
+          KNOWN: ${{ vars.WEBSITE_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -n "$KEY" ] && [ -n "$HOST" ] && [ -n "$KNOWN" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::No upload: WEBSITE_DEPLOY_KEY, WEBSITE_DEPLOY_HOST or WEBSITE_DEPLOY_KNOWN_HOSTS is not set"; fi
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.ok == 'true'
+        with:
+          name: website
+          path: site
+      - name: Upload to the web host
+        if: steps.check.outputs.ok == 'true'
+        env:
+          KEY: ${{ secrets.WEBSITE_DEPLOY_KEY }}
+          HOST: ${{ vars.WEBSITE_DEPLOY_HOST }}
+          KNOWN: ${{ vars.WEBSITE_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          # The host's key only allows rsync into the site's folder, so the target is its root: /
+          rsync -rlz --checksum --delete --exclude CNAME \
+            -e "ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes" \
+            site/ "$HOST:/"
+          rm -f ~/.ssh/deploy_key
+      - name: Check the live site
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://spaghetti-code-foundry.com/)
+          test "$code" = 200 || { echo "::error::the site answers $code"; exit 1; }
