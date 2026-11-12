@@ -4,7 +4,7 @@ import type { HelpRole } from "./contract.js";
 import type { Source } from "./turn.js";
 
 /**
- * The offers of Ask SCF: buttons in a reply that the server itself offers and checks again at the click. Pure data and
+ * The offers of Ask Foundry: buttons in a reply that the server itself offers and checks again at the click. Pure data and
  * pure functions. This module imports only types from the contract (the contract imports values from here), so there
  * is no import cycle. An offer points at a source the server offered; the server knows the subject (kind and id) of
  * that source and builds every address from it. Text from a model never becomes an address.
@@ -157,7 +157,7 @@ export type Check = z.infer<typeof CheckSchema>;
 /** The server's own words for checks. */
 export const checkText = {
   "bad-state": "A check can run only in an open conversation whose last answer is finished.",
-  busy: "Ask SCF is still answering in this conversation. Wait for the answer, then run the check.",
+  busy: "Ask Foundry is still answering in this conversation. Wait for the answer, then run the check.",
   limit: "This conversation is full. Start a new conversation to run a check.",
   running: "A check is already running in this conversation. Wait for it to finish.",
   changed: "This conversation changed while the check ran. Run the check again.",

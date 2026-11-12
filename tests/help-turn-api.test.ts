@@ -190,7 +190,7 @@ describe("limits and the off switch", () => {
     await idle();
   });
 
-  it("refuses every question with 503 while Ask SCF is switched off, and still shows the stored conversations", async () => {
+  it("refuses every question with 503 while Ask Foundry is switched off, and still shows the stored conversations", async () => {
     settings("default_model: codex\n");
     started!.ctx.reloadConfig();
     try {

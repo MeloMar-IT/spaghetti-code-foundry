@@ -17,7 +17,7 @@ import { runInScope, scopedRepos } from "./workspace-scope.js";
 import { userRecord, userRun } from "./user-view.js";
 
 /**
- * The help context service of Ask SCF: what the server itself knows about a thing, for one account, as a small
+ * The help context service of Ask Foundry: what the server itself knows about a thing, for one account, as a small
  * snapshot. It has no rules of its own. Every adapter first asks the permission table for the API call that reads
  * the same thing (`findRule`, `authorize`), then reads through the reader that call uses, with the owner check that
  * call uses, and keeps a short list of plain fields. So a snapshot holds the same as the call or less.

@@ -163,7 +163,7 @@ describe("describedSections", () => {
 
 describe("generatedSection", () => {
   const stored = { enabled: false, sensitive_patterns: [" secret ", "a\nb", "x"], disabled_accounts: ["8f14e45f-ceea-467f-a0e6-1d2f9b5b5c11"], keep_days: 30 };
-  const make = (help: Record<string, unknown> = stored, readOnly = false, list = described) => sections.generatedSection("Ask SCF", "help.", { help }, list, { section, readOnly });
+  const make = (help: Record<string, unknown> = stored, readOnly = false, list = described) => sections.generatedSection("Ask Foundry", "help.", { help }, list, { section, readOnly });
   const change = (el: any, value: string) => {
     el.value = value;
     el.fire("change", { target: el });
@@ -176,7 +176,7 @@ describe("generatedSection", () => {
     expect(Object.keys(s.inputs())).toEqual(keys);
     expect(keys).not.toContain("help.sensitive_patterns");
     expect(keys).not.toContain("help.disabled_accounts");
-    expect(s.card.all("h3")[0].textContent).toBe("Ask SCF");
+    expect(s.card.all("h3")[0].textContent).toBe("Ask Foundry");
   });
 
   it("keeps the stored private patterns and accounts exactly, and drops an emptied optional number", () => {

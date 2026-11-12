@@ -38,7 +38,7 @@ const DOC: Evidence = { id: "D1", kind: "doc", title: "The run page", ref: "User
 const STATE: Evidence = { id: "S1", kind: "state", title: "Run 2026-01-01 is waiting for approval", ref: "#/runs", observedAt: "2026-01-01T10:00:00.000Z" };
 const good = { type: "product-help", summary: "A run is one start of a flow.", explanation: "It has steps.", certainty: "confirmed", evidence: ["D1"] };
 
-describe("the Ask SCF contract", () => {
+describe("the Ask Foundry contract", () => {
   it("names the four kinds of question, each with the evidence its answer needs", () => {
     expect([...QUESTION_TYPES]).toEqual(["product-help", "status", "troubleshooting", "guided-resolution"]);
     expect(QUESTION_RULES["product-help"].evidence).toBe("doc");
@@ -300,7 +300,7 @@ describe("the documentation of the contract", () => {
   const design = readFileSync("docs/DESIGN.md", "utf8");
 
   it("is in the user guide: the kinds of question, the parts of a reply, the levels and every limitation", () => {
-    expect(guide).toContain("## 14. Ask SCF");
+    expect(guide).toContain("## 14. Ask Foundry");
     for (const t of QUESTION_TYPES) expect(guide, t).toContain(QUESTION_RULES[t].what);
     for (const k of PART_KINDS) expect(guide, k).toContain(PART_RULES[k].what);
     for (const c of CERTAINTY) expect(guide, c).toContain(CERTAINTY_WORDS[c]);
@@ -309,7 +309,7 @@ describe("the documentation of the contract", () => {
   });
 
   it("is in the design document, with the place of the code", () => {
-    expect(design).toContain("### Ask SCF: the contract");
+    expect(design).toContain("### Ask Foundry: the contract");
     expect(design).toContain("src/help/contract.ts");
     for (const fn of ["checkReply", "limitationFor", "certaintyOf", "forRole"]) expect(design, fn).toContain(fn);
   });
@@ -455,7 +455,7 @@ describe("offers in a reply", () => {
   });
 });
 
-describe("Ask SCF in the Simple view", () => {
+describe("Ask Foundry in the Simple view", () => {
   const projects = [{ id: "p1", name: "My app" }];
   const simple = { projects };
 

@@ -36,7 +36,7 @@ export class ActionRefused extends Error {
 }
 
 export interface ActionDeps {
-  /** Whether the account may use Ask SCF now (`helpAllowed`); passed in, so this file does not import the routes. */
+  /** Whether the account may use Ask Foundry now (`helpAllowed`); passed in, so this file does not import the routes. */
   allow: (a: Asker) => RefusalCode | undefined;
   grants?: ActionGrants;
   gate?: typeof gateRun;
@@ -119,7 +119,7 @@ export function previewOf(def: ActionDef, run: RunSummary, scheduler: Scheduler)
   const resume = def.id === "resume-run";
   const next = run.state?.next;
   const now = [
-    `The run ${run.runId} ${STATUS_WORDS[run.status] ?? "is in a state Ask SCF does not know"}.`,
+    `The run ${run.runId} ${STATUS_WORDS[run.status] ?? "is in a state Ask Foundry does not know"}.`,
     queued ? "It is in the queue." : active ? "It is working now." : "",
     resume && typeof next === "string" && STEP_ID.test(next) ? `It would go on at step "${next}".` : "",
   ]
@@ -132,7 +132,7 @@ export function previewOf(def: ActionDef, run: RunSummary, scheduler: Scheduler)
       : active
         ? "The run is stopped and marked as cancelled."
         : "The run is marked as cancelled.";
-  const undo = resume ? "You can cancel the run on its page." : "Ask SCF cannot undo this. A cancelled run can be resumed on its page later.";
+  const undo = resume ? "You can cancel the run on its page." : "Ask Foundry cannot undo this. A cancelled run can be resumed on its page later.";
   return { action: def.id, title: def.title, about: { kind: "run", id: run.runId }, now, changes, impact: def.effect, impactLevel: def.impact, undo, undoable: def.undoable, who: WHO };
 }
 
@@ -141,8 +141,8 @@ interface Words {
   words: (seen: Seen, was?: Was) => string;
   recovery: string;
 }
-const MISSING: Words = { words: () => "The run is gone. Ask SCF cannot confirm what the action did.", recovery: "Open Runs to see your runs." };
-const UNCONFIRMED: Words = { words: () => "Ask SCF could not confirm what happened to the run.", recovery: "Open the run and check its state before you try again." };
+const MISSING: Words = { words: () => "The run is gone. Ask Foundry cannot confirm what the action did.", recovery: "Open Runs to see your runs." };
+const UNCONFIRMED: Words = { words: () => "Ask Foundry could not confirm what happened to the run.", recovery: "Open the run and check its state before you try again." };
 const SEE_STATE = "Open the run to see its state.";
 const RESUME_LATER = "Open the run. You can resume it there if you still want the work.";
 
@@ -158,7 +158,7 @@ export const OUTCOME_WORDS: Record<"resume-run" | "cancel-run", Partial<Record<O
   "cancel-run": {
     dequeued: { words: (seen) => `The job that waited in the queue was taken out. The run is now ${seen}.`, recovery: SEE_STATE },
     stopped: { words: () => "The run was stopped and is marked as cancelled.", recovery: RESUME_LATER },
-    stopping: { words: () => "The run is being stopped. It had not ended yet when Ask SCF looked.", recovery: "Open the run to see when it ends." },
+    stopping: { words: () => "The run is being stopped. It had not ended yet when Ask Foundry looked.", recovery: "Open the run to see when it ends." },
     "not-done": { words: (seen, was) => (was === "active" ? `The run ended on its own as ${seen} before the stop took effect.` : `The run was not cancelled. It is ${seen}.`), recovery: SEE_STATE },
     done: { words: () => "The run is marked as cancelled. The server read it back.", recovery: RESUME_LATER },
     missing: MISSING,
@@ -178,7 +178,7 @@ function checkSwitches(ctx: ApiContext, asker: Asker, deps: ActionDeps): User {
   const help = ctx.config().help;
   if (!help.enabled) throw new ActionRefused("off", 503, REFUSAL_WORDS.off);
   if (help.paused === true) throw new ActionRefused("paused", 503, REFUSAL_WORDS.paused);
-  if (!help.actions) throw new ActionRefused("actions-off", 503, "Ask SCF may not carry out actions on this Foundry. An administrator can switch this on.");
+  if (!help.actions) throw new ActionRefused("actions-off", 503, "Ask Foundry may not carry out actions on this Foundry. An administrator can switch this on.");
   const now = currentAccount(asker);
   if (!now) throw new ActionRefused("not-allowed", 403, REFUSAL_WORDS["not-allowed"]);
   let no: RefusalCode | undefined;

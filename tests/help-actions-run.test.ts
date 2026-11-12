@@ -146,7 +146,7 @@ describe("resuming", () => {
     });
     const w = watch();
     const r = await go(s);
-    expect(r.outcome).toMatchObject({ result: "missing", seen: "missing", words: "The run is gone. Ask SCF cannot confirm what the action did." });
+    expect(r.outcome).toMatchObject({ result: "missing", seen: "missing", words: "The run is gone. Ask Foundry cannot confirm what the action did." });
     w.check(s.runId);
   });
 
@@ -234,7 +234,7 @@ describe("cancelling a working run", () => {
     const cancel = vi.spyOn(env.scheduler, "cancel").mockReturnValue(true);
     const w = watch(50);
     const r = await go(s, env.deps({ readBackMs: 50 }));
-    expect(r.outcome).toMatchObject({ result: "stopping", seen: "running", words: "The run is being stopped. It had not ended yet when Ask SCF looked." });
+    expect(r.outcome).toMatchObject({ result: "stopping", seen: "running", words: "The run is being stopped. It had not ended yet when Ask Foundry looked." });
     expect(w.timers.length).toBeGreaterThan(0);
     w.check(s.runId);
     cancel.mockRestore();

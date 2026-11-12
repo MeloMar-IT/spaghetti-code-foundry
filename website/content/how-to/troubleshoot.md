@@ -98,5 +98,5 @@ scf user password <e-mail>
 
 - [Resume a run](/how-to/resume-run/)
 - [Approve plans and answer questions](/how-to/approve-and-answer/)
-- [Ask SCF why something does not work](/how-to/ask-scf/)
+- [Ask Foundry why something does not work](/how-to/ask-scf/)
 - [Guide: Troubleshooting](/guide/#10-troubleshooting)

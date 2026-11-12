@@ -259,7 +259,7 @@ const EXAMPLES: Record<string, Example> = {
   "DELETE repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET help/conversations": { path: "help/conversations", user: 200, admin: 200 },
-  // Ask SCF is off by default: a question is refused before it is looked at
+  // Ask Foundry is off by default: a question is refused before it is looked at
   "POST help/conversations": { path: "help/conversations", body: {}, user: 503, admin: 503 },
   "POST help/conversations/:id/messages": { path: `help/conversations/${UNKNOWN}/messages`, body: {}, user: 503, admin: 503 },
   "POST help/conversations/:id/retry": { path: `help/conversations/${UNKNOWN}/retry`, body: {}, user: 503, admin: 503 },

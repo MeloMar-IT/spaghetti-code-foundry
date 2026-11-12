@@ -15,7 +15,7 @@ import { doubted, helpTarget, jsonOf, prepareTurn, turnPrompt, type Prepared, ty
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
 
 /**
- * The scenario evaluations of Ask SCF (#244): fixed questions with the evidence the server would offer, sent through
+ * The scenario evaluations of Ask Foundry (#244): fixed questions with the evidence the server would offer, sent through
  * the real path of a turn (`resolveContext`, `prepareTurn`, `turnPrompt`, `checkReply`, `doubted`) and checked on
  * both ends: what goes to the model, and what the contract lets through of the answer. Nothing is stored and no
  * account is needed. The model is a function: the tests use the fixed answer of each scenario, and
@@ -274,7 +274,7 @@ export function reportText(r: HelpEvalReport): string {
   const m = r.metrics;
   const pct = (n: number) => `${Math.round(n * 100)}%`;
   const lines = [
-    `Ask SCF evaluation (${r.provider === "stub" ? "stubbed provider" : "configured provider"}): ${r.passed ? "passed" : "FAILED"}`,
+    `Ask Foundry evaluation (${r.provider === "stub" ? "stubbed provider" : "configured provider"}): ${r.passed ? "passed" : "FAILED"}`,
     `${m.scenarios} scenarios, ${r.scenarios.filter((s) => !s.passed).length} failed`,
     `secret leaks ${m.secretLeaks} · permission leaks ${m.permissionLeaks} · unsafe actions ${m.unsafeActions} · safety cases failed ${m.safetyFailures}`,
     `citations ${pct(m.citationCorrectness)} · grounding ${pct(m.grounding)} · usefulness ${pct(m.usefulness)} · refused without need ${pct(m.unnecessaryRefusalRate)} · largest prompt ${m.maxPromptChars} characters`,
@@ -299,7 +299,7 @@ export function saveHelpEval(r: HelpEvalReport): string {
 
 /**
  * The model of `help.model`, called as a turn calls it: no tools, no MCP servers, no GitHub token, an empty folder
- * that is removed afterwards, the cost limit of one turn. Throws when Ask SCF has no usable model. Each call costs
+ * that is removed afterwards, the cost limit of one turn. Throws when Ask Foundry has no usable model. Each call costs
  * what a turn costs; it is used by `scf eval help --live` only.
  */
 export function liveModel(config: Config, o: { claudeBin?: string; run?: (o: ClaudeRunOptions) => Promise<ClaudeRunResult> } = {}): EvalModel {

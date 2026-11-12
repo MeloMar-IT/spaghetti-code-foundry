@@ -320,7 +320,7 @@ document.addEventListener("keydown", (e) => {
 const me = await enterDisplay("admin");
 S.me = me.id;
 initShell("admin", { user: me });
-// Ask SCF: its button and drawer appear only when it is switched on. The pages do not wait for it.
+// Ask Foundry: its button and drawer appear only when it is switched on. The pages do not wait for it.
 void initAsk("admin");
 initPalette({ role: "admin", user: me });
 context = initContext("admin", me, { go: contextGo });

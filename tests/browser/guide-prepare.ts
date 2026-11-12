@@ -74,7 +74,7 @@ export const PREPARE: Record<string, ShotPrep> = {
       await page.locator("#main", { hasText: "Build status on the board" }).waitFor();
     },
   },
-  // Ask SCF is off on the seeded server (help.enabled is not set): only this page is told it is on, so the top bar shows the button
+  // Ask Foundry is off on the seeded server (help.enabled is not set): only this page is told it is on, so the top bar shows the button
   ask: {
     before: async (page) => {
       await page.route("**/api/help/conversations", async (route) => {

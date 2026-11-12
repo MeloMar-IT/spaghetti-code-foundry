@@ -146,10 +146,10 @@ export function sessionRepoNames(userId: string, ws?: ReadonlySet<string>): stri
 
 const UUID =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `fromHelp` of a new session: kept only for one of the caller's own Ask SCF conversations that is not deleted; otherwise left out. */
+/** `fromHelp` of a new session: kept only for one of the caller's own Ask Foundry conversations that is not deleted; otherwise left out. */
 function helpOrigin(owner: string, v: unknown): string | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== "string" || !UUID.test(v)) throw new HttpError(400, "fromHelp must be the id of one of your Ask SCF conversations");
+  if (typeof v !== "string" || !UUID.test(v)) throw new HttpError(400, "fromHelp must be the id of one of your Ask Foundry conversations");
   try {
     return getConversation(owner, v).state !== "deleted" ? v : undefined;
   } catch {
@@ -223,7 +223,7 @@ function view(ctx: ApiContext, s: Session, viewer: User, viewing = false) {
     repoAvailable,
     title: s.title,
     idea: s.idea,
-    // The link back to the owner's Ask SCF conversation: the owner's own read only, never an admin's and never under View as user.
+    // The link back to the owner's Ask Foundry conversation: the owner's own read only, never an admin's and never under View as user.
     ...(mine && !viewing && s.fromHelp ? { fromHelp: s.fromHelp } : {}),
     // The draft that stands for the issue is worked out also for older sessions; the old text kept for a retry is not shown, and the journal of a replacement is not shown, only how far it is.
     ...(s.source

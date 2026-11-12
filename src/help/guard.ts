@@ -4,7 +4,7 @@ import { PATTERN_LIMIT, PATTERN_MAX } from "./patterns.js";
 export { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./patterns.js";
 
 /**
- * The guard of Ask SCF: what stands between a text and the two places a text can go, the store (`help.json`) and
+ * The guard of Ask Foundry: what stands between a text and the two places a text can go, the store (`help.json`) and
  * the model. It takes secrets out (`scrub`), and it holds back copied text that reads like an order to the model
  * (`guardExcerpt`). Both fail closed: when a check cannot be done, a `GuardError` is thrown and the caller neither
  * stores nor sends anything. Pure functions; the only thing read is the set of stored credentials.

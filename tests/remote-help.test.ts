@@ -38,16 +38,16 @@ describe("scf ask", () => {
     expect(list.out).toContain("What is a run?");
     const shown = await ask(["show", id]);
     expect(shown.out).toContain("You:\nWhat is a run?");
-    expect(shown.out).toContain("Ask SCF:\nA run is one start of a flow.");
+    expect(shown.out).toContain("Ask Foundry:\nA run is one start of a flow.");
     expect((await w.scf(["ask", "list"])).out).toBe("no conversations");
     expect((await w.scf(["ask", "show", id])).code).not.toBe(0);
   });
 
   it("asks, retries and stops through the server, and shows the usage to an administrator only", async () => {
-    // Ask SCF is off on a new install: the sentence of the server is what the command prints
+    // Ask Foundry is off on a new install: the sentence of the server is what the command prints
     const off = await ask(["new", "What is a flow?"]);
     expect(off.code).not.toBe(0);
-    expect(off.err).toContain("Ask SCF is switched off on this Foundry.");
+    expect(off.err).toContain("Ask Foundry is switched off on this Foundry.");
     expect((await ask(["more", id, "And then?"])).err).toContain("switched off");
     expect((await ask(["retry", id])).code).not.toBe(0);
     expect((await ask(["stop", id])).err).toContain("no answer is being written");
@@ -59,10 +59,10 @@ describe("scf ask", () => {
   });
 
   it("sends a page context as the body of its own call", async () => {
-    // Ask SCF is off here: the call reaches the server and is answered in its words
+    // Ask Foundry is off here: the call reaches the server and is answered in its words
     const off = await ask(["context", "#/runs/r1", "--kind", "run", "--id", "r1", "--selection", "exit 1", "--filters", '{"status":"failed"}']);
     expect(off.code).not.toBe(0);
-    expect(off.err).toContain("Ask SCF is switched off on this Foundry.");
+    expect(off.err).toContain("Ask Foundry is switched off on this Foundry.");
   });
 
   it("archives, restores and completes, and deletes only after a yes", async () => {

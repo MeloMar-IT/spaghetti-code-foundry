@@ -2,7 +2,7 @@
 // The check of the project names, which needs the guard, is `simpleProjects` in simple-projects.ts.
 
 /**
- * Ask SCF in the Simple view: plain words, only the asker's own work, and only the pages of the Simple view.
+ * Ask Foundry in the Simple view: plain words, only the asker's own work, and only the pages of the Simple view.
  * Pure data and pure functions. The UI keeps the same word list in `ui/simple-words.js` (it has no build step and
  * cannot import this file); a test keeps both equal.
  */

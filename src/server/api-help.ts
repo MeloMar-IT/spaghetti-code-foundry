@@ -48,9 +48,9 @@ import { scopedRepos } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
 
-const INTERNAL = "Ask SCF is not working; see the server log";
+const INTERNAL = "Ask Foundry is not working; see the server log";
 /** The answer to a help call made through "View as user": conversations are the owner's alone. */
-export const NOT_IN_PREVIEW = "Ask SCF conversations are not shown in a preview";
+export const NOT_IN_PREVIEW = "Ask Foundry conversations are not shown in a preview";
 const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-context": 400, "not-found": 404, deleted: 410, "bad-state": 409, busy: 409, limit: 409, "bad-feedback": 400, changed: 409 };
 
 /** How often the server applies the retention policy to the stored conversations, in ms. */
@@ -98,7 +98,7 @@ export function helpAllowed(ctx: ApiContext, asker: Asker): RefusalCode | undefi
   return undefined;
 }
 
-/** One audit line of Ask SCF: who, what, which conversation, how it ended, and the id of the turn. Never a text of a question or an answer. */
+/** One audit line of Ask Foundry: who, what, which conversation, how it ended, and the id of the turn. Never a text of a question or an answer. */
 function auditHelp(ctx: ApiContext, by: string, action: "help-ask" | "help-delete" | "help-export" | "help-action", result: "ok" | "failed", target: string, detail?: string): void {
   try {
     writeAudit(by, { action, result, target, ...(detail !== undefined ? { detail } : {}) }, 0);
@@ -202,7 +202,7 @@ export function conversationView(c: Conversation, viewer: User) {
 
 export type RolloutStage = "off" | "paused" | "admins" | "pilot" | "everyone";
 
-/** Where Ask SCF stands in a staged rollout, from the settings alone: off, paused (the emergency stop), administrators only, the pilot accounts, or everyone. */
+/** Where Ask Foundry stands in a staged rollout, from the settings alone: off, paused (the emergency stop), administrators only, the pilot accounts, or everyone. */
 export function rolloutStage(help: Config["help"]): RolloutStage {
   if (!help.enabled) return "off";
   if (help.paused === true) return "paused";
@@ -230,7 +230,7 @@ function qualityView(ctx: ApiContext) {
   }
 }
 
-/** For administrators: whether Ask SCF is on, which provider answers, the limits, and what each account used per day. No question and no answer is in it. */
+/** For administrators: whether Ask Foundry is on, which provider answers, the limits, and what each account used per day. No question and no answer is in it. */
 function usageView(ctx: ApiContext) {
   const config = ctx.config();
   const found = helpTarget(config);
@@ -257,7 +257,7 @@ function usageView(ctx: ApiContext) {
       costLimits: config.cost_limits,
     },
     now: helpTurnsOf(ctx).status(),
-    // the documentation Ask SCF quotes: the version it is for, what was indexed, and what is wrong with it
+    // the documentation Ask Foundry quotes: the version it is for, what was indexed, and what is wrong with it
     documentation: helpDocsOf(ctx).status(),
     today: { day: today, ...sum },
     days: rows.map((u) => ({ ...u, ownerName: nameOf(u.owner) })).reverse(),
@@ -297,7 +297,7 @@ export function helpSweeper(log: (msg: string) => void, keepDays?: () => number 
 }
 
 /**
- * The stored conversations of Ask SCF. Every call works on the conversations of the signed-in account only; the
+ * The stored conversations of Ask Foundry. Every call works on the conversations of the signed-in account only; the
  * role gives nothing more, so an administrator reads no conversation of another account, also not through
  * "View as user". An id of another account is answered like an unknown one.
  */
@@ -311,7 +311,7 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     send(res, 200, guardedHelp(ctx, () => usageView(ctx)));
     return true;
   }
-  // the view of the account at the time of the question: Simple narrows what Ask SCF uses and says, it never widens it
+  // the view of the account at the time of the question: Simple narrows what Ask Foundry uses and says, it never widens it
   const asker: Asker = { id: user.id, role: user.role === "admin" ? "admin" : "user", ...(viewOf(user) === "simple" ? { simple: true } : {}) };
   const turns = helpTurnsOf(ctx);
   // What a page context is worth, before it is sent with a question: nothing is stored and no model is called.
@@ -332,7 +332,7 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     });
     return true;
   }
-  // Everything the account has in Ask SCF, to keep: its own conversations only, with the same view as reading them one by one.
+  // Everything the account has in Ask Foundry, to keep: its own conversations only, with the same view as reading them one by one.
   if (seg.length === 2 && seg[1] === "export" && method === "GET") {
     const body = guardedHelp(ctx, () => {
       const all = [...listConversations(user.id), ...listConversations(user.id, { archived: true })].sort((a, b) => a.created.localeCompare(b.created));
@@ -423,7 +423,7 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     }
     return true;
   }
-  // A hand-off of a finished answer to another page. No model is called, so it works while Ask SCF is off or paused. Only the conversation changes.
+  // A hand-off of a finished answer to another page. No model is called, so it works while Ask Foundry is off or paused. Only the conversation changes.
   if (seg.length === 4 && seg[3] === "handoffs" && (method === "GET" || method === "POST")) {
     const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
     if (method === "GET") {

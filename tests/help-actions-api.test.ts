@@ -58,7 +58,7 @@ async function call(who: TestSession, method: string, path: string, body?: unkno
 }
 
 let n = 0;
-/** A stopped run of Ann, and a finished answer of Ask SCF that proposes to cancel it. */
+/** A stopped run of Ann, and a finished answer of Ask Foundry that proposes to cancel it. */
 async function proposed() {
   const runId = `r-api-${++n}`;
   const runDir = join(tmp, "runs", runId);

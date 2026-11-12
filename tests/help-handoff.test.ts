@@ -97,7 +97,7 @@ describe("titleOf and ideaText", () => {
   it("cuts and cleans the first line", () => {
     expect(titleOf("x".repeat(300))).toHaveLength(HANDOFF_TITLE_MAX);
     expect(titleOf("\n a\tb\u0001c \nsecond")).toBe("a b c");
-    expect(titleOf("  \n ")).toBe("Ask SCF answer");
+    expect(titleOf("  \n ")).toBe("Ask Foundry answer");
   });
 
   it("drops sources from the end to fit, and cuts a long question", () => {

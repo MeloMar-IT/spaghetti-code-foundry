@@ -5,7 +5,7 @@ import type { HelpRole } from "./contract.js";
 import type { Source } from "./turn.js";
 
 /**
- * The documentation Ask SCF may quote: a fixed list of the product's own files, read from the folder the Foundry is
+ * The documentation Ask Foundry may quote: a fixed list of the product's own files, read from the folder the Foundry is
  * installed in. Never a file of a repository that is worked on, never the network, no model. The files are cut into
  * sections by their headings; a question finds sections by the words it shares with them. The index carries the
  * version of the installed Foundry and the hash of every file, so an index that no longer fits the files is noticed.

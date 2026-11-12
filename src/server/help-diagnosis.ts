@@ -8,7 +8,7 @@ import { currentAccount, runWithNext, type Snapshot } from "./help-context.js";
 import type { ApiContext } from "./server.js";
 
 /**
- * The diagnoses of Ask SCF: what the product itself already says about a thing that does not work, as one more
+ * The diagnoses of Ask Foundry: what the product itself already says about a thing that does not work, as one more
  * source a reply may cite. There is no diagnosis rule here. A cause is only ever one of:
  *
  * - the failure summary of the run's next-step record (`failureSummary` in `failure.ts`, which classifies the failure
@@ -76,7 +76,7 @@ function ofRun(s: Snapshot, x: DiagnosisFacts): Diagnosis | undefined {
     if (unknownWhy(why)) {
       return {
         about, symptom: f?.what ?? e?.what ?? "The run failed", confirmed: false, supporting,
-        missing: ["the cause: the error is not one the product can explain", "the output of the failing step: Ask SCF does not read it"],
+        missing: ["the cause: the error is not one the product can explain", "the output of the failing step: Ask Foundry does not read it"],
         nextCheck: todo || (x.role === "admin" ? "Look at Details on the run page" : "Ask the administrator"),
       };
     }
@@ -125,7 +125,7 @@ function ofOther(s: Snapshot): Diagnosis | undefined {
         return {
           about, symptom: "The last connection check of the repository failed", confirmed: false,
           supporting: list(at && `checked at ${at}`, text(f.signIn) && `it signs in with: ${text(f.signIn)}`),
-          missing: ["which part of the check failed and why: the record Ask SCF reads does not hold it"], nextCheck: "Press Test connection for the repository and read which check fails",
+          missing: ["which part of the check failed and why: the record Ask Foundry reads does not hold it"], nextCheck: "Press Test connection for the repository and read which check fails",
         };
       }
       return {

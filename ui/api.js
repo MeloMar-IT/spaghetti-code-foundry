@@ -300,7 +300,7 @@ export const api = {
   stopPreview: (id) => req("DELETE", `/api/repos/${enc(id)}/preview`),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
-  // Ask SCF. `stay`: a typed question must survive a session that ended.
+  // Ask Foundry. `stay`: a typed question must survive a session that ended.
   helpConversations: (archived = false) => req("GET", `/api/help/conversations${archived ? "?archived=1" : ""}`, undefined, true),
   helpConversation: (id) => req("GET", `/api/help/conversations/${enc(id)}`, undefined, true),
   retryHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/retry`, {}, true),

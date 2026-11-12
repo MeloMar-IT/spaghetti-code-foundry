@@ -61,7 +61,7 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
-describe("the settings of Ask SCF", () => {
+describe("the settings of Ask Foundry", () => {
   it("have safe defaults and refuse what is not a setting", () => {
     const c = ConfigSchema.parse({ default_model: "sonnet" }).help;
     expect(c).toMatchObject({ enabled: false });
@@ -272,7 +272,7 @@ describe("staged rollout, the emergency pause and the quality numbers", () => {
   });
 });
 
-describe("the audit lines of Ask SCF", () => {
+describe("the audit lines of Ask Foundry", () => {
   it("name the actor, the action, the conversation, the result and the turn, and never a text", async () => {
     const from = helpLines().length;
     const asked = await ask(ann, `${QUESTION} token ghp_${"b".repeat(36)}`);

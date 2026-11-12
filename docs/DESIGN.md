@@ -2072,7 +2072,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | A candidate skill's scenarios run an agent | `score --agent` (`src/skill-eval/`): each arm in its own temporary data folder, a user's run (no GitHub token, empty `gh` folder, strict MCP, short environment, only the model key), the evaluation limit, and cleanup on every exit; the outbound network is limited to a port, not a host |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
-| Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
+| Someone reads another person's Ask Foundry conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
 | The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the only actions are the server's two, and each is bound to a run the asker owns |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
@@ -2094,8 +2094,8 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `workspaces/<id>/skills/` | The administrator skills of a workspace other than `default` (#825); `skills/` in the data folder is the one of `default` |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
-| `help.json` | The Ask SCF conversations of every account (mode 0600) |
-| `help-stats.json` | The Ask SCF quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
+| `help.json` | The Ask Foundry conversations of every account (mode 0600) |
+| `help-stats.json` | The Ask Foundry quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
 | `red-base.json` | The red base branch state (`version: 1`): per repository and branch, the failing tests of the red commit, the prior commits, the fix story and a `pending` entry. Written in one synchronous step with a rename, so another repository's entry is kept; a broken file reads as no state (`src/red-base.ts`) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
@@ -2137,7 +2137,7 @@ Plain JavaScript modules, no build step, no framework.
 
 **The shell.** Every page sits in one frame (`ui/index.html` and `ui/user/index.html`, wired by `initShell` in `ui/shell.js`):
 
-- **Top bar:** the brand, the page title, then **Search** (the command palette, `ui/palette.js`, Ctrl+K or Cmd+K), **Ask Foundry** (the Ask SCF drawer, only when Ask SCF is on), **+ New change** (`#/start`, `NEW_CHANGE` in `ui/ia.js`) and, in the admin display, the **Health** chip. The account menu holds the name, **Appearance** (theme, density and look, `ui/prefs.js`), **View** (Simple, Advanced, Admin; `mountViewSwitch` in `ui/view-mode.js`) and **Accessibility**.
+- **Top bar:** the brand, the page title, then **Search** (the command palette, `ui/palette.js`, Ctrl+K or Cmd+K), **Ask Foundry** (the Ask Foundry drawer, only when Ask Foundry is on), **+ New change** (`#/start`, `NEW_CHANGE` in `ui/ia.js`) and, in the admin display, the **Health** chip. The account menu holds the name, **Appearance** (theme, density and look, `ui/prefs.js`), **View** (Simple, Advanced, Admin; `mountViewSwitch` in `ui/view-mode.js`) and **Accessibility**.
 - **Sidebar:** the repository switcher at the top (`#context`, `ui/context.js`; "All repositories" or one repository), then the five places every view shows (`SIDEBAR_MAIN`): **Today** (`#/home`), **Changes** (`#/runs`), **Ideas** (`#/refinement`), **Releases** (`#/epics`) and **Help** (`#/help`). Below a divider come the extra pages of the view (`SIDEBAR_EXTRA`): none in Simple; **My repositories** in Advanced; **Board**, **Repositories**, **Flows** and **Administration** (`#/operations`) in Admin. The links are static in the two HTML files; `showViewNav` hides the divider and the extra pages (`data-extra`) in Simple, and `ui/shell.js` marks the current link with `aria-current`. On a narrow screen the sidebar is a drawer opened with the menu button.
 - **Secondary row and breadcrumb:** `subnavFor` and `resolve` of `ui/ia.js` still work on the destinations below. Administration has three labelled sections (`SECTIONS`): Operations (Overview, Problems, Watchers, Models, Dashboard), People and access (Users, All repositories, Credentials, Audit, Autonomy) and System (Settings, Maintenance).
 
@@ -2200,7 +2200,7 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 | `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`, and the editor grid under `.page-editor`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
-| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`, `gallery`, `work`, `simple` (the Simple view). `ask` is the Ask SCF drawer. |
+| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`, `gallery`, `work`, `simple` (the Simple view). `ask` is the Ask Foundry drawer. |
 
 **Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
 - **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
@@ -2376,9 +2376,9 @@ list of routes (`RULES` in `permissions.ts`) in both directions: a command for a
 fails a test, and so does a new route without a command or a stated reason (`API_ONLY`). The file
 commands keep their words: `remoteCommand` returns "not mine" for anything it does not know.
 
-### Ask SCF: the contract
+### Ask Foundry: the contract
 
-Ask SCF is the help assistant inside the product (epic #226). Its contract is code, in
+Ask Foundry is the help assistant inside the product (epic #226). Its contract is code, in
 `src/help/contract.ts`: pure data and pure functions, with no model, no storage and no route. Every
 later part (stored conversations, the turn service, the pages) goes through it, so the text of a
 model can never widen what a reply holds.
@@ -2410,7 +2410,7 @@ model can never widen what a reply holds.
 `tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
 chapter 14 of the user guide holds the same sentences as the code.
 
-### Ask SCF: confirmed actions
+### Ask Foundry: confirmed actions
 
 Part 1 of 2 of #567 (#569), behind `help.actions`, off by default. It only binds a proposal to the
 run the server knows about. Part 2 of 2 (#570) carries out a previewed action through the API. The
@@ -2478,7 +2478,7 @@ Tests: `tests/help-grants.test.ts`, `tests/help-actions.test.ts` (the checks, wi
 `tests/help-actions-run.test.ts` (the real scheduler: stale evidence, read-back, the error boundary) and
 `tests/help-actions-api.test.ts` (HTTP with `FAKE_HELP`).
 
-### Ask SCF: stored conversations
+### Ask Foundry: stored conversations
 
 `src/help/store.ts` keeps the conversations in `help.json` (`{ version: 1, conversations }`), read
 and written like the other account files: `withAuthLock`, a temporary file and a rename. The schema
@@ -2513,7 +2513,7 @@ Tests: `tests/help-store.test.ts` (ownership, retries, states, retention, older 
 `tests/help-api.test.ts` (the routes, both roles, the preview, a restart, a broken file) and
 `tests/remote-help.test.ts` (`scf ask`).
 
-### Ask SCF: the turn service
+### Ask Foundry: the turn service
 
 `src/help/turn.ts` runs a help turn. It is a runner of its own, apart from flow runs, the
 refinement flows and `src/server/generate.ts`: no flow, no run folder, no scheduler job.
@@ -2546,7 +2546,7 @@ refinement flows and `src/server/generate.ts`: no flow, no run folder, no schedu
 Tests: `tests/help-turn.test.ts` (the service with a replaced model call, and the fake agent for
 the arguments) and `tests/help-turn-api.test.ts` (the routes with the fake agent).
 
-### Ask SCF: the page context
+### Ask Foundry: the page context
 
 `src/help/context.ts` holds the envelope a browser may send with a question, and what the server
 makes of it.
@@ -2595,7 +2595,7 @@ makes of it.
 
 Tests: `tests/help-context.test.ts`, `tests/help-context-api.test.ts`.
 
-### Ask SCF: the documentation index
+### Ask Foundry: the documentation index
 
 `src/help/docs.ts` (#232) makes the evidence of a product question. No embedding model, no
 network, no dependency.
@@ -2623,7 +2623,7 @@ network, no dependency.
   reasons are logged and kept (`rebuilt`, `rebuiltBecause`). Missing documents are `problems`.
   `GET /api/help/usage` shows this as `documentation`.
 
-### Ask SCF: live evidence
+### Ask Foundry: live evidence
 
 `src/server/help-evidence.ts` (#233) makes the `state` sources of a turn. It holds no business
 rule: every fact is a field of a snapshot of the help context service (`help-context.ts`), which
@@ -2647,7 +2647,7 @@ next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` a
   explanation, and for saying that the state is uncertain when a source says so.
 - `helpTurnsOf` offers the state sources first, then the documentation sections.
 
-### Ask SCF: diagnoses
+### Ask Foundry: diagnoses
 
 `src/server/help-diagnosis.ts` (#237) adds, to the `state` sources of a turn, what the product
 itself says is wrong. It holds no diagnosis rule. A cause is one of three things: the
@@ -2681,7 +2681,7 @@ snapshot already holds), or nothing.
 
 Tests: `tests/help-diagnosis.test.ts`.
 
-### Ask SCF: offers
+### Ask Foundry: offers
 
 `src/help/actions.ts` (#565, part 1 of 2 of #239) is the registry of the offers of a reply: buttons
 that open a page. It is pure data and functions and imports only types from the contract, so the
@@ -2727,7 +2727,7 @@ Tests: `tests/help-actions.test.ts` (the registry, `subjectPage`, `OfferSchema`)
 `tests/help-offers-api.test.ts` (each type: allowed, role denied, rule denied, stale, another
 account's target; the route refusals).
 
-### Ask SCF: checks
+### Ask Foundry: checks
 
 #566 (part 2 of 2 of #239) adds two offers with `effect: "check"`: `refresh-evidence` (every subject
 kind, `call: "read"`, so checked against `READ_CALLS[kind]`) and `test-repository` (repositories, checked
@@ -2770,7 +2770,7 @@ against `POST repos/:id/test`). They run only on a click and have no confirmatio
   pre-check 409s, the interleavings, oversized values and the visibility of sources after a demotion.
   `tests/help-store.test.ts` covers `addCheck`.
 
-### Ask SCF: authorization, retention, audit and limits
+### Ask Foundry: authorization, retention, audit and limits
 
 #243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
 the store's retention and the usage ledger.
@@ -2787,13 +2787,13 @@ the store's retention and the usage ledger.
   removes the conversations and the usage rows of the account (`removeHelpLocked`); the audit
   lines stay.
 - **Audit**: `help-ask` (ok with `turn <reply id>; try n`, or failed with `refused: <code>`),
-  `help-delete`, `help-export`, `help-action` (an offer followed; see "Ask SCF: offers"). Written with `writeAudit` without waiting for the lock; a line
+  `help-delete`, `help-export`, `help-action` (an offer followed; see "Ask Foundry: offers"). Written with `writeAudit` without waiting for the lock; a line
   that cannot be written is named in the server log and does not fail the call. The turn id is
   the correlation id: it is the id of the reply message in the conversation. No text of a
   conversation is in a line. `ui/audit.js` lists the three names for the filter.
 - **Export**: `GET /api/help/export`, own conversations only, through `conversationView`.
 
-### Ask SCF: feedback and quality numbers
+### Ask Foundry: feedback and quality numbers
 
 #245 adds no second access rule. A rating is a field of its reply, so the conversation's owner check and
 retention apply to it. The quality numbers are a separate file that names no account.
@@ -2821,7 +2821,7 @@ retention apply to it. The quality numbers are a separate file that names no acc
 - **Actions.** `actionsOffered`, `actionsRun` and `actionsFailed` are in the schema now. The last two stay 0
   until #239 and #240 record them.
 
-### Ask SCF: the guard
+### Ask Foundry: the guard
 
 `src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.
 Everything except the asker's own question is untrusted: page context, documents, run records,
@@ -2856,9 +2856,9 @@ issue text, logs, and the model's answer.
 
 Tests: `tests/help-safety.test.ts` (secret fixtures of every category, hostile texts, the three
 parts of the request, and the fail-closed paths).
-### Ask SCF: the drawer
+### Ask Foundry: the drawer
 
-The interface of Ask SCF is one drawer for both displays (#234). Three files, and the shells only mount it:
+The interface of Ask Foundry is one drawer for both displays (#234). Three files, and the shells only mount it:
 
 | File | What |
 |---|---|
@@ -2870,7 +2870,7 @@ The interface of Ask SCF is one drawer for both displays (#234). Three files, an
 - **The page is not touched.** The drawer is a sibling of the page, not a route. Opening and closing change no address and draw no page again. While it is open, `#top`, `#skip` and `#content` are `inert`; closing removes that unless the menu of a narrow screen is open.
 - **Opening is free.** `open()` makes no call. Only when a reply was still waited for it reads that conversation again. A question, and the page it is asked on, go out with Send only. The context is `{ page }`: the address without its query, checked against the form the route takes. No `kind` and no `id` yet.
 - **Keyboard.** The focus goes to the question box and comes back to the control that had it (the button when that control is gone). Escape closes; Tab is kept inside with `trapTarget` of `ui/dom.js`. A dialog in `#modal-root` lies over the drawer and gets the keys first.
-- **Status.** `#ask-status` is a polite status line: it says once that Ask SCF is working, and once what came of it. Errors of a call go to `#ask-error` (`role="alert"`).
+- **Status.** `#ask-status` is a polite status line: it says once that Ask Foundry is working, and once what came of it. Errors of a call go to `#ask-error` (`role="alert"`).
 - **Reading the answer.** While the drawer is open and the last reply is `pending`, the conversation is read every 1.5 s, after ten reads every 4 s. Four failed reads in a row, or a 404 or 410, end it with a sentence.
 - **Following a turn (#235).** `controlsFor` says which of Stop, Try again, Archive, Take back and Delete are offered; none while a call is on its way (`busy`), so a control cannot be pressed twice. Try again is offered after a stop and after a failure with `failure.retry` true, not after a limit (`entryOf` gives that the kind `limit`). The server keeps the two messages of a retried turn and counts `tries`; `triesNote` shows the count on the one reply. `waitNote` turns the waiting text after 20 s, measured in the tab from the moment it first saw this try.
 - **Late answers.** Every call takes a ticket from `staleGuard` first. Leaving a conversation (a new one, another one, archive, delete) makes all earlier tickets stale, and a result with a stale ticket is not drawn and starts no reading. The two lists (current, archived) are told apart the same way. A change of the page behind does not leave the conversation.
@@ -2882,10 +2882,10 @@ The interface of Ask SCF is one drawer for both displays (#234). Three files, an
   - **Cards never act.** `cardsOf` marks each card `read-only` or `changes-state`, as `PART_RULES` of the contract does. An action is drawn as a suggestion without any control; running one is #240.
 - **Styles.** `ui/css/pages/ask.css`, class names start with `ask-`. The drawer is `--layer-menu` + 1, so a dialog and a toast lie over it. It is the whole width at 767 px and below. It has no transition and no animation.
 
-### Ask SCF: scenario evaluations
+### Ask Foundry: scenario evaluations
 
 `src/server/help-evals.ts` and `src/server/help-eval-scenarios.ts` (#244) prove the promises of
-Ask SCF on fixed inputs. A scenario is a question, a role, optionally a page context with the
+Ask Foundry on fixed inputs. A scenario is a question, a role, optionally a page context with the
 things the account can see, the sources the server would offer, the answer of a stubbed
 provider, and what must hold.
 

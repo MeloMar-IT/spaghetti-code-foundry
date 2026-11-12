@@ -45,7 +45,7 @@ Usage:
                                                  Benchmark flows/agents/models on sample tasks
                                                  (--claude-bin, --codex-bin, --gh-bin use other programs)
   scf eval safety [--claude-bin p] [--gh-bin p]  Run the offline safety suites in evals/safety; ends with 1 when a case fails
-  scf eval help [--live]                         Check Ask SCF against its fixed scenarios; no model is called
+  scf eval help [--live]                         Check Ask Foundry against its fixed scenarios; no model is called
                                                  (--live: ask the model of help.model; each scenario costs a turn)
   scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
                                                  Remove old run workspaces/worktrees (branches kept)
@@ -575,7 +575,7 @@ async function main(argv: string[]): Promise<number> {
         return r.failed ? 1 : 0;
       }
       if (arg === "help") {
-        // The scenario evaluation of Ask SCF. Without --live no model is called: every scenario has a fixed answer.
+        // The scenario evaluation of Ask Foundry. Without --live no model is called: every scenario has a fixed answer.
         const { runHelpEval, stubModel, liveModel, reportText, saveHelpEval } = await import("./server/help-evals.js");
         const { HELP_SCENARIOS } = await import("./server/help-eval-scenarios.js");
         const live = values.live === true;

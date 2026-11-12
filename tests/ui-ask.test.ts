@@ -47,7 +47,7 @@ function make(over: any = {}) {
 afterEach(() => { for (const d of open.splice(0)) d.stop(); doc().getElementById("modal-root").replaceChildren(); doc().body.classList.remove("drawer-open"); });
 
 describe("switched off", () => {
-  it("offers nothing when Ask SCF is off, and nothing when the answer does not come", async () => {
+  it("offers nothing when Ask Foundry is off, and nothing when the answer does not come", async () => {
     const slot = doc().getElementById("ask-scf");
     slot.hidden = true;
     expect(await ask.initAsk("user", { api: { helpConversations: async () => ({ enabled: false, conversations: [] }) }, host: new FakeElement("body"), win: {} })).toBeNull();
@@ -100,8 +100,8 @@ describe("names for a screen reader", () => {
     expect(d.button.textContent).toBe("Ask Foundry");
     expect(d.ui.drawer.attrs).toMatchObject({ id: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title" });
     const all = walk(d.ui.drawer);
-    expect(all.find((e) => e.attrs.id === "ask-title")!.textContent).toBe("Ask SCF");
-    expect(d.ui.close.attrs["aria-label"]).toBe("Close Ask SCF");
+    expect(all.find((e) => e.attrs.id === "ask-title")!.textContent).toBe("Ask Foundry");
+    expect(d.ui.close.attrs["aria-label"]).toBe("Close Ask Foundry");
     const labels = all.filter((e) => e.tag === "label");
     expect(labels.map((l) => l.attrs.for)).toEqual(["ask-question", "ask-attach"]);
     expect(labels[0]!.textContent).toBe("Your question");
@@ -262,12 +262,12 @@ describe("the question", () => {
     expect(api.askHelp).toHaveBeenCalledTimes(1);
     expect(api.askHelp).toHaveBeenCalledWith(null, { question: "Why does it wait?", context: { page: "#/runs" } });
     expect(d.ui.question.value).toBe("");
-    expect(texts(d.ui.thread, "ask-entry")).toEqual(["YouWhy does it wait?", "Ask SCF Ask SCF is working on your answer."]);
-    expect(d.ui.status.textContent).toBe("Ask SCF is working on your answer.");
+    expect(texts(d.ui.thread, "ask-entry")).toEqual(["YouWhy does it wait?", "Ask Foundry Ask Foundry is working on your answer."]);
+    expect(d.ui.status.textContent).toBe("Ask Foundry is working on your answer.");
     // while the answer is written, Send says why it does nothing
     d.ui.question.value = "And now?";
     expect(await d.send()).toBe(false);
-    expect(d.ui.error.textContent).toBe("Ask SCF is still answering. Wait for the answer first.");
+    expect(d.ui.error.textContent).toBe("Ask Foundry is still answering. Wait for the answer first.");
     expect(api.askHelp).toHaveBeenCalledTimes(1);
   });
 
@@ -295,12 +295,12 @@ describe("the question", () => {
   });
 
   it("keeps the typed question when the server refuses it, and says why", async () => {
-    const { d } = make({ api: { askHelp: vi.fn(async () => { throw Object.assign(new Error("Ask SCF is switched off on this Foundry. An administrator can switch it on."), { status: 503 }); }) } });
+    const { d } = make({ api: { askHelp: vi.fn(async () => { throw Object.assign(new Error("Ask Foundry is switched off on this Foundry. An administrator can switch it on."), { status: 503 }); }) } });
     d.open();
     d.ui.question.value = "Why?";
     expect(await d.send()).toBe(false);
     expect(d.ui.question.value).toBe("Why?");
-    expect(d.ui.error.textContent).toBe("Ask SCF is switched off on this Foundry. An administrator can switch it on.");
+    expect(d.ui.error.textContent).toBe("Ask Foundry is switched off on this Foundry. An administrator can switch it on.");
     expect(d.ui.send.attrs["aria-disabled"]).toBeUndefined();
     expect(d.state.busy).toBe(false);
   });
@@ -319,7 +319,7 @@ describe("the answer", () => {
     expect(api.helpConversation).toHaveBeenCalledWith("c1");
     await vi.advanceTimersByTimeAsync(1500);
     expect(api.helpConversation).toHaveBeenCalledTimes(2);
-    expect(d.ui.status.textContent).toBe("Ask SCF answered. The answer is below your question.");
+    expect(d.ui.status.textContent).toBe("Ask Foundry answered. The answer is below your question.");
     const answer = walk(d.ui.thread).filter((e) => e.classList.contains("ask-answer"))[0]!;
     expect(answer.children.filter((c) => typeof c === "string").at(-1)).toBe("<img src=x onerror=alert(1)> Because.");
     expect(walk(d.ui.thread).some((e) => e.tag === "img")).toBe(false);
@@ -352,7 +352,7 @@ describe("the answer", () => {
     await d.send();
     await vi.advanceTimersByTimeAsync(1500);
     expect(d.ui.status.textContent).toBe("The AI service did not answer. You can try again in a moment.");
-    expect(texts(d.ui.thread, "ask-failed")).toEqual(["Ask SCFThe AI service did not answer. You can try again in a moment."]);
+    expect(texts(d.ui.thread, "ask-failed")).toEqual(["Ask FoundryThe AI service did not answer. You can try again in a moment."]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -384,7 +384,7 @@ const ID1 = "11111111-1111-4111-8111-111111111111";
 const ID2 = "22222222-2222-4222-8222-222222222222";
 const failed = (code: string, retry: boolean, text: string, tries = 1) => conv([q("Why?"), a("failed", { text, failure: { code, retry }, tries })], { state: "failed" });
 const PROVIDER = "The AI service did not answer. You can try again in a moment.";
-const LIMIT = "The limit for Ask SCF is reached for today. Try again tomorrow, or ask an administrator.";
+const LIMIT = "The limit for Ask Foundry is reached for today. Try again tomorrow, or ask an administrator.";
 const row = (id: string, over: any = {}) => ({ id, title: `Title ${id.slice(0, 2)}`, state: "active", messages: 2, waiting: false, updated: "2026-01-01T00:00:00.000Z", ...over });
 const actions = (d: any) => walk(d.ui.actions).filter((e) => e.tag === "button").map((e) => e.textContent);
 const press = (d: any, label: string) => walk(d.ui.actions).find((e) => e.tag === "button" && e.textContent === label)!.click();
@@ -409,7 +409,7 @@ describe("a turn from question to answer", () => {
     expect(actions(d)).toEqual(["Stop", "Delete"]);
     expect(d.ui.suggestBox.hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(1500);
-    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause.Continue on another page"]);
+    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask FoundryBecause.Continue on another page"]);
     expect(actions(d)).toEqual(["This solved my problem", "Archive", "Delete"]);
     d.ui.question.value = "And then?";
     await d.send();
@@ -419,13 +419,13 @@ describe("a turn from question to answer", () => {
   it("slow progress: says once that it takes long and points at Stop", async () => {
     let t = 1_000_000;
     const { d } = await asked({ deps: { now: () => t }, api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("pending")])) } });
-    expect(texts(d.ui.thread, "ask-waiting")[0]).toContain("Ask SCF is working on your answer.");
+    expect(texts(d.ui.thread, "ask-waiting")[0]).toContain("Ask Foundry is working on your answer.");
     t += 19_000;
     await vi.advanceTimersByTimeAsync(1500);
-    expect(d.ui.status.textContent).toBe("Ask SCF is working on your answer.");
+    expect(d.ui.status.textContent).toBe("Ask Foundry is working on your answer.");
     t += 2_000;
     await vi.advanceTimersByTimeAsync(1500);
-    const slow = "Ask SCF is still working. This takes longer than usual. You can wait, or stop the answer.";
+    const slow = "Ask Foundry is still working. This takes longer than usual. You can wait, or stop the answer.";
     expect(d.ui.status.textContent).toBe(slow);
     expect(texts(d.ui.thread, "ask-waiting")[0]).toContain(slow);
     d.ui.status.textContent = "";
@@ -444,7 +444,7 @@ describe("a turn from question to answer", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(api.cancelHelp).toHaveBeenCalledTimes(1);
     expect(api.cancelHelp).toHaveBeenCalledWith("c1");
-    expect(texts(d.ui.thread, "ask-stopped")).toEqual(["Ask SCFYou stopped this answer. You can ask again."]);
+    expect(texts(d.ui.thread, "ask-stopped")).toEqual(["Ask FoundryYou stopped this answer. You can ask again."]);
     expect(d.ui.status.textContent).toBe("You stopped this answer. You can ask again.");
     expect(actions(d)).toEqual(["Try again", "Archive", "Delete"]);
     expect(vi.getTimerCount()).toBe(0);
@@ -454,7 +454,7 @@ describe("a turn from question to answer", () => {
   it("provider failure: the fixed sentence and Try again", async () => {
     const { d } = await asked({ api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)) } });
     await vi.advanceTimersByTimeAsync(1500);
-    expect(texts(d.ui.thread, "ask-failed")).toEqual([`Ask SCF${PROVIDER}`]);
+    expect(texts(d.ui.thread, "ask-failed")).toEqual([`Ask Foundry${PROVIDER}`]);
     expect(d.ui.status.textContent).toBe(PROVIDER);
     expect(actions(d)).toEqual(["Try again", "Archive", "Delete"]);
   });
@@ -462,10 +462,10 @@ describe("a turn from question to answer", () => {
   it("limit: the fixed sentence and no Try again, for a reply and for a refused question", async () => {
     const { d } = await asked({ api: { helpConversation: vi.fn(async () => failed("limit", false, LIMIT)) } });
     await vi.advanceTimersByTimeAsync(1500);
-    expect(texts(d.ui.thread, "ask-limit")).toEqual([`Ask SCF${LIMIT}`]);
+    expect(texts(d.ui.thread, "ask-limit")).toEqual([`Ask Foundry${LIMIT}`]);
     expect(actions(d)).toEqual(["Archive", "Delete"]);
     expect(await d.retry()).toBe(false);
-    const words = "You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator.";
+    const words = "You have used all your questions to Ask Foundry for today. Try again tomorrow, or ask an administrator.";
     const refused = make({ api: { askHelp: vi.fn(async () => { throw Object.assign(new Error(words), { status: 429 }); }) } });
     refused.d.open();
     refused.d.ui.question.value = "Why?";
@@ -490,16 +490,16 @@ describe("a turn from question to answer", () => {
     expect(api.askHelp).toHaveBeenCalledTimes(1);
     expect(texts(d.ui.thread, "ask-entry")).toHaveLength(2);
     expect(texts(d.ui.thread, "ask-note")).toEqual(["This is the second try. The first try gave no answer."]);
-    expect(d.ui.status.textContent).toBe("Ask SCF is working on your answer.");
+    expect(d.ui.status.textContent).toBe("Ask Foundry is working on your answer.");
     // the reply is read again
     expect(vi.getTimerCount()).toBe(1);
   });
 
   it("retry that the server refuses changes nothing on the page", async () => {
-    const { d } = await asked({ api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)), retryHelp: vi.fn(async () => { throw Object.assign(new Error("Ask SCF is already answering this question"), { status: 409 }); }) } });
+    const { d } = await asked({ api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)), retryHelp: vi.fn(async () => { throw Object.assign(new Error("Ask Foundry is already answering this question"), { status: 409 }); }) } });
     await vi.advanceTimersByTimeAsync(1500);
     expect(await d.retry()).toBe(false);
-    expect(d.ui.error.textContent).toBe("Ask SCF is already answering this question.");
+    expect(d.ui.error.textContent).toBe("Ask Foundry is already answering this question.");
     expect(texts(d.ui.thread, "ask-entry")).toHaveLength(2);
     expect(actions(d)).toEqual(["Try again", "Archive", "Delete"]);
   });
@@ -575,7 +575,7 @@ describe("archive and deletion", () => {
     const { d } = await asked({ api: { deleteHelp: vi.fn(async () => { throw Object.assign(new Error("x"), { status: 500 }); }) } });
     expect(await d.remove()).toBe(false);
     expect(d.state.conversation.id).toBe("c1");
-    expect(d.ui.error.textContent).toBe("Ask SCF is not working now. Try again later.");
+    expect(d.ui.error.textContent).toBe("Ask Foundry is not working now. Try again later.");
   });
 });
 
@@ -600,7 +600,7 @@ describe("history and a new conversation", () => {
     expect(api.helpConversation).toHaveBeenCalledWith(ID2);
     expect(d.ui.history.hidden).toBe(true);
     expect(d.ui.talk.hidden).toBe(false);
-    expect(texts(d.ui.thread, "ask-entry")).toEqual(["YouOther?", "Ask SCFYes.Continue on another page"]);
+    expect(texts(d.ui.thread, "ask-entry")).toEqual(["YouOther?", "Ask FoundryYes.Continue on another page"]);
     expect(d.ui.status.textContent).toBe("The conversation is open.");
     expect(doc().activeElement).toBe(d.ui.question);
     // the open one is marked in the list
@@ -709,7 +709,7 @@ describe("late answers are dropped", () => {
     expect(d.state.conversation.id).toBe("c1");
     await vi.advanceTimersByTimeAsync(1500);
     expect(api.helpConversation).toHaveBeenCalledTimes(1);
-    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause.Continue on another page"]);
+    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask FoundryBecause.Continue on another page"]);
   });
 });
 
@@ -858,7 +858,7 @@ describe("a reply by its parts", () => {
     expect(walk(cards[3]!).find((e) => e.tag === "pre")!.textContent).toBe("Line 1\nLine 2");
     // nothing in a reply can be pressed to do something
     expect(all.filter((e) => (e.tag === "button" && e.attrs["data-handoff"] === undefined) || e.tag === "form" || e.tag === "input")).toEqual([]);
-    expect(cards[4]!.textContent).toContain("Ask SCF does not do this. Nothing happens here.");
+    expect(cards[4]!.textContent).toContain("Ask Foundry does not do this. Nothing happens here.");
     for (const c of cards) expect(Object.keys(c.listeners)).toEqual([]);
   });
 
@@ -873,7 +873,7 @@ describe("a reply by its parts", () => {
   });
 
   it("shows a request that is not served with its fixed words and no sources", async () => {
-    const { all } = await shown({ type: "product-help", summary: "Ask SCF never shows a password, a token or a key, and it never needs one from you.", explanation: "", certainty: "confirmed", evidence: [], recommendations: ["Do not type a secret into a question."], links: [{ label: "My repositories", to: "#/repos" }], drafts: [], actions: [], limit: { code: "secret", limitation: "x", nextStep: "y" } });
+    const { all } = await shown({ type: "product-help", summary: "Ask Foundry never shows a password, a token or a key, and it never needs one from you.", explanation: "", certainty: "confirmed", evidence: [], recommendations: ["Do not type a secret into a question."], links: [{ label: "My repositories", to: "#/repos" }], drafts: [], actions: [], limit: { code: "secret", limitation: "x", nextStep: "y" } });
     expect(byClass(all, "ask-trust")[0]!.classList.contains("ask-trust-limit")).toBe(true);
     expect(all.find((e) => e.tag === "details")).toBeUndefined();
     expect(byClass(all, "ask-card").map((c) => c.attrs["aria-label"])).toEqual(["What you can do. Read-only", "A page you can open. Read-only"]);
@@ -972,7 +972,7 @@ describe("a plan in the drawer", () => {
     expect(buttons(d)[0]!.attrs["aria-pressed"]).toBe("true");
     expect(cards(d)[0]!.attrs["aria-current"]).toBeUndefined();
     expect(cards(d)[1]!.attrs["aria-current"]).toBe("step");
-    expect(cards(d)[0]!.textContent).toContain("You marked this. Ask SCF has not checked the result.");
+    expect(cards(d)[0]!.textContent).toContain("You marked this. Ask Foundry has not checked the result.");
     expect(d.ui.thread.textContent).not.toMatch(/succeeded|worked/i);
     buttons(d)[0]!.click();
     expect(progress.get("a1")).toEqual([]);
@@ -1122,7 +1122,7 @@ describe("rating an answer", () => {
 });
 
 describe("the pause", () => {
-  const PAUSED = "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.";
+  const PAUSED = "Ask Foundry is paused by an administrator for now. You can still read, export and delete your conversations.";
   const refuse = (message: string) => vi.fn(async () => { throw Object.assign(new Error(message), { status: 503 }); });
 
   it("shows a notice, refuses Send and Try again, and still reads the history", async () => {
@@ -1132,7 +1132,7 @@ describe("the pause", () => {
     expect(d.ui.paused.textContent).toBe(PAUSED);
     expect(d.ui.send.attrs["aria-disabled"]).toBe("true");
     await d.openConversation("c1");
-    expect(texts(d.ui.thread, "ask-failed")).toEqual([`Ask SCF${PROVIDER}`]);
+    expect(texts(d.ui.thread, "ask-failed")).toEqual([`Ask Foundry${PROVIDER}`]);
     expect(actions(d)).toEqual(["Archive", "Delete"]);
     expect(await d.retry()).toBe(false);
     d.ui.question.value = "Why?";
@@ -1143,7 +1143,7 @@ describe("the pause", () => {
   });
 
   it("learns of a pause from the server's sentence, and not from another 503", async () => {
-    const off = "Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry.";
+    const off = "Ask Foundry cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry.";
     const { d } = make({ api: { askHelp: refuse(off) } });
     d.open();
     d.ui.question.value = "Why?";
@@ -1162,7 +1162,7 @@ describe("the pause", () => {
     expect(paused.d.ui.send.attrs["aria-disabled"]).toBe("true");
   });
 
-  it("asks the server again when it was paused, so an unpaused Ask SCF works without a reload", async () => {
+  it("asks the server again when it was paused, so an unpaused Ask Foundry works without a reload", async () => {
     const { d, api } = make({ deps: { paused: true }, api: { helpConversations: vi.fn(async () => ({ enabled: true, paused: false, conversations: [] })) } });
     d.open();
     d.ui.question.value = "Why?";

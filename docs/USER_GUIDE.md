@@ -30,7 +30,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [11. Upgrading from claude-factory](#11-upgrading-from-claude-factory)
 - [12. Ideas (refinement)](#12-ideas-refinement)
 - [13. Self-repair (for admins)](#13-self-repair-for-admins)
-- [14. Ask SCF](#14-ask-scf)
+- [14. Ask Foundry](#14-ask-foundry)
 
 ---
 
@@ -146,12 +146,12 @@ this browser for your account.
 (a link to Today), the name of the page, then:
 
 - **Search** — find a page, a run, a repository, a refinement session or a flow (see **Search** below). Ctrl/⌘+K opens it too.
-- **Ask Foundry** — opens the **Ask SCF** panel, where you ask how the Foundry works in your own words. It reads and explains; nothing changes unless you review and confirm an action. The button is there only when an admin has switched Ask SCF on. See [Ask SCF](#14-ask-scf).
+- **Ask Foundry** — opens a panel where you ask how the Foundry works in your own words. It reads and explains; nothing changes unless you review and confirm an action. The button is there only when an admin has switched Ask Foundry on. See [Ask Foundry](#14-ask-foundry).
 - **+ New change** — the one primary button. It opens the **Start work** page, where you describe a change in your own words (see **+ New change** below).
 - The health chip (Admin view only) — press it to open or close the full health line. It opens by itself when something is wrong with the Foundry itself.
 - Your **account menu**: your name, **Appearance**, **Change password**, **Sign out**, the **View** box, the switch **Pause the Foundry while I work** (Off, 1 h or 2 h; admins only) and a link to the **Accessibility** statement. While the pause is on, a **Paused** flag shows in the top bar.
 
-![The Ask SCF panel, opened with Ask Foundry](images/ask.png)
+![The Ask Foundry panel, opened with Ask Foundry](images/ask.png)
 
 The number of items waiting for you shows on **Today** (Admin view) and on the menu button. The words in the interface
 say **change** where older versions said **story** (a story and a change are the same thing); the word **issue**
@@ -423,7 +423,7 @@ Publishing again does not copy the pictures or write their text a second time.
 
 **Check a result.** When a change waits for your check, the card shows one paragraph of what was made, then **This is good** and **Something is not right**. **Try it** is there too when the page is on the Foundry's computer (see **Try it on the project page** below). **This is good** accepts the change. **Something is not right** opens a box with the question "What is not right?"; write what is wrong (an empty answer is not sent) and press **Send**. The Foundry then tries again with your words. The page says "Thank you. The Foundry goes on by itself." once it is sent.
 
-**Got stuck.** When a change got stuck, the card says "This got stuck: the Foundry could not finish it by itself." **Try again** starts the change once more, when it can be started from this page. **Ask for help** opens Ask SCF on a new conversation (see **Ask SCF in the Simple view**). **Not now** puts the card aside; it stays hidden after a restart and comes back only when the change fails again. The page never shows the reason, the step or an error text.
+**Got stuck.** When a change got stuck, the card says "This got stuck: the Foundry could not finish it by itself." **Try again** starts the change once more, when it can be started from this page. **Ask for help** opens Ask Foundry on a new conversation (see **Ask Foundry in the Simple view**). **Not now** puts the card aside; it stays hidden after a restart and comes back only when the change fails again. The page never shows the reason, the step or an error text.
 
 Only work that is still stuck is listed under "See what got stuck". A change whose issue is closed on GitHub is not listed, and a split whose parts all exist is shown as done, not as stuck. Such a split has no **Try again**, because a second run would create the parts again. A split that made some of its parts but not all stays stuck, without **Try again**.
 
@@ -4575,7 +4575,7 @@ not followed; the command says where the server points to and stops.
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Ask SCF: ask a question, try again, stop; rate an answer (`feedback`); your conversations (list, show, complete with `--resolved`, archive, restore, delete); what a page context is worth (`context`); the usage and quality numbers (admin) |
+| `ask` | Ask Foundry: ask a question, try again, stop; rate an answer (`feedback`); your conversations (list, show, complete with `--resolved`, archive, restore, delete); what a page context is worth (`context`); the usage and quality numbers (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -4881,7 +4881,7 @@ To change a setting, open **Administration** in the sidebar, then **Settings** u
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
-**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the lists of accounts that may not ask Ask SCF or may ask in the pilot stage (`help.disabled_accounts`, `help.pilot_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
+**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the lists of accounts that may not ask Ask Foundry or may ask in the pilot stage (`help.disabled_accounts`, `help.pilot_accounts`), the list of texts Ask Foundry keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
 
 **Start-up settings.** The data folder, the port, the repository and the program paths are read only when the server starts, so they are not changed on this page. To change one, stop the server, change it where it is set, and start the server again; the **Set at start-up** card shows the values in use. Two things are set up once, not in settings: the first admin is made on the setup page when the server starts for the first time, and the login service is installed with `scf service install` (see [Upgrading](#11-upgrading-from-claude-factory)).
 
@@ -4890,7 +4890,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
-**Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the **Help** page (in the sidebar of every view): a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
+**Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the **Help** page (in the sidebar of every view): a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask Foundry and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
 
 **Starters (`simple.hidden_starters`, `simple.projects_folder`)** — `simple.hidden_starters` is a list of ids of built-in starters that are not offered for a new project (an own starter is always offered; empty offers all, at most 50 ids). `simple.projects_folder` is an absolute path outside the Foundry data folder where new projects from a starter go; not set means `scf-projects` in the home folder of the person who runs the Foundry. See [Starters](#starters) in section 1.
 
@@ -5147,7 +5147,7 @@ use neither. A sign-in line that cannot be written (for example while another `s
 sign-in; the server log says `auth: audit.jsonl cannot-write`.
 
 What people do in the web interface is also logged, with `result` `ok`, `by` set to the account that made the call, and a `target`
-(and sometimes a `detail`). An Ask SCF line never holds a question, an answer, a confirmation token or the text of a model:
+(and sometimes a `detail`). An Ask Foundry line never holds a question, an answer, a confirmation token or the text of a model:
 
 | `action` | When | `target` | `detail` |
 |---|---|---|---|
@@ -5165,11 +5165,11 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no change is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
-| `help-action` | An approved action of Ask SCF ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
-| `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
-| `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
-| `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
-| `help-action` | An account followed an offer of an Ask SCF reply (opened a page). Refused when the thing is gone (404), not allowed now (403) or the conversation is deleted (410) | `conversation <id>` | `<type>` (for example `open-run`), or `refused: denied` or `refused: stale` |
+| `help-action` | An approved action of Ask Foundry ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
+| `help-ask` | A question to Ask Foundry was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
+| `help-delete` | An account deleted one of its Ask Foundry conversations | `conversation <id>` | |
+| `help-export` | An account exported its Ask Foundry conversations | `conversations` | how many |
+| `help-action` | An account followed an offer of an Ask Foundry reply (opened a page). Refused when the thing is gone (404), not allowed now (403) or the conversation is deleted (410) | `conversation <id>` | `<type>` (for example `open-run`), or `refused: denied` or `refused: stale` |
 | `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on **Today** (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
@@ -5732,7 +5732,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
 | `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
-| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials |
+| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials |
 | `GET /api/skills/lifecycle` | yes | no | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
 | `POST /api/skills/lifecycle` | yes | no | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
 | `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards |
@@ -5816,25 +5816,25 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 | `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403); on a local project it reads the local stories in `.scf/stories/` with no GitHub sign-in, `go` is the build label, and 403 `not-yours` when the project is not yours |
-| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on and whether it is paused (then you can read but not ask), and the limits; only your own, for an admin too, and not in a view of a user's display |
-| `GET /api/help/conversations/:id` | yes | yes | read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
-| `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask SCF conversations: it stays readable and takes no new question |
-| `POST /api/help/conversations/:id/feedback` | yes | yes | rate an answer in one of your Ask SCF conversations: helpful or not helpful, with optional reasons from a fixed list and no free text; vote null (or none) takes it back; only counts are kept in the quality numbers; works while Ask SCF is paused |
-| `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask SCF conversations to the archive |
-| `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask SCF conversations out of the archive; it gets the state it had |
-| `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back |
-| `POST /api/help/conversations` | yes | yes | ask Ask SCF a question in a new conversation (`question`, and optionally `context`: the page and one selected thing); answers 202 with the conversation, whose reply is `pending` until the turn ends; one turn per account at a time (409), 429 when the queue is full or your turns of today are used, 503 while Ask SCF is switched off |
-| `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
-| `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
-| `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
-| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`, or runs a read-only check (read it again, test the connection) and stores its result as a check message of the conversation, answering `{type, outcome, conversation}`; 404 when the thing is gone or you can no longer see it, 403 when you may not do it now, 409 when the conversation is not open, is waiting, is full, changed while the check ran, or already runs a check, 410 for a deleted conversation. Or see what an action Ask SCF proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask SCF or its actions are switched off |
+| `GET /api/help/conversations` | yes | yes | your Ask Foundry conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask Foundry is switched on and whether it is paused (then you can read but not ask), and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations/:id` | yes | yes | read one of your Ask Foundry conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
+| `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask Foundry conversations: it stays readable and takes no new question |
+| `POST /api/help/conversations/:id/feedback` | yes | yes | rate an answer in one of your Ask Foundry conversations: helpful or not helpful, with optional reasons from a fixed list and no free text; vote null (or none) takes it back; only counts are kept in the quality numbers; works while Ask Foundry is paused |
+| `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask Foundry conversations to the archive |
+| `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask Foundry conversations out of the archive; it gets the state it had |
+| `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask Foundry conversations: its title and messages are removed at once and cannot be brought back |
+| `POST /api/help/conversations` | yes | yes | ask Ask Foundry a question in a new conversation (`question`, and optionally `context`: the page and one selected thing); answers 202 with the conversation, whose reply is `pending` until the turn ends; one turn per account at a time (409), 429 when the queue is full or your turns of today are used, 503 while Ask Foundry is switched off |
+| `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask Foundry conversations; the same answers as for a new one |
+| `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask Foundry conversations again; no message is added, and it counts as a turn of today |
+| `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask Foundry conversations |
+| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask Foundry reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`, or runs a read-only check (read it again, test the connection) and stores its result as a check message of the conversation, answering `{type, outcome, conversation}`; 404 when the thing is gone or you can no longer see it, 403 when you may not do it now, 409 when the conversation is not open, is waiting, is full, changed while the check ran, or already runs a check, 410 for a deleted conversation. Or see what an action Ask Foundry proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask Foundry or its actions are switched off |
 | `POST /api/help/conversations/:id/actions/confirm` | yes | yes | carry out a previewed action with its token (`token`, `message`, `index`): the server checks the token, that the run did not change since the preview, the settings, your account and the rule of the same button on the run's page (your own runs only, an admin too), then reads the result back from the run and answers `{ outcome, stored }`; 409 for a token that is used, expired or does not fit, or a run that changed; writes an audit line |
 | `POST /api/help/conversations/:id/actions/cancel` | yes | yes | drop the confirmation token of a preview (`token`); nothing changes |
-| `GET /api/help/conversations/:id/handoffs` | yes | yes | the pages you may take one answer of your Ask SCF conversation to (`?message=`), with what each would copy; checked again for your account now; nothing is written |
-| `POST /api/help/conversations/:id/handoffs` | yes | yes | record that you took an answer of your Ask SCF conversation to another page (`message`, `offer`, and the `page` and `fill` you saw); only the conversation changes, never the target; 409 when the offer, its page or what it copies changed |
-| `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
-| `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
-| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
+| `GET /api/help/conversations/:id/handoffs` | yes | yes | the pages you may take one answer of your Ask Foundry conversation to (`?message=`), with what each would copy; checked again for your account now; nothing is written |
+| `POST /api/help/conversations/:id/handoffs` | yes | yes | record that you took an answer of your Ask Foundry conversation to another page (`message`, `offer`, and the `page` and `fill` you saw); only the conversation changes, never the target; 409 when the offer, its page or what it copies changed |
+| `POST /api/help/context` | yes | yes | what Ask Foundry would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask Foundry is switched off |
+| `GET /api/help/export` | yes | yes | all your Ask Foundry conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
+| `GET /api/help/usage` | yes | no | Ask Foundry for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
 
 
 ### Automatic skills
@@ -8336,9 +8336,9 @@ be absent from the output and the logs, `max_privileges.credential: none`, a `pu
 reason `secret.detected`, and a check that the fake remote has no pushed branch. The name of a fake key
 must start with `SCF_EVAL_`, and its value must not look like a real key.
 
-#### Checking Ask SCF before you switch it on
+#### Checking Ask Foundry before you switch it on
 
-Ask SCF is the help that opens with **Ask Foundry** in the top bar. `scf eval help` checks it against 14 fixed scenarios. It needs no account and no server,
+Ask Foundry is the help that opens with **Ask Foundry** in the top bar. `scf eval help` checks it against 14 fixed scenarios. It needs no account and no server,
 stores no conversation and calls no model: every scenario has a fixed answer, as a model might
 give it, and the check is what the Foundry sends and what it keeps of that answer.
 
@@ -8369,7 +8369,7 @@ scenario must pass as a whole; any failure is a regression.
 
 With `--live` the wording is the model's own, so a reply is not compared with the fixed answer.
 It only has to stay within these limits, and it may never be more sure than the sources it
-cites allow. Run it by hand before you switch Ask SCF
+cites allow. Run it by hand before you switch Ask Foundry
 on for everyone, and after you change `help.model`. No test and no flow runs it.
 
 The command prints the verdict, the numbers, and for every failed scenario its id, the check
@@ -8468,7 +8468,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf plugins` (or `scf plugins list`) | List the plugins loaded at server start, with version, module and what each registered; needs a running, signed-in server (admin) ([Plugins](#plugins)) |
 | `scf eval <suite.yaml> [--flows a,b] [--models …] [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run an eval suite; the `--…-bin` options use other programs ([Evals](#evals)) |
 | `scf eval safety [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run every offline safety suite in `evals/safety`; exits 1 when a case fails ([Safety suites](#safety-suites)) |
-| `scf eval help [--live]` | Check Ask SCF against its fixed scenarios; without `--live` no model is called |
+| `scf eval help [--live]` | Check Ask Foundry against its fixed scenarios; without `--live` no model is called |
 | `scf clean [--older-than 7] [--purge] [--dry-run] [--evidence-older-than days]` | Remove old run workspaces. With `--evidence-older-than` it also removes the evidence of the cleaned runs that ended at least that many days ago ([Evidence of a run](#evidence-of-a-run)). With `--purge` it also removes plan records (see below) older than the larger of 90 days and `--older-than` |
 | `scf user create [--admin] [--name n] [--email e]` | Create an account. The first one needs `--admin`. Name and e-mail are asked for on a terminal |
 | `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one, `provider` for an account of the identity provider, `break-glass` for the emergency local admin (never shows passwords, hashes or links) |
@@ -9304,28 +9304,28 @@ the monitor off nothing is created.
 
 ---
 
-## 14. Ask SCF
+## 14. Ask Foundry
 
-**Ask SCF** is the help assistant inside the Foundry. You open it with **Ask Foundry** in the top bar.
+**Ask Foundry** is the help assistant inside the Foundry. You open it with **Ask Foundry** in the top bar.
 You ask a question in your own words; it explains how the Foundry works, what your work is doing, and
 how to solve a problem. This chapter holds its rules.
 
 **It reads and explains. It acts only when you confirm.** Nothing you ask changes the Foundry, a
 repository or GitHub. A reply can only propose an action from the server's own list. A proposal changes
 nothing, and an action runs only after you confirm it yourself (see **Approved actions** under
-"Ask SCF for administrators").
+"Ask Foundry for administrators").
 
-### Where you ask: the Ask SCF drawer
+### Where you ask: the Ask Foundry drawer
 
-When an administrator has switched Ask SCF on, the top bar of every page has an **Ask Foundry** button,
+When an administrator has switched Ask Foundry on, the top bar of every page has an **Ask Foundry** button,
 between **Search** and **+ New change**. It is there in every view (Simple, Advanced and Admin). While
-Ask SCF is off (the default), the button is not there. While an administrator has paused it, the button
+Ask Foundry is off (the default), the button is not there. While an administrator has paused it, the button
 stays: you can read, export and delete your conversations, but **Send** and **Try again** are off and a
-line says that Ask SCF is paused.
+line says that Ask Foundry is paused.
 
-![The Ask SCF panel, opened with Ask Foundry in the top bar, with a question and its answer](images/ask.png)
+![The Ask Foundry panel, opened with Ask Foundry in the top bar, with a question and its answer](images/ask.png)
 
-- **Open it** with **Ask Foundry**. A panel titled **Ask SCF** opens at the right side, over the page.
+- **Open it** with **Ask Foundry** in the top bar. A panel opens at the right side, over the page.
   The page behind it is not drawn again: what you typed there, and what was open, stays as it is.
 - **Close it** with Escape, the ✕ or a click beside the panel. The focus goes back to where it was. A
   question you had started to type is still there when you open the panel again.
@@ -9336,11 +9336,11 @@ line says that Ask SCF is paused.
   the page you are on, and nothing else of the page. Untick **Send the page I am on with my question** to
   send the question alone.
 - **Send** with the button, or with Ctrl+Enter (Cmd+Enter on a Mac). Enter alone starts a new line.
-- The answer appears under your question. A line in the panel says that Ask SCF is working and then that
+- The answer appears under your question. A line in the panel says that Ask Foundry is working and then that
   the answer is there; a screen reader reads it.
 
 **Following an answer.** Your question and the reply stand under each other. While the reply is
-written, the panel says that Ask SCF is working. After 20 seconds it says once that this takes longer
+written, the panel says that Ask Foundry is working. After 20 seconds it says once that this takes longer
 than usual. Under the conversation are its controls; each one says what it does when you point at it,
 and a screen reader reads that too.
 
@@ -9373,13 +9373,13 @@ only the id of that conversation, never a question or an answer.
    | Line | When |
    |---|---|
    | ✓ Checked against its sources | The answer rests on sources of the kind the question needs. |
-   | ≈ Not fully confirmed | Ask SCF has sources but they do not fully confirm the answer. |
+   | ≈ Not fully confirmed | Ask Foundry has sources but they do not fully confirm the answer. |
    | ? Not checked: no source | No source of the kind the question needs. A question about your work needs the current state, not only the documentation. Treat the answer as a guess. |
    | ! The sources do not agree | Two sources say different things about the same place. Look yourself before you act. |
-   | – Not answered | You asked for something Ask SCF does not do. It says what you can do instead. |
+   | – Not answered | You asked for something Ask Foundry does not do. It says what you can do instead. |
 
 3. **What it rests on.** For a statement about your work, the lines of the current state that were read, each with the time it was seen.
-4. **Proposals, as cards.** Each card says **Read-only** or **Changes state**: something you could do, a page you can open, a draft to copy, or a suggested change. A read-only card never does anything. A suggested change that the server can carry out (see **Approved actions** under "Ask SCF for administrators") has **Review the change** and the note "Nothing happens until you review the change and confirm it."; any other suggested change is only a suggestion, and it has no button.
+4. **Proposals, as cards.** Each card says **Read-only** or **Changes state**: something you could do, a page you can open, a draft to copy, or a suggested change. A read-only card never does anything. A suggested change that the server can carry out (see **Approved actions** under "Ask Foundry for administrators") has **Review the change** and the note "Nothing happens until you review the change and confirm it."; any other suggested change is only a suggestion, and it has no button.
 5. **Sources and assumptions**, to unfold: every source with its kind (documentation or current state) and place, and what the answer takes for granted.
 
 Text of an answer is always shown as text. An address in it is not a link. A link appears only for a
@@ -9390,9 +9390,9 @@ The panel works with the keyboard alone: Tab stays inside it while it is open. O
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no **Ask Foundry** button.
 
-### What Ask SCF knows, and how to check an answer
+### What Ask Foundry knows, and how to check an answer
 
-Ask SCF answers from three things, and nothing else:
+Ask Foundry answers from three things, and nothing else:
 
 - **The documentation of this Foundry**: the sections of this guide that fit your question (at most four). An administrator's question may also use the flow guide.
 - **The current state your account can see**: the run, repository, refinement session, queue or server state that your question names or that the page you are on shows. An administrator also sees board issues, monitor findings and the server's health. Each piece says when it was read; a record that is known to be old says so.
@@ -9413,13 +9413,13 @@ Under each finished answer, the drawer asks **Was this answer helpful?** with tw
 - **Not helpful** opens a short list, **What was wrong?** (optional): it was wrong; it was out of date; it did not answer my question; it was unclear; it named no source I could check; it was unsafe or should not have been said. Tick what fits and press **Save reasons**. There is no box for free text: the reasons are the only words kept.
 - **This solved my problem** is offered under the last answer of an open conversation. It closes the conversation, so you can still read it but cannot ask more in it. Use it only when the answer really solved your problem; closing a conversation in any other way is not counted.
 
-Your rating stays with that answer in your conversation, and you can change it. It is deleted with the conversation. It is not sent to any AI service, and rating an answer does not give consent to use your conversations for training. Only counts go to the quality numbers that administrators see (see "Who may ask, what is kept, and what is logged"). Rating still works while Ask SCF is paused.
+Your rating stays with that answer in your conversation, and you can change it. It is deleted with the conversation. It is not sent to any AI service, and rating an answer does not give consent to use your conversations for training. Only counts go to the quality numbers that administrators see (see "Who may ask, what is kept, and what is logged"). Rating still works while Ask Foundry is paused.
 
 **To report a bad answer:** rate it **Not helpful** and tick the reason. For a wrong answer about the product, also tell an administrator of this Foundry, with the question, so the documentation or the setting can be fixed. The quality numbers show how many answers were rated, but not which one.
 
-### Ask SCF in the Simple view
+### Ask Foundry in the Simple view
 
-In the Simple view, Ask SCF answers in plain words, for someone who does not know the Foundry:
+In the Simple view, Ask Foundry answers in plain words, for someone who does not know the Foundry:
 
 - **Words.** The same word list as the rest of Simple is used (for example "change" for a story, "work" for a run, "got stuck" for a failed run). A sentence that still needs a word of the Advanced view is left out.
 - **Only your own work.** It explains only your own projects and runs. Another account's work is not used.
@@ -9438,7 +9438,7 @@ The panel shows the Simple suggestions instead of the Advanced ones. If a reply 
 | Troubleshooting | Why something failed or does not move. |
 | Guided resolution | Which steps solve a problem, in order, and where to do them. |
 
-Ask SCF does three kinds of work only by sending you to the place that already does them:
+Ask Foundry does three kinds of work only by sending you to the place that already does them:
 
 - **Writing and improving stories** is done in [Refinement](#12-ideas-refinement) (**Ideas** in the sidebar), with the architect.
 - **What happens next** with a run or an issue is said by the Foundry itself, on the run page and (for administrators) on **Today**.
@@ -9451,7 +9451,7 @@ and what would change something.
 
 | Part | What it is | Changes something |
 |---|---|---|
-| Answer | What is true, as far as Ask SCF can see. Nothing happens. | no |
+| Answer | What is true, as far as Ask Foundry can see. Nothing happens. | no |
 | Recommendation | What you could do. You decide and you do it; nothing happens by itself. | no |
 | Navigation | A link to a page of the Foundry that you may open. Opening it is your click. | no |
 | Plan | Ordered steps to solve a problem. Nothing happens until you do a step yourself. | no |
@@ -9461,9 +9461,9 @@ and what would change something.
 A plan is a short list of steps, safest first. Each step says what kind it is: an explanation, a page
 to open, a read-only check, something only you can decide, a reversible change or a high-impact change.
 Every change step says what you should see, what a failure looks like and what to do then. A high-impact
-step always shows a danger label and is never folded away. Ask SCF does not run a step:
+step always shows a danger label and is never folded away. Ask Foundry does not run a step:
 you do it yourself, or follow the plan by hand. "I did this" only ticks the step in this browser tab
-(it is kept for the tab's session, not on the server); Ask SCF has not checked the result.
+(it is kept for the tab's session, not on the server); Ask Foundry has not checked the result.
 
 An offer is a navigation part shown as a card with an **Open** button. It opens one of these pages:
 
@@ -9494,7 +9494,7 @@ is refused, and nothing is contacted, when the conversation is not open (its las
 finished, it is full, or another check runs in it). The sentences are:
 
 - "A check can run only in an open conversation whose last answer is finished."
-- "Ask SCF is still answering in this conversation. Wait for the answer, then run the check."
+- "Ask Foundry is still answering in this conversation. Wait for the answer, then run the check."
 - "This conversation is full. Start a new conversation to run a check."
 - "A check is already running in this conversation. Wait for it to finish."
 
@@ -9523,25 +9523,25 @@ Every reply ends with one of these sentences. The server chooses it from the sou
 
 - "This rests on the sources listed below."
 - "This is likely, but the sources below do not fully confirm it."
-- "Ask SCF could not check this against the documentation or the current state. Treat it as a guess."
+- "Ask Foundry could not check this against the documentation or the current state. Treat it as a guess."
 
 ### What it does not do
 
-When you ask for something Ask SCF does not do, it says so in a fixed sentence and tells you the
+When you ask for something Ask Foundry does not do, it says so in a fixed sentence and tells you the
 safest thing you can do instead. These sentences come from the server, not from the assistant.
 
-| When | What Ask SCF says | What you can do |
+| When | What Ask Foundry says | What you can do |
 |---|---|---|
-| You ask it to do something | Ask SCF reads and explains. It does not start, stop, change, delete or send anything. | Do it yourself on the page where it belongs. Ask where that page is, or what the button does, and Ask SCF will tell you. |
-| You ask about another account | Ask SCF sees only what your own account can see. It does not look at the work, the repositories or the conversations of another account. | Ask the owner of that work. |
-| You ask about what only administrators see | That belongs to the administrators: models, costs, accounts and the settings of the server. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
-| You ask for a secret, or type one | Ask SCF never shows a password, a token or a key, and it never needs one from you. | Do not type a secret into a question. Sign-ins of repositories are managed under My repositories. |
-| You ask about something else | Ask SCF answers questions about Spaghetti Code Foundry only: how it works, what your work is doing, and how to solve a problem with it. | Ask about a page, a run, a repository or a message that you see here. |
-| It cannot see enough | Ask SCF cannot see enough to answer this, so it does not guess. | Open the run, the repository or the session you mean; its own page shows its state. |
-| You ask it to write or improve a story | Writing and improving stories is the work of Refinement, with the architect. Ask SCF does not do it a second time. | Open Refinement and start a session, or go on with one. |
-| You ask what happens next with a run or an issue | What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask SCF does not give a second answer that could differ. | Open the run under My runs: its page says what happens next. |
-| You ask about a finding of the monitor | What the monitor of the Foundry found is for the administrators. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
-| You ask it to start a session or publish an issue | Ask SCF does not start a Refinement session and does not publish an issue. **Continue on another page** only opens the New session form with the text filled in. | Check the form, then press **Start session** yourself. Nothing is saved before that. |
+| You ask it to do something | Ask Foundry reads and explains. It does not start, stop, change, delete or send anything. | Do it yourself on the page where it belongs. Ask where that page is, or what the button does, and Ask Foundry will tell you. |
+| You ask about another account | Ask Foundry sees only what your own account can see. It does not look at the work, the repositories or the conversations of another account. | Ask the owner of that work. |
+| You ask about what only administrators see | That belongs to the administrators: models, costs, accounts and the settings of the server. Ask Foundry does not show it to you. | Ask an administrator of this Foundry. |
+| You ask for a secret, or type one | Ask Foundry never shows a password, a token or a key, and it never needs one from you. | Do not type a secret into a question. Sign-ins of repositories are managed under My repositories. |
+| You ask about something else | Ask Foundry answers questions about Spaghetti Code Foundry only: how it works, what your work is doing, and how to solve a problem with it. | Ask about a page, a run, a repository or a message that you see here. |
+| It cannot see enough | Ask Foundry cannot see enough to answer this, so it does not guess. | Open the run, the repository or the session you mean; its own page shows its state. |
+| You ask it to write or improve a story | Writing and improving stories is the work of Refinement, with the architect. Ask Foundry does not do it a second time. | Open Refinement and start a session, or go on with one. |
+| You ask what happens next with a run or an issue | What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask Foundry does not give a second answer that could differ. | Open the run under My runs: its page says what happens next. |
+| You ask about a finding of the monitor | What the monitor of the Foundry found is for the administrators. Ask Foundry does not show it to you. | Ask an administrator of this Foundry. |
+| You ask it to start a session or publish an issue | Ask Foundry does not start a Refinement session and does not publish an issue. **Continue on another page** only opens the New session form with the text filled in. | Check the form, then press **Start session** yourself. Nothing is saved before that. |
 
 For an administrator some of these sentences differ: they point to Home, Problems or Settings instead of to an administrator.
 
@@ -9550,7 +9550,7 @@ These sentences are the server's fixed words, so they still use some older page 
 ### Conversations
 
 A question and its reply are kept in a **conversation**, so you can go on where you stopped. The
-Ask SCF drawer shows the conversation you are in and, under **History**, your earlier ones. The
+Ask Foundry drawer shows the conversation you are in and, under **History**, your earlier ones. The
 command line (`scf ask`) has them too.
 
 **What is kept.** Each conversation has a title (the first line of your first question), a state,
@@ -9577,7 +9577,7 @@ restarted before the answer was ready. You can try again."
 
 **Who can read them.** Only you. Another account's conversation answers exactly like one that does
 not exist. An administrator has no more access than a user: no list, no text and no change of
-another account's conversations, and "View as user" shows none of them (the server answers "Ask SCF
+another account's conversations, and "View as user" shows none of them (the server answers "Ask Foundry
 conversations are not shown in a preview"). When an account is deleted, all its conversations are
 removed with it.
 
@@ -9593,7 +9593,7 @@ removed with it.
 **Where it is kept.** In `help.json` in the data folder (mode 0600), written under the lock of the
 data folder. A check is a message with the role `check`, written by the server only; a file from an
 older version has none and loads as before. It survives a restart and is copied unchanged when the data folder moves. If the file
-cannot be read (broken, or written by a newer version), the calls answer "Ask SCF is not working;
+cannot be read (broken, or written by a newer version), the calls answer "Ask Foundry is not working;
 see the server log", the file is left as it is, and an account cannot be deleted until it is
 repaired. Calls: `GET /api/help/conversations` and the calls under it in the table of chapter 7.
 
@@ -9624,7 +9624,7 @@ and nothing from the internet. No AI model is used to search.
   example `docs/USER_GUIDE.md#the-page-context (SCF 0.1.0)`. A reply can name only sections that
   were handed over for that question.
 - **When the documentation has no answer**, no section is handed over, and the reply says that
-  Ask SCF could not check it (see "Sources, and how sure it is"). It is then a guess.
+  Ask Foundry could not check it (see "Sources, and how sure it is"). It is then a guess.
 - **Your role counts.** A user gets sections of the chapters for users only (1, 2, 3, 10, 12 and
   14). The chapters about settings, models, costs, watchers and self-repair, and the flow
   reference, are for administrators.
@@ -9657,7 +9657,7 @@ Its place names the kind and id of the thing and the page to open, for example
 account is taken, also when the page context names it.
 
 **Facts, conclusions and suggestions are kept apart.** The explanation of such a reply says
-"Observed:" for what a record shows, "So:" for what Ask SCF concludes, and "You could:" for what
+"Observed:" for what a record shows, "So:" for what Ask Foundry concludes, and "You could:" for what
 it suggests.
 
 **Old or contradictory records are shown.** A record with a fact that is known to be old (a
@@ -9670,7 +9670,7 @@ A reply that rests on such a source is never shown as confirmed: at most "likely
 ### Why something does not work
 
 When you ask why a run, a repository, the queue or (as an administrator) an issue or the server
-does not work, Ask SCF does not work out a cause by itself. The server looks up what the
+does not work, Ask Foundry does not work out a cause by itself. The server looks up what the
 Foundry already says about the thing, the same explanation the run page, the queue and the
 Operations page show, and hands it over as a source named "Diagnosis of …". It has five parts:
 
@@ -9690,7 +9690,7 @@ problem. At most 2 diagnoses go with one question.
 
 - **Not recognised.** When the error is not one the Foundry can explain, the diagnosis says so
   and names the safest next step ("Ask the administrator" for a user, "Look at Details on the
-  run page" for an administrator). Ask SCF is told to repeat that and to make up no cause.
+  run page" for an administrator). Ask Foundry is told to repeat that and to make up no cause.
 - **A hypothesis.** A cause that a model wrote from the output of a step, a cause from an old
   record and a cause from records that disagree are marked "a hypothesis, not confirmed".
 - A reply that rests on a diagnosis without a confirmed cause is shown as "likely" at most.
@@ -9758,12 +9758,12 @@ you never read the text of the AI service.
 
 | What happened | What you read | Try again |
 |---|---|---|
-| The answer took longer than the time limit | The answer took too long, so Ask SCF stopped waiting. You can try again. | yes, right away |
+| The answer took longer than the time limit | The answer took too long, so Ask Foundry stopped waiting. You can try again. | yes, right away |
 | The AI service failed or could not be reached | The AI service did not answer. You can try again in a moment. | yes, right away |
 | The AI service reached its own limit | The AI service has reached its limit for now. Try again later. | later |
-| The budget for Ask SCF is used up | The limit for Ask SCF is reached for today. Try again tomorrow, or ask an administrator. | later |
-| Ask SCF cannot run here (no model that fits, or the agent is signed out) | Ask SCF is not set up to answer here. Ask an administrator of this Foundry. | later |
-| The answer did not pass the checks of the server | Ask SCF got an answer it could not use, so it shows none. You can try again. | yes, right away |
+| The budget for Ask Foundry is used up | The limit for Ask Foundry is reached for today. Try again tomorrow, or ask an administrator. | later |
+| Ask Foundry cannot run here (no model that fits, or the agent is signed out) | Ask Foundry is not set up to answer here. Ask an administrator of this Foundry. | later |
+| The answer did not pass the checks of the server | Ask Foundry got an answer it could not use, so it shows none. You can try again. | yes, right away |
 | The Foundry restarted during the answer | The Foundry restarted before the answer was ready. You can try again. | yes, right away |
 | You stopped the answer | You stopped this answer. You can ask again. | yes |
 
@@ -9771,12 +9771,12 @@ you never read the text of the AI service.
 
 | When | What you read |
 |---|---|
-| Ask SCF is switched off | Ask SCF is switched off on this Foundry. An administrator can switch it on. |
-| An administrator paused Ask SCF | Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations. |
-| You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
-| Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
-| You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
-| The server cannot check texts for secrets (its stored credentials cannot be read, or a pattern in the settings is broken) | Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry. |
+| Ask Foundry is switched off | Ask Foundry is switched off on this Foundry. An administrator can switch it on. |
+| An administrator paused Ask Foundry | Ask Foundry is paused by an administrator for now. You can still read, export and delete your conversations. |
+| You already have a question being answered | Ask Foundry is still answering another question of yours. Wait for it, or stop it first. |
+| Too many questions wait | Ask Foundry is busy with the questions of other people. Try again in a moment. |
+| You used your questions of today | You have used all your questions to Ask Foundry for today. Try again tomorrow, or ask an administrator. |
+| The server cannot check texts for secrets (its stored credentials cannot be read, or a pattern in the settings is broken) | Ask Foundry cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry. |
 
 ### Take an answer to another page
 
@@ -9801,12 +9801,12 @@ answer's repository is no longer yours, you must choose one; nothing is picked f
 **Who can read it.** A Refinement session made this way is read like any other session:
 administrators of this Foundry can read it. Its text is a copy of the answer.
 
-**The link back.** A session started from an answer shows "Started from one of your Ask SCF
+**The link back.** A session started from an answer shows "Started from one of your Ask Foundry
 conversations" and an **Open the conversation** button. The link is kept in the session and only you
 see it: administrators and "View as user" do not. No id goes into the text of the session.
 
 **If the answer changed.** When the run, the repository or a source of the answer changed or became
-unavailable between your preview and your confirm, Ask SCF asks you to look at the answer again. Nothing
+unavailable between your preview and your confirm, Ask Foundry asks you to look at the answer again. Nothing
 is recorded.
 
 ### Secrets and copied text
@@ -9839,19 +9839,19 @@ what the contract allows, so a text in a document cannot make an action, a link 
 or a source that the server did not offer.
 
 **When a check cannot be done, nothing goes out.** If the stored credentials cannot be read or a
-pattern of the settings is broken, a new question is not kept, a waiting turn ends with "Ask SCF
+pattern of the settings is broken, a new question is not kept, a waiting turn ends with "Ask Foundry
 is not set up to answer here." without a call to the model, and a reply that cannot be checked is
 not stored.
 
-### Ask SCF for administrators
+### Ask Foundry for administrators
 
-**It is off by default.** Switch it on in the Admin view under **Administration → Settings**, on the **Ask SCF** card (the card's switch is `help.enabled`; the limits are on the same card). The same settings are in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
+**It is off by default.** Switch it on in the Admin view under **Administration → Settings**, on the **Ask Foundry** card (the card's switch is `help.enabled`; the limits are on the same card). The same settings are in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
 
 ```yaml
 help:
   enabled: true
   paused: false                 # true: the emergency stop, see "Pause" below
-  actions: false                # Ask SCF may propose a resume or cancel of a person's own run (below); default false
+  actions: false                # Ask Foundry may propose a resume or cancel of a person's own run (below); default false
   audience: everyone            # or admins, or pilot: administrators and pilot_accounts
   pilot_accounts: []            # account ids that may ask in the pilot stage, besides the administrators
   model: haiku                  # a model spec; without it, default_model
@@ -9861,17 +9861,17 @@ help:
   turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
   max_cost_usd_per_turn: 0.1
   daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
-  sensitive_patterns:           # optional: texts to keep out of Ask SCF, as regular expressions
+  sensitive_patterns:           # optional: texts to keep out of Ask Foundry, as regular expressions
     - 'CUSTOMER-\d{5}'          # at most 20, each at most 200 characters; upper and lower case are the same
 ```
 
-`sensitive_patterns` adds to what Ask SCF removes anyway (see "Secrets and copied text" above). A
+`sensitive_patterns` adds to what Ask Foundry removes anyway (see "Secrets and copied text" above). A
 pattern that is not a regular expression, or that matches the empty text, is refused when the
 settings are read.
 
-**Pause (the emergency stop).** Set **Pause Ask SCF** on the Ask SCF card (`help.paused: true`) to stop
-new work at once, without switching Ask SCF off. Nobody can ask a question, try again or check a page
-context: each gets 503 with the sentence "Ask SCF is paused by an administrator for now." A question
+**Pause (the emergency stop).** Set **Pause Ask Foundry** on the Ask Foundry card (`help.paused: true`) to stop
+new work at once, without switching Ask Foundry off. Nobody can ask a question, try again or check a page
+context: each gets 503 with the sentence "Ask Foundry is paused by an administrator for now." A question
 that already waits in the queue fails as "not set up" without a call to the model, and an answer that
 is being written is finished. Reading, exporting, deleting, archiving, restoring and closing
 conversations, and rating answers, keep working, and the button stays in the top bar. Use it when an
@@ -9887,7 +9887,7 @@ The two money limits are not applied with `cost_limits: false` or for a model wi
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
 in the daily budget of runs.
 
-**Proposed actions (`help.actions`).** Off by default. On, Ask SCF may propose to **resume** or **cancel** a run, but only one of
+**Proposed actions (`help.actions`).** Off by default. On, Ask Foundry may propose to **resume** or **cancel** a run, but only one of
 your own runs, for administrators and users alike: an administrator gets no exception for another
 account's run. The proposal shows a fixed text of what would happen, written by the server, and it is
 kept only when the run is current and the evidence agrees (a run that is out of date, or that the
@@ -9895,10 +9895,10 @@ Foundry's own pages disagree about, is not offered). A proposal changes nothing.
 this key in `config.yaml`, so take it out before you go back.
 
 **Approved actions.** With `help.actions` on, a proposed resume or cancel can be carried out through the
-API (the rows of Ask SCF in the permissions table in section 7). The server first makes a preview: the
+API (the rows of Ask Foundry in the permissions table in section 7). The server first makes a preview: the
 action, the run, what is now, what would change, the effect and whether it can be undone, and who may do
 it. It gives a confirmation that works once, for 5 minutes. Confirming checks again, at that moment: that
-Ask SCF, the action and your account are still allowed, that the run has not changed since the preview,
+Ask Foundry, the action and your account are still allowed, that the run has not changed since the preview,
 that the action still fits the run, and the rule of the same button on the run's page (your own runs
 only, for administrators too). A confirmation that is used, expired or does not fit, or a run that
 changed, is refused and nothing happens. Only then is the action carried out, and the server reads the
@@ -9941,10 +9941,10 @@ no permissions, none of your personal setup and no GitHub token, in an empty tem
 is removed when the turn ends (its log with it). So it has no shell, cannot write to a repository,
 cannot read a credential and cannot fetch anything. Whatever the answer says, the server keeps only
 what the contract allows: text, fixed pages, and no action. For this reason only a **Claude Code**
-model can answer; with a Codex model every turn ends with "Ask SCF is not set up to answer here."
+model can answer; with a Codex model every turn ends with "Ask Foundry is not set up to answer here."
 A model on a local provider that Claude Code can reach (for example `ollama:<model>`) works.
 
-**Provider and usage.** `GET /api/help/usage` (`scf ask usage`) shows whether Ask SCF is on, which
+**Provider and usage.** `GET /api/help/usage` (`scf ask usage`) shows whether Ask Foundry is on, which
 provider and model answer (or why none can), the rollout stage, the limits, how many turns run and wait, per
 account and day the turns, failures, cost and tokens, and the quality numbers (see "Ratings and quality
 numbers" below). It holds no question and no answer. Users
@@ -9956,9 +9956,9 @@ conversations. The server log gets one line in fixed words for a failed turn, fo
 says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
 value.
 
-### Rolling out Ask SCF
+### Rolling out Ask Foundry
 
-Turn Ask SCF on in steps. Go to the next step only when the checks of the step before are done and their
+Turn Ask Foundry on in steps. Go to the next step only when the checks of the step before are done and their
 evidence is kept with your change record. `scf ask usage` shows the stage you are in (`stage`: off, paused,
 admins, pilot or everyone).
 
@@ -9978,12 +9978,12 @@ Before you move to the next stage, have evidence for each of these:
    one account of the stage and one that is not in it. `scf api routes help` shows who may call each route.
 3. **Accessibility.** Use the drawer with the keyboard alone (open it, ask, rate, close with Escape), and
    once with a screen reader. **Accessibility** in the account menu states what is checked and the known limits.
-4. **Recovery.** Pause Ask SCF (`paused: true`). Check that a question gets the paused sentence and that
+4. **Recovery.** Pause Ask Foundry (`paused: true`). Check that a question gets the paused sentence and that
    your conversations can still be read, exported and deleted. Take the pause off and check that a new
    question works without a reload. Restart the server during an answer and check that the answer is
    marked as interrupted, and that the conversations are still there.
 
-**If something goes wrong,** pause Ask SCF first, then find the cause. A 503 with any other sentence
+**If something goes wrong,** pause Ask Foundry first, then find the cause. A 503 with any other sentence
 (switched off, or the secret check failed) is not a pause; only the paused sentence pauses the drawer.
 Switching it off with `enabled: false` also stops new questions, but it hides the button, so users cannot
 read their history until you switch it on again.
@@ -9994,7 +9994,7 @@ conversations you want to keep, delete the rated ones, and take those keys out o
 
 ### Who may ask, what is kept, and what is logged
 
-**Who may ask.** When Ask SCF is on, these settings of `help` decide (on the Ask SCF card, except
+**Who may ask.** When Ask Foundry is on, these settings of `help` decide (on the Ask Foundry card, except
 `disabled_accounts` and `pilot_accounts`, which are only in `config.yaml`), and the account is read again at every question:
 
 | Setting | Default | Meaning |
@@ -10006,7 +10006,7 @@ conversations you want to keep, delete the rated ones, and take those keys out o
 | `keep_days` | 90 | days an untouched conversation is kept |
 
 An account that may not ask gets 403 and reads:
-"Ask SCF is not switched on for your account. Ask an administrator of this Foundry." An account that used its questions of the day, or whose
+"Ask Foundry is not switched on for your account. Ask an administrator of this Foundry." An account that used its questions of the day, or whose
 help turns of today cost as much as its own daily budget (**Users**, limits; not with
 `cost_limits: false`), reads the limit sentence (429). In both cases nothing is stored and no
 AI provider is called. An account that may not ask can still read, export and delete its

@@ -59,6 +59,6 @@ In **Hand off**, press **Publish**. A window lists the issues in the order they 
 ## Next steps
 
 - [Hand the Foundry a whole epic](/how-to/split-epic/)
-- [Ask SCF for help in the app](/how-to/ask-scf/)
+- [Ask Foundry for help in the app](/how-to/ask-scf/)
 - [Refinement in the user guide](/guide/#12-ideas-refinement)
 - [Ideas in short](/guide/#ideas-in-short)

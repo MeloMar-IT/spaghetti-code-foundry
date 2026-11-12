@@ -54,7 +54,7 @@ describe("previewOf", () => {
       { label: "Title", text: "Why does it wait?" },
       { label: "Text", text: "Question:\nWhy?" },
       { label: "Repository (chosen in the form; you can change it)", text: "acme/app" },
-      { label: "Link back (saved in the session; only you can see it)", text: "This Ask SCF conversation: My conversation" },
+      { label: "Link back (saved in the session; only you can see it)", text: "This Ask Foundry conversation: My conversation" },
     ]);
     expect(p.note).toContain("Start session");
     expect(p.note).toContain("Administrators");

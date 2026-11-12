@@ -1,7 +1,7 @@
 import { resolve, splitHash } from "./ia.js";
 import { ASK, HELP, WORDS, plainWords, safeText } from "./simple-words.js";
 
-// Ask SCF, the help drawer: what it decides, without a page. Pure functions only (no document, no fetch, no timer),
+// Ask Foundry, the help drawer: what it decides, without a page. Pure functions only (no document, no fetch, no timer),
 // so every rule here is tested as it is. The drawer itself is ui/ask.js, its nodes are ui/ask-view.js.
 
 /** The most characters the ask route takes in one question (QUESTION_MAX in src/help/store.ts). */
@@ -34,7 +34,7 @@ export function contextFor(where, attach) {
   return { context: { page: where.page }, text: `Sent with your question: the page you are on (${where.title}, ${where.page}). Nothing else of the page is sent.` };
 }
 
-const GENERAL = ["What can Ask SCF help me with?", "Where do I start work on a change?"];
+const GENERAL = ["What can Ask Foundry help me with?", "Where do I start work on a change?"];
 const BY_PAGE = {
   home: ["What does Home show me?", "What should I look at first?"],
   runs: ["What do the statuses of a run mean?", "Why can a run wait?"],
@@ -68,10 +68,10 @@ export function isWaiting(conversation) {
   return !!last && last.role === "assistant" && last.status === "pending";
 }
 
-/** The sentence of the server for a paused Ask SCF (REFUSAL_WORDS.paused in src/help/turn.ts; a test keeps them equal). */
-export const PAUSED_WORDS = "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.";
+/** The sentence of the server for a paused Ask Foundry (REFUSAL_WORDS.paused in src/help/turn.ts; a test keeps them equal). */
+export const PAUSED_WORDS = "Ask Foundry is paused by an administrator for now. You can still read, export and delete your conversations.";
 
-/** True when an error of a send or a retry is the answer of a paused Ask SCF, and not another 503 (switched off, secret check). */
+/** True when an error of a send or a retry is the answer of a paused Ask Foundry, and not another 503 (switched off, secret check). */
 export const isPausedError = (e) => Number(e?.status) === 503 && String(e?.message ?? "").trim() === PAUSED_WORDS;
 
 /**
@@ -82,7 +82,7 @@ export const isPausedError = (e) => Number(e?.status) === 503 && String(e?.messa
 export function sendPlan({ draft, busy = false, conversation = null, where = null, attach = true, paused = false } = {}) {
   if (paused) return { ok: false, reason: PAUSED_WORDS };
   if (busy) return { ok: false, reason: "Your question is being sent." };
-  if (isWaiting(conversation)) return { ok: false, reason: "Ask SCF is still answering. Wait for the answer first." };
+  if (isWaiting(conversation)) return { ok: false, reason: "Ask Foundry is still answering. Wait for the answer first." };
   const question = String(draft ?? "").replace(/\r\n/g, "\n").trim();
   if (!question) return { ok: false, reason: "Type your question first." };
   if (question.length > QUESTION_MAX) return { ok: false, reason: `A question can have at most ${QUESTION_MAX} characters. Yours has ${question.length}.` };
@@ -107,7 +107,7 @@ export const SLOW_AFTER_MS = 20_000;
 /** What the drawer says while a reply is written, by how long it has waited (ms). */
 export function waitNote(elapsedMs = 0) {
   const slow = Number(elapsedMs) >= SLOW_AFTER_MS;
-  return { slow, text: slow ? "Ask SCF is still working. This takes longer than usual. You can wait, or stop the answer." : "Ask SCF is working on your answer." };
+  return { slow, text: slow ? "Ask Foundry is still working. This takes longer than usual. You can wait, or stop the answer." : "Ask Foundry is working on your answer." };
 }
 
 /** The line under a reply that was started more than once; "" for the first try. The earlier tries stay counted. */
@@ -128,16 +128,16 @@ export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () =
   if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
   if (message?.role === "check") return { id: message.id, kind: "check", who: "Check", text: simple ? "" : text, note: "", check: checkLayout(message.check, message.at, { simple }) };
   const note = triesNote(message);
-  if (message?.status === "pending") return { id: message?.id, kind: "waiting", who: "Ask SCF", text: waitNote(elapsedMs).text, note };
-  if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: plain(text, ASK.noAnswer), note };
-  if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: simple && text ? plainWords(text, "You stopped this answer.") : text || "You stopped this answer.", note };
+  if (message?.status === "pending") return { id: message?.id, kind: "waiting", who: "Ask Foundry", text: waitNote(elapsedMs).text, note };
+  if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask Foundry", text: plain(text, ASK.noAnswer), note };
+  if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask Foundry", text: simple && text ? plainWords(text, "You stopped this answer.") : text || "You stopped this answer.", note };
   // a reply with its checked parts is laid out by them; the text is what is left when there are none
   const layout = replyLayout(message?.reply, role, planDone(message?.id), { simple });
   // stored action outcomes use words of the Advanced view: the Simple view does not show them
   if (layout) layout.outcomes = simple ? [] : outcomesFor(message, outcomes(message?.id));
   const vote = message?.feedback?.vote === "helpful" || message?.feedback?.vote === "not-helpful" ? message.feedback.vote : null;
   const reasons = vote === "not-helpful" ? list(message.feedback.reasons).filter((r) => r in REASON_WORDS) : [];
-  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : simple && text ? plainWords(text, ASK.noPlainAnswer) : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
+  return { id: message?.id, kind: "answer", who: "Ask Foundry", text: layout ? "" : simple && text ? plainWords(text, ASK.noPlainAnswer) : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
 }
 
 // ---- rating an answer -------------------------------------------------------------------------------
@@ -180,8 +180,8 @@ export function announce(before, after) {
   const now = lastOf(after);
   if (!now || now.role !== "assistant") return "";
   if (was && was.id === now.id && was.status === now.status && was.tries === now.tries) return "";
-  if (now.status === "pending") return "Ask SCF is working on your answer.";
-  if (now.status === "done") return "Ask SCF answered. The answer is below your question.";
+  if (now.status === "pending") return "Ask Foundry is working on your answer.";
+  if (now.status === "done") return "Ask Foundry answered. The answer is below your question.";
   return entryOf(now).text;
 }
 
@@ -193,7 +193,7 @@ export function explainAskError(e) {
   if (status === 404 || status === 410) return "This conversation is gone. Ask your question in a new one.";
   const text = String(e?.message ?? "").trim();
   if ([400, 409, 429, 503].includes(status) && text) return /[.!?]$/.test(text) ? text[0].toUpperCase() + text.slice(1) : `${text[0].toUpperCase()}${text.slice(1)}.`;
-  return "Ask SCF is not working now. Try again later.";
+  return "Ask Foundry is not working now. Try again later.";
 }
 
 /** Where Tab goes in the open drawer is `trapTarget` of ui/dom.js; this says which key closes it and when. */
@@ -217,7 +217,7 @@ export function controlsFor(conversation, { busy = false, paused = false } = {})
   const ended = !archived && !!last && last.role === "assistant" && ((last.status === "failed" && last.failure?.retry !== false) || last.status === "cancelled");
   return {
     stop: waiting && !busy,
-    // a paused Ask SCF starts no turn, so there is nothing to try again
+    // a paused Ask Foundry starts no turn, so there is nothing to try again
     retry: ended && !busy && !paused,
     // the server archives no conversation whose reply is still being written
     archive: !archived && !waiting && !busy,
@@ -286,7 +286,7 @@ export function staleGuard() {
 export const CERTAINTY_WORDS = {
   confirmed: "This rests on the sources listed below.",
   likely: "This is likely, but the sources below do not fully confirm it.",
-  unverified: "Ask SCF could not check this against the documentation or the current state. Treat it as a guess.",
+  unverified: "Ask Foundry could not check this against the documentation or the current state. Treat it as a guess.",
 };
 
 /** The kind of source each kind of question needs (QUESTION_RULES in src/help/contract.ts). */
@@ -340,17 +340,17 @@ const TRUST = {
 /**
  * How far a reply can be trusted, as one of five states that look different: confirmed, low (likely, or unsure with
  * sources), missing (no source of the kind the question needs), conflict (two sources differ about one place) and
- * limit (a request Ask SCF does not serve). The sentence is a fixed one; a model never writes it.
+ * limit (a request Ask Foundry does not serve). The sentence is a fixed one; a model never writes it.
  */
 export function trustOf(reply, sources) {
   const make = (state, text) => ({ state, ...TRUST[state], text });
-  if (reply?.limit) return make("limit", "Ask SCF does not do this. What you can do instead is below.");
+  if (reply?.limit) return make("limit", "Ask Foundry does not do this. What you can do instead is below.");
   if (sourcesDisagree(sources)) return make("conflict", "Two sources below say different things about the same place. Open them and look yourself before you act.");
   const fits = sources.some((s) => s.kind === (NEEDS[reply?.type] ?? "doc"));
   if (!fits) return make("missing", reply?.type && NEEDS[reply.type] === "state" ? `No source shows the current state of your work. ${CERTAINTY_WORDS.unverified}` : CERTAINTY_WORDS.unverified);
   if (reply?.certainty === "confirmed") return make("confirmed", CERTAINTY_WORDS.confirmed);
   if (reply?.certainty === "likely") return make("low", CERTAINTY_WORDS.likely);
-  return make("low", "Ask SCF has the sources below but is not sure of this. Treat it as a guess.");
+  return make("low", "Ask Foundry has the sources below but is not sure of this. Treat it as a guess.");
 }
 
 /** What a reply takes for granted, in fixed sentences made from its sources and its state. */
@@ -362,7 +362,7 @@ export function assumptionsOf(reply, sources, trust) {
   if (trust.state === "missing") out.push("Nothing was checked against the documentation or the current state.");
   if (trust.state === "low") out.push("The sources do not fully confirm the answer.");
   if (trust.state === "conflict") out.push("The answer may rest on the wrong one of two sources.");
-  out.push("Ask SCF sees only what your own account can see.");
+  out.push("Ask Foundry sees only what your own account can see.");
   return out;
 }
 
@@ -387,7 +387,7 @@ export function cardsOf(reply, role) {
     if (!str(a?.title)) return;
     const bound = !reply?.limit && Object.hasOwn(ACTION_TITLES, a.id) && a.about?.kind === "run" && str(a.about.id);
     cards.push({ kind: "action", effect: "changes-state", title: `Suggested change: ${str(a.title)}`, text: str(a.impact),
-      ...(bound ? { act: index, note: ACT_NOTE } : { note: "Ask SCF does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." }) });
+      ...(bound ? { act: index, note: ACT_NOTE } : { note: "Ask Foundry does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." }) });
   });
   return cards;
 }
@@ -513,8 +513,8 @@ export const STEP_WORDS = {
   "high-impact": "High-impact change",
 };
 
-/** The one sentence under a step the person marked: Ask SCF never checks the result of a step. */
-export const stepNote = (done) => (done ? "You marked this. Ask SCF has not checked the result." : "");
+/** The one sentence under a step the person marked: Ask Foundry never checks the result of a step. */
+export const stepNote = (done) => (done ? "You marked this. Ask Foundry has not checked the result." : "");
 
 /** Where this tab keeps which steps of a reply were marked. Only indices, never a text. */
 export const planKey = (messageId) => `scf-ask-plan-${String(messageId ?? "").replace(/[^A-Za-z0-9-]/g, "")}`;

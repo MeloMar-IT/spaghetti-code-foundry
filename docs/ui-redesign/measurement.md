@@ -33,7 +33,7 @@ All 39 files in `docs/images/`, one per entry of `SHOTS` in `scripts/screenshots
 
 | File | Route shown | Used in | Status |
 |---|---|---|---|
-| `ask.png` | Ask SCF drawer, opened from Ask Foundry (user display) | `docs/USER_GUIDE.md` | captured from the redesign |
+| `ask.png` | Ask Foundry drawer, opened from Ask Foundry (user display) | `docs/USER_GUIDE.md` | captured from the redesign |
 | `audit.png` | `#/audit` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `autonomy.png` | `#/autonomy` | `docs/USER_GUIDE.md` | captured from the redesign |
 | `board.png` | `#/board` | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
@@ -190,11 +190,11 @@ The eight essential journeys of `tests/browser/essential.spec.ts`, run in Chromi
 | 7 Repositories | pass | pass | pass | pass |
 | 8 Sign out | pass | pass | pass | pass |
 
-The Ask SCF drawer is not built on the seeded servers: it is switched off there, so the spec only checks that `#ask-scf` stays hidden and empty.
+The Ask Foundry drawer is not built on the seeded servers: it is switched off there, so the spec only checks that `#ask-scf` stays hidden and empty.
 
 ### Stress content at 360 px
 
-The seven items of `tests/browser/stress.spec.ts`, run in Chromium at 360 px as a touch device. The journeys above cover 360, 768, 1024 and 1440 px; these items go further at 360 px only. Filled from a real run. The Ask SCF drawer is not built, so it is not part of this table.
+The seven items of `tests/browser/stress.spec.ts`, run in Chromium at 360 px as a touch device. The journeys above cover 360, 768, 1024 and 1440 px; these items go further at 360 px only. Filled from a real run. The Ask Foundry drawer is not built, so it is not part of this table.
 
 | Content | Result |
 |---|---|

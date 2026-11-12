@@ -4,9 +4,9 @@ import { SIMPLE_DROPPED, simplePage, type SimpleProject } from "./simple.js";
 import { PLAN_MAX, PlanStepSchema, STEP_KINDS, STEP_RULES, checkPlan, claimsResult, type Impact } from "./plan.js";
 
 /**
- * The contract of Ask SCF, the help assistant inside the product: what it answers, what a reply may hold, what
+ * The contract of Ask Foundry, the help assistant inside the product: what it answers, what a reply may hold, what
  * evidence a claim needs, how it says that it is not sure, and what it never does. Pure data and pure functions:
- * no model, no storage, no routes. Every later part of Ask SCF goes through `checkReply`, so a model's text can
+ * no model, no storage, no routes. Every later part of Ask Foundry goes through `checkReply`, so a model's text can
  * never widen what a reply holds.
  */
 
@@ -40,7 +40,7 @@ export type PartKind = (typeof PART_KINDS)[number];
  * are text and links, and nothing happens until the person does it.
  */
 export const PART_RULES: Record<PartKind, { what: string; changesState: boolean; needsConfirmation: boolean }> = {
-  answer: { what: "What is true, as far as Ask SCF can see. Nothing happens.", changesState: false, needsConfirmation: false },
+  answer: { what: "What is true, as far as Ask Foundry can see. Nothing happens.", changesState: false, needsConfirmation: false },
   recommendation: { what: "What you could do. You decide and you do it; nothing happens by itself.", changesState: false, needsConfirmation: false },
   navigation: { what: "A link to a page of the Foundry that you may open. Opening it is your click.", changesState: false, needsConfirmation: false },
   plan: { what: "Ordered steps to solve a problem. Nothing happens until you do a step yourself.", changesState: false, needsConfirmation: false },
@@ -48,7 +48,7 @@ export const PART_RULES: Record<PartKind, { what: string; changesState: boolean;
   action: { what: "A change to the Foundry or to GitHub. Never done without your explicit approval.", changesState: true, needsConfirmation: true },
 };
 
-/** Ask SCF reads and explains unless every rule for an action below is met. */
+/** Ask Foundry reads and explains unless every rule for an action below is met. */
 export const READ_ONLY_BY_DEFAULT = true;
 
 /** What must all hold before an action may run. A proposal that misses one is dropped by the server. */
@@ -73,12 +73,12 @@ export interface ActionDef {
 }
 
 /**
- * The actions Ask SCF may propose: only the asker's own runs, an admin gets no exception (`liveEvidence` enforces
+ * The actions Ask Foundry may propose: only the asker's own runs, an admin gets no exception (`liveEvidence` enforces
  * this). Nothing is carried out here; the effect texts say what would happen, never what happened.
  */
 export const ACTIONS: readonly ActionDef[] = [
   { id: "resume-run", title: "Resume the run", roles: AU, impact: "reversible", undoable: true, effect: "The run goes on from the step where it stopped. It can be stopped again later." },
-  { id: "cancel-run", title: "Cancel the run", roles: AU, impact: "high", undoable: false, effect: "The run stops and is marked as cancelled. Ask SCF cannot undo this." },
+  { id: "cancel-run", title: "Cancel the run", roles: AU, impact: "high", undoable: false, effect: "The run stops and is marked as cancelled. Ask Foundry cannot undo this." },
 ];
 
 export const ABOUT_KINDS = ["run"] as const;
@@ -169,7 +169,7 @@ export type Certainty = (typeof CERTAINTY)[number];
 export const CERTAINTY_WORDS: Record<Certainty, string> = {
   confirmed: "This rests on the sources listed below.",
   likely: "This is likely, but the sources below do not fully confirm it.",
-  unverified: "Ask SCF could not check this against the documentation or the current state. Treat it as a guess.",
+  unverified: "Ask Foundry could not check this against the documentation or the current state. Treat it as a guess.",
 };
 
 /**
@@ -188,7 +188,7 @@ export type LimitCode = (typeof LIMIT_CODES)[number];
 
 export interface Limitation {
   code: LimitCode;
-  /** What Ask SCF does not do, in one or two plain sentences. */
+  /** What Ask Foundry does not do, in one or two plain sentences. */
   limitation: string;
   /** The safest useful thing the person can do instead. */
   nextStep: string;
@@ -199,55 +199,55 @@ export interface Limitation {
 const ASK_ADMIN = "Ask an administrator of this Foundry.";
 const LIMITS: Record<LimitCode, (role: HelpRole) => Omit<Limitation, "code">> = {
   "changes-state": () => ({
-    limitation: "Ask SCF reads and explains. It does not start, stop, change, delete or send anything.",
-    nextStep: "Do it yourself on the page where it belongs. Ask where that page is, or what the button does, and Ask SCF will tell you.",
+    limitation: "Ask Foundry reads and explains. It does not start, stop, change, delete or send anything.",
+    nextStep: "Do it yourself on the page where it belongs. Ask where that page is, or what the button does, and Ask Foundry will tell you.",
   }),
   "other-account": () => ({
-    limitation: "Ask SCF sees only what your own account can see. It does not look at the work, the repositories or the conversations of another account.",
+    limitation: "Ask Foundry sees only what your own account can see. It does not look at the work, the repositories or the conversations of another account.",
     nextStep: "Ask the owner of that work.",
   }),
   "admin-only": (role) =>
     role === "admin"
-      ? { limitation: "Ask SCF does not read or change the settings, the accounts or the costs for you.", nextStep: "Open Settings.", to: "#/settings" }
-      : { limitation: "That belongs to the administrators: models, costs, accounts and the settings of the server. Ask SCF does not show it to you.", nextStep: ASK_ADMIN },
+      ? { limitation: "Ask Foundry does not read or change the settings, the accounts or the costs for you.", nextStep: "Open Settings.", to: "#/settings" }
+      : { limitation: "That belongs to the administrators: models, costs, accounts and the settings of the server. Ask Foundry does not show it to you.", nextStep: ASK_ADMIN },
   secret: () => ({
-    limitation: "Ask SCF never shows a password, a token or a key, and it never needs one from you.",
+    limitation: "Ask Foundry never shows a password, a token or a key, and it never needs one from you.",
     nextStep: "Do not type a secret into a question. Sign-ins of repositories are managed under My repositories.",
     to: "#/repos",
   }),
   "not-scf": () => ({
-    limitation: "Ask SCF answers questions about Spaghetti Code Foundry only: how it works, what your work is doing, and how to solve a problem with it.",
+    limitation: "Ask Foundry answers questions about Spaghetti Code Foundry only: how it works, what your work is doing, and how to solve a problem with it.",
     nextStep: "Ask about a page, a run, a repository or a message that you see here.",
   }),
   "no-evidence": () => ({
-    limitation: "Ask SCF cannot see enough to answer this, so it does not guess.",
+    limitation: "Ask Foundry cannot see enough to answer this, so it does not guess.",
     nextStep: "Open the run, the repository or the session you mean; its own page shows its state.",
     to: "#/runs",
   }),
   refinement: () => ({
-    limitation: "Writing and improving stories is the work of Refinement, with the architect. Ask SCF does not do it a second time.",
+    limitation: "Writing and improving stories is the work of Refinement, with the architect. Ask Foundry does not do it a second time.",
     nextStep: "Open Refinement and start a session, or go on with one.",
     to: "#/refinement",
   }),
   "next-step": (role) => ({
-    limitation: "What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask SCF does not give a second answer that could differ.",
+    limitation: "What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask Foundry does not give a second answer that could differ.",
     nextStep: role === "admin" ? "Open Home: Your turn and every run say what happens next." : "Open the run under My runs: its page says what happens next.",
     to: role === "admin" ? "#/home" : "#/runs",
   }),
   "monitor-finding": (role) =>
     role === "admin"
-      ? { limitation: "What the monitor found is handled on the Problems page. Ask SCF does not judge, mute or change a finding.", nextStep: "Open Problems.", to: "#/problems" }
-      : { limitation: "What the monitor of the Foundry found is for the administrators. Ask SCF does not show it to you.", nextStep: ASK_ADMIN },
+      ? { limitation: "What the monitor found is handled on the Problems page. Ask Foundry does not judge, mute or change a finding.", nextStep: "Open Problems.", to: "#/problems" }
+      : { limitation: "What the monitor of the Foundry found is for the administrators. Ask Foundry does not show it to you.", nextStep: ASK_ADMIN },
 };
 
-/** The fixed limitation and the safest next step for a request Ask SCF does not serve, in the words for the role. */
+/** The fixed limitation and the safest next step for a request Ask Foundry does not serve, in the words for the role. */
 export function limitationFor(code: LimitCode, role: HelpRole): Limitation {
   const l = LIMITS[code](role);
   // a page the role does not have is never offered
   return { code, limitation: l.limitation, nextStep: l.nextStep, ...(l.to !== undefined && navPage(role, l.to) ? { to: l.to } : {}) };
 }
 
-/** Work that has its own place in the Foundry. Ask SCF sends people there instead of doing it again. */
+/** Work that has its own place in the Foundry. Ask Foundry sends people there instead of doing it again. */
 export const HANDOFFS: Record<"refinement" | "next-step" | "monitor-finding", string> = {
   refinement: "Backlog refinement: Refinement, with the architect.",
   "next-step": "The authoritative next step of a run or an issue: the Foundry's own \"what happens next\".",

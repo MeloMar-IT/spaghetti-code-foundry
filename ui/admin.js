@@ -148,7 +148,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
   };
   const extra = describedSections(c, described, { section, readOnly });
-  const askScf = generatedSection("Ask SCF", "help.", c, described, { section, readOnly });
+  const askScf = generatedSection("Ask Foundry", "help.", c, described, { section, readOnly });
   const simpleCard = generatedSection("Simple view", "simple.", c, described, { section, readOnly });
   const deliveryCard = generatedSection("Delivery", "delivery.", c, described, { section, readOnly });
   const policyCard = generatedSection("Policy", "policy.", c, described, { section, readOnly });

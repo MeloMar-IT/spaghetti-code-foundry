@@ -12,7 +12,7 @@ import { SECRET_CATEGORIES, type SecretCategory } from "./guard.js";
 export { CONTEXT_KINDS, type PageContext };
 
 /**
- * The stored conversations of Ask SCF: `help.json` in the data folder, written under the lock of the data folder
+ * The stored conversations of Ask Foundry: `help.json` in the data folder, written under the lock of the data folder
  * through a temporary file and a rename. Every conversation belongs to one account, and every call that reads or
  * changes one takes that account: a conversation of another account is the same as one that does not exist.
  */
@@ -69,12 +69,12 @@ export type FailureCode = (typeof FAILURE_CODES)[number];
 
 /** What a person reads for a failed turn. Fixed sentences: never the text of a provider or of the server. */
 export const FAILURE_WORDS: Record<FailureCode, string> = {
-  timeout: "The answer took too long, so Ask SCF stopped waiting. You can try again.",
+  timeout: "The answer took too long, so Ask Foundry stopped waiting. You can try again.",
   provider: "The AI service did not answer. You can try again in a moment.",
   quota: "The AI service has reached its limit for now. Try again later.",
-  limit: "The limit for Ask SCF is reached for today. Try again tomorrow, or ask an administrator.",
-  setup: "Ask SCF is not set up to answer here. Ask an administrator of this Foundry.",
-  "bad-answer": "Ask SCF got an answer it could not use, so it shows none. You can try again.",
+  limit: "The limit for Ask Foundry is reached for today. Try again tomorrow, or ask an administrator.",
+  setup: "Ask Foundry is not set up to answer here. Ask an administrator of this Foundry.",
+  "bad-answer": "Ask Foundry got an answer it could not use, so it shows none. You can try again.",
   interrupted: "The Foundry restarted before the answer was ready. You can try again.",
 };
 export const CANCELLED_WORDS = "You stopped this answer. You can ask again.";
@@ -393,7 +393,7 @@ export function addQuestion(owner: string, input: NewQuestion, opts: StoreOption
     });
   }
   return change(owner, input.conversation, opts, (c, at) => {
-    if (pendingOf(c)) throw new HelpError("busy", "Ask SCF is still answering your last question in this conversation; wait for it or stop it");
+    if (pendingOf(c)) throw new HelpError("busy", "Ask Foundry is still answering your last question in this conversation; wait for it or stop it");
     if (c.state === "completed" || c.state === "archived") throw new HelpError("bad-state", `a conversation that is ${c.state} takes no new question`);
     if (c.messages.length + 2 > MESSAGE_LIMIT) throw new HelpError("limit", `a conversation can have at most ${MESSAGE_LIMIT} messages; start a new one`);
     const [q, a] = messages(at);
@@ -408,7 +408,7 @@ export function addQuestion(owner: string, input: NewQuestion, opts: StoreOption
  */
 export function retryTurn(owner: string, id: string, opts: StoreOptions = {}): Turn {
   return change(owner, id, opts, (c, at) => {
-    if (pendingOf(c)) throw new HelpError("busy", "Ask SCF is already answering this question");
+    if (pendingOf(c)) throw new HelpError("busy", "Ask Foundry is already answering this question");
     const last = c.messages[c.messages.length - 1];
     const question = c.messages[c.messages.length - 2];
     if ((c.state !== "failed" && c.state !== "cancelled") || !last || !question || last.role !== "assistant" || (last.status !== "failed" && last.status !== "cancelled")) {
@@ -538,7 +538,7 @@ export function cancelTurn(owner: string, id: string, opts: StoreOptions = {}): 
 }
 
 const notWhilePending = (c: Conversation) => {
-  if (pendingOf(c)) throw new HelpError("busy", "Ask SCF is still answering in this conversation; wait for it or stop it first");
+  if (pendingOf(c)) throw new HelpError("busy", "Ask Foundry is still answering in this conversation; wait for it or stop it first");
 };
 
 /** The owner closes a conversation: it stays readable and takes no new question. */

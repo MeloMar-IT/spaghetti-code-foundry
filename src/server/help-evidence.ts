@@ -18,7 +18,7 @@ import type { ApiContext } from "./server.js";
 import { turnFor } from "./your-turn.js";
 
 /**
- * The live evidence of Ask SCF: what the server knows now about the work a question is about, as sources a reply may
+ * The live evidence of Ask Foundry: what the server knows now about the work a question is about, as sources a reply may
  * cite. Nothing is computed here. Every fact comes from a snapshot of the help context service, which reads through
  * the permission table and the readers of the API (the run with its next-step record, the queue, the repository's
  * connection check, the board, the monitor's findings, the health). This module only chooses which snapshots to

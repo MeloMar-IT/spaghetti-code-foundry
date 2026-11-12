@@ -116,7 +116,7 @@ const SessionSchema = z
     repo: z.string().refine(validSessionRepo),
     title: z.string().min(1).max(SESSION_TITLE_MAX),
     idea: z.string().min(1).max(IDEA_MAX),
-    /** The Ask SCF conversation (of the owner) this session was started from. Shown to the owner only. */
+    /** The Ask Foundry conversation (of the owner) this session was started from. Shown to the owner only. */
     fromHelp: z.uuid().optional(),
     source: SourceSchema.optional(),
     state: z.enum(STATES),
@@ -230,7 +230,7 @@ export interface NewSession {
   repo: unknown;
   idea: unknown;
   title?: unknown;
-  /** The id of the owner's Ask SCF conversation the session was started from (checked by the caller). */
+  /** The id of the owner's Ask Foundry conversation the session was started from (checked by the caller). */
   fromHelp?: string;
   /** The session is a change request of the Simple view. */
   changeRequest?: true;

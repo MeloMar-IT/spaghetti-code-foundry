@@ -186,7 +186,7 @@ describe("the server and the file", () => {
       for (const who of [ann, admin]) {
         const r = await call(who, "GET", "/api/help/conversations");
         expect(r.status).toBe(500);
-        expect(r.error()).toBe("Ask SCF is not working; see the server log");
+        expect(r.error()).toBe("Ask Foundry is not working; see the server log");
       }
       expect((await call(ann, "DELETE", `/api/help/conversations/${UNKNOWN}`)).status).toBe(500);
       expect(logs.filter((l) => l.includes("help"))).toEqual(["help: help.json not-json", "help: help.json not-json", "help: help.json not-json"]);

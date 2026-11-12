@@ -363,7 +363,7 @@ describe("the documents", () => {
     expect(section).toContain("### Stress content at 360 px");
     expect(section).toContain("| Content | Result |");
     for (const w of ["360", "768", "1024", "1440"]) expect(section, w).toContain(w);
-    expect(section).toMatch(/Ask SCF drawer[^.]*not built/);
+    expect(section).toMatch(/Ask Foundry drawer[^.]*not built/);
     const failing = rows.some((r) => r.slice(1).some((c) => c.startsWith("fail")));
     expect(failing, "a fail cell exists exactly when the spec has a test.fixme").toBe(read("tests/browser/stress.spec.ts").includes("test.fixme("));
   });

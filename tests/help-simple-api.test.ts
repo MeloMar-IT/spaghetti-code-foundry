@@ -11,7 +11,7 @@ import { freePort } from "./helpers/remote.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// Ask SCF in the Simple view, through the server with the fake claude: the view of the account decides.
+// Ask Foundry in the Simple view, through the server with the fake claude: the view of the account decides.
 let base: string;
 let tmp: string;
 let saved: Record<string, string | undefined>;
@@ -81,7 +81,7 @@ const canned = () => ({
 });
 const tos = (m: any) => m.reply.links.map((l: any) => l.to);
 
-describe("Ask SCF for an account in the Simple view", () => {
+describe("Ask Foundry for an account in the Simple view", () => {
   it("reads the projects of the account only", () => {
     expect(helpProjects(ann.user.id)).toEqual([{ id: ids.annRepo, name: "app" }]);
     expect(helpProjects("00000000-0000-4000-8000-000000000000")).toEqual([]);

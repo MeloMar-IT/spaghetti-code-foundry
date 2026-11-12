@@ -38,7 +38,7 @@ import {
 import { addStats, type StatsDelta } from "./telemetry.js";
 
 /**
- * The help-turn service of Ask SCF: one question in, one checked reply out. It is its own small runner, apart from
+ * The help-turn service of Ask Foundry: one question in, one checked reply out. It is its own small runner, apart from
  * flow runs, refinement and `server/generate.ts`: a turn is one headless model call with no tools, no MCP servers and
  * no GitHub token, in an empty folder that is removed afterwards. What comes back is text; `checkReply` of the
  * contract decides what of it is kept. Turns wait in a queue, one per account at a time.
@@ -64,13 +64,13 @@ export class TurnRefused extends Error {
 }
 
 export const REFUSAL_WORDS: Record<RefusalCode, string> = {
-  off: "Ask SCF is switched off on this Foundry. An administrator can switch it on.",
-  paused: "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.",
-  "not-allowed": "Ask SCF is not switched on for your account. Ask an administrator of this Foundry.",
-  busy: "Ask SCF is still answering another question of yours. Wait for it, or stop it first.",
-  "queue-full": "Ask SCF is busy with the questions of other people. Try again in a moment.",
-  limit: "You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator.",
-  unsafe: "Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry.",
+  off: "Ask Foundry is switched off on this Foundry. An administrator can switch it on.",
+  paused: "Ask Foundry is paused by an administrator for now. You can still read, export and delete your conversations.",
+  "not-allowed": "Ask Foundry is not switched on for your account. Ask an administrator of this Foundry.",
+  busy: "Ask Foundry is still answering another question of yours. Wait for it, or stop it first.",
+  "queue-full": "Ask Foundry is busy with the questions of other people. Try again in a moment.",
+  limit: "You have used all your questions to Ask Foundry for today. Try again tomorrow, or ask an administrator.",
+  unsafe: "Ask Foundry cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry.",
 };
 
 /** Which failures a person can usefully try again right away. */
@@ -273,7 +273,7 @@ export function helpTarget(config: Config): { target: Target } | { problem: stri
   } catch (e) {
     return { problem: (e as Error).message };
   }
-  if (target.agent !== "claude") return { problem: `Ask SCF needs a Claude Code model: ${target.label} cannot run without tools` };
+  if (target.agent !== "claude") return { problem: `Ask Foundry needs a Claude Code model: ${target.label} cannot run without tools` };
   return { target };
 }
 
@@ -339,7 +339,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     ...(opts.simple ? { projects: opts.simple.projects.map(({ id, name }) => ({ id, name })) } : {}),
   };
   return [
-    "You are Ask SCF, the help assistant inside Spaghetti Code Foundry (SCF), a tool that runs flows of AI coding steps on git repositories.",
+    "You are Ask Foundry, the help assistant inside Spaghetti Code Foundry (SCF), a tool that runs flows of AI coding steps on git repositories.",
     "Answer the one question in the data below. You only read and explain: you have no tools, and you cannot start, stop, change, delete or send anything.",
     "",
     "Rules:",
@@ -432,7 +432,7 @@ export class HelpTurns {
   }
 
   /**
-   * What Ask SCF would take from a page context for this account, without asking anything: the envelope as it would
+   * What Ask Foundry would take from a page context for this account, without asking anything: the envelope as it would
    * be kept, and what the server finds for it now. Throws `HelpError` (`bad-context`) for an envelope that is refused.
    */
   describe(asker: Asker, input: unknown): { context: PageContext | null; resolved: ResolvedContext | null } {

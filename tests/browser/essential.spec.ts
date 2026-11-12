@@ -306,17 +306,17 @@ ESSENTIAL.forEach((name, i) => {
   }
 });
 
-// Not run as a drawer test: Ask SCF is switched off on the seeded servers (help.enabled is not set), so there is no drawer
+// Not run as a drawer test: Ask Foundry is switched off on the seeded servers (help.enabled is not set), so there is no drawer
 // to open. The guard below proves it is off; the drawer itself waits for the follow-up named in the annotation.
-test("Ask SCF drawer at every width", () => {
+test("Ask Foundry drawer at every width", () => {
   test.info().annotations.push({
     type: "follow-up",
-    description: 'follow-up "UI quality 1f follow-up — Ask SCF drawer at the four widths with help switched on"',
+    description: 'follow-up "UI quality 1f follow-up — Ask Foundry drawer at the four widths with help switched on"',
   });
 });
 
 for (const role of ["admin", "user"] as const) {
-  test(`Ask SCF is off: #ask-scf is hidden and empty on the ${role} display`, async ({ browser }) => {
+  test(`Ask Foundry is off: #ask-scf is hidden and empty on the ${role} display`, async ({ browser }) => {
     let waited: Promise<Response> | undefined;
     const page = await openAs(browser, role, 1440, "", {
       before: async (p) => { waited = p.waitForResponse((r) => new URL(r.url()).pathname === "/api/help/conversations"); },

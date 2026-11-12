@@ -1,7 +1,7 @@
 import { previewOf } from "./ask-handoff.js";
 import { glyph, h, modal, mount, timeAgo } from "./dom.js";
 
-// The nodes of the Ask SCF drawer. No decisions here (those are in ui/ask-model.js) and no calls (ui/ask.js).
+// The nodes of the Ask Foundry drawer. No decisions here (those are in ui/ask-model.js) and no calls (ui/ask.js).
 // Every text of a conversation is put in as text: `h` never reads a string as HTML.
 
 /** The button in the top bar that opens the drawer. */
@@ -28,8 +28,8 @@ export function askFrame(on, { questionMax, hints = {} }) {
   const send = h("button", { type: "submit", class: "primary", "data-focus": "ask-send" }, "Send");
   const fresh = h("button", { type: "button", class: "small", title: hints.fresh, "data-focus": "ask-new", onClick: () => on.fresh() }, "New conversation");
   const historyBtn = h("button", { type: "button", class: "small", "aria-expanded": "false", "aria-controls": "ask-history", "data-focus": "ask-history-btn", onClick: () => on.history() }, "History");
-  const close = h("button", { type: "button", class: "icon", "aria-label": "Close Ask SCF", onClick: () => on.close() }, glyph("✕"));
-  const form = h("form", { class: "ask-form", "aria-label": "Your question to Ask SCF", onSubmit: (e) => { e.preventDefault?.(); on.submit(); } },
+  const close = h("button", { type: "button", class: "icon", "aria-label": "Close Ask Foundry", onClick: () => on.close() }, glyph("✕"));
+  const form = h("form", { class: "ask-form", "aria-label": "Your question to Ask Foundry", onSubmit: (e) => { e.preventDefault?.(); on.submit(); } },
     h("label", { for: "ask-question" }, "Your question"),
     question,
     h("label", { class: "check-row", for: "ask-attach" }, attach, " Send the page I am on with my question"),
@@ -44,8 +44,8 @@ export function askFrame(on, { questionMax, hints = {} }) {
     list);
   history.hidden = true;
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
-    h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask SCF"), fresh, historyBtn, close),
-    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. Nothing changes unless you review and confirm an action."),
+    h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask Foundry"), fresh, historyBtn, close),
+    h("p", { class: "muted text-sm" }, "Ask Foundry explains how the Foundry works. It reads and explains. Nothing changes unless you review and confirm an action."),
     paused,
     status,
     talk,

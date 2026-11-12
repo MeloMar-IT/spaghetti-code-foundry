@@ -105,7 +105,7 @@ function routing(a: AgentAnswers): AgentSettings["router"] & { default_model?: s
   }
 }
 
-/** The settings these answers give. `default_model` is never `codex`: Ask SCF needs Claude Code. */
+/** The settings these answers give. `default_model` is never `codex`: Ask Foundry needs Claude Code. */
 export function settingsFor(a: AgentAnswers): AgentSettings {
   const plans = toolsOf(a).map((t) => PLAN[t][a.plans[t] ?? "unknown"] ?? SMALLEST);
   const runs = plans.length ? Math.min(...plans.map((p) => p[0])) : SMALLEST[0];
@@ -290,7 +290,7 @@ export function summaryLines(a: AgentAnswers, status: AgentStatus): string[] {
   );
   if (status.kept.some((k) => k === "default_model" || k === "router.fallback" || k === "router.rules")) out.push("An admin set the routing by hand; see the Models page.");
   else if (a.have === "claude") out.push("Claude Code runs every step, also the ones made for Codex.");
-  else if (a.have === "codex") out.push("Codex runs every step. Ask SCF needs Claude Code, so it does not work with Codex alone.");
+  else if (a.have === "codex") out.push("Codex runs every step. Ask Foundry needs Claude Code, so it does not work with Codex alone.");
   else if (a.have === "both") {
     const share = a.share ?? "auto";
     out.push(

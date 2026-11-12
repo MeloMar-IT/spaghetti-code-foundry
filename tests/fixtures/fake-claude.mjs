@@ -5,7 +5,7 @@
 // permission_denials (command for Bash, file_path otherwise); "SHOWPROMPT" answers with the arguments and the whole prompt (as `args=…` and `PROMPT<<…>>`); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // Plans that ask for a skill request: a line "REQUEST_SKILLS <id> [<id>…]" requests those ids; a line "REQUEST_CATALOGUE_SKILLS" requests every id of the
 // <foundry-skill-catalogue> block of the prompt (the empty request without one); FAKE_SKILL_REQUEST wins when set. The lines come from the issue body.
-// A help turn of Ask SCF ("You are Ask SCF, the help assistant") has a canned JSON answer: FAKE_HELP replaces it, FAKE_HELP=ECHO reports args, folder and token state.
+// A help turn of Ask Foundry ("You are Ask Foundry, the help assistant") has a canned JSON answer: FAKE_HELP replaces it, FAKE_HELP=ECHO reports args, folder and token state.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The coding turn can hang: FAKE_HANG_IMPLEMENT leaves half-done.txt in the folder and waits to be killed. The forced split (prompt "This issue has to be split.") has a canned answer, FAKE_FORCED_SPLIT; FAKE_FORCED_SPLIT_CAPTURE (a file path) gets its CLI arguments and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
@@ -190,8 +190,8 @@ if (prompt.includes("CLAUDE_GONE") && args.includes("--resume") && String(args[a
 // Canned answers for the built-in blocks, so whole flows can run offline.
 let canned;
 let cost = 0.01;
-if (prompt.includes("You are Ask SCF, the help assistant")) {
-  // A help turn of Ask SCF. FAKE_HELP replaces the JSON answer; FAKE_HELP=ECHO puts the CLI arguments, the working folder, its content and the token state in the explanation.
+if (prompt.includes("You are Ask Foundry, the help assistant")) {
+  // A help turn of Ask Foundry. FAKE_HELP replaces the JSON answer; FAKE_HELP=ECHO puts the CLI arguments, the working folder, its content and the token state in the explanation.
   const h = process.env.FAKE_HELP;
   const echo = `args=${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} cwd=${process.cwd()} files=${readdirSync(".").join(",")} gh_token=${ghSeen}`;
   canned = h === "ECHO" ? JSON.stringify({ type: "product-help", summary: "Echo.", explanation: echo, certainty: "confirmed" }) : h ?? JSON.stringify({ type: "product-help", summary: "A run is one start of a flow.", explanation: "It goes through the steps of the flow.", certainty: "confirmed", recommendations: ["Open the run to see its steps."], links: [{ to: "#/runs" }] });

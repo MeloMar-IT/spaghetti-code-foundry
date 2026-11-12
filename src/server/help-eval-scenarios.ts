@@ -9,7 +9,7 @@ import { conflictSource, sourceOf, stateId } from "./help-evidence.js";
 import type { HelpScenario } from "./help-evals.js";
 
 /**
- * The fixed scenarios of the Ask SCF evaluation (#244). The evidence is made by the product's own functions
+ * The fixed scenarios of the Ask Foundry evaluation (#244). The evidence is made by the product's own functions
  * (`sourceOf`, `conflictSource`, `diagnose`, `diagnosisSource`), so a scenario offers what a server would offer.
  * Every name, id and "secret" here is invented.
  */

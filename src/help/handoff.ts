@@ -3,7 +3,7 @@ import { subjectPage } from "./actions.js";
 import type { HelpRole, Reply } from "./contract.js";
 
 /**
- * The hand-offs of Ask SCF: taking one answer to a page that already does that work (run details, Problems, Your
+ * The hand-offs of Ask Foundry: taking one answer to a page that already does that work (run details, Problems, Your
  * turn) or to a new Refinement session filled with the answer or one of its drafts. Pure data and pure functions.
  * The offers are built from a stored reply plus facts the server checked again for the account; text from a model is
  * never an address. The server builds every `page`, with ids encoded.
@@ -18,7 +18,7 @@ export const HANDOFF_TITLE_MAX = 120;
 export const HANDOFF_KEEP = 50;
 export const COPIED = ["title", "text", "repository", "link"] as const;
 const QUESTION_CUT = 2000;
-const FALLBACK_TITLE = "Ask SCF answer";
+const FALLBACK_TITLE = "Ask Foundry answer";
 
 export interface HandoffFill {
   title: string;
@@ -100,7 +100,7 @@ export function titleOf(question: string): string {
 export function ideaText(question: string, reply: Reply, evidence: readonly string[]): string {
   const q = question.length > QUESTION_CUT ? `${question.slice(0, QUESTION_CUT)} …` : question;
   const answer = [...(reply.limit ? [] : [reply.summary]), ...reply.recommendations.map((r) => `- ${r}`)];
-  const head = ["Question:", q, "", "Answer from Ask SCF:", ...answer].join("\n");
+  const head = ["Question:", q, "", "Answer from Ask Foundry:", ...answer].join("\n");
   const build = (n: number) => (n > 0 ? `${head}\n\nSources:\n${evidence.slice(0, n).join("\n")}` : head);
   let n = evidence.length;
   while (n > 0 && build(n).length > HANDOFF_TEXT_MAX) n--;

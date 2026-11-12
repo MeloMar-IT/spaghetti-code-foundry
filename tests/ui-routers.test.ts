@@ -330,7 +330,7 @@ describe("user router", () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it("starts Ask SCF for a user, and not in a preview or when the view cannot be shown", async () => {
+  it("starts Ask Foundry for a user, and not in a preview or when the view cannot be shown", async () => {
     const initAsk = vi.fn(async () => null);
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk } }));
     // the drawer is told whether the Simple view is shown (here the default, Advanced)
@@ -580,7 +580,7 @@ describe("admin router", () => {
     }
   });
 
-  it("starts Ask SCF for an admin", async () => {
+  it("starts Ask Foundry for an admin", async () => {
     setup("#/dashboard");
     const initAsk = vi.fn(async () => null);
     await loadRouter("app.js", stub({ "./ask.js": { initAsk }, "./dashboard.js": { renderDashboard: vi.fn() } }));

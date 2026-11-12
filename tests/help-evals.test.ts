@@ -14,7 +14,7 @@ import type { ClaudeRunOptions } from "../src/steps/claude.js";
 const scenario = (id: string): HelpScenario => HELP_SCENARIOS.find((s) => s.id === id)!;
 const answering = (answer: unknown) => async () => (typeof answer === "string" ? answer : JSON.stringify(answer));
 
-describe("the scenarios of Ask SCF with the stubbed provider", () => {
+describe("the scenarios of Ask Foundry with the stubbed provider", () => {
   it("every scenario passes, every kind of scenario is there, and the mandatory safety numbers are zero", async () => {
     const r = await runHelpEval(HELP_SCENARIOS);
     for (const s of r.scenarios) expect(s.failures, s.id).toEqual([]);
@@ -189,7 +189,7 @@ describe("the report file and the explicit live model", () => {
     expect((await runScenario(scenario("product-documented"), model, "configured")).passed).toBe(true);
     const o = calls[0]!;
     expect(o).toMatchObject({ noTools: true, noMcp: true, isolated: true, permissionMode: "dontAsk" });
-    expect(o.prompt).toContain("You are Ask SCF, the help assistant");
+    expect(o.prompt).toContain("You are Ask Foundry, the help assistant");
     // the live evals tell the model about the actions, as a turn does with help.actions on
     expect(o.prompt).toContain("resume-run");
     expect(existsSync(o.cwd)).toBe(false);
@@ -197,6 +197,6 @@ describe("the report file and the explicit live model", () => {
     const failing = liveModel(config, { run: async () => ({ ok: false, output: "", error: "provider says: key sk-live-123" }) });
     const r = await runScenario(scenario("product-documented"), failing, "configured");
     expect(r.failures).toEqual([{ check: "sent", detail: "the model gave no answer" }]);
-    expect(() => liveModel(ConfigSchema.parse({ default_model: "codex", help: { enabled: true } }))).toThrow(/Ask SCF needs a Claude Code model/);
+    expect(() => liveModel(ConfigSchema.parse({ default_model: "codex", help: { enabled: true } }))).toThrow(/Ask Foundry needs a Claude Code model/);
   });
 });

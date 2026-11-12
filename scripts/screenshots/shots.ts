@@ -101,7 +101,7 @@ export const SHOTS: readonly Shot[] = [
   { name: "releases", guide: "admin", role: "admin", path: "/#/epics", expect: "Build status on the board" },
   { name: "epic", guide: "admin", role: "admin", path: "/#/epics/{epic}?repo=acme%2Fapp", expect: "Read the build status from GitHub Actions" },
   { name: "help", guide: "user", role: "user", path: "/user/#/help", expect: "What the words mean" },
-  { name: "ask", guide: "user", role: "user", path: "/user/#/home", expect: "Ask SCF explains how the Foundry works" },
+  { name: "ask", guide: "user", role: "user", path: "/user/#/home", expect: "Ask Foundry explains how the Foundry works" },
   { name: "preferences", guide: "user", role: "user", path: "/user/#/home", expect: "Look" },
   { name: "looks", guide: "user", role: "user", path: "/user/#/home", expect: "Bento", view: "simple" },
   { name: "repo", guide: "admin", role: "admin", path: "/#/repos/{repoId}", expect: "Test connection" },

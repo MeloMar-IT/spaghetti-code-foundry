@@ -190,7 +190,7 @@ describe("whose conversation it is", () => {
       await createUser({ name: "Root", email: "root@example.com", password: "test-password-12345", role: "admin" });
       const ann = await createUser({ name: "Ann", email: "ann@example.com", password: "test-password-12345" });
       const bob = await createUser({ name: "Bob", email: "bob@example.com", password: "test-password-12345" });
-      // an install that never used Ask SCF: deleting an account makes no help file
+      // an install that never used Ask Foundry: deleting an account makes no help file
       const cy = await createUser({ name: "Cy", email: "cy@example.com", password: "test-password-12345" });
       deleteUser(cy.id);
       expect(existsSync(helpPath())).toBe(false);

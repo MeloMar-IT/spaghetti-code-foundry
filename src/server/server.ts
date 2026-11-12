@@ -348,7 +348,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   sweep();
   const refinementSweep = refinementSweeper(log);
   refinementSweep();
-  // Ask SCF: a reply that a stopped server left unfinished is marked as interrupted, and the retention policy is applied.
+  // Ask Foundry: a reply that a stopped server left unfinished is marked as interrupted, and the retention policy is applied.
   // Stopped runs of a project at its daily cap go on by themselves the next day (#792): at start, then every few minutes.
   const stopProjectSweep = startProjectBudgetSweep({ scheduler, runsDir: opts.runsDir, log: sink }, opts.projectBudgetSweepMs);
   const helpSweep = helpSweeper(log, () => ctx.config().help.keep_days);

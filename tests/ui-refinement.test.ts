@@ -1203,7 +1203,7 @@ describe("states of the list and the session", () => {
   });
 });
 
-describe("a hand-off from Ask SCF", () => {
+describe("a hand-off from Ask Foundry", () => {
   const CONV = "11111111-1111-4111-8111-111111111111";
   const fill = (over: object = {}) => ({ title: "Why does it wait?", text: "Question:\nWhy?", fromHelp: CONV, ...over });
   let wishes: any;
@@ -1231,7 +1231,7 @@ describe("a hand-off from Ask SCF", () => {
     void fresh.wishedSession(["acme/app"], undefined, { fill: fill() });
     expect(field(root(), "title")!.value).toBe("Why does it wait?");
     expect(field(root(), "idea")!.value).toBe("Question:\nWhy?");
-    expect(root().textContent).toContain("Filled in from Ask SCF. Check the text and change it as you like. Nothing is saved until you press Start session.");
+    expect(root().textContent).toContain("Filled in from Ask Foundry. Check the text and change it as you like. Nothing is saved until you press Start session.");
     await flush();
     expect(sent).toEqual([]);
     press(button(root(), "Start session"));
@@ -1307,7 +1307,7 @@ describe("a hand-off from Ask SCF", () => {
     void fresh.wishedSession(["a/one", "b/two"], undefined, {});
     expect(field(root(), "repo")!.value).toBe("b/two");
     expect(field(root(), "idea")!.value).toBe("");
-    expect(root().textContent).not.toContain("Filled in from Ask SCF");
+    expect(root().textContent).not.toContain("Filled in from Ask Foundry");
     root().replaceChildren();
     expect(fresh.wishedSession(["a/one"], undefined, null)).toBeUndefined();
     expect(root().children).toHaveLength(0);
@@ -1395,7 +1395,7 @@ describe("a hand-off from Ask SCF", () => {
       try {
         const nodes = fresh.helpOrigin({ fromHelp: CONV });
         expect(nodes).toHaveLength(1);
-        expect(nodes[0].textContent).toContain("Started from one of your Ask SCF conversations.");
+        expect(nodes[0].textContent).toContain("Started from one of your Ask Foundry conversations.");
         const open = walk(nodes[0]).find((e) => e.textContent === "Open the conversation")!;
         open.click();
         expect(seen).toEqual([CONV]);

@@ -1,4 +1,4 @@
-/* pages/ask.css — Ask SCF, the help drawer of both displays (ui/ask.js, ui/ask-view.js).
+/* pages/ask.css — Ask Foundry, the help drawer of both displays (ui/ask.js, ui/ask-view.js).
    Belongs here: the drawer, its backdrop, the conversation in it and the question form. Class names start with ask-.
    Does not belong here: rules for a page, shared component rules, and motion (the drawer opens without any). */
 .ask-scrim { position: fixed; inset: 0; background: var(--color-overlay); z-index: var(--layer-menu); }

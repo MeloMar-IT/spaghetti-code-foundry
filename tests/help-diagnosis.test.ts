@@ -110,7 +110,7 @@ describe("insufficient evidence is said, never filled in", () => {
     const bad = diagnose(repo({ connectionOk: false, connectionCheckedAt: AT }), { role: "user" })!;
     expect(bad.cause).toBeUndefined();
     expect(bad).toMatchObject({ symptom: "The last connection check of the repository failed", confirmed: false, nextCheck: "Press Test connection for the repository and read which check fails" });
-    expect(bad.missing).toEqual(["which part of the check failed and why: the record Ask SCF reads does not hold it"]);
+    expect(bad.missing).toEqual(["which part of the check failed and why: the record Ask Foundry reads does not hold it"]);
     const old = diagnose(repo({ connectionOk: true, connectionCheckedAt: "2026-01-01T00:00:00.000Z" }, ["connectionOk", "connectionCheckedAt"]), { role: "user" })!;
     expect(old.missing).toEqual(["a connection check of now", "a reading of now of: connectionOk, connectionCheckedAt"]);
     expect(diagnose(repo({}), { role: "user" })!.symptom).toBe("The connection of the repository has not been checked");

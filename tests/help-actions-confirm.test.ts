@@ -101,7 +101,7 @@ describe("the preview", () => {
 
   it("says what a cancel does, for a run in the queue and for one that waits", () => {
     const s = setup("cancel-run");
-    expect(prep(s).preview).toMatchObject({ changes: "The run is marked as cancelled.", impactLevel: "high", undoable: false, undo: "Ask SCF cannot undo this. A cancelled run can be resumed on its page later." });
+    expect(prep(s).preview).toMatchObject({ changes: "The run is marked as cancelled.", impactLevel: "high", undoable: false, undo: "Ask Foundry cannot undo this. A cancelled run can be resumed on its page later." });
     env.scheduler.submit({ kind: "resume", runId: s.runId }, { source: "x", queuedBy: users.ann.id });
     const q = prep(s).preview;
     expect(q.changes).toBe("The job that waits in the queue is taken out.");

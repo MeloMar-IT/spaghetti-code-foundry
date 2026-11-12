@@ -71,10 +71,10 @@ describe("suggested questions", () => {
       expect(list.length, hash).toBeGreaterThanOrEqual(2);
       expect(list.length, hash).toBeLessThanOrEqual(4);
       expect(new Set(list).size, hash).toBe(list.length);
-      expect(list, hash).toContain("What can Ask SCF help me with?");
+      expect(list, hash).toContain("What can Ask Foundry help me with?");
       for (const s of list) expect(s, s).toMatch(/^[A-Z].*\?$/);
     }
-    expect(m.suggestionsFor(null)).toEqual(["What can Ask SCF help me with?", "Where do I start work on a change?"]);
+    expect(m.suggestionsFor(null)).toEqual(["What can Ask Foundry help me with?", "Where do I start work on a change?"]);
   });
 });
 
@@ -94,7 +94,7 @@ describe("sending", () => {
 
   it("sends nothing a second time while a request is on its way or a reply is being written", () => {
     expect(m.sendPlan({ draft: "Why?", busy: true })).toMatchObject({ ok: false });
-    expect(m.sendPlan({ draft: "Why?", conversation: conv([q(), a("pending")]) })).toEqual({ ok: false, reason: "Ask SCF is still answering. Wait for the answer first." });
+    expect(m.sendPlan({ draft: "Why?", conversation: conv([q(), a("pending")]) })).toEqual({ ok: false, reason: "Ask Foundry is still answering. Wait for the answer first." });
   });
 
   it("sends the trimmed question, with the page only when it is attached", () => {
@@ -133,19 +133,19 @@ describe("reading the answer", () => {
     // a failure that trying again cannot solve is its own kind
     expect(m.entryOf(a("failed", { failure: { code: "limit", retry: false } })).kind).toBe("limit");
     expect(m.entryOf(a("failed", { failure: { code: "provider", retry: true } })).kind).toBe("failed");
-    expect(m.entryOf(a("failed")).text).toBe("Ask SCF could not answer.");
+    expect(m.entryOf(a("failed")).text).toBe("Ask Foundry could not answer.");
     expect(m.entryOf(a("done", { text: 7 })).text).toBe("");
   });
 
   it("announces the start of the wait and the result once", () => {
     const waiting = conv([q(), a("pending")]);
-    expect(m.announce(null, waiting)).toBe("Ask SCF is working on your answer.");
+    expect(m.announce(null, waiting)).toBe("Ask Foundry is working on your answer.");
     expect(m.announce(waiting, waiting)).toBe("");
-    expect(m.announce(waiting, conv([q(), a("done", { text: "Because." })]))).toBe("Ask SCF answered. The answer is below your question.");
+    expect(m.announce(waiting, conv([q(), a("done", { text: "Because." })]))).toBe("Ask Foundry answered. The answer is below your question.");
     expect(m.announce(waiting, conv([q(), a("failed", { text: "The AI service did not answer. You can try again in a moment." })]))).toBe("The AI service did not answer. You can try again in a moment.");
     expect(m.announce(waiting, conv([q(), a("cancelled", { text: "You stopped this answer. You can ask again." })]))).toBe("You stopped this answer. You can ask again.");
     // the same reply tried again is a new wait
-    expect(m.announce(conv([q(), a("failed")]), conv([q(), a("pending", { tries: 2 })]))).toBe("Ask SCF is working on your answer.");
+    expect(m.announce(conv([q(), a("failed")]), conv([q(), a("pending", { tries: 2 })]))).toBe("Ask Foundry is working on your answer.");
     expect(m.announce(null, conv([q()]))).toBe("");
     expect(m.announce(null, null)).toBe("");
   });
@@ -154,14 +154,14 @@ describe("reading the answer", () => {
 describe("a failed call", () => {
   it("is said in plain words, and a text of the server only where it is a fixed one", () => {
     expect(m.explainAskError(new TypeError("Failed to fetch"))).toBe("The Foundry could not be reached. Check your connection, then try again.");
-    expect(m.explainAskError({ status: 503, message: "Ask SCF is switched off on this Foundry. An administrator can switch it on." })).toBe("Ask SCF is switched off on this Foundry. An administrator can switch it on.");
+    expect(m.explainAskError({ status: 503, message: "Ask Foundry is switched off on this Foundry. An administrator can switch it on." })).toBe("Ask Foundry is switched off on this Foundry. An administrator can switch it on.");
     expect(m.explainAskError({ status: 400, message: "type your question" })).toBe("Type your question.");
-    expect(m.explainAskError({ status: 429, message: "You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator." })).toContain("for today");
+    expect(m.explainAskError({ status: 429, message: "You have used all your questions to Ask Foundry for today. Try again tomorrow, or ask an administrator." })).toContain("for today");
     expect(m.explainAskError({ status: 404, message: "not found" })).toBe("This conversation is gone. Ask your question in a new one.");
     expect(m.explainAskError({ status: 410 })).toBe("This conversation is gone. Ask your question in a new one.");
     expect(m.explainAskError({ status: 401 })).toBe("Your session has ended. Sign in again.");
-    expect(m.explainAskError({ status: 500, message: "stack trace at /srv/x" })).toBe("Ask SCF is not working now. Try again later.");
-    expect(m.explainAskError({ status: 409, message: "" })).toBe("Ask SCF is not working now. Try again later.");
+    expect(m.explainAskError({ status: 500, message: "stack trace at /srv/x" })).toBe("Ask Foundry is not working now. Try again later.");
+    expect(m.explainAskError({ status: 409, message: "" })).toBe("Ask Foundry is not working now. Try again later.");
   });
 });
 
@@ -176,9 +176,9 @@ describe("keys", () => {
 
 describe("progress", () => {
   it("says after 20 seconds that it takes long, and points at Stop", () => {
-    expect(m.waitNote(0)).toEqual({ slow: false, text: "Ask SCF is working on your answer." });
+    expect(m.waitNote(0)).toEqual({ slow: false, text: "Ask Foundry is working on your answer." });
     expect(m.waitNote(m.SLOW_AFTER_MS - 1).slow).toBe(false);
-    expect(m.waitNote(m.SLOW_AFTER_MS)).toEqual({ slow: true, text: "Ask SCF is still working. This takes longer than usual. You can wait, or stop the answer." });
+    expect(m.waitNote(m.SLOW_AFTER_MS)).toEqual({ slow: true, text: "Ask Foundry is still working. This takes longer than usual. You can wait, or stop the answer." });
     expect(m.waitNote().slow).toBe(false);
     expect(m.entryOf(a("pending"), { elapsedMs: 30_000 }).text).toContain("longer than usual");
     expect(m.threadOf(conv([q(), a("pending")]), { elapsedMs: 30_000 })[1].text).toContain("longer than usual");
@@ -344,7 +344,7 @@ describe("how sure a reply is", () => {
 
   it("low confidence: likely, or unsure although it has sources", () => {
     expect(trust(reply({ certainty: "likely" }))).toMatchObject({ state: "low", label: "Not fully confirmed", text: CERTAINTY_WORDS.likely });
-    expect(trust(reply({ certainty: "unverified" }))).toMatchObject({ state: "low", text: "Ask SCF has the sources below but is not sure of this. Treat it as a guess." });
+    expect(trust(reply({ certainty: "unverified" }))).toMatchObject({ state: "low", text: "Ask Foundry has the sources below but is not sure of this. Treat it as a guess." });
   });
 
   it("missing evidence: no source of the kind the question needs, whatever the reply claims", () => {
@@ -393,7 +393,7 @@ describe("sources and assumptions", () => {
 
   it("says what the reply takes for granted", () => {
     const of = (r: any) => m.replyLayout(r, "user").assumptions;
-    expect(of(reply())).toEqual(["The documentation of this Foundry was used as it is installed here.", "Ask SCF sees only what your own account can see."]);
+    expect(of(reply())).toEqual(["The documentation of this Foundry was used as it is installed here.", "Ask Foundry sees only what your own account can see."]);
     expect(of(reply({ type: "status", evidence: [stateSrc()] }))[0]).toBe("The current state was read at the times shown. It can have changed since.");
     expect(of(reply({ evidence: [] }))).toContain("Nothing was checked against the documentation or the current state.");
     expect(of(reply({ certainty: "likely" }))).toContain("The sources do not fully confirm the answer.");
@@ -413,9 +413,9 @@ describe("proposals as cards", () => {
     for (const c of all) expect(c.note, c.kind).toMatch(/\.$/);
   });
 
-  it("shows an action as a suggestion that Ask SCF does not do", () => {
+  it("shows an action as a suggestion that Ask Foundry does not do", () => {
     const [card] = cards(reply({ actions: [{ id: "cancel-run", title: "Cancel run r-1", impact: "The run stops." }] }));
-    expect(card).toEqual({ kind: "action", effect: "changes-state", title: "Suggested change: Cancel run r-1", text: "The run stops.", note: "Ask SCF does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." });
+    expect(card).toEqual({ kind: "action", effect: "changes-state", title: "Suggested change: Cancel run r-1", text: "The run stops.", note: "Ask Foundry does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." });
     expect(card.link).toBeUndefined();
   });
 
@@ -463,7 +463,7 @@ describe("a reply as the server checked it", () => {
     // the message carries the layout; its plain text is not shown a second time
     const entry = m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", reply: checked, tries: 1 }, { role: "user" });
     expect(entry).toMatchObject({ kind: "answer", text: "", layout: { summary: layout.summary } });
-    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", tries: 1 })).toEqual({ id: "a1", kind: "answer", who: "Ask SCF", text: "plain", note: "", rateable: true, feedback: { vote: null, reasons: [] } });
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", tries: 1 })).toEqual({ id: "a1", kind: "answer", who: "Ask Foundry", text: "plain", note: "", rateable: true, feedback: { vote: null, reasons: [] } });
   });
 });
 
@@ -545,7 +545,7 @@ describe("a plan", () => {
   it("makes the first step that is not marked the current one, and says that a mark is not a check", () => {
     const p = m.planOf(planned([step(), step(), step()]), "user", [0, 2]);
     expect(p.steps.map((s: any) => s.current)).toEqual([false, true, false]);
-    expect(p.steps.map((s: any) => s.note)).toEqual(["You marked this. Ask SCF has not checked the result.", "", "You marked this. Ask SCF has not checked the result."]);
+    expect(p.steps.map((s: any) => s.note)).toEqual(["You marked this. Ask Foundry has not checked the result.", "", "You marked this. Ask Foundry has not checked the result."]);
     expect(m.planOf(planned([step()]), "user", [0]).steps[0].current).toBe(false);
   });
 
@@ -622,12 +622,12 @@ describe("offers of a reply", () => {
     expect(e(410)).toBe(e(404));
     expect(e(409, checkText.changed)).toBe(checkText.changed);
     expect(e(409, checkText.notStored)).toBe(checkText.notStored);
-    expect(e(503, "Ask SCF is switched off on this Foundry.")).toBe("Ask SCF is switched off on this Foundry.");
-    expect(e(500)).toBe("Ask SCF is not working now. Try again later.");
+    expect(e(503, "Ask Foundry is switched off on this Foundry.")).toBe("Ask Foundry is switched off on this Foundry.");
+    expect(e(500)).toBe("Ask Foundry is not working now. Try again later.");
   });
 });
 
-describe("Ask SCF in the Simple view", () => {
+describe("Ask Foundry in the Simple view", () => {
   let w: any;
   beforeAll(async () => {
     w = await import("../ui/simple-words.js" as string);

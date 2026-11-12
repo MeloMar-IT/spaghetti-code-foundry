@@ -518,20 +518,20 @@ export const ConfigSchema = z
       .strict()
       .default({ enabled: true, model: "haiku" }),
     /**
-     * Ask SCF, the help assistant: off until an admin switches it on. A turn is one question; it runs through the
+     * Ask Foundry, the help assistant: off until an admin switches it on. A turn is one question; it runs through the
      * provider of `model` with no tools, and stops at these limits.
      */
     help: z
       .object({
         enabled: z.boolean().default(false),
-        /** Lets Ask SCF propose a resume or cancel of a person's own run (and, after #568, carry it out once they confirm). Off: every proposed action is dropped. */
+        /** Lets Ask Foundry propose a resume or cancel of a person's own run (and, after #568, carry it out once they confirm). Off: every proposed action is dropped. */
         actions: z.boolean().default(false),
         /**
          * Emergency stop: nobody can ask, try again or check a page; turns that already run finish and every account keeps
          * reading, exporting and deleting its conversations. `enabled: false` is "never set up" and shows no button.
          */
         paused: z.boolean().default(false),
-        /** Who may ask when Ask SCF is on: every account (also without the setting), administrators only, or administrators and `pilot_accounts`. */
+        /** Who may ask when Ask Foundry is on: every account (also without the setting), administrators only, or administrators and `pilot_accounts`. */
         audience: z.enum(["everyone", "admins", "pilot"]).optional(),
         /** With `audience: "pilot"`: the accounts (by id) that may ask besides the administrators. */
         pilot_accounts: z.array(z.uuid()).max(1000).optional(),
@@ -555,7 +555,7 @@ export const ConfigSchema = z
         daily_budget_usd: z.number().positive().optional(),
         /**
          * Regular expressions (no flags; upper and lower case are the same) for texts this install keeps private, besides the stored
-         * credentials and the common shapes of tokens and keys. What matches is taken out of every text before Ask SCF stores it or sends it to a model.
+         * credentials and the common shapes of tokens and keys. What matches is taken out of every text before Ask Foundry stores it or sends it to a model.
          */
         sensitive_patterns: z.array(z.string().min(1).max(PATTERN_MAX).refine(usablePattern, { message: "not a regular expression, or one that matches the empty text" })).max(PATTERN_LIMIT).optional(),
       })

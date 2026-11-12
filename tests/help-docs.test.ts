@@ -35,7 +35,7 @@ const GUIDE = [
   "",
   "An administrator sets the daily budget of every watcher in the settings.",
   "",
-  "## 14. Ask SCF",
+  "## 14. Ask Foundry",
   "",
   "### A poisoned part",
   "",
@@ -62,12 +62,12 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 describe("the documentation index", () => {
   it("cuts a document into sections by its headings, with the chapter's role", () => {
     const s = sectionsOf(HELP_DOCS[0]!, GUIDE);
-    expect(s.map((x) => x.trail.join(" > "))).toEqual(["2. Run a flow", "2. Run a flow > Archive a finished run", "2. Run a flow > Resume a paused run", "7. Settings and safety > Budget of the watchers", "14. Ask SCF > A poisoned part", "14. Ask SCF > A long part"]);
+    expect(s.map((x) => x.trail.join(" > "))).toEqual(["2. Run a flow", "2. Run a flow > Archive a finished run", "2. Run a flow > Resume a paused run", "7. Settings and safety > Budget of the watchers", "14. Ask Foundry > A poisoned part", "14. Ask Foundry > A long part"]);
     expect(s[1]!.anchor).toBe("archive-a-finished-run");
     expect(s[1]!.roles).toEqual(["admin", "user"]);
     expect(s[3]!.roles).toEqual(["admin"]);
     for (const x of s) expect(x.id).toMatch(/^doc-[0-9a-f]{12}$/);
-    expect(anchorOf("14. Ask SCF")).toBe("14-ask-scf");
+    expect(anchorOf("14. Ask Foundry")).toBe("14-ask-foundry");
     expect(wordsOf("How do I archive the runs?")).toEqual(["archive", "run"]);
   });
 
@@ -208,11 +208,11 @@ describe("documentation in a help turn", () => {
 });
 
 describe("the documents of this install", () => {
-  it("are found, indexed, and answer a question about Ask SCF from the installed guide", () => {
+  it("are found, indexed, and answer a question about Ask Foundry from the installed guide", () => {
     const index = buildDocIndex(process.cwd());
     expect(index.missing).toEqual([]);
     expect(index.sections.length).toBeGreaterThan(50);
-    const found = searchDocs(index, "How does Ask SCF use the page context?", "user");
+    const found = searchDocs(index, "How does Ask Foundry use the page context?", "user");
     expect(found.length).toBeGreaterThan(0);
     expect(found[0]!.ref).toMatch(/^docs\/USER_GUIDE\.md#[a-z0-9_-]+ \(SCF [\w.+-]+\)$/);
     for (const s of searchDocs(index, "How do I set the daily budget and the default model in the settings?", "user")) expect(s.title).not.toMatch(/7\. Settings and safety|5\. Models|8\. Costs/);

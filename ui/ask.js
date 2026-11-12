@@ -8,7 +8,7 @@ import { actionNodes, askButton, askFrame, entryNode, handoffDialog, historyNode
 import { ASK_OPEN_EVENT, isConversationId, offersOf, recordsOf, wishOf } from "./ask-handoff.js";
 import { sendWish } from "./palette-data.js";
 
-// Ask SCF: the help drawer of both displays. One implementation; ui/app.js and ui/user/app.js only call initAsk.
+// Ask Foundry: the help drawer of both displays. One implementation; ui/app.js and ui/user/app.js only call initAsk.
 // The drawer lies over the page and never draws the page again, so what is typed or open there stays as it is.
 // Opening it sends nothing: a question, and the page it is asked on, go out only when the person presses Send.
 
@@ -234,7 +234,7 @@ export function createAsk(role, {
       return true;
     } catch (e) {
       st.busy = false;
-      // only the exact sentence of a paused Ask SCF pauses the drawer: another 503 (switched off, secret check) does not
+      // only the exact sentence of a paused Ask Foundry pauses the drawer: another 503 (switched off, secret check) does not
       if (isPausedError(e)) st.paused = true;
       if (current()) ui.error.textContent = explain(e);
       draw();
@@ -242,7 +242,7 @@ export function createAsk(role, {
     }
   }
 
-  /** Asks the server whether Ask SCF is still paused. A failed read leaves it as it was. */
+  /** Asks the server whether Ask Foundry is still paused. A failed read leaves it as it was. */
   async function refreshPaused() {
     try {
       const info = await api.helpConversations(st.archived);
@@ -345,7 +345,7 @@ export function createAsk(role, {
   }
 
   async function send() {
-    // paused: look again before refusing, so an unpaused Ask SCF is usable without a reload
+    // paused: look again before refusing, so an unpaused Ask Foundry is usable without a reload
     if (st.paused) await refreshPaused();
     const plan = sendPlan({ draft: ui.question.value, busy: st.busy, conversation: st.conversation, where: where(), attach: st.attach, paused: st.paused });
     if (!plan.ok) {
@@ -557,7 +557,7 @@ export function createAsk(role, {
 }
 
 /**
- * Asks the server whether Ask SCF is switched on and, only then, puts the button and the drawer on the page.
+ * Asks the server whether Ask Foundry is switched on and, only then, puts the button and the drawer on the page.
  * Switched off, or the answer did not come: nothing is offered. Returns the drawer or null; never rejects.
  */
 export async function initAsk(role, deps = {}) {

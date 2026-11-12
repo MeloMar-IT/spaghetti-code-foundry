@@ -409,7 +409,7 @@ describe("limits, fair use and separate accounts", () => {
     for (const w of Object.values(REFUSAL_WORDS)) expect(w).toMatch(/^[A-Z].*\.$/);
   });
 
-  it("stops at the daily budget of Ask SCF without a model call, and caps the cost of a turn", async () => {
+  it("stops at the daily budget of Ask Foundry without a model call, and caps the cost of a turn", async () => {
     config = cfg({ daily_budget_usd: 0.05, max_cost_usd_per_turn: 0.04 });
     const s = svc(answer(GOOD, { costUsd: 0.03 }));
     s.ask(ANN, { question: "one" });
@@ -697,7 +697,7 @@ describe("actions in the prompt", () => {
   });
 });
 
-describe("Ask SCF in the Simple view", () => {
+describe("Ask Foundry in the Simple view", () => {
   const P1 = { id: "p1", name: "My app" };
   const history: Message[] = [
     { id: "m1", role: "user", status: "done", text: "What about Bobs-secret-project?" },
@@ -807,6 +807,6 @@ describe("the documentation of help turns", () => {
     for (const w of [CANCELLED_WORDS, ...Object.values(REFUSAL_WORDS)]) expect(guide).toContain(w);
     const d = ConfigSchema.parse({}).help;
     for (const line of ["enabled: true", `timeout_seconds: ${d.timeout_seconds}`, `max_parallel: ${d.max_parallel}`, `max_queued: ${d.max_queued}`, `turns_per_user_per_day: ${d.turns_per_user_per_day}`, `max_cost_usd_per_turn: ${d.max_cost_usd_per_turn}`]) expect(guide, line).toContain(line);
-    expect(readFileSync("docs/DESIGN.md", "utf8")).toContain("### Ask SCF: the turn service");
+    expect(readFileSync("docs/DESIGN.md", "utf8")).toContain("### Ask Foundry: the turn service");
   });
 });

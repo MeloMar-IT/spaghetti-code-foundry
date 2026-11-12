@@ -4,7 +4,7 @@ import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/sto
 import { FAILURE_CODES, FEEDBACK_REASONS, REFUSAL_CODES, USAGE_KEEP_DAYS, dayOf, type FailureCode, type FeedbackReason, type StoreOptions } from "./store.js";
 
 /**
- * The quality numbers of Ask SCF: `help-stats.json` in the data folder. One row per day (UTC) of counts and latency
+ * The quality numbers of Ask Foundry: `help-stats.json` in the data folder. One row per day (UTC) of counts and latency
  * buckets and nothing else: no account, no conversation, no text. The file is apart from `help.json`, so the numbers
  * and the conversations are kept, read and deleted independently. It stays on this install and is never sent out.
  */

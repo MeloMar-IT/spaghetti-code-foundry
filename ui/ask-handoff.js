@@ -1,6 +1,6 @@
 import { pageLink } from "./ask-model.js";
 
-// Taking an answer of Ask SCF to another page. Pure: the words, the checks of what the server offered, and the preview.
+// Taking an answer of Ask Foundry to another page. Pure: the words, the checks of what the server offered, and the preview.
 // The server works out every offer (and checks it again at the confirm); nothing here decides what may be copied.
 
 const REFINEMENT_NOTE = "Refinement opens its New session form with this text. You can change it there. Nothing is saved until you press Start session. Administrators of this Foundry can read refinement sessions.";
@@ -58,7 +58,7 @@ export function previewOf(offer, conversationTitle = "") {
         { label: "Title", text: f.title },
         { label: "Text", text: f.text },
         ...(f.repo ? [{ label: "Repository (chosen in the form; you can change it)", text: f.repo }] : []),
-        { label: "Link back (saved in the session; only you can see it)", text: `This Ask SCF conversation: ${conversationTitle}` },
+        { label: "Link back (saved in the session; only you can see it)", text: `This Ask Foundry conversation: ${conversationTitle}` },
       ]
     : [];
   return { title: offer.title || words.title, rows, nothing: !f, note: words.note, confirm: words.confirm };

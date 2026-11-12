@@ -8,7 +8,7 @@ import { openAskConversation } from "./ask-handoff.js";
 import { issueNumber } from "./refinement-import.js";
 
 export const NEED_ISSUE = "Give the issue number.";
-const FILL_NOTE = "Filled in from Ask SCF. Check the text and change it as you like. Nothing is saved until you press Start session.";
+const FILL_NOTE = "Filled in from Ask Foundry. Check the text and change it as you like. Nothing is saved until you press Start session.";
 // the limits of POST /api/refinement for an idea (IDEA_MAX and TITLE_MAX of src/refinement/store.ts)
 const IDEA_MAX = 10000;
 const TITLE_MAX = 120;
@@ -16,7 +16,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const text = (s) => String(s ?? "").trim();
 
-/** A fill from Ask SCF that can be used: a title and a text within the limits, an optional repository and the id of the conversation. */
+/** A fill from Ask Foundry that can be used: a title and a text within the limits, an optional repository and the id of the conversation. */
 function validFill(f) {
   return !!f && typeof f === "object" && typeof f.title === "string" && !!text(f.title) && typeof f.text === "string" && !!text(f.text) && (f.repo === undefined || typeof f.repo === "string") && typeof f.fromHelp === "string" && UUID.test(f.fromHelp);
 }
@@ -59,7 +59,7 @@ function keep(next) {
 
 /**
  * Asks for the repository and an idea or an issue. Resolves with the new session, or undefined when closed. `kind` wins over the kept kind; `preferred` is the filtered repository.
- * `fill` (from Ask SCF): the title and idea come from it, its repository wins over the kept one, and the session keeps a link back.
+ * `fill` (from Ask Foundry): the title and idea come from it, its repository wins over the kept one, and the session keeps a link back.
  * The kept text is written only by what the person types or picks, and cleared only by the dialog that wrote it.
  */
 export function newSessionDialog(repos, onMade, { kind, preferred, fill: given } = {}) {
@@ -152,16 +152,16 @@ export function newSessionDialog(repos, onMade, { kind, preferred, fill: given }
   });
 }
 
-/** What the refinement page does with a wish: nothing without one; the palette's wish (`{}`) opens the empty dialog; Ask SCF's wish carries a fill. */
+/** What the refinement page does with a wish: nothing without one; the palette's wish (`{}`) opens the empty dialog; Ask Foundry's wish carries a fill. */
 export function wishedSession(repos, onMade, wish) {
   if (!wish) return undefined;
   return newSessionDialog(repos, onMade, validFill(wish.fill) ? { fill: wish.fill } : {});
 }
 
-/** The line of a session that was started from the owner's Ask SCF conversation (the server sends `fromHelp` to the owner only). */
+/** The line of a session that was started from the owner's Ask Foundry conversation (the server sends `fromHelp` to the owner only). */
 export function helpOrigin(s) {
   if (typeof s?.fromHelp !== "string" || !UUID.test(s.fromHelp)) return [];
   const open = document.getElementById("ask-btn");
-  return [h("p", { class: "muted" }, "Started from one of your Ask SCF conversations. ",
+  return [h("p", { class: "muted" }, "Started from one of your Ask Foundry conversations. ",
     open ? h("button", { type: "button", class: "small", onClick: () => openAskConversation(s.fromHelp) }, "Open the conversation") : null)];
 }

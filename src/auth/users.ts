@@ -610,7 +610,7 @@ export interface DeletedUser {
 }
 
 /**
- * Deletes an account. Order: limits override, repositories (with their watchers, one audit line each), refinement sessions and Ask SCF conversations, sessions, then credentials (with a new key), then users.json, so every partial state is
+ * Deletes an account. Order: limits override, repositories (with their watchers, one audit line each), refinement sessions and Ask Foundry conversations, sessions, then credentials (with a new key), then users.json, so every partial state is
  * safe and a second run finishes the job. The last admin that is not blocked cannot be deleted.
  */
 export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {

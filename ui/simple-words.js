@@ -416,7 +416,7 @@ export function plainText(s, max = 140) {
 }
 
 /**
- * A longer text (a reply of Ask SCF) in plain words: per line and per sentence the terms are mapped, and a sentence
+ * A longer text (a reply of Ask Foundry) in plain words: per line and per sentence the terms are mapped, and a sentence
  * that still has a forbidden term is left out. Line breaks stay. `fallback` when nothing is left.
  */
 export function plainWords(s, fallback = "") {
@@ -436,14 +436,14 @@ export function plainWords(s, fallback = "") {
   return out || fallback;
 }
 
-/** The words of Ask SCF in the Simple view. Fixed text: a test keeps it free of forbidden terms. */
+/** The words of Ask Foundry in the Simple view. Fixed text: a test keeps it free of forbidden terms. */
 export const ASK = {
-  suggestions: ["What can Ask SCF help me with?", "What does this word mean?", "Why does my change wait?", "How do I ask for a change?"],
-  noPlainAnswer: "Ask SCF answered in words of the Advanced view. Switch to the Advanced view with View at the top to read it.",
+  suggestions: ["What can Ask Foundry help me with?", "What does this word mean?", "Why does my change wait?", "How do I ask for a change?"],
+  noPlainAnswer: "Ask Foundry answered in words of the Advanced view. Switch to the Advanced view with View at the top to read it.",
   project: "Your project",
   stateSource: "What the Foundry saw of your work",
   docSource: "The guide of the Foundry",
-  noAnswer: "Ask SCF could not answer.",
+  noAnswer: "Ask Foundry could not answer.",
   checkTitle: "A check",
   checkOutcomes: { read: "Read again", passed: "Works", failed: "Does not work" },
 };
