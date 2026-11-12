@@ -236,4 +236,30 @@ describe("a story whose trigger label is removed is parked", () => {
     expect(runs()).toHaveLength(1);
   });
 
+  it("drops a run it queued when the trigger label is gone before the run started, and keeps the others", async () => {
+    const w = watcher();
+    const real = scheduler.queue.bind(scheduler);
+    const job = (runId: string, source: string, issue = "4") => ({ kind: "run", runId, githubRepo: "acme/app", issue, source } as ReturnType<typeof real>["pending"][number]);
+    let pending = [job("20990101-000000-q001", "watcher w issue #4"), job("20990101-000000-q002", "ui answer"), job("20990101-000000-q003", "watcher other issue #4")];
+    vi.spyOn(scheduler, "queue").mockImplementation(() => ({ ...real(), pending }));
+    const cancel = vi.spyOn(scheduler, "cancel").mockImplementation((id: string) => {
+      const before = pending.length;
+      pending = pending.filter((p) => p.runId !== id);
+      return pending.length < before;
+    });
+
+    // the label is still there: nothing is dropped
+    issue4([TRIGGER, "factory:working"]);
+    await w.tick();
+    expect(cancel).not.toHaveBeenCalled();
+
+    // the label is gone: only this watcher's own queued run of the issue is dropped, once
+    issue4([]);
+    await w.tick();
+    expect(cancel.mock.calls.map((c) => c[0])).toEqual(["20990101-000000-q001"]);
+    expect(w.status.lastActions.join("\n")).toContain(`#4 has no ${TRIGGER} label → queued run 20990101-000000-q001 is dropped before it started`);
+    await w.tick();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
 });

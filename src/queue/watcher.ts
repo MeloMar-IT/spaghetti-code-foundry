@@ -2107,8 +2107,8 @@ export class Watcher {
   }
 
   /**
-   * Marks the newest run of an open issue that lost its trigger label, when the run waits for answers or was cancelled
-   * while stopped: nothing continues it, so nobody is asked about it. Candidates come from the uncapped run index; an
+   * Drops a job this watcher queued for an open issue that lost its trigger label (it has not started), and marks the newest run of
+   * such an issue, when the run waits for answers or was cancelled while stopped: nothing continues it, so nobody is asked about it. Candidates come from the uncapped run index; an
    * issue missing from the (possibly cut) issue list is confirmed directly. At most PARK_CHECKS_PER_TICK confirmations
    * per check; a "not parked" answer is remembered for a while, so the next checks reach the other runs.
    */
@@ -2118,13 +2118,28 @@ export class Watcher {
     const listed = new Map(everyIssue.map((i) => [i.number, i]));
     const now = Date.now();
     for (const [k, t] of this.parkNegative) if (now - t > PARK_RECHECK_MS) this.parkNegative.delete(k);
+    let confirmations = 0;
+    // A job this watcher queued for an issue that has since lost its trigger label has not started: drop it, so it never runs (and
+    // spends nothing) only to be parked afterwards. It also carries the flow of the time it was queued, not the current one.
+    for (const p of this.d.scheduler.queue().pending) {
+      const n = Number(p.issue);
+      if (p.githubRepo !== this.repo || !Number.isSafeInteger(n) || p.source !== `watcher ${this.cfg.id} issue #${n}`) continue;
+      if (withLabel.has(n) || this.parkNegative.has(n)) continue;
+      const known = listed.get(n);
+      if (known && (known.state?.toUpperCase() !== "OPEN" || known.labels.some((l) => l.name === this.cfg.label))) continue;
+      if (!known && knownIssueState(this.repo, n) === "closed") continue;
+      if (confirmations >= PARK_CHECKS_PER_TICK) break;
+      confirmations++;
+      alive();
+      if (!(await this.reallyParked(n))) { this.parkNegative.set(n, now); continue; }
+      if (this.d.scheduler.cancel(p.runId)) this.act(`#${n} has no ${this.cfg.label} label → queued run ${p.runId} is dropped before it started`);
+    }
     const pending = this.d.scheduler.queue().pending;
     const newest = new Map<string, RunBrief>(); // the newest run of each issue of this repository, in any flow
     for (const b of this.d.scheduler.briefs()) {
       if (b.githubRepo !== this.repo || !b.issue || newest.has(b.issue)) continue;
       newest.set(b.issue, b);
     }
-    let confirmations = 0;
     for (const [issueNo, b] of newest) {
       const n = Number(issueNo);
       if (b.flow !== this.flowName() || (b.status !== "stopped" && b.status !== "cancelled")) continue;
