@@ -286,6 +286,9 @@ describe("skill-write flow", () => {
     expect(mainLog()).toEqual(before);
     const asked = gh.comments().find((c) => c.body.includes("does not measurably help"))!;
     expect(asked.body).toMatch(/\nEFFECT demo@1\.0\.0 no-measurable-effect /);
+    // a decision for the owner, never answered with the recommendations
+    expect(asked.body).toContain("**Kind:** owner_action");
+    expect(asked.body).not.toContain("Nothing needed from you");
     expect(gh.ghLog()).not.toContain("gh issue close");
     expect(gh.ghLog()).toMatch(/--add-label Factory_needs_info/);
 
@@ -316,7 +319,23 @@ describe("skill-write flow", () => {
     expect(runOf("9")!.status).toBe("stopped");
     expect(ids("9").slice(4)).toEqual(["write", "check", "measure", "review", "after_review", "write", "check", "measure", "review", "after_review", "ask_for_info"]);
     expect(runOf("9")!.history.filter((h) => h.id === "after_review").map((h) => h.output?.trim())).toEqual(["REVIEW: rewrite", "REVIEW: ask"]);
-    expect(gh.comments().find((c) => c.body.includes("the review asks for changes"))!.body).toContain("overlaps the java skill");
+    const asked = gh.comments().find((c) => c.body.includes("the review asks for changes"))!;
+    expect(asked.body).toContain("overlaps the java skill");
+    expect(asked.body).toContain("**Kind:** owner_action");
+
+    // a watcher that answers questions itself leaves this one to the owner: no /defaults, the run is not resumed
+    issues(9, ["Skill_write", "Factory_needs_info"]);
+    process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: [foundryComment(asked.body)], labels: [] });
+    const auto = new Watcher(WatcherSchema.parse({
+      id: "sw", github_repo: REPO, label: "Skill_write", flow: "skill-write", one_at_a_time: true, auto_defaults: true,
+      status_labels: LABELS, remove_on_done: ["Skill_write"], vars: {},
+    }), { scheduler, runsDir: runsDir(), repo: gh.tmp, log: () => {} });
+    const posted = gh.comments().length;
+    await auto.tick();
+    await settle();
+    expect(gh.comments().slice(posted).some((c) => c.body.includes("/defaults"))).toBe(false);
+    expect(runOf("9")!.status).toBe("stopped");
+    expect(auto.status.holds?.find((h) => h.issue === 9)?.next.kind).toBe("owner_action");
     expect(mainLog()).toEqual(before);
   }, 120_000);
 
