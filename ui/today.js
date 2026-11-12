@@ -1,3 +1,4 @@
+import { api } from "./api.js";
 import { h } from "./dom.js";
 import { needsUser, recordLink } from "./home.js";
 import { phaseStrip } from "./kit/product.js";
@@ -8,6 +9,7 @@ import { myRunsEntries } from "./runs-list.js";
 import { ownerLabel } from "./runs.js";
 import { groupOf, runPhase } from "./simple-model.js";
 import { FINAL, STUCK, kindWords, plainWords, safeText } from "./simple-words.js";
+import { PANEL_KINDS, openTurnItem } from "./turn-act.js";
 
 // Today: the first page of every view. One model (built from GET /api/runs through `groupOf`, which reads the #838 flags),
 // one view. Simple, Advanced and Admin call it and add their own extras. No help button, no server text on the cards.
@@ -134,7 +136,7 @@ export function droppedRuns(runs) {
  * opts: { role, simple, projectOf (Simple: (entry) => project id | null), now, exclude (run ids another panel of the page already shows),
  * extraNeeds (needs that are not runs, counted in the summary), needsUnknown (what needs the person is not known) }.
  */
-export function todayModel(runs, pending, { role = "user", simple = false, projectOf, now = Date.now(), exclude, extraNeeds = 0, needsUnknown = false } = {}) {
+export function todayModel(runs, pending, { role = "user", simple = false, projectOf, now = Date.now(), exclude, extraNeeds = 0, needsUnknown = false, mine } = {}) {
   const out = {
     total: 0, now, attention: [], building: [], finished: [], extraNeeds, needsUnknown,
     counts: { waiting: 0, building: 0, check: 0, ready: 0, "published-week": 0, "finished-today": 0 },
@@ -165,7 +167,7 @@ export function todayModel(runs, pending, { role = "user", simple = false, proje
       out.counts.check++;
       out.lists.check.push(item);
       if (isReady(n)) { out.counts.ready++; out.lists.ready.push(item); }
-      if (!skip.has(id)) out.attention.push(attentionOf(e, n, { role, simple, title, pid }));
+      if (!skip.has(id)) out.attention.push(attentionOf(e, n, { role, simple, title, pid, mine }));
     }
     if (g === "building") {
       out.counts.building++;
@@ -191,7 +193,18 @@ function titleOf(e, n, simple) {
   return simple ? safeText(n.title || task, TODAY.untitled) : n.title || task || TODAY.untitled;
 }
 
-function attentionOf(e, n, { role, simple, title, pid }) {
+/**
+ * The item of `GET /api/your-turn/mine` that answers or decides this run here: the same run, a kind with a panel, and an act the
+ * panel uses. Null when there is none (the card then links to where the item lives, such as the issue on GitHub).
+ */
+export function answerItemFor(id, kind, mine) {
+  if (!id || !Array.isArray(mine) || !PANEL_KINDS.has(kind)) return null;
+  const item = mine.find((i) => i && typeof i.key === "string" && i.key && i.runId === id && i.kind === kind
+    && Array.isArray(i.acts) && (i.acts.includes("answer") || i.acts.includes("approve")));
+  return item ? { key: item.key, kind: item.kind } : null;
+}
+
+function attentionOf(e, n, { role, simple, title, pid, mine }) {
   const id = idOf(e);
   const failed = n.kind === "failed";
   const words = kindWords(n.kind, n.who);
@@ -202,8 +215,11 @@ function attentionOf(e, n, { role, simple, title, pid }) {
   else if (link && !failed) { href = link.href; external = !!link.external; }
   else if (id) href = `#/runs/${enc(id)}`;
   const label = n.final ? FINAL.yes : words.todo;
+  // a question or a decision this person may give here opens its panel on the page (as Your turn does), not the issue
+  const answer = answerItemFor(id, n.kind, mine);
   return {
     ...(simple ? { project: pid, tag: tagOf(n) } : {}),
+    ...(answer ? { answer: { ...answer, label } } : {}),
     id,
     title,
     sentence: failed ? STUCK.line : n.final ? FINAL.line : words.line,
@@ -257,13 +273,24 @@ export function tagOf(n) {
   return "todo";
 }
 
-export function attentionCard(c, focus) {
+/**
+ * The button of an attention item: with `c.answer`, a button that opens the panel to answer or decide in place (the page refreshes by
+ * itself after the answer is sent); else the link of `c.action`; else nothing. `onAct` is for tests.
+ */
+export function actionNode(c, focus, { onAct = (body) => api.actTurn(body) } = {}) {
   const fid = c.id ?? "x";
+  if (c.answer) {
+    return h("button", { type: "button", class: "btn primary", "data-focus": `${focus}-act-${fid}`, onClick: () => openTurnItem({ key: c.answer.key, next: { kind: c.answer.kind } }, onAct) }, c.answer.label);
+  }
+  return c.action ? link("btn primary", c.action.href, `${focus}-act-${fid}`, c.action.external, c.action.label) : null;
+}
+
+export function attentionCard(c, focus) {
   return h("li", { class: "card today-card" },
     h("h3", {}, c.title),
     h("p", {}, c.sentence),
     c.owner ? h("p", { class: "muted" }, `Owner: ${c.owner}`) : null,
-    c.action ? link("btn primary", c.action.href, `${focus}-act-${fid}`, c.action.external, c.action.label) : null,
+    actionNode(c, focus),
     causeDetails(c, focus));
 }
 

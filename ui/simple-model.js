@@ -181,8 +181,8 @@ export const HOME_COUNTERS = ["check", "building", "ready", "published-week"];
  * The current project is the project of the newest work that really runs (paused work does not count), else of the first card
  * that needs the person, else the first project; null when there is no project.
  */
-export function homeModel(runs, pending, repos, projects, { now = Date.now(), list = "", safe } = {}) {
-  const today = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos), now });
+export function homeModel(runs, pending, repos, projects, { now = Date.now(), list = "", safe, mine } = {}) {
+  const today = todayModel(runs, pending, { simple: true, projectOf: projectOfWork(repos), now, mine });
   const all = Array.isArray(projects) ? projects : [];
   const newest = (items) => items.reduce((best, b) => (!best || b.startedMs > best.startedMs ? b : best), null);
   const runningOf = (id) => newest(today.building.filter((b) => b.running && (id === undefined || String(b.project) === String(id))));
@@ -213,9 +213,9 @@ export function projectsModel(repos, runs, pending, changes = {}) {
   return all.map((repo) => {
     const m = projectModel(repo, all, runs, pending, changes?.[String(repo.id)] ?? []);
     const first = m.todo.find((c) => c.link || c.decide);
-    // A card that decides in place has no link: the big button goes to the project page, where the card is.
+    // A card that decides in place has no link, and a question is answered in place: the big button goes to the project page, where the card is.
     const next = first
-      ? first.decide
+      ? first.decide || first.ask
         ? { label: first.todo, href: `#/repos/${encodeURIComponent(m.id)}`, external: false }
         : { label: first.todo, href: first.link.href, external: first.link.external }
       : { label: WORDS.open, href: `#/repos/${encodeURIComponent(m.id)}`, external: false };

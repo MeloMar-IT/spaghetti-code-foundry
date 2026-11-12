@@ -31,10 +31,34 @@ export function actButtons(item, onAct) {
     ];
   }
   const label = SHOW[kind];
+  return label ? [h("button", { class: "primary", onClick: () => openTurnItem(item, onAct) }, label)] : [];
+}
+
+/**
+ * Opens the panel of an item that waits for the person (questions, or a plan or a request to approve) in a modal, as Your turn does.
+ * `item`: { key, next: { kind } }; `onAct(body)` posts and returns a promise. False when the kind has no panel.
+ */
+export function openTurnItem(item, onAct) {
+  const kind = item?.next?.kind;
+  const label = SHOW[kind];
+  if (!label || kind === "failed") return false;
   const questions = kind === "questions" || kind === "planner_questions" || kind === "owner_action";
   const build = (detail, close) => (questions ? questionsPanel : proposalPanel)(item, detail, { onAct, close });
-  return label ? [h("button", { class: "primary", onClick: () => openDetail(label, build) }, label)] : [];
+  (async () => {
+    let detail;
+    try {
+      detail = await api.turnDetail(item.key);
+    } catch (e) {
+      toast(e.message, "error");
+      return;
+    }
+    modal(label, (close) => build(detail, close));
+  })();
+  return true;
 }
+
+/** The kinds `openTurnItem` opens a panel for. */
+export const PANEL_KINDS = new Set(Object.keys(SHOW));
 
 /** Posts `body`: the buttons are off meanwhile; on success the panel closes, on failure it stays open with the server's sentence. */
 function submitter(buttons, onAct, close) {

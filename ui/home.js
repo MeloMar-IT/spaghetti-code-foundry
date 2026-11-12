@@ -57,11 +57,13 @@ export async function renderHome(main, { a = api, setup = false } = {}) {
   });
   poll = poller({
     load: async () => {
-      const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
-      return { runs: await withActive(a, runs, queue), pending: queue?.pending };
+      // the items the person may answer here; a failed read gives none, and the cards link to the issue as before
+      const mine = Promise.resolve().then(() => a.myTurn()).then((v) => (Array.isArray(v?.items) ? v.items : []), () => []);
+      const [runs, queue, items] = await Promise.all([a.runs(), a.queue(), mine]);
+      return { runs: await withActive(a, runs, queue), pending: queue?.pending, mine: items };
     },
-    draw: ({ runs, pending }) => {
-      const [head, ...rest] = homeView(todayModel(runs, pending, { role: "user" }));
+    draw: ({ runs, pending, mine }) => {
+      const [head, ...rest] = homeView(todayModel(runs, pending, { role: "user", mine }));
       const more = setup ? h("p", { class: "muted" }, h("a", { href: "#/setup" }, "Setup check"), " — what this computer still needs") : null;
       keepScroll(box, () => mount(box, head, states.alert, ...rest, more, states.note));
     },

@@ -4,6 +4,8 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Hotfix: a question can be answered in the app again from Home. Since the Today home (#842, #855, #857), the button of a question card linked to the issue on GitHub; only the Admin home's Your turn list still opened the answer panel. A Today card in Simple and Advanced now opens the same panel (questions, or a plan or a request to approve) when the person may answer it here (`GET /api/your-turn/mine`), and keeps the link otherwise. The big button of a Simple project with a question goes to the project page, where it is answered in place.
+
 - Hotfix: the skill-write flow failed far too often (50 runs in three days, none published). A review of every run found six causes, all fixed:
   - **A reply threw the skill away.** A resumed run cleaned the clone, so every answer on an issue started the skill from nothing. The clone step now keeps the draft of the skill (`DRAFT:` line), the writer builds on it, and `pick` checks new/change against `main` instead of the working tree.
   - **The reviewer never approved.** It sorts its points under Blocking, Worth fixing later and For a person, and approves when nothing blocks. The closing comment of a published skill lists the other points. Requests outside the skill folder (a README index) are never blocking.

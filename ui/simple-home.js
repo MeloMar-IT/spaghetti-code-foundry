@@ -3,7 +3,7 @@ import { phaseStrip } from "./kit/product.js";
 import { PHASES } from "./phases.js";
 import { DEFAULTS, LOOKS } from "./prefs.js";
 import { HOME } from "./simple-words.js";
-import { SHOWN, attentionCard, buildingItem, causeDetails, summaryLine } from "./today.js";
+import { SHOWN, actionNode, attentionCard, buildingItem, causeDetails, summaryLine } from "./today.js";
 
 // The Simple home is drawn by a layout picked from the person's look. Every layout draws the same model (`homeModel` in
 // ./simple-model.js): a layout only arranges it and adds or drops nothing.
@@ -98,7 +98,7 @@ const row = (c, i, focus) => h("li", { class: "simple-row" },
   h("span", { class: "simple-row-num", "aria-hidden": "true" }, String(i + 1).padStart(2, "0")),
   h("div", { class: "simple-row-main" }, h("h3", {}, c.title), h("p", {}, c.sentence)),
   c.tag ? h("span", { class: `pill sem-${TAG_TONE[c.tag] ?? "neutral"} simple-row-tag` }, HOME.tags[c.tag] ?? HOME.tags.todo) : null,
-  c.action ? h("a", { class: "btn primary", href: c.action.href, "data-focus": `${focus}-act-${c.id ?? "x"}` }, c.action.label) : null,
+  actionNode(c, focus),
   causeDetails(c, focus));
 
 const column = (b, focus) => h("li", { class: "simple-column" },

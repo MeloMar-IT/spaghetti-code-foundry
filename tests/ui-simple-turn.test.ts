@@ -368,17 +368,53 @@ describe("the project page", () => {
     off();
   });
 
-  it("keeps the link when the read fails or is missing, and My projects does not read the list", async () => {
+  it("keeps the link when the read fails or is missing", async () => {
     for (const a of [base({ myTurn: vi.fn(async () => { throw new Error("no"); }) }), base({ myTurn: undefined }), base({ myTurn: vi.fn(async () => ({})) })]) {
       const { main, off } = await open(a);
       expect(btn(main, "Answer the questions")).toBeUndefined();
       expect(links(main).length).toBeGreaterThan(0);
       off();
     }
+  });
+
+  it("answers a question from the Today card of My projects in a panel, not on GitHub", async () => {
+    const home = async (a: any) => {
+      const main = new FakeElement("div");
+      const off = await view.renderSimpleHome(main, { a });
+      return { main, off };
+    };
     const a = base();
-    const main = new FakeElement("div");
-    (await view.renderSimpleHome(main, { a }))();
-    expect(a.myTurn).not.toHaveBeenCalled();
+    const { main, off } = await home(a);
+    expect(a.myTurn).toHaveBeenCalled();
+    const b = main.all("button").find((x) => x.attrs["data-focus"] === "simple-today-act-w1");
+    expect(b, "a button that opens the answer panel").toBeTruthy();
+    expect(main.all("a").some((x) => String(x.attrs.href ?? "").startsWith("https://github.com/"))).toBe(false);
+    off();
+    // without the item (a failed read), the card keeps its link
+    const failed = await home(base({ myTurn: vi.fn(async () => { throw new Error("no"); }) }));
+    expect(failed.main.all("button").some((x) => x.attrs["data-focus"] === "simple-today-act-w1")).toBe(false);
+    expect(failed.main.all("a").some((x) => x.attrs["data-focus"] === "simple-today-act-w1")).toBe(true);
+    failed.off();
+  });
+
+  it("gives an Advanced Today card the panel for a question or a plan this person may decide, and keeps the link otherwise", async () => {
+    const today = await import("../ui/today.js" as string);
+    const runs = [run("q1", "planner_questions"), run("p1", "approve_plan"), run("x1", "questions")];
+    const mine = [mineItem("q1", { kind: "planner_questions", acts: ["answer"] }), mineItem("p1", { kind: "approve_plan", acts: ["approve", "reject"] })];
+    const m = today.todayModel(runs, [], { role: "user", mine });
+    const by = (id: string) => m.attention.find((c: any) => c.id === id);
+    expect(by("q1").answer).toMatchObject({ key: "m-q1", kind: "planner_questions" });
+    expect(by("p1").answer).toMatchObject({ key: "m-p1", kind: "approve_plan" });
+    expect(by("x1").answer).toBeUndefined();
+    expect(today.todayModel(runs, [], { role: "user" }).attention.every((c: any) => !c.answer)).toBe(true);
+    const node = box([today.actionNode(by("q1"), "home")]);
+    expect(node.all("button")).toHaveLength(1);
+    expect(node.all("a")).toHaveLength(0);
+  });
+
+  it("sends the big button of a project with a question to the project page, where it is answered", () => {
+    const [p] = model.projectsModel([repo], [run("pq", "questions")], []);
+    expect(p.next).toMatchObject({ href: "#/repos/r1", external: false });
   });
 
   it("keeps the page on a 401 while answers are unsent (the real api wrapper)", async () => {

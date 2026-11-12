@@ -303,7 +303,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
 }
 
 /** Loads the three lists and polls them; `draw(projects)` gets the projects. Returns a cleanup. */
-async function live(main, { a, draw, turns = false, changesFor, safeFor }) {
+async function live(main, { a, draw, turns = false, mine: wantMine = false, changesFor, safeFor }) {
   const box = h("div", { class: "simple" });
   mount(main, box);
   let poll;
@@ -318,7 +318,7 @@ async function live(main, { a, draw, turns = false, changesFor, safeFor }) {
   poll = poller({
     load: async () => {
       // the items the person may answer; a failed or missing read gives none, so no card has an answer button
-      const mine = turns ? Promise.resolve().then(() => a.myTurn()).then((v) => (Array.isArray(v?.items) ? v.items : []), () => []) : [];
+      const mine = turns || wantMine ? Promise.resolve().then(() => a.myTurn()).then((v) => (Array.isArray(v?.items) ? v.items : []), () => []) : [];
       const [repos, runs, queue, mineItems] = await Promise.all([a.repos(), a.runs(), a.queue(), mine]);
       // the project page also reads this project's change requests (those kept for later are listed under Planned); a failed read gives none
       const changes = {};
@@ -383,7 +383,9 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true,
     a,
     // the current project of the home reads its newest safe point
     safeFor: ({ repos, runs, pending }) => homeModel(runs, pending, repos, projectsModel(repos, runs, pending)).project?.id ?? null,
-    draw: (projects, _refresh, repos, _turns, { runs, pending, safe } = {}) => {
+    // the items the person may answer: a question card of Today opens its panel here instead of the issue
+    mine: true,
+    draw: (projects, _refresh, repos, mineItems, { runs, pending, safe } = {}) => {
       const empty = first && projects.length === 0;
       first = false;
       if (empty && alive()) {
@@ -395,7 +397,7 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true,
       }
       // Today first, drawn by the layout of the person's look (work of the person's projects only), then My projects.
       // A counter opens `list` on this page.
-      const model = homeModel(runs, pending, repos, projects, { list, safe });
+      const model = homeModel(runs, pending, repos, projects, { list, safe, mine: mineItems });
       return [...homeLayout(model, look(), { focus: "simple-today" }), ...projectsView(projects)];
     },
   });
