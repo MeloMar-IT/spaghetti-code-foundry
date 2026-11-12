@@ -1,10 +1,16 @@
 name: Website
 
-# Builds spaghetti-code-foundry.com from docs/ and website/ and publishes it with GitHub Pages.
-# Needs Settings → Pages → Source: "GitHub Actions" (set once by the owner), and DNS for the domain in website/static/CNAME.
+# Builds spaghetti-code-foundry.com from docs/ and website/ and checks it (a broken link, anchor or image fails the build).
+# The site is hosted on the owner's own web host: download the "website" artifact of a run and upload its contents there.
 on:
   push:
     branches: [main]
+    paths:
+      - "docs/**"
+      - "website/**"
+      - "README.md"
+      - ".github/workflows/website.yml"
+  pull_request:
     paths:
       - "docs/**"
       - "website/**"
@@ -14,12 +20,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -35,16 +35,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Build the website (fails on a broken link, anchor or image)
         run: node website/build.mjs
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
+          name: website
           path: website/dist
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          retention-days: 30
