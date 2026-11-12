@@ -308,9 +308,11 @@ export async function renderProblems(main, { data } = {}) {
   };
   shown = PAGE;
   const list = h("div", {});
-  const redraw = () => list.replaceChildren(
+  // replaceChildren turns null into the text "null": leave absent children out
+  const redraw = () => list.replaceChildren(...[
     m.findingsUnreadable ? h("p", { class: "status bad" }, "The findings file of the monitor cannot be read, so the list is not shown. The next check keeps it as monitor-findings.json.broken and starts a new one.") : null,
-    m.findings?.length ? findingsTable(m, redraw) : m.findingsUnreadable ? null : emptyState("No findings."));
+    m.findings?.length ? findingsTable(m, redraw) : m.findingsUnreadable ? null : emptyState("No findings."),
+  ].filter(Boolean));
   redraw();
   mount(main,
     head(),

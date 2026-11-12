@@ -50,8 +50,13 @@ export class FakeElement extends FakeNode {
     for (const fn of this.listeners[type] ?? []) fn(event);
   }
   private adopt(nodes: (FakeNode | string)[]) { for (const n of nodes) if (n instanceof FakeElement) n.parent = this; }
-  append(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.children.push(...nodes); }
-  replaceChildren(...nodes: (FakeNode | string)[]) {
+  /** As the DOM does: a child that is not a node (null, undefined, a number) becomes its text, so `null` shows as "null". */
+  private static asNodes(nodes: unknown[]): (FakeNode | string)[] {
+    return nodes.map((n) => (n !== null && typeof n === "object" ? (n as FakeNode) : String(n)));
+  }
+  append(...given: (FakeNode | string)[]) { const nodes = FakeElement.asNodes(given); this.adopt(nodes); this.children.push(...nodes); }
+  replaceChildren(...given: (FakeNode | string)[]) {
+    const nodes = FakeElement.asNodes(given);
     for (const c of this.children) if (c instanceof FakeElement && c.parent === this) c.parent = undefined;
     this.adopt(nodes);
     this.text = undefined;

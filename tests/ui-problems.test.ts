@@ -217,8 +217,10 @@ describe("the page", () => {
     expect(await g(8)).toEqual([undefined, ["Mute", "This is not a problem"]]);
   });
 
-  it("says when there are no findings", async () => {
-    expect((await draw()).textContent).toContain("No findings.");
+  it("says when there are no findings, without a stray \"null\" from the absent warning", async () => {
+    const t = (await draw()).textContent;
+    expect(t).toContain("No findings.");
+    expect(t).not.toContain("null");
   });
 
   it("warns instead of saying no findings when the file cannot be read", async () => {
