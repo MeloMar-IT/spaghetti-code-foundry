@@ -15,6 +15,8 @@ button.icon:hover { color: var(--text); background: var(--panel-2); }
 button.small { padding: 3px 9px; font-size: var(--text-small); }
 
 input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--control-pad-y) var(--control-pad-x); width: 100%; min-width: 0; }
+/* a checkbox or radio button keeps its own size; the full width above would put it in the middle of a row, far from its label */
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; flex: none; }
 textarea { resize: vertical; font-family: var(--mono); font-size: var(--text-code); line-height: 1.5; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
 .field { display: grid; gap: 4px; }

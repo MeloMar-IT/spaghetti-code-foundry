@@ -3578,7 +3578,8 @@ write("skill-write", {
     {
       id: "write",
       type: "claude",
-      max_visits: 4,
+      // 4 tries to pass the check, plus a rewrite of the sample tasks after a measurement without effect (and its checks)
+      max_visits: 6,
       permission_mode: "acceptEdits",
       allowed_tools: ["Read", "Edit", "Write", "Glob", "Grep", "Bash(ls*)"],
       description: "Write or change skills/<name>/SKILL.md and skills/<name>/evals/ (takes the messages of a failed check)",
@@ -3594,6 +3595,13 @@ write("skill-write", {
         "{{steps.read_issue.output}}",
         "=== THE LAST CHECK (fix every PROBLEM line; empty on the first try) ===",
         "{{steps.check.output}}",
+        "=== THE LAST MEASUREMENT (empty unless the sample tasks could not show that the skill helps) ===",
+        "{{steps.measure.output}}",
+        "",
+        "When THE LAST MEASUREMENT ends with MEASURE: retask, the skill was measured and the sample tasks did not tell a run with the skill from a run without it. Each TASK line says why. Change evals/ (and the skill only where it is wrong):",
+        "- A task that passes without the skill tests nothing the skill teaches. Rewrite it so that only an agent that follows a rule of SKILL.md or references/ (a convention, a version fact, an edge case, a required order of steps) passes, and make its check test exactly that rule. Do not name the rule in the task text.",
+        "- A task that fails with and without the skill is broken: it cannot be done offline in its fixture (no download, no package registry, no provider plugins), or its check is wrong. Make it doable offline and its check correct; run nothing, reason from the files.",
+        "- Keep tasks that already pass with the skill and fail without it.",
         "",
         SKILL_FORMAT_LINES,
         "",
@@ -3618,7 +3626,11 @@ write("skill-write", {
       type: "shell",
       timeout_sec: 28800,
       description: "Run the sample tasks with and without the skill (scf skills effect), for a change also the old version, and record the tree that was measured",
-      routes: [{ if: "^MEASURE: (no-help|not-better)\\s*$", goto: "ask_for_info" }],
+      routes: [
+        // the first measurement without effect sends the sample tasks back to the writer, once; the second one asks the owner
+        { if: "^MEASURE: retask\\s*$", goto: "write" },
+        { if: "^MEASURE: (no-help|not-better)\\s*$", goto: "ask_for_info" },
+      ],
       run: [
         SKILL_VARS_SH,
         'git add -A -- "skills/$name" || { echo "could not stage the skill"; exit 1; }',
@@ -3630,7 +3642,11 @@ write("skill-write", {
         'verdict=$(printf \'%s\\n\' "$out" | sed -n \'s/^EFFECT [^ ]* \\([^ ]*\\) .*/\\1/p\' | tail -n 1)',
         '[ -n "$verdict" ] || { echo "measure failed: no verdict"; exit 1; }',
         'echo "SKILL_TREE: $tree"',
+        // per task: passes with / without the skill (RUN <skill> with|without <task> i/n run <id>: 0|1)
+        'printf \'%s\\n\' "$out" | awk \'$1=="RUN" && ($3=="with" || $3=="without") { n[$4 " " $3]++; p[$4 " " $3]+=$NF; t[$4]=1 } END { for (k in t) { w=p[k " with"]+0; o=p[k " without"]+0; a=n[k " with"]+0; b=n[k " without"]+0; why="it tells the two apart"; if (b>0 && o==b) why="too easy: it passes without the skill"; else if (a>0 && w==0) why="broken: it fails with and without the skill"; else if (w<=o) why="the skill does not make it pass more often"; printf "TASK %s: with %d/%d, without %d/%d; %s\\n", k, w, a, o, b, why } }\' | sort',
         'result=no-help; [ "$verdict" = helps ] && result=helps',
+        // a skill without effect gets one rewrite of its sample tasks: the earlier output of this step says whether it had it
+        'if [ "$result" = no-help ] && ! printf \'%s\\n\' "$FACTORY_OUT_MEASURE" | grep -q \'^MEASURE: retask\'; then echo "MEASURE: retask"; exit 0; fi',
         // a change that helps is also measured against the old version, on the new suite; it must score at least as well (tools/skill-improve)
         'if [ "$change" = change ] && [ "$result" = helps ]; then',
         '  old=$(mktemp -d) || { echo "could not make a temporary folder"; exit 1; }',
@@ -3752,7 +3768,7 @@ write("skill-write", {
         '  else',
         '    say="wrote the skill, but it does not measurably help, so it was not published. The scores:"',
         "  fi",
-        '  body=$(printf \'%s\\n\' "$FACTORY_OUT_MEASURE" | grep -E \'^((OLD )?(EFFECT|RUN|SKIPPED|NOTE) |COMPARE:)\')',
+        '  body=$(printf \'%s\\n\' "$FACTORY_OUT_MEASURE" | grep -E \'^((OLD )?(EFFECT|RUN|SKIPPED|NOTE|TASK) |COMPARE:)\')',
         // an improve issue: count the failed tries; the second one deprecates the skill (only said when the command really worked)
         '  ikey=$(printf \'%s\\n\' "$FACTORY_OUT_PICK" | sed -n \'s/^IMPROVE_KEY: *//p\' | head -n 1)',
         '  if [ -n "$ikey" ]; then',

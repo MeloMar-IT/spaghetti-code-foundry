@@ -94,7 +94,7 @@ describe("skill-write flow", () => {
     expect(flow.steps.map((s) => s.id)).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "review", "publish", "report", "ask_for_info"]);
     for (const s of flow.steps) if (s.type === "shell") expect(s.run, s.id).not.toMatch(/\{\{\s*(task|steps\.)/);
     const write = flow.steps.find((s) => s.id === "write") as { max_visits: number; allowed_tools: string[] };
-    expect(write.max_visits).toBe(4);
+    expect(write.max_visits).toBe(6);
     expect(write.allowed_tools.join(" ")).not.toMatch(/node|git/);
     for (const id of ["plan", "review"]) expect((flow.steps.find((s) => s.id === id) as { allowed_tools: string[] }).allowed_tools).toEqual(["Read", "Glob", "Grep"]);
     expect(flow.steps.filter((s) => s.on_success === "stop").map((s) => s.id)).toEqual(["ask_for_info"]);
@@ -277,7 +277,11 @@ describe("skill-write flow", () => {
     const run = runOf("8")!;
     expect(run.status).toBe("stopped");
     expect(run.reason).toContain('stopped at step "ask_for_info"');
-    expect(ids("8")).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "ask_for_info"]);
+    // the first measurement without effect sends the sample tasks back to the writer once; the second one asks
+    expect(ids("8")).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "write", "check", "measure", "ask_for_info"]);
+    const measures = run.history.filter((h) => h.id === "measure").map((h) => h.output);
+    expect(measures[0]).toMatch(/^MEASURE: retask$/m);
+    expect(measures[1]).toMatch(/^MEASURE: no-help$/m);
     expect(mainLog()).toEqual(before);
     const asked = gh.comments().find((c) => c.body.includes("does not measurably help"))!;
     expect(asked.body).toMatch(/\nEFFECT demo@1\.0\.0 no-measurable-effect /);
