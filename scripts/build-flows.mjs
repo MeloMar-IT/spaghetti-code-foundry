@@ -3578,8 +3578,8 @@ write("skill-write", {
     {
       id: "write",
       type: "claude",
-      // 4 tries to pass the check, plus a rewrite of the sample tasks after a measurement without effect (and its checks)
-      max_visits: 6,
+      // tries to pass the check, a rewrite of the sample tasks after a measurement without effect, and one after a review that asks for changes
+      max_visits: 8,
       permission_mode: "acceptEdits",
       allowed_tools: ["Read", "Edit", "Write", "Glob", "Grep", "Bash(ls*)"],
       description: "Write or change skills/<name>/SKILL.md and skills/<name>/evals/ (takes the messages of a failed check)",
@@ -3597,7 +3597,10 @@ write("skill-write", {
         "{{steps.check.output}}",
         "=== THE LAST MEASUREMENT (empty unless the sample tasks could not show that the skill helps) ===",
         "{{steps.measure.output}}",
+        "=== THE LAST REVIEW (empty unless the reviewer asked for changes) ===",
+        "{{steps.review.output}}",
         "",
+        "When THE LAST REVIEW ends with VERDICT: CHANGES, the skill was measured and reviewed, and the reviewer asked for changes. Fix every point it makes, in the skill and in evals/; keep what it did not object to.",
         "When THE LAST MEASUREMENT ends with MEASURE: retask, the skill was measured and the sample tasks did not tell a run with the skill from a run without it. Each TASK line says why. Change evals/ (and the skill only where it is wrong):",
         "- A task that passes without the skill tests nothing the skill teaches. Rewrite it so that only an agent that follows a rule of SKILL.md or references/ (a convention, a version fact, an edge case, a required order of steps) passes, and make its check test exactly that rule. Do not name the rule in the task text.",
         "- A task that fails with and without the skill is broken: it cannot be done offline in its fixture (no download, no package registry, no provider plugins), or its check is wrong. Make it doable offline and its check correct; run nothing, reason from the files.",
@@ -3618,6 +3621,8 @@ write("skill-write", {
       id: "check",
       type: "shell",
       description: "Check that only the skill folder changed, its format, size, credentials, the scan and the sample tasks (no agent)",
+      // one more than the writer may run: every write is checked
+      max_visits: 9,
       routes: [{ if: "^CHECK: failed\\s*$", goto: "write" }],
       run: [SKILL_VARS_SH, 'node "$FACTORY_TOOLS/skill-check" "$name" "$base"'].join("\n"),
     },
@@ -3691,7 +3696,19 @@ write("skill-write", {
         "List your points, each with the file. Then end with exactly one line: VERDICT: APPROVE   or   VERDICT: CHANGES",
       ].join("\n"),
       routes: [{ if: "^VERDICT: APPROVE\\s*$", goto: "publish" }],
+      on_success: "after_review",
+    },
+    {
+      id: "after_review",
+      type: "shell",
+      jump_only: true,
+      description: "The first review that asks for changes sends the skill back to the writer, once; the second one asks the owner (no agent)",
+      routes: [{ if: "^REVIEW: rewrite\\s*$", goto: "write" }],
       on_success: "ask_for_info",
+      run: [
+        // a shell step sees its own last output: after one rewrite the next review with changes goes to the owner
+        'if printf \'%s\\n\' "$FACTORY_OUT_AFTER_REVIEW" | grep -q \'^REVIEW: rewrite\'; then echo "REVIEW: ask"; else echo "REVIEW: rewrite"; fi',
+      ].join("\n"),
     },
     {
       id: "publish",

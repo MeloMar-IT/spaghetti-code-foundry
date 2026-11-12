@@ -131,8 +131,9 @@ export function loadLocalSkill(dir: string, origin: NormalizeOrigin = LOCAL_SKIL
   const notes: string[] = [];
   if (problems.length > 0) return { files: read.files, problems, notes };
   for (const f of scanSkill({ root: "skill", files: read.files }).findings) {
-    if (f.severity === "low") notes.push(`scan: ${f.rule} in ${f.path}`);
-    else problems.push(`scan: ${f.rule} in ${f.path}`);
+    const where = f.line ? `${f.path} line ${f.line}` : f.path;
+    if (f.severity === "low") notes.push(`scan: ${f.rule} in ${where}`);
+    else problems.push(`scan: ${f.rule} in ${where}`);
   }
   const kept = read.files.filter((f) => f.path !== "evals" && !f.path.startsWith("evals/"));
   const result = normalizeSkill(origin, { root: "skill", files: kept });

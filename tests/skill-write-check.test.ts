@@ -125,6 +125,20 @@ describe("credentials and endpoints", () => {
     expect(endpointProblems(f("connect('ws://localhost:9092'); open('wss://broker.test/x'); ftp://127.0.0.1/x"))).toEqual([]);
   });
 
+  it("lists every live endpoint of a file with its line and what to do, not only the first", () => {
+    const doc = [{ path: "references/vendors.md", content: Buffer.from("See [docs](https://learn.acme.io/a).\nRaw https://api.acme.io/x\nand https://hooks.acme.io/y\n") }];
+    expect(endpointProblems(doc)).toEqual([
+      "references/vendors.md line 2: a live endpoint (https://api.acme.io); write it as a Markdown link [text](https://…) or remove it",
+      "references/vendors.md line 3: a live endpoint (https://hooks.acme.io); write it as a Markdown link [text](https://…) or remove it",
+    ]);
+    const code = [{ path: "scripts/a.py", content: Buffer.from("x\nurl = 'https://api.acme.io'\n") }];
+    expect(endpointProblems(code)).toEqual(["scripts/a.py line 2: a live endpoint (https://api.acme.io); use a host under example.com or localhost, or remove it"]);
+    const many = [{ path: "evals/fixtures/a.txt", content: Buffer.from(Array.from({ length: 25 }, (_, i) => `https://h${i}.acme.io`).join("\n")) }];
+    const out = endpointProblems(many);
+    expect(out).toHaveLength(21);
+    expect(out.at(-1)).toBe("evals/fixtures/a.txt: more live endpoints after line 21");
+  });
+
   it("allows only the reserved example names, not every example.<tld>", () => {
     const f = (t: string) => [{ path: "evals/fixtures/a.js", content: Buffer.from(t) }];
     expect(endpointProblems(f("https://example.com/x https://example.org https://example.net"))).toEqual([]);

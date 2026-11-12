@@ -89,15 +89,21 @@ export function credentialProblems(files: readonly { path: string; content: Uint
   return out;
 }
 
+/** At most this many live endpoints are listed per file: enough to fix them all in one go. */
+const ENDPOINTS_PER_FILE = 20;
+const lineAt = (t: string, i: number): number => t.slice(0, i).split("\n").length;
+
 /**
  * Live endpoints of any of http, https, ws, wss and ftp. Allowed: local and reserved example hosts everywhere, and an https Markdown
- * link target in SKILL.md and references/*.md (a plain http link is not a documentation exception).
+ * link target in SKILL.md and references/*.md (a plain http link is not a documentation exception). Every hit is listed with its line
+ * (up to ENDPOINTS_PER_FILE per file), so a writer can fix them all at once.
  */
 export function endpointProblems(files: readonly { path: string; content: Uint8Array }[]): string[] {
   const out: string[] = [];
   for (const f of files) {
     const doc = f.path === "SKILL.md" || (f.path.startsWith("references/") && f.path.endsWith(".md"));
     const t = text(f.content);
+    let hits = 0;
     ENDPOINT_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = ENDPOINT_RE.exec(t))) {
@@ -105,8 +111,8 @@ export function endpointProblems(files: readonly { path: string; content: Uint8A
       const host = hostOf(m[2]!);
       if (doc && scheme === "https" && t.slice(Math.max(0, m.index - 2), m.index) === "](") continue;
       if (localOrExampleHost(host)) continue;
-      out.push(`${f.path}: a live endpoint (${scheme}://${host.slice(0, 60)})`);
-      break;
+      if (++hits > ENDPOINTS_PER_FILE) { out.push(`${f.path}: more live endpoints after line ${lineAt(t, m.index)}`); break; }
+      out.push(`${f.path} line ${lineAt(t, m.index)}: a live endpoint (${scheme}://${host.slice(0, 60)})${doc && scheme === "https" ? "; write it as a Markdown link [text](https://…) or remove it" : "; use a host under example.com or localhost, or remove it"}`);
     }
   }
   return out;

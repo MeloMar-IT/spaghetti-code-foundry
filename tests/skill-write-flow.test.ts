@@ -91,10 +91,11 @@ describe("skill-write flow", () => {
   it("is shaped as planned: no issue text in shell commands, a bounded writer, a read-only reviewer, one stop step", () => {
     const flow = flowOf();
     expect(flow.one_per_repo).toBe(true);
-    expect(flow.steps.map((s) => s.id)).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "review", "publish", "report", "ask_for_info"]);
+    expect(flow.steps.map((s) => s.id)).toEqual(["clone", "read_issue", "plan", "pick", "write", "check", "measure", "review", "after_review", "publish", "report", "ask_for_info"]);
     for (const s of flow.steps) if (s.type === "shell") expect(s.run, s.id).not.toMatch(/\{\{\s*(task|steps\.)/);
     const write = flow.steps.find((s) => s.id === "write") as { max_visits: number; allowed_tools: string[] };
-    expect(write.max_visits).toBe(6);
+    expect(write.max_visits).toBe(8);
+    expect((flow.steps.find((s) => s.id === "check") as { max_visits: number }).max_visits).toBe(9);
     expect(write.allowed_tools.join(" ")).not.toMatch(/node|git/);
     for (const id of ["plan", "review"]) expect((flow.steps.find((s) => s.id === id) as { allowed_tools: string[] }).allowed_tools).toEqual(["Read", "Glob", "Grep"]);
     expect(flow.steps.filter((s) => s.on_success === "stop").map((s) => s.id)).toEqual(["ask_for_info"]);
@@ -306,14 +307,15 @@ describe("skill-write flow", () => {
     expect(mainLog()[0]).toBe("Add skill demo-skill (#8)");
   }, 180_000);
 
-  it("stops for the review notes when the reviewer asks for changes", async () => {
+  it("sends the first review with changes back to the writer, and stops for the review notes of the second", async () => {
     process.env.FAKE_SKILL_REVIEW = "SKILL.md overlaps the java skill.\nVERDICT: CHANGES";
     issues(9);
     const before = mainLog();
     await watcher().tick();
     await settle();
     expect(runOf("9")!.status).toBe("stopped");
-    expect(ids("9").at(-1)).toBe("ask_for_info");
+    expect(ids("9").slice(4)).toEqual(["write", "check", "measure", "review", "after_review", "write", "check", "measure", "review", "after_review", "ask_for_info"]);
+    expect(runOf("9")!.history.filter((h) => h.id === "after_review").map((h) => h.output?.trim())).toEqual(["REVIEW: rewrite", "REVIEW: ask"]);
     expect(gh.comments().find((c) => c.body.includes("the review asks for changes"))!.body).toContain("overlaps the java skill");
     expect(mainLog()).toEqual(before);
   }, 120_000);

@@ -146,7 +146,7 @@ export const TEXT_RULES: readonly TextRule[] = [
   rule("prompt-injection.role-override", "medium", "Tries to change the role of the agent",
     /\byou\s+are\s+now\s+(?:in\s+)?(?:DAN|developer\s+mode|jailbroken|unrestricted|an?\s+unrestricted)\b|\bnew\s+system\s+prompt\s{0,4}:/i),
   rule("prompt-injection.fake-turn", "medium", "Looks like a message from the system or the assistant",
-    /<\/?(?:system|system-reminder|assistant)>|\[\/?INST\]|<\|im_start\|>/i),
+    /<\/?(?:system|system-reminder|assistant)>|(?-i:\[\/?INST\])|<\|im_start\|>/i),
 
   // policy-override
   rule("policy-override.skip-flag", "high", "Uses a flag that skips permission checks",
