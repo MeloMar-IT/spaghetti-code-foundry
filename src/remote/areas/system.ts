@@ -28,4 +28,6 @@ export const SYSTEM: Cmd[] = [
     show: (d) => table(Array.isArray(d) ? d : ((d as { watchers?: unknown[] })?.watchers ?? []), [...cols("id", "source", "flow", "every", "enabled"), { key: "github_repo", head: "repository" }], "no watchers") },
   { area: "plugins", action: "list", method: "GET", path: "plugins", help: "the plugins loaded at server start, in order", show: pluginsText },
   { area: "watchers", action: "tick", method: "POST", path: "watchers/:id/tick", args: ["id"], help: "run a watcher's check now" },
+  { area: "watchers", action: "pause", method: "POST", path: "watchers/:id/pause", args: ["id"], help: "pause a watcher: no new runs, running runs go on", show: (d) => fields(d) },
+  { area: "watchers", action: "resume", method: "POST", path: "watchers/:id/resume", args: ["id"], help: "resume a paused watcher", show: (d) => fields(d) },
 ];

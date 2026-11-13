@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Pause and resume a watcher through the API: `POST /api/watchers/:id/pause` and `/resume` (admins, or a service account that lists each route), with an audit line; also `scf watchers pause|resume`.
 - Docs: `TRADEMARKS.md` (new) names the marks "Spaghetti Code Foundry", "SCF" and the logo, says what is allowed (saying a product is based on the Foundry, sharing it unchanged under its own name) and what is not (naming another product or service with these names, using the logo), and gives a contact. The README's licence section and the website's FAQ and footer link to it. The code is unchanged.
 
 - New setting `server.public_url`: the https address people use to reach the Foundry (Settings → Network → **Public address**, or `server:` in `config.yaml`). When it is set, the macOS and Slack notifications, the Slack "Open" links, the **Where:** line of the status comment and the new **Run:** line of a failure comment on an issue link to the Foundry at that address, so they work from another device. When it is empty, links use this Mac's local address as before. A value that is not an https address (with a user, password, `?` or `#`) is refused when saved. Links to GitHub are unchanged.

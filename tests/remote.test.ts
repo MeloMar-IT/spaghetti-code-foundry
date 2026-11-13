@@ -176,11 +176,14 @@ describe("against a running server", () => {
   });
 
   it("lists the commands of an area and every call of the server", async () => {
-    expect(areaHelp(ALL, "watchers")).toContain("scf watchers tick <id>  run a watcher's check now");
+    const help = areaHelp(ALL, "watchers");
+    expect(help).toMatch(/scf watchers tick <id>\s+run a watcher's check now/);
+    expect(help).toMatch(/scf watchers pause <id>\s+pause a watcher/);
+    expect(help).toMatch(/scf watchers resume <id>\s+resume a paused watcher/);
     expect((await w.scf(["watchers"])).out).toContain("scf watchers list");
     const routes = await w.scf(["api", "routes", "watchers/:id"]);
-    expect(routes.out.split("\n")).toHaveLength(2);
-    expect(routes.out).toContain("POST    watchers/:id/tick  admin");
+    expect(routes.out.split("\n")).toHaveLength(4);
+    for (const a of ["tick", "pause", "resume"]) expect(routes.out).toMatch(new RegExp(`POST\\s+watchers/:id/${a}\\s+admin`));
     expect(await w.scf(["nonsense"])).toMatchObject({ code: undefined });
     expect((await w.scf(["watchers", "nonsense"])).code).toBeUndefined();
   });
