@@ -181,6 +181,7 @@ describe("against a running server", () => {
     const routes = await w.scf(["api", "routes", "watchers/:id"]);
     expect(routes.out.split("\n")).toHaveLength(2);
     expect(routes.out).toContain("POST    watchers/:id/tick  admin");
+    expect((await w.scf(["api", "routes", "feed"])).out).toMatch(/^GET {5}feed +admin, user/m);
     expect(await w.scf(["nonsense"])).toMatchObject({ code: undefined });
     expect((await w.scf(["watchers", "nonsense"])).code).toBeUndefined();
   });

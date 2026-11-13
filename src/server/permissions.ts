@@ -34,7 +34,7 @@ export interface Rule {
 export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "list" | "none";
 
 /** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
-const LIST_PATHS = new Set(["changes", "queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
+const LIST_PATHS = new Set(["feed", "changes", "queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
 const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
 
 function scopeOfYes(path: string): RuleScope | undefined {
@@ -138,6 +138,7 @@ export const RULES: Rule[] = [
   r("GET", "board", "no", "the board of all work"),
   r("GET", "search", "yes", "find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues)"),
   r("GET", "since", "no", "what changed since a time"),
+  r("GET", "feed", "yes", "what changed since `since` (the `seq` of your last answer): `{ seq, changes: [{ kind, id, at }] }` with the kinds `turn` (a Your turn item), `run`, `repo` and `change` (a change request), never any detail; `wait` (0 to 30 seconds) holds the call until a change you may read is recorded; `reset: true` when `since` is missing or older than what is kept (changes younger than 24 hours and the newest 10,000 are kept, within a hard cap of 20,000); only what you may read, and a service account only the kinds whose read route is in its scope; read the details through their own routes"),
   r("GET", "your-turn", "no", "what waits for you"),
   r("POST", "your-turn/dismiss", "no", "dismiss an item"),
   r("POST", "your-turn/restore", "no", "restore dismissed items; with `{ \"key\": \"…\" }` only that item"),

@@ -2095,6 +2095,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `workspaces/<id>/skills/` | The administrator skills of a workspace other than `default` (#825); `skills/` in the data folder is the one of `default` |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `feed.json` | The change feed (#868, `version: 1`): the last `seq`, the `floor` below which a cursor gets `reset`, the snapshot of the fingerprints of runs, repositories, change requests and Your-turn items (kind, id, owner, workspace; no detail), and the kept changes. Written with a temporary file and a rename, mode 0600 (`src/server/feed.ts`) |
 | `help.json` | The Ask Foundry conversations of every account (mode 0600) |
 | `help-stats.json` | The Ask Foundry quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
@@ -2129,6 +2130,14 @@ when an install was cut off, and puts the previous commit back once when the ser
 does not confirm in time. The new server confirms with `GET /api/ready` (loopback only) after it
 checked that `HEAD` and its build stamp are those of the install. A failed go-back is a terminal
 state (`failed.backOk = false`) that a person must repair. The monitor reads the same file. The release check (`release-daily` `verify`) writes `tested/<key>`, with `key` = `printf '%s\n%s\n' <tree> <cmd> | shasum | cut -c1-40`, as the one line `run <id>, <UTC time>, tree <sha>` only for a green run on a clean tree whose `HEAD^{tree}` did not change; self-update skips its test step only when the staged commit's tree and its own test command (alone or after `npm ci && `) match that exact line form, and runs the tests otherwise.
+
+**The change feed (#868).** `FeedRecorder` (`src/server/feed.ts`) takes a snapshot of what exists every 5 seconds (`feedTickMs`), 20 ms after a run ends (`kick`), and before an answer when the last snapshot is over a second old (`fresh`). A snapshot holds, per object, a fingerprint and its sides (owner, workspace, and for a change request the workspace of its architect run). `diffFeed` (`src/feed.ts`) compares it with the last one and appends one record per added, changed or removed object, with its kind, id, time, and the sides before and after. The record never holds detail. A kind whose source throws keeps its old entries, so a failed read records no false removals. Records are pruned to the last 24 hours and the newest 10,000, never above 20,000; a pruned record moves `floor` up, and a cursor below `floor` gets `reset`.
+
+Visibility is decided when the answer is made, not when the change is recorded: `feedAnswer` shows a record when one of its sides is visible to the caller (`sideVisible`), and drops an object that still exists but is no longer readable. Turn items are the exception: their id is opaque, so their records keep the owner they left, and the owner learns the item is gone. A service account sees a kind only when its scope holds that kind's read route (`KIND_ROUTE`).
+
+The long poll (`wait`, at most 30 s) is held in memory: a waiter is woken when a snapshot records something, and the caller's identity and scope are read again before each answer, so a revoked scope or a removed workspace does not leak a change. The response ends when the client closes.
+
+**Restarts.** The state is saved in `feed.json`, so the sequence goes on after a restart. The Your-turn source is not trusted right after a start: the watchers have not looked yet, so the turn kind is left out of the snapshot until every watcher has checked once or two minutes have passed (`SETTLE_MS`). A `feed.json` from a newer version is read only and the feed runs in memory. A broken file starts a new feed with `reset`.
 
 ---
 
