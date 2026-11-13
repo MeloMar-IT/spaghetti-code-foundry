@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
+import { appBase } from "../public-url.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { clockMinutes, composeNotice, deliver, fit, hasChannel, inQuietHours, minutesNow, runMessage, summaryNotice, type Notice, type NoticeItem } from "../notify.js";
 import { runOrigin } from "../your-turn.js";
@@ -16,7 +17,7 @@ const DONE_WINDOW_MS = 7 * DAY;
 const KEEP_MS = 30 * DAY;
 
 export interface NotifierDeps {
-  /** http://localhost:<port> */
+  /** The local address (http://localhost:<port>), used when server.public_url is not set. */
   baseUrl: string;
   /** Resolves false when no channel got the notice (it is then tried again at the next check). */
   send?: (n: Notice, cfg: Config["notify"]) => Promise<boolean | void>;
@@ -153,6 +154,7 @@ export class TurnNotifier {
     const { ctx, d } = this;
     const cfg = ctx.config().notify;
     if (!hasChannel(cfg)) return;
+    const base = appBase(ctx.config().server.public_url) ?? d.baseUrl;
     const tz = d.timeZone;
     const send = d.send ?? deliver;
     const state = this.baseline(now);
@@ -174,7 +176,7 @@ export class TurnNotifier {
         const run = ctx.scheduler.get(b.runId);
         if (!run) continue;
         const what = run.vars?.issue ? `${run.vars.github_repo}#${run.vars.issue}` : run.task.split("\n")[0] || run.flow;
-        doneRuns.push({ runId: b.runId, finishedAt: b.finishedAt, item: { what, text: runMessage(ctx.config(), run), url: `${d.baseUrl}/#/runs/${b.runId}` } });
+        doneRuns.push({ runId: b.runId, finishedAt: b.finishedAt, item: { what, text: runMessage(ctx.config(), run), url: `${base}/#/runs/${b.runId}` } });
       }
     }
 
@@ -184,10 +186,10 @@ export class TurnNotifier {
       const items: NoticeItem[] = fresh.map((i) => {
         const what = i.next.issue !== undefined ? `${i.repo}#${i.next.issue} ${i.what}` : i.what;
         const u = i.next.where.url;
-        const url = u && /^https?:\/\//.test(u) ? u : u?.startsWith("#/") ? `${d.baseUrl}/${u}` : undefined;
+        const url = u && /^https?:\/\//.test(u) ? u : u?.startsWith("#/") ? `${base}/${u}` : undefined;
         return { what, text: fit(what, i.next), url };
       });
-      const notice = composeNotice(items, doneRuns.map((r) => r.item), { turn: `${d.baseUrl}/#/your-turn`, runs: `${d.baseUrl}/#/runs` });
+      const notice = composeNotice(items, doneRuns.map((r) => r.item), { turn: `${base}/#/your-turn`, runs: `${base}/#/runs` });
       if (notice) {
         if ((await send(notice, cfg)) === false) {
           d.log?.(`notification not delivered: ${notice.title}`);
@@ -226,7 +228,7 @@ export class TurnNotifier {
     const release = turn.release && clock.minutes + turn.release.inMinutes < 1440 ? turn.release.at : undefined;
     const notice = summaryNotice(
       { stories: stories.size, otherRuns, waiting: turn.data.count, building: turn.building, releaseAt: release },
-      `${d.baseUrl}/#/your-turn`,
+      `${base}/#/your-turn`,
     );
     if (notice) {
       if ((await send(notice, cfg)) === false) {

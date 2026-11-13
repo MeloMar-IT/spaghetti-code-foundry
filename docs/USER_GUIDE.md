@@ -3905,7 +3905,7 @@ _This comment is kept up to date by the Spaghetti Code Foundry. It is edited, ne
 - **Closed while the run works.** It asks you to cancel the run if the work is no longer wanted. When the run ends it says it is done.
 - **No longer followed.** If the issue is closed or loses the watcher's label, the last text says the Foundry no longer follows it (or that it is done, if its run succeeded). A closed-issue check that fails or is cut short changes nothing.
 - **Two watchers on one issue** (for example a plan and a code watcher) share one comment. It shows the record of the one that is working, else the one that waits for you.
-- **Plain words.** The comment uses the wording for a reader of the issue: no raw error text, folder, setting or amount of money. Pages of the Foundry app are named, not linked; the details are in the app.
+- **Plain words.** The comment uses the wording for a reader of the issue: no raw error text, folder, setting or amount of money. Pages of the Foundry app are linked when **Public address** is set (`server.public_url`), otherwise they are named, not linked; the details are in the app.
 - **Switch it off** with `status_comment: false` on the watcher. A switched-off, removed or disabled watcher leaves its comments as they are.
 - **Extra copies.** If the Foundry finds more than one status comment of its own account on an issue, it keeps the oldest and removes the others (at most 5 per check; the rest follows at the next check).
 - **A failure is only in the log.** If a comment cannot be written, the check goes on; the log has a line `status comment #<n>: …` and the next check tries again.
@@ -4974,6 +4974,9 @@ No notification and no `notify.command` is sent for a run whose issue is known t
   the `PATH` the server runs with; run `scf service install` again after installing it. Without
   it the notification shows but a click does nothing. Settings says which case applies. Slack
   messages always carry an "Open" link.
+- **Links:** the links in these messages open the Foundry at the address set as **Public address**
+  (`server.public_url`, in the **Network** section of Settings), so they work from another device. Unset,
+  they use this Mac's local address.
 - **Command:** your own command still runs for every finished run, as before, for the outcomes
   you tick ("Run the command when a run is:"), with `FACTORY_STATUS`, `FACTORY_RUN_ID`,
   `FACTORY_FLOW` and `FACTORY_MESSAGE` set.
@@ -7700,6 +7703,7 @@ server:
   listen: 127.0.0.1              # 127.0.0.1 (default), ::1, 0.0.0.0 or ::
   allowed_hosts: [mymac.local]   # names people type; a port is optional
   allow_insecure_http: false     # true: also accept plain HTTP from other computers
+  public_url: https://mymac.example.com  # optional; links in notifications and issue comments
 ```
 
 - `listen` is the address the server binds. `0.0.0.0` and `::` answer on every network; the other
@@ -7708,6 +7712,13 @@ server:
   the server port) always work. Any other `Host` header must be listed, else the answer is
   `403 forbidden host`. A change applies at once.
 - `allow_insecure_http` is off by default. A change applies at once.
+- `public_url` is the https address people use to reach the Foundry, for example the one of your
+  HTTPS proxy. It is optional and empty by default. The Foundry uses it for the links in macOS and
+  Slack notifications and in its comments on issues (the **Where:** line of the status comment and
+  the **Run:** line of a failure comment), so they open from another device. Only a plain address is
+  accepted: `https://` with a host name, no user, password, `?` or `#`; anything else is refused when
+  you save. The field is in the **Network** section as **Public address**. A change applies at the next
+  check or notification. A comment that was already posted keeps its link until the status comment is next edited.
 
 **The safe way: HTTPS through Caddy on the Mac.** The Foundry has no TLS of its own. A proxy on the
 same Mac does the HTTPS and talks to the Foundry on `127.0.0.1`.

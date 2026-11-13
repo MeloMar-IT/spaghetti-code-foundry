@@ -805,6 +805,50 @@ describe("Your turn notifications", () => {
     });
   });
 
+  describe("public address", () => {
+    const setUrl = (t: ReturnType<typeof rig>, public_url?: string) => {
+      t.state.config = ConfigSchema.parse({ ...t.state.config, server: public_url ? { public_url } : {} });
+    };
+
+    it("is used for run, item, turn and runs links, and read again at each check", async () => {
+      const t = rig({ successes: true });
+      setUrl(t, "https://f.example.com/foundry/");
+      await t.notifier.check(min(0));
+      t.runs.push(done("s1", min(5).toISOString()));
+      await t.notifier.check(min(10));
+      expect(t.sent[0]!.url).toBe("https://f.example.com/foundry/#/runs/s1");
+      setUrl(t);
+      t.runs.push(done("s2", min(15).toISOString()));
+      await t.notifier.check(min(30));
+      expect(t.sent[1]!.url).toBe(`${BASE}/#/runs/s2`);
+    });
+
+    it("is used for the turn link", async () => {
+      const t = rig({ daily_summary_at: "09:00" });
+      setUrl(t, "https://f.example.com");
+      t.holds(qh(3), qh(4));
+      await t.notifier.check(min(0));
+      expect(t.sent[0]!.url).toBe("https://f.example.com/#/your-turn");
+    });
+
+    it("is used for the daily summary", async () => {
+      const u = rig({ daily_summary_at: "09:00" });
+      setUrl(u, "https://f.example.com");
+      u.runs.push(done("s2", at(6).toISOString()));
+      await u.notifier.check(at(8));
+      await u.notifier.check(at(9));
+      expect(u.sent[0]).toMatchObject({ title: "Foundry · daily summary", url: "https://f.example.com/#/your-turn" });
+    });
+
+    it("leaves an external item link alone", async () => {
+      const one = rig();
+      setUrl(one, "https://f.example.com");
+      one.holds(qh(3));
+      await one.notifier.check(min(0));
+      expect(one.sent[0]!.url).toBe(issueUrl(3));
+    });
+  });
+
   describe("daily summary", () => {
     const sum = { daily_summary_at: "09:00" };
     it("is sent at the time with the counts, once a day", async () => {

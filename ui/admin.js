@@ -37,6 +37,7 @@ export function serverFrom(v) {
     listen: String(v.listen ?? "").trim() || "127.0.0.1",
     allowed_hosts: String(v.hosts ?? "").split(/[\s,]+/).filter(Boolean),
     allow_insecure_http: !!v.insecure,
+    public_url: String(v.publicUrl ?? "").trim() || undefined,
   };
 }
 
@@ -119,6 +120,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const listenSel = h("select", {}, ["127.0.0.1", "::1", "0.0.0.0", "::"].map((a) => h("option", { value: a }, a)));
   listenSel.value = net.listen;
   const hostsIn = input(net.allowed_hosts.join(", "), { class: "mono", placeholder: "mymac.local" });
+  const publicIn = input(net.public_url ?? "", { class: "mono", placeholder: "https://mymac.local", autocomplete: "off" });
   const insecure = check(net.allow_insecure_http, "Allow plain HTTP from other computers");
   const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
   const redesign = check(c.ui?.redesign === true, "Show the redesigned pages (still being built)");
@@ -143,7 +145,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const saveBtn = h("button", { class: "primary", onClick: () => save() }, "Save");
   // the controls a server sentence can name, by the key of the setting
   const fields = {
-    allowed_hosts: hostsIn, listen: listenSel, daily_budget_usd: budget, simple_project_daily_budget_usd: projectBudget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
+    allowed_hosts: hostsIn, public_url: publicIn, listen: listenSel, daily_budget_usd: budget, simple_project_daily_budget_usd: projectBudget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
     slack_webhook: slack, command: cmd, throttle_minutes: throttle, quiet_hours: quietFrom, daily_summary_at: summaryAt, gh_token_env: botToken,
     app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
   };
@@ -185,7 +187,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       skills: skills.value(),
       ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
-      server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
+      server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, publicUrl: publicIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
       simple_project_daily_budget_usd: num(projectBudget) ?? 0,
       cost_limits: limits.el.checked,
@@ -300,7 +302,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       h("p", { class: "muted flush" }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
       h("div", { class: "grid" },
         f("Listen on", listenSel, hint("server.listen", "0.0.0.0 and :: need an admin account.")),
-        f("Allowed host names", hostsIn, hint("server.allowed_hosts", "Comma-separated, for example mymac.local."))),
+        f("Allowed host names", hostsIn, hint("server.allowed_hosts", "Comma-separated, for example mymac.local.")),
+        f("Public address", publicIn, hint("server.public_url", "Used for links in notifications and GitHub comments."))),
       hinted(insecure.row, insecure.el, hint("server.allow_insecure_http")),
       h("p", { class: "muted text-sm flush mt-4" }, "Warning: with plain HTTP, passwords and session cookies cross the network unencrypted. Use it only on a network you trust.")),
     section("Safety",

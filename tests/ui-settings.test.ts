@@ -23,6 +23,10 @@ describe("serverFrom", () => {
     expect(ui.serverFrom({ hosts: " a.test, b.test:8443  c.test " }).allowed_hosts).toEqual(["a.test", "b.test:8443", "c.test"]);
     expect(ui.serverFrom({ hosts: "" }).allowed_hosts).toEqual([]);
   });
+  it("trims the public address, and an empty field is not set", () => {
+    expect(ui.serverFrom({ publicUrl: "  https://f.example.com " }).public_url).toBe("https://f.example.com");
+    expect(ui.serverFrom({ publicUrl: "" }).public_url).toBeUndefined();
+  });
   it("makes insecure a boolean", () => {
     expect(ui.serverFrom({ insecure: undefined }).allow_insecure_http).toBe(false);
     expect(ui.serverFrom({ insecure: true }).allow_insecure_http).toBe(true);

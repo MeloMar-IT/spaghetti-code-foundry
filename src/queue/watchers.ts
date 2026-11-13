@@ -96,7 +96,7 @@ export class WatcherManager {
     const repo = cfg.github_repo;
     let b = this.boards.get(key);
     if (!b) {
-      b = new StatusComments(repo, (m) => this.o.log(`[${repo}] ${m}`), key === repo ? { file: statusFile() } : { file: statusFile(), key, gh: this.identityOf(cfg) });
+      b = new StatusComments(repo, (m) => this.o.log(`[${repo}] ${m}`), key === repo ? { file: statusFile(), publicUrl: () => this.o.config().server.public_url } : { file: statusFile(), key, gh: this.identityOf(cfg), publicUrl: () => this.o.config().server.public_url });
       this.boards.set(key, b);
     }
     return b;
@@ -137,6 +137,7 @@ export class WatcherManager {
         areaWait: this.o.areaWait,
         log: this.o.log,
         statusComments: this.board(cfg, board),
+        publicUrl: () => this.o.config().server.public_url,
         watchers: () => this.o.config().watchers,
         hotfixToMain: () => this.o.config().hotfix_to_main,
         peers: () => this.tracked(),

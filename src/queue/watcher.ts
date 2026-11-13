@@ -32,6 +32,7 @@ import { freshIssueList, isTrackingEpic } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
+import { appBase, appLink } from "../public-url.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
 import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSince, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
 import { filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
@@ -65,7 +66,8 @@ export function labelNames(cfg: WatcherConfig): LabelNames {
  * `factoryWhat` (the record's "The Foundry failed, not the code: …") is set when the Foundry itself failed:
  * the first line says so and it replaces the What and Why lines.
  */
-export function failureComment(s: RunSummary, next: NextStep): string {
+export function failureComment(s: RunSummary, next: NextStep, appUrl?: string): string {
+  const runLink = appLink(appUrl, `#/runs/${s.runId}`);
   const factory = next.cause === "factory";
   const e = explainError(s.reason);
   const sum = next.failure ?? failureSummary(s, { watched: true });
@@ -82,6 +84,7 @@ export function failureComment(s: RunSummary, next: NextStep): string {
     `- **Why:** ${sum.why}`,
     `- **Kind of problem:** ${sum.kind}`,
     `- **Already tried:** ${sum.tried.replace(/[.!?]+$/, "")}.`,
+    ...(runLink ? [`- **Run:** [run \`${s.runId}\`](${runLink}) in the Foundry app`] : []),
     ...(sum.byModel ? ["", "_(A model read the output of the failing step to write the Why line. It can be wrong; the raw text is under Details.)_"] : []),
     "",
     "**Your options**",
@@ -122,6 +125,8 @@ export interface WatcherDeps {
   log: (msg: string) => void;
   /** Shared by the watchers of one repository (the manager sets it). */
   statusComments?: StatusComments;
+  /** server.public_url, read at use; links in the failure comment. */
+  publicUrl?: () => string | undefined;
   /** Every watcher's config, to find the scheduled release of a finished run. */
   watchers?: () => WatcherConfig[];
   /** The other watchers and what their last check saw (the manager sets it). */
@@ -341,7 +346,7 @@ export class Watcher {
     this.status = { id: cfg.id, lastActions: [] };
     this.L = labelNames(cfg);
     this.allStatus = Object.values(this.L);
-    this.statusComments = d.statusComments ?? new StatusComments(cfg.github_repo, (m) => d.log(`[${cfg.id}] ${m}`), { gh: d.gh });
+    this.statusComments = d.statusComments ?? new StatusComments(cfg.github_repo, (m) => d.log(`[${cfg.id}] ${m}`), { gh: d.gh, publicUrl: d.publicUrl });
     if (cfg.source === "issues" && cfg.status_comment) this.statusComments.expect(cfg.id);
   }
 
@@ -913,7 +918,7 @@ export class Watcher {
   /** Tell the issue why the run failed, with the tail of the failing step's output. */
   private async commentFailure(issue: number, s: RunSummary) {
     const next = this.failedHold({ number: issue, title: "" }, s, s.reason).next;
-    const body = failureComment(s, next);
+    const body = failureComment(s, next, appBase(this.d.publicUrl?.()));
     await this.store.comment(issue, body);
   }
 

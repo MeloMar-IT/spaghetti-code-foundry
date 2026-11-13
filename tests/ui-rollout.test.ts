@@ -76,7 +76,7 @@ describe("route compatibility", () => {
 
   it("resolves the links the notifier writes", () => {
     const src = readFileSync("src/server/notifier.ts", "utf8");
-    const hashes = [...src.matchAll(/\$\{d\.baseUrl\}\/(#\/[\w-]+(?:\/\$\{[^}]+\})?)/g)].map((m) => m[1]!.replace(/\$\{[^}]+\}/, RUN));
+    const hashes = [...src.matchAll(/\$\{(?:d\.baseUrl|base)\}\/(#\/[\w-]+(?:\/\$\{[^}]+\})?)/g)].map((m) => m[1]!.replace(/\$\{[^}]+\}/, RUN));
     expect(hashes.length).toBeGreaterThanOrEqual(3);
     expect(hashes).toContain("#/runs/" + RUN);
     for (const h of hashes) expect([null, "alias"], h).toContain(ia.resolve("admin", h).reason);
