@@ -305,3 +305,48 @@ describe("management", () => {
     expect(logs.join("\n")).not.toContain("scf_svc_");
   });
 });
+
+describe("data classes and services: none (#869)", () => {
+  it("takes class entries, refuses secret and unknown classes, and lists the classes", async () => {
+    const secret = await asAdmin("POST", "/api/service-accounts", { name: "S1", scope: ["class:secret"] });
+    expect(secret.status).toBe(400);
+    expect((await json(secret)).error).toContain("can never be granted");
+    expect((await asAdmin("POST", "/api/service-accounts", { name: "S2", scope: ["class:nope"] })).status).toBe(400);
+    const list = await json(await asAdmin("GET", "/api/service-accounts"));
+    expect(list.classes).toEqual(["inbox", "summary", "log", "diff", "admin"]);
+    expect(list.grantable.find((g: any) => g.key === "GET runs/:id/diff").data).toBe("diff");
+  });
+
+  it("a class grant covers reads of its class only", async () => {
+    const made = await makeAccount("Summary", ["class:summary"]);
+    expect((await withToken(made.token, "GET", "/api/runs")).status).toBe(200);
+    expect((await withToken(made.token, "POST", "/api/runs/abc/cancel", {}, {})).status).toBe(403);
+    expect((await withToken(made.token, "GET", "/api/runs/abc/diff")).status).toBe(403);
+    expect((await withToken(made.token, "POST", "/api/busy", {}, {})).status).toBe(403);
+  });
+
+  it("services: none closes a repository to every service account, with an audit line, until it is cleared", async () => {
+    const added = await json(await asAdmin("POST", "/api/repos", { name: "acme/closed", method: "none" }));
+    const repoId = (added.repo?.id ?? added.id) as string;
+    expect(repoId).toBeTruthy();
+    const svc = await makeAccount("Closed", ["GET board", `GET admin/repos/:id/budget`, "GET governor", "GET help/export", "GET help/conversations/:id", "POST skills/lifecycle"]);
+    expect((await withToken(svc.token, "GET", "/api/board")).status).toBe(200);
+    const closed = await asAdmin("PUT", `/api/admin/repos/${repoId}/settings`, { services: "none" });
+    expect(closed.status).toBe(200);
+    expect((await withToken(svc.token, "GET", "/api/board")).status).toBe(403);
+    expect((await withToken(svc.token, "GET", `/api/admin/repos/${repoId}/budget`)).status).toBe(403);
+    expect((await audit())[0]).toMatchObject({ by: svc.id, result: "failed", target: "GET admin/repos/:id/budget" });
+    expect((await audit())[0]!.detail).toMatch(/^403 /);
+    // a rule that holds no repository data still works
+    expect((await withToken(svc.token, "GET", "/api/governor")).status).toBe(200);
+    // Ask Foundry and the cross-repository lifecycle write are refused while a repository is closed
+    expect((await withToken(svc.token, "GET", "/api/help/export")).status).toBe(403);
+    expect((await withToken(svc.token, "GET", "/api/help/conversations/abc")).status).toBe(403);
+    expect((await withToken(svc.token, "POST", "/api/skills/lifecycle", {}, { key: "x", state: "retired", reason: "r" })).status).toBe(403);
+    expect((await audit())[0]).toMatchObject({ by: svc.id, result: "failed", target: "POST skills/lifecycle" });
+    // a person is not affected
+    expect((await asAdmin("GET", "/api/board")).status).toBe(200);
+    expect((await asAdmin("PUT", `/api/admin/repos/${repoId}/settings`, { services: "all" })).status).toBe(200);
+    expect((await withToken(svc.token, "GET", "/api/board")).status).toBe(200);
+  });
+});

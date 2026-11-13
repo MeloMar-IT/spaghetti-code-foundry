@@ -236,6 +236,26 @@ export class Scheduler {
     }
   }
 
+  /** The repository of a run: a stored run's `github_repo`, else the queued run job's. Read errors are not caught (the caller fails closed). */
+  repoOf(runId: string): string | undefined {
+    const v = this.get(runId)?.vars.github_repo;
+    if (typeof v === "string" && v !== "") return v;
+    const q = [...this.pending, ...[...this.active.values()].map((a) => a.queued)].find((p) => p.runId === runId && p.job.kind === "run");
+    const r = q?.job.kind === "run" ? q.job.vars.github_repo : undefined;
+    return typeof r === "string" && r !== "" ? r : undefined;
+  }
+
+  /** The repositories of the queued and active run jobs of an account. Read errors are not caught. */
+  queuedRepos(owner: string): string[] {
+    const out = new Set<string>();
+    for (const p of [...this.pending, ...[...this.active.values()].map((a) => a.queued)]) {
+      if (p.owner !== owner || p.job.kind !== "run") continue;
+      const r = p.job.vars.github_repo;
+      if (typeof r === "string" && r !== "") out.add(r);
+    }
+    return [...out];
+  }
+
   /** New runs that started today per account, counted as the per-day limit counts them: every run folder plus runs just started in memory. */
   startedTodayByOwner(now = new Date()): Map<string, number> {
     const day = now.toDateString();

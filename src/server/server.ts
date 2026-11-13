@@ -77,7 +77,7 @@ import { promotionRoutes } from "./api-promotions.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
 import { serviceAccountRoutes } from "./api-service-accounts.js";
-import { auditNetworkRefusal, auditRefused, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
+import { auditNetworkRefusal, auditRefused, checkServiceRepos, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
 import { sinceRoutes } from "./since.js";
@@ -425,6 +425,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       if (!rule) throw new HttpError(404, "not found");
       where = rule.path;
       authorize(ctx, user, rule, seg);
+      checkServiceRepos(ctx, user, rule, seg, new URL(req.url ?? "/", "http://x").searchParams);
       const moved = method === "GET" ? undefined : homeMoved();
       if (moved) throw new HttpError(503, movedText(moved, admin));
       if (call) serviceOk(ctx, call);

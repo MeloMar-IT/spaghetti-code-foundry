@@ -27,6 +27,8 @@ export function settingsBody(values = {}) {
     questions: { decide_technical: values.decideTechnical !== false },
     // only true is stored; a missing value clears it
     ...(values.pushRemote === true ? { pushRemote: true } : {}),
+    // only "none" is stored (closed to service accounts); a missing value clears it
+    ...(values.servicesNone === true ? { services: "none" } : {}),
   };
 }
 
@@ -66,9 +68,9 @@ function sendFrom({ button, err, send, done, close, state, mark }) {
 }
 
 const formShape = (s = {}) => ({
-  ...s, docs: (s.docs ?? []).join("\n"), protectedBranches: (s.protectedBranches ?? []).join("\n"), decideTechnical: s.questions?.decide_technical !== false, pushRemote: s.pushRemote === true,
+  ...s, docs: (s.docs ?? []).join("\n"), protectedBranches: (s.protectedBranches ?? []).join("\n"), decideTechnical: s.questions?.decide_technical !== false, pushRemote: s.pushRemote === true, servicesNone: s.services === "none",
 });
-const CHECKS = new Set(["decideTechnical", "pushRemote"]);
+const CHECKS = new Set(["decideTechnical", "pushRemote", "servicesNone"]);
 
 /**
  * Edits the settings of one repository. Resolves with the server's row once the dialog is closed after a save (else undefined).
@@ -90,7 +92,9 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       releaseRecipe: h("textarea", { name: "releaseRecipe", rows: 12, class: "mono", spellcheck: "false", placeholder: "builds:\n  - name: …" }),
       decideTechnical: h("input", { type: "checkbox", name: "decideTechnical" }),
       pushRemote: h("input", { type: "checkbox", name: "pushRemote" }),
+      servicesNone: h("input", { type: "checkbox", name: "servicesNone" }),
     };
+    all.servicesNone.checked = s.services === "none";
     // the push setting is only for a local repository that has a git remote
     if (!(repo.method === "local" && repo.hasRemote === true)) delete all.pushRemote;
     else all.pushRemote.checked = s.pushRemote === true;
@@ -106,6 +110,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       releaseRecipe: ["Release-build recipe (YAML)", "Used by release-build when the commit has no .factory/release-build.yaml. A file in the repository wins."],
       decideTechnical: ["Decide technical questions itself", "The Foundry takes its own recommendation on technical questions and says so on the GitHub issue. Off: you are asked every question."],
       pushRemote: ["Also push to the remote", "After each merge into develop, the Foundry pushes develop to your folder's remote with plain git. A failed push is reported; the merge stays."],
+      servicesNone: ["Closed to service accounts", "No program with a service token can read or change anything about this repository."],
     };
     const err = h("p", { class: "status bad flush", role: "alert" });
     const pairs = [
@@ -118,6 +123,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       [/^releaseRecipe/, "releaseRecipe"],
       [/^questions/, "decideTechnical"],
       [/^pushRemote/, "pushRemote"],
+      [/^services/, "servicesNone"],
     ];
     const mark = (m) => showError(err, m, { fields: Object.values(els), field: els[fieldFor(m, pairs)] });
     const typed = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, CHECKS.has(k) ? el.checked === true : el.value]));

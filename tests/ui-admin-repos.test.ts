@@ -98,6 +98,12 @@ describe("pure functions", () => {
     expect(ui.settingsBody()).toEqual({ testCommand: "", docs: [], protectedBranches: [], mainBranch: "", developBranch: "", releaseRecipe: "", questions: { decide_technical: true } });
   });
 
+  it("settingsBody sends services none only when the box is ticked (#869)", () => {
+    expect(ui.settingsBody({ servicesNone: true }).services).toBe("none");
+    expect("services" in ui.settingsBody({ servicesNone: false })).toBe(false);
+    expect("services" in ui.settingsBody()).toBe(false);
+  });
+
   it("settingsBody sends pushRemote only when it is true", () => {
     expect(ui.settingsBody({ pushRemote: true }).pushRemote).toBe(true);
     expect("pushRemote" in ui.settingsBody({ pushRemote: false })).toBe(false);
@@ -387,6 +393,17 @@ describe("settings dialog", () => {
       await flush();
       expect(current).toHaveBeenCalledTimes(1);
       expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["release/*"], mainBranch: "main2", developBranch: "develop", releaseRecipe: "", questions: { decide_technical: true } } }]);
+    });
+
+    it("sends services none back unchanged from a dialog that does not draw it", async () => {
+      const current = async () => ({ ...S, services: "none" });
+      const r = await open(rec({ settings: { ...S, services: "none" } }), { only: BRANCHES, current });
+      expect(names()).not.toContain("servicesNone");
+      press(button(root(), "Save"));
+      await flush();
+      await flush();
+      expect(sent[0]!.body).toMatchObject({ services: "none", mainBranch: S.mainBranch });
+      expect(r).toBeDefined();
     });
 
     it("falls back to the record's own settings without current()", async () => {

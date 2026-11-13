@@ -14,7 +14,7 @@ export const SERVICE_TOKEN_PREFIX = "scf_svc_";
 export const SERVICE_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 export const SCOPE_MAX = 200;
 const TOKEN_RE = /^scf_svc_[A-Za-z0-9_-]{43}$/;
-const SCOPE_KEY_RE = /^(GET|POST|PUT|DELETE) [A-Za-z0-9:/_-]{1,200}$/;
+const SCOPE_KEY_RE = /^(?:(?:GET|POST|PUT|DELETE) [A-Za-z0-9:/_-]{1,200}|class:[a-z]{1,20})$/;
 
 export type TokenState = "live" | "expired" | "revoked";
 export type ServiceAccount = User & { kind: "service"; scope: string[] };
@@ -40,7 +40,7 @@ export function checkScopeShape(scope: unknown): string[] {
   if (!Array.isArray(scope) || scope.length > SCOPE_MAX) throw new UserError("bad-role", `the scope must be a list of at most ${SCOPE_MAX} routes`);
   const seen = new Set<string>();
   for (const k of scope) {
-    if (typeof k !== "string" || !SCOPE_KEY_RE.test(k)) throw new UserError("bad-role", "every scope entry must be a route such as `GET runs`");
+    if (typeof k !== "string" || !SCOPE_KEY_RE.test(k)) throw new UserError("bad-role", "every scope entry must be a route such as `GET runs` or a class such as `class:summary`");
     if (seen.has(k)) throw new UserError("bad-role", `"${k}" is in the scope twice`);
     seen.add(k);
   }

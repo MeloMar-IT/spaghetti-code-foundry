@@ -296,6 +296,29 @@ describe("Branches and Run settings", () => {
     expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, mainBranch: "trunk", questions: { decide_technical: false } });
   });
 
+  it("Run settings has the 'Closed to service accounts' box; saving it sends services none, and a Branches save keeps it (#869)", async () => {
+    const r = rec();
+    await show(r);
+    expect(section("run-settings").textContent).toContain("Allowed");
+    press(action("run-settings"));
+    await flush();
+    const box = field(root(), "servicesNone")!;
+    expect(box.checked).toBe(false);
+    expect(root().textContent).toContain("Closed to service accounts");
+    box.checked = true;
+    press(button(root(), "Save"));
+    await settle();
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON, services: "none" });
+    expect(section("run-settings").textContent).toContain("Closed");
+    sent.length = 0;
+    press(action("branches"));
+    await flush();
+    field(root(), "mainBranch")!.value = "trunk";
+    press(button(root(), "Save"));
+    await settle();
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON, mainBranch: "trunk", services: "none" });
+  });
+
   it("shows 'Also push to the remote' only for a local repository with a remote, and saves it", async () => {
     for (const over of [{}, { method: "local", url: "/work/a" }, { method: "local", url: "/work/a", hasRemote: false }]) {
       await show(rec(over));
