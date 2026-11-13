@@ -164,4 +164,5 @@ for the rules coding agents follow in this repository.
 
 [Functional Source License 1.1, MIT future license (FSL-1.1-MIT)](LICENSE). You may use, change and self-host
 the Foundry for any purpose except offering it as a competing commercial service. Each version becomes MIT
-two years after its release.
+two years after its release. The name "Spaghetti Code Foundry", "SCF" and the logo are not covered by the
+licence: see [TRADEMARKS.md](TRADEMARKS.md).

@@ -370,6 +370,16 @@ describe("a workspace that is not in the list is read-only (#824)", () => {
     expect(existsSync(join(home, "workspaces"))).toBe(false);
     expect(existsSync(runsDir())).toBe(false);
   });
+  it("repoOf and queuedRepos name the repository of a stored or queued run (#869)", async () => {
+    config(TEAMS);
+    const repo = join(home, "repo-of");
+    mkdirSync(repo, { recursive: true });
+    const stored = await runFlow(parseFlow(FLOW), { task: "t", repo, runsDir: runsDir(), config: cfg, vars: { github_repo: "acme/stored" } });
+    const s = new Scheduler({ runsDir: runsDir(), queueFile: join(home, "queue-of.json"), config: () => ({ ...cfg, concurrency: 1 }) });
+    expect(s.repoOf(stored.runId)).toBe("acme/stored");
+    expect(s.repoOf("missing")).toBeUndefined();
+    expect(s.queuedRepos(ANN)).toEqual([]);
+  });
   it("cancelling a stopped or waiting run of a removed workspace writes nothing", async () => {
     const { run, file, s } = await start();
     const before = readFileSync(file, "utf8");

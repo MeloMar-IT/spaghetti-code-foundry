@@ -16,6 +16,8 @@ afterAll(() => restore());
 
 type Answer = { status: number; error: string } | "throw";
 let users: any[];
+let services: any[] = [];
+let servicesFail = false;
 let entries: any[];
 let more: boolean;
 let gets: string[];
@@ -33,6 +35,8 @@ beforeEach(() => {
     { id: "u2", name: "Bob", email: "bob@example.com" },
     { id: "u1", name: "Ann", email: "ann@example.com" },
   ];
+  services = [];
+  servicesFail = false;
   entries = [entry(), entry({ action: "edit", target: { type: "text", text: "run-1" }, detail: "x -> y" })];
   more = false;
   gets = [];
@@ -42,6 +46,8 @@ beforeEach(() => {
   (document as any).getElementById("main").replaceChildren();
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   (globalThis as any).fetch = async (url: string) => {
+    // the service accounts are asked for once next to the users; the counts below are of the other calls
+    if (url === "/api/service-accounts") return servicesFail ? reply({ error: "no" }, 403) : reply({ accounts: services, grantable: [] });
     gets.push(url);
     const wait = heldGets.shift();
     if (url === "/api/users") {
@@ -238,8 +244,19 @@ describe("filters", () => {
   it("has the user and action choices", async () => {
     await show();
     expect(field("user").all("option").map((o) => o.textContent)).toEqual(["All users", "Ann (ann@example.com)", "Bob (bob@example.com)"]);
-    expect(field("action").all("option")).toHaveLength(50);
+    expect(field("action").all("option")).toHaveLength(53);
     expect(field("action").all("option")[0]!.textContent).toBe("All actions");
+  });
+  it("adds the service accounts to the user choices, and goes on without them when they cannot be read", async () => {
+    services = [{ id: "s1", name: "Robot", scope: [] }];
+    await show();
+    expect(field("user").all("option").map((o) => o.textContent)).toEqual(["All users", "Ann (ann@example.com)", "Bob (bob@example.com)", "Robot (service account)"]);
+    servicesFail = true;
+    await show();
+    expect(field("user").all("option").map((o) => o.textContent)).toEqual(["All users", "Ann (ann@example.com)", "Bob (bob@example.com)"]);
+  });
+  it("names the three service actions", () => {
+    for (const a of ["service-request", "service-token-revoke", "service-token-rotate"]) expect(ui.ACTIONS).toContain(a);
   });
   it("reloads on every change without redrawing the bar", async () => {
     await show();

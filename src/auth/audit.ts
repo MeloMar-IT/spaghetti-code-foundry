@@ -61,6 +61,9 @@ export const EVENT_ACTIONS = [
   "skill-auto-approve",
   "skill-auto-update",
   "safe-point-restore",
+  "service-request",
+  "service-token-rotate",
+  "service-token-revoke",
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;

@@ -59,6 +59,24 @@ describe("website build", () => {
   });
   afterAll(() => rmSync(out, { recursive: true, force: true }));
 
+  it("links the trademark notice from the README, every footer and the licence FAQ", () => {
+    const url = "https://github.com/MeloMar-IT/spaghetti-code-foundry/blob/main/TRADEMARKS.md";
+    const notice = readFileSync(join(process.cwd(), "TRADEMARKS.md"), "utf8");
+    for (const s of ["Spaghetti Code Foundry", "SCF", "logo", "https://github.com/MeloMar-IT/spaghetti-code-foundry/issues", "## Allowed", "## Not allowed", "based on", "unchanged", "another product or service"]) expect(notice).toContain(s);
+    const readme = readFileSync(join(process.cwd(), "README.md"), "utf8");
+    const license = readme.slice(readme.indexOf("## License")).split(/\n## /)[0];
+    expect(license).toContain("](TRADEMARKS.md)");
+    for (const p of pages) {
+      const footer = /<footer[\s\S]*?<\/footer>/.exec(p.html)?.[0] ?? "";
+      expect(footer, p.url).toContain(`<a href="${url}" rel="noopener">Trademarks</a>`);
+    }
+    const home = pages.find((p) => p.url === "/")!;
+    const faq = home.html.slice(home.html.indexOf("<summary>What does it cost?</summary>"));
+    const item = faq.slice(0, faq.indexOf("</details>"));
+    expect(item).toContain(`href="${url}"`);
+    expect(item).toContain("trademark notice</a>");
+  });
+
   it("builds without a broken link, anchor, image or front matter", () => {
     expect(problems).toEqual([]);
   });

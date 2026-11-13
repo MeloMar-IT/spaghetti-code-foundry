@@ -84,6 +84,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/user/runs.js` | Cancel this run | Cancel on `/user/#/runs/:id` | none | Cancel the run | `confirmDialog` through `withDialog` |
 | `ui/user/runs.js` | Approve | Approve on `/user/#/runs/:id` | note (optional) | Approve | `decisionDialog` (`ui/run-dialogs.js`) through `withDialog` |
 | `ui/user/runs.js` | Reject | Reject on `/user/#/runs/:id` | reason (optional) | Reject | `decisionDialog` (`ui/run-dialogs.js`) through `withDialog` |
+| `ui/service-accounts.js` | Add service account | Add service account or Edit scope in the Service accounts section of `#/users` | name, the routes the account may call (checkboxes) | Add / Save | `modal` |
+| `ui/service-accounts.js` | Service token | after Add service account or Rotate in the Service accounts section of `#/users` | the token (read-only, shown once) | Done | `modal` |
 | `ui/users.js` | Add user | Add user on `#/users` | the user form (`userForm`) | Add user | `callDialog` (`addDialog`) |
 | `ui/users.js` | New link | Action on `#/users/:id` | none | New link | `callDialog` (`linkDialog`) |
 | `ui/users.js` | Reset password | Action on `#/users/:id` | none | Reset password | `callDialog` (`resetDialog`) |

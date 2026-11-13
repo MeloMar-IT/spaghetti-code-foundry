@@ -15,7 +15,7 @@ import { WORKSPACE_ID_RE } from "../workspaces/list.js";
 import { ViewSchema, viewsFor, type View } from "./views.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 
-export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits" | "provider-account";
+export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits" | "provider-account" | "service-account" | "name-taken";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class UserError extends Error {
@@ -32,6 +32,12 @@ export class UserError extends Error {
 export const PROVIDER_ACCOUNT = "this account signs in through the identity provider; change it there";
 const noProvider = (u: { source?: "provider" }) => {
   if (u.source === "provider") throw new UserError("provider-account", PROVIDER_ACCOUNT);
+};
+
+/** Why a password, link, profile or view action is refused on a service account (an account for a program). */
+export const SERVICE_ACCOUNT = "this is a service account; it has no password, link, view or break-glass mark";
+const noService = (u: { kind?: "service" }) => {
+  if (u.kind === "service") throw new UserError("service-account", SERVICE_ACCOUNT);
 };
 
 export const usersPath = () => join(dataHome(), "users.json");
@@ -102,9 +108,13 @@ export function checkName(input: string): string {
   return name;
 }
 
+/** The reserved e-mail domain of service accounts: no person may use it. */
+export const SERVICE_EMAIL_DOMAIN = "service.invalid";
+
 export function checkEmail(input: string): string {
   const email = typeof input === "string" ? input.trim().toLowerCase() : "";
   if (email.length > 254 || !EMAIL_RE.test(email)) throw new UserError("bad-email", "that is not a valid e-mail address");
+  if (email.endsWith(`@${SERVICE_EMAIL_DOMAIN}`)) throw new UserError("bad-email", "that e-mail domain is reserved");
   return email;
 }
 
@@ -131,8 +141,29 @@ const UserSchema = z
     workspace: z.string().regex(WORKSPACE_ID_RE).optional(),
     /** The one local admin that may sign in with a password while an identity provider is active; set only by `scf user break-glass`. */
     breakGlass: z.literal(true).optional(),
+    /** "service": an account for a program. It has no password and signs in with a bearer token (#866). */
+    kind: z.literal("service").optional(),
+    /** Only a service: the rule keys (`GET runs`) of the routes it may call. */
+    scope: z.array(z.string().min(1).max(210)).max(200).optional(),
+    /** Only a service: `id` is the SHA-256 of the token. `used` is the time of the last request; `revoked` is set when an admin revokes it (the hash stays so a refused request can still name the account). */
+    token: z.object({ id: z.string().regex(/^[0-9a-f]{64}$/), created: z.iso.datetime(), used: z.iso.datetime().optional(), revoked: z.iso.datetime().optional() }).strict().optional(),
   })
   .strict();
+
+/**
+ * Why a record is not a valid account of its kind, or undefined. A service has the role user, no password, link, provider
+ * source, workspace, break-glass mark or view, a scope, and the reserved e-mail of its id. A person has no scope or token.
+ */
+export function accountProblem(u: z.infer<typeof UserSchema>): string | undefined {
+  if (u.kind === "service") {
+    if (u.role !== "user") return "service with a role";
+    if (u.passwordHash !== undefined || u.passwordLink || u.source !== undefined || u.workspace !== undefined || u.breakGlass || u.view !== undefined) return "service with person fields";
+    if (u.scope === undefined) return "service without scope";
+    if (u.email !== `${u.id}@${SERVICE_EMAIL_DOMAIN}`) return "service with a wrong e-mail";
+    return undefined;
+  }
+  return u.scope !== undefined || u.token !== undefined ? "person with service fields" : undefined;
+}
 
 const FileSchema = z
   .object({ version: z.literal(1), users: z.array(UserSchema) })
@@ -152,6 +183,8 @@ const FileSchema = z
         if (links.has(u.passwordLink.id)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["users", i, "passwordLink", "id"] });
         links.add(u.passwordLink.id);
       }
+      const problem = accountProblem(u);
+      if (problem) ctx.addIssue({ code: "custom", message: problem, path: ["users", i, "kind"] });
       if (ids.has(u.id)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["users", i, "id"] });
       if (emails.has(u.email)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["users", i, "email"] });
       ids.add(u.id);
@@ -160,7 +193,7 @@ const FileSchema = z
   });
 
 export type User = z.infer<typeof UserSchema>;
-export type PublicUser = Omit<User, "passwordHash" | "passwordLink">;
+export type PublicUser = Omit<User, "passwordHash" | "passwordLink" | "token">;
 export type UsersFile = z.infer<typeof FileSchema>;
 
 const read = (): UsersFile => readJsonFile(usersPath(), FileSchema, { version: 1, users: [] });
@@ -193,7 +226,7 @@ export const isBreakGlass = (u: User): boolean =>
   u.breakGlass === true && u.source !== "provider" && u.role === "admin" && u.status === "active" && u.passwordHash !== undefined;
 
 export function publicUser(u: User): PublicUser {
-  const { passwordHash: _hash, passwordLink: _link, ...rest } = u;
+  const { passwordHash: _hash, passwordLink: _link, token: _token, ...rest } = u;
   return rest;
 }
 
@@ -277,6 +310,7 @@ function change(
     const current = file.users[i]!;
     const r = apply(current, file.users);
     if (!r) return current;
+    if (accountProblem(r.next)) throw new UserError("service-account", SERVICE_ACCOUNT);
     const event = r.event && ({ ...r.event, userId: id } as AccountAuditEvent);
     return audited(opts.by, event, () => {
       // sessions first: if the user file cannot be written, the account is only signed out too early
@@ -290,6 +324,7 @@ function change(
 /** The account chooses its own view. Nothing is audited: it is a display preference. */
 export function setView(id: string, view: View): User {
   return change(id, (u) => {
+    noService(u);
     if (!viewsFor(u.role).includes(view)) throw new UserError("bad-role", "this view is not open to your role");
     return u.view === view ? undefined : { next: { ...u, view } };
   });
@@ -300,6 +335,7 @@ export async function setPassword(id: string, password: string, opts: ChangeOpti
   return change(
     id,
     (u) => {
+      noService(u);
       noProvider(u);
       const { passwordLink: _link, ...rest } = u;
       return { next: { ...rest, passwordHash }, event: { action: "password" } };
@@ -316,6 +352,7 @@ export async function changePassword(id: string, current: string, password: stri
   checkPassword(password);
   const u = getUser(id);
   if (!u) throw new UserError("not-found", "no such account");
+  noService(u);
   noProvider(u);
   const stored = u.passwordHash;
   const fits = typeof current === "string" && current.length <= PASSWORD_MAX;
@@ -385,6 +422,7 @@ export async function newPasswordLink(id: string, opts: ChangeOptions = {}): Pro
   const user = change(
     id,
     (u) => {
+      noService(u);
       noProvider(u);
       if (u.passwordHash !== undefined) throw new UserError("has-password", "this account has a password already");
       const { breakGlass: _bg, ...rest } = u;
@@ -404,6 +442,7 @@ export async function resetPassword(id: string, opts: ChangeOptions = {}): Promi
   const user = change(
     id,
     (u, all) => {
+      noService(u);
       noProvider(u);
       if (u.passwordHash === undefined) throw new UserError("no-password", "this account has no password; make a new link instead");
       if (isLastAdmin(all, u)) throw new UserError("last-admin", LAST_ADMIN);
@@ -485,6 +524,7 @@ export async function updateUser(id: string, changes: UserChanges, opts: ChangeO
   return change(
     id,
     (u, all) => {
+      noService(u);
       noProvider(u);
       if (email !== undefined && all.some((o) => o.id !== id && o.email === email)) {
         throw new UserError("email-taken", "an account with that e-mail exists already");
@@ -509,6 +549,7 @@ export function setBreakGlass(id: string, on: boolean, opts: ChangeOptions = {})
     const file = read();
     const u = file.users.find((o) => o.id === id);
     if (!u) throw new UserError("not-found", "no such account");
+    noService(u);
     if (on) {
       noProvider(u);
       if (u.role !== "admin") throw new UserError("bad-role", "only an admin can be the break-glass account");

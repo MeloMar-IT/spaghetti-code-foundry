@@ -16,6 +16,7 @@ import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
 import { previewsOf } from "./server/api-preview.js";
+import { withServicesStopped } from "./services/supervisor.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
@@ -456,7 +457,7 @@ async function main(argv: string[]): Promise<number> {
       configureTelemetry(config, { log });
       const runsDir = resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs"));
       const scheduler = new Scheduler({ runsDir, config: () => config });
-      const watcher = new Watcher(cfg, { scheduler, runsDir, repo, dailyBudget: () => config.daily_budget_usd, log });
+      const watcher = new Watcher(cfg, { scheduler, runsDir, repo, dailyBudget: () => config.daily_budget_usd, publicUrl: () => config.server.public_url, log });
       if (values.once) {
         await watcher.tick();
         if (watcher.status.lastError) throw new Error(watcher.status.lastError);
@@ -531,14 +532,15 @@ async function main(argv: string[]): Promise<number> {
         },
         interrupt: (ids) => ctx.scheduler.interrupt(ids),
       });
-      const beforeExit = () => {
+      // every restart path (self-update, new build, data folder, settings) stops the managed services first (#867)
+      const beforeExit = withServicesStopped(() => {
         updater.stop();
         ctx.watchers.stopAll();
         void previewsOf(ctx).stopAll();
-      };
+      }, ctx.services);
       // a step of the updater runs in its own process group: it must not outlive the server
       // (the groups of shell steps are killed by the exit hook in steps/process.ts)
-      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void previewsOf(ctx).stopAll().finally(() => exitAfterTelemetry(code)); });
+      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void Promise.all([previewsOf(ctx).stopAll(), ctx.services?.stop()]).finally(() => exitAfterTelemetry(code)); });
       // other restarts wait while the updater builds
       const idle = () => queueIdle() && !updater.busy();
       restartOnNewBuild({

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
 import { changesToday } from "../ops/governor.js";
 import { pluginProblems, readFilePlugins, type PluginProblem } from "../plugins/load.js";
+import type { ServiceView } from "../services/supervisor.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
 import { lateChores } from "./late-chores.js";
@@ -41,6 +42,8 @@ export interface Health {
   governor?: { changesToday: number };
   /** Problems with plugins: labels and reasons, never paths or options. At most 20 are listed. Absent when there are none. */
   pluginProblems?: PluginProblem[];
+  /** The managed services (#867): state, restarts and last exit. Absent when none is configured. */
+  services?: ServiceView[];
 }
 
 const RUNS = { label: "Runs page", url: "#/runs" };
@@ -172,7 +175,9 @@ export function health(ctx: ApiContext, now = new Date()): Health {
 
   const list = problems.map(safe);
   const pluginAll = ctx.plugins ? pluginProblems(ctx.plugins, readFilePlugins()) : [];
-  const count = list.length + skillAll.length + pluginAll.length;
+  const services = ctx.services?.view() ?? [];
+  const serviceProblems = services.filter((x) => x.state === "refused" || x.state === "waiting").length;
+  const count = list.length + skillAll.length + pluginAll.length + serviceProblems;
   const self = ctx.selfUpdate?.view();
   const monitorFindings = findingsCount(cfg.monitor.report_to);
   const governorChanges = changesToday(join(process.env.FACTORY_HOME ?? FACTORY_HOME, "governor"), now);
@@ -184,6 +189,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     ...(skillProblems.length ? { skillProblems } : {}),
     ...(skillAll.length > skillProblems.length ? { skillProblemsMore: skillAll.length - skillProblems.length } : {}),
     ...(pluginAll.length ? { pluginProblems: pluginAll.slice(0, MAX_PLUGIN_PROBLEMS) } : {}),
+    ...(services.length ? { services } : {}),
     ...(monitorFindings ? { monitorFindings } : {}),
     ...(governorChanges > 0 ? { governor: { changesToday: governorChanges } } : {}),
     ...(self?.version ? { version: self.version } : {}),

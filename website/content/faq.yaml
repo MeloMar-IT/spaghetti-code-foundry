@@ -58,7 +58,8 @@
   a: |
     The Foundry itself is free to use and self-host under the Functional Source License (FSL-1.1-MIT): you may
     use and change it for anything except a competing commercial service, and each version becomes MIT two years
-    after its release. You pay for the AI subscriptions or API usage of the agents and models you choose. The
+    after its release. The name, "SCF" and the logo are not part of the licence: see the
+    [trademark notice](https://github.com/MeloMar-IT/spaghetti-code-foundry/blob/main/TRADEMARKS.md). You pay for the AI subscriptions or API usage of the agents and models you choose. The
     dashboard shows what each run cost, and spending limits keep it in bounds. See [controlling costs](/how-to/costs/).
 - q: Is it only for GitHub?
   a: |

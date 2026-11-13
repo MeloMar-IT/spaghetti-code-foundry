@@ -8,6 +8,7 @@ import { z } from "zod";
 import { editYamlText, removeYamlKey } from "./config-edit.js";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
+import { isPublicUrl, PUBLIC_URL_MESSAGE } from "./public-url.js";
 import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
@@ -259,6 +260,8 @@ const ServerSchema = z
     allowed_hosts: z.array(z.string().transform((s) => s.toLowerCase()).refine(hostEntryOk, "not a host name")).default([]),
     /** Accept requests from other computers over plain HTTP. Passwords and cookies are then unencrypted. */
     allow_insecure_http: z.boolean().default(false),
+    /** The https address people use to reach this server, for links in notifications and issue comments. Not set: links use this Mac's local address. */
+    public_url: z.string().max(2048).refine(isPublicUrl, PUBLIC_URL_MESSAGE).optional(),
   })
   .strict()
   .prefault({});
@@ -378,6 +381,49 @@ const PluginEntrySchema = z
   })
   .strict();
 export type PluginConfig = z.infer<typeof PluginEntrySchema>;
+
+/** A service name (also the name of its service account and its log file). */
+export const SERVICE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/**
+ * Why `p` cannot be the program of a managed service (#867); undefined when it is fine. An absolute file path with no `.`, `..`
+ * or empty parts, not a URL, and not inside the runs or workspaces folder of the data folder (the real path is checked again at start).
+ */
+export function serviceCommandProblem(p: string, home: string): string | undefined {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(p)) return "must be an absolute path, not a web address";
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(p)) return "has a control character";
+  if (!isAbsolute(p)) return "must be an absolute path";
+  if (p.split("/").slice(1).some((x) => x === "" || x === "." || x === "..")) return "must not have . or .. parts or double slashes";
+  for (const dir of [join(resolve(home), "runs"), join(resolve(home), "workspaces")]) {
+    if (p === dir || p.startsWith(dir + sep)) return "must be outside the run workspaces";
+  }
+  return undefined;
+}
+
+const ServiceStringSchema = z.string().max(4096, "at most 4096 characters").refine((s) => !s.includes("\u0000"), "has a NUL character");
+
+const ServiceSchema = z
+  .object({
+    name: z.string().regex(SERVICE_NAME_RE, "use a-z, 0-9 and - only (1–40 characters, not starting with -)"),
+    /** An absolute path to the program. Never run through a shell. */
+    command: z.string().max(1024).superRefine((c, ctx) => {
+      const problem = serviceCommandProblem(c, process.env.FACTORY_HOME ?? FACTORY_HOME);
+      if (problem) ctx.addIssue({ code: "custom", message: `command ${problem}` });
+    }),
+    args: z.array(ServiceStringSchema).max(50, "at most 50 arguments").default([]),
+    /** Extra environment variables. Their values count as secrets in the log. */
+    env: z
+      .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "not a variable name").refine((k) => !/^(SCF_|FACTORY_)/.test(k), "SCF_ and FACTORY_ names are reserved"), ServiceStringSchema)
+      .refine((r) => Object.keys(r).length <= 50, "at most 50 variables")
+      .default({}),
+    /** Base64 of the 32 raw bytes of an Ed25519 public key; with it `<command>.sig` is checked before every start. */
+    public_key: z.string().refine((s) => decodeBase64Exact(s, 32) !== undefined, "must be base64 of a 32-byte Ed25519 key").optional(),
+    /** The scope of the service account the Foundry keeps for this program, such as `GET health`. */
+    scope: z.array(z.string().regex(/^(GET|POST|PUT|DELETE) [A-Za-z0-9:/_-]{1,200}$/, "must be a route such as `GET runs`")).max(200, "at most 200 routes")
+      .refine((l) => new Set(l).size === l.length, "names a route twice"),
+  })
+  .strict();
+export type ServiceConfig = z.infer<typeof ServiceSchema>;
 
 /** The id of a starter (the name of its folder). */
 export const STARTER_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -865,6 +911,12 @@ export const ConfigSchema = z
       .array(PluginEntrySchema)
       .max(MAX_PLUGINS)
       .refine((l) => new Set(l.map((p) => p.module)).size === l.length, "names the same plugin twice")
+      .default([]),
+    /** Managed services (#867): companion programs the server starts, restarts and stops. Set in config.yaml only; applies after a restart. */
+    services: z
+      .array(ServiceSchema)
+      .max(10, "at most 10 services")
+      .refine((l) => new Set(l.map((x) => x.name)).size === l.length, "names the same service twice")
       .default([]),
     /**
      * The values of the settings sections plugins add (#787), by the plugin's web address name. Checked loosely here, because

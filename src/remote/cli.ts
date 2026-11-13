@@ -1,5 +1,5 @@
 import type { UserIo } from "../auth/cli.js";
-import { RULES } from "../server/permissions.js";
+import { RULES, dataClassOf } from "../server/permissions.js";
 import { ALL } from "./areas/index.js";
 import { ApiError, call, LOGIN_TIMEOUT_MS, type Fetch } from "./client.js";
 import { auto, cols, table } from "./render.js";
@@ -32,7 +32,7 @@ export const LOCAL_WORDS = ["run", "resume", "approve", "reject", "eval", "clean
 export const LOCAL_ACTIONS: Record<string, string[]> = { monitor: ["on", "off", "status"] };
 
 /** Words that run an action when none is given. */
-export const DEFAULT_ACTIONS: Record<string, string> = { plugins: "list" };
+export const DEFAULT_ACTIONS: Record<string, string> = { plugins: "list", services: "list" };
 
 const areasOf =(cmds: Cmd[]) => [...new Set(cmds.map((c) => c.area))].sort();
 
@@ -97,8 +97,8 @@ async function api(argv: string[], d: RemoteDeps, path: string): Promise<number>
   const [first, second, ...more] = f.rest;
   if (first === "routes" && !more.length) {
     const word = second?.toLowerCase();
-    const rows = RULES.filter((r) => !word || `${r.method} ${r.path} ${r.note}`.toLowerCase().includes(word)).map((r) => ({ method: r.method, path: r.path, who: r.user === "no" ? "admin" : r.user === "own" ? "admin, user (own)" : "admin, user", what: r.note }));
-    d.io.out(f.json ? JSON.stringify(rows, null, 2) : table(rows, [...cols("method", "path", "who"), { key: "what", max: 90 }], "no call matches"));
+    const rows = RULES.filter((r) => !word || `${r.method} ${r.path} ${dataClassOf(r) ?? ""} ${r.note}`.toLowerCase().includes(word)).map((r) => ({ method: r.method, path: r.path, who: r.user === "no" ? "admin" : r.user === "own" ? "admin, user (own)" : "admin, user", data: dataClassOf(r) ?? "", what: r.note }));
+    d.io.out(f.json ? JSON.stringify(rows, null, 2) : table(rows, [...cols("method", "path", "who", "data"), { key: "what", max: 90 }], "no call matches"));
     return 0;
   }
   const method = first?.toUpperCase();

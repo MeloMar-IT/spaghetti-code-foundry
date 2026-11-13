@@ -102,7 +102,7 @@ export function viewedUser(ctx: ApiContext, req: IncomingMessage, caller: User, 
   const view = key ? views.get(key) : undefined;
   if (!key || !view || view.userId !== as) throw new HttpError(403, NO_VIEW);
   const target = readUser(ctx, view.userId);
-  if (!target || target.role !== "user") {
+  if (!target || target.role !== "user" || target.kind === "service") {
     views.end(key);
     throw new HttpError(403, NO_VIEW);
   }
@@ -136,6 +136,7 @@ export const viewAsRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const target = readUser(ctx, userId);
   if (!target) throw new HttpError(404, "no such account");
   if (target.role === "admin") throw new HttpError(400, "an admin account cannot be viewed");
+  if (target.kind === "service") throw new HttpError(400, "a service account has no display to view");
   try {
     writeAudit(user.id, { action: "view-as", result: "ok", userId: target.id }, 0);
   } catch (e) {

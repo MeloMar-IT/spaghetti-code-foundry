@@ -1341,6 +1341,35 @@ runs and starts again when steps are added, removed or renamed. It is an estimat
 promise. "Taking longer than usual" means a step runs much longer than it usually does. Nothing
 is wrong yet: look at the live log.
 
+### Change feed (API)
+
+`GET /api/feed` tells a program what changed since its last call, so it does not have to poll
+several routes every few seconds. It answers only kinds and ids. The details are read through the
+normal routes (`GET /api/your-turn/mine`, `GET /api/runs/:id`, `GET /api/repos`, `GET /api/changes/:id`).
+
+- `?since=<seq>` — the `seq` of your last answer. The first call has no `since`: it answers
+  `reset: true` and the current `seq`, so the caller reads everything once with the normal routes.
+- The answer is `{ "seq": 812, "changes": [{ "kind": "run", "id": "20261113-…", "at": "2026-11-13T10:02:11.000Z" }] }`.
+  The kinds are `turn` (an item of Your turn was added, changed or is gone), `run` (a run's state
+  changed), `repo` (a repository was added, changed or removed) and `change` (a change request
+  changed). One id appears once, with its newest change.
+- `?wait=<seconds>` — 0 to 30. The call is held until a change you may read is recorded, or the
+  time is up. A call that already has a change answers at once.
+- `reset: true` — `since` is missing, older than what is kept, or newer than `seq`. What is kept:
+  every change of the last 24 hours and the newest 10,000 changes, never more than 20,000. Read
+  everything once, then keep the new `seq`.
+- The sequence is kept in `feed.json` in the data folder, so it goes on after a restart. A feed
+  file that cannot be read starts a new feed, and the next call answers `reset: true`.
+- **Access.** You see a change only when you could read the object now or when you could read it
+  before the change (so a deletion or a move is still reported to the person who lost the item).
+  A user sees their own runs and repositories of their workspaces. Change requests are shown only
+  to their owner. An admin sees all, except another account's change requests. A service account
+  sees a kind only when its scope holds that kind's read route.
+- Errors: 400 for a `since` or `wait` that is not a whole number in range; 503 while the feed is
+  not running.
+
+From the command line: `scf api GET 'feed?since=812&wait=30'`.
+
 ### Search (API)
 
 `GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
@@ -3905,7 +3934,7 @@ _This comment is kept up to date by the Spaghetti Code Foundry. It is edited, ne
 - **Closed while the run works.** It asks you to cancel the run if the work is no longer wanted. When the run ends it says it is done.
 - **No longer followed.** If the issue is closed or loses the watcher's label, the last text says the Foundry no longer follows it (or that it is done, if its run succeeded). A closed-issue check that fails or is cut short changes nothing.
 - **Two watchers on one issue** (for example a plan and a code watcher) share one comment. It shows the record of the one that is working, else the one that waits for you.
-- **Plain words.** The comment uses the wording for a reader of the issue: no raw error text, folder, setting or amount of money. Pages of the Foundry app are named, not linked; the details are in the app.
+- **Plain words.** The comment uses the wording for a reader of the issue: no raw error text, folder, setting or amount of money. Pages of the Foundry app are linked when **Public address** is set (`server.public_url`), otherwise they are named, not linked; the details are in the app.
 - **Switch it off** with `status_comment: false` on the watcher. A switched-off, removed or disabled watcher leaves its comments as they are.
 - **Extra copies.** If the Foundry finds more than one status comment of its own account on an issue, it keeps the oldest and removes the others (at most 5 per check; the rest follows at the next check).
 - **A failure is only in the log.** If a comment cannot be written, the check goes on; the log has a line `status comment #<n>: …` and the next check tries again.
@@ -4974,6 +5003,9 @@ No notification and no `notify.command` is sent for a run whose issue is known t
   the `PATH` the server runs with; run `scf service install` again after installing it. Without
   it the notification shows but a click does nothing. Settings says which case applies. Slack
   messages always carry an "Open" link.
+- **Links:** the links in these messages open the Foundry at the address set as **Public address**
+  (`server.public_url`, in the **Network** section of Settings), so they work from another device. Unset,
+  they use this Mac's local address.
 - **Command:** your own command still runs for every finished run, as before, for the outcomes
   you tick ("Run the command when a run is:"), with `FACTORY_STATUS`, `FACTORY_RUN_ID`,
   `FACTORY_FLOW` and `FACTORY_MESSAGE` set.
@@ -5035,6 +5067,16 @@ another admin first", changes nothing and exits 1. An admin that has no password
 as another admin. Change a role with
 `scf user role <e-mail> admin|user`. `scf user list` shows the last sign-in of each account
 ("never" when there is none).
+
+**Service accounts.** A service account is an account for a program, such as an integration. Admins make one in the **Service accounts** section of the Users page, or with `scf service-accounts add <name>`. `scf user list` shows service accounts apart from people, with their scope, token state and last use. A service account has no password and no browser session, and never has the admin role. It signs in with a bearer token, sent as `Authorization: Bearer <token>` from this computer only. The token is shown once, when it is made or rotated; the server keeps only its SHA-256 hash.
+
+A service account may call only the routes in its **scope**, a list of rule keys from the permission table such as `GET runs`. A request outside the scope gets 403 and is still written to the audit log with the account's name. A route inside the scope works as it does for a user of the same workspace. Some routes can never be granted: credentials, users, settings, autonomy, self-update, plugins and the audit export, among others. A scope that names one is refused when it is saved. An admin-only route can be in a scope only when it is listed by itself.
+
+Every route has a **data class**, shown in the Data column of the permission table and by `scf api routes`: `inbox` (answering and deciding changes), `summary` (lists and status), `log` (live events, transcripts and the audit), `diff` (the changes of a run), `admin` (settings and administration) and `secret` (routes that can never be granted). A scope may also name a class, such as `class:summary`, which covers the GET routes of that class. A class never covers a change: a POST, PUT or DELETE route needs its own key. `class:secret` is refused.
+
+A repository can be closed to service accounts: in its Run settings, tick **Closed to service accounts** (`services: none`). Then no service account can read or change anything about it. A request that names the repository, a run of it or a list that would include it gets 403, and the refusal is audited. Ask Foundry answers nothing while a repository is closed. Untick the box to open the repository again.
+
+**Rotate** gives the account a new token; the old one stops at once. **Revoke** ends the token until you rotate again. A token expires 30 days after its last use, and then it is refused until it is rotated. Cookie sign-in for people is not changed.
 
 ![The Users page under Administration, People and access](images/users.png)
 
@@ -5620,221 +5662,227 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 
 **The table.** An admin may make every call.
 
-| Call | Admin | User | What it does |
-|---|---|---|---|
-| `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` is not returned |
-| `GET /api/plugins` | yes | no | the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options |
-| `GET /api/plugins/ui` | yes | yes | the pages and menu items that plugins added and your role may see (`pages`: plugin, id, title, module address, roles; `menu`: plugin, page, label); never a folder, a file path or a plugin option. With `?as=` the role of the viewed user |
-| `PUT /api/config` | yes | no | change the settings (not `plugins`: a body with that key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
-| `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
-| `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
-| `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
-| `POST /api/restart` | yes | no | restart when no story is running: no new runs start until the active runs are done, and the watchers keep running (only a move of the data folder stops them); only when the server runs under the supervisor; writes an audit line |
-| `DELETE /api/restart` | yes | no | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
-| `GET /api/watchers` | yes | no | list the watchers |
-| `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
-| `GET /api/governor` | yes | no | the load governor for the Overview page: the runs at once now and the caps that hold with their reasons, the free cores, the load of other programs with the top 5 programs by name, the Foundry's own load, and the changes of the cap in the last 24 hours; admins only, as it names programs |
-| `GET /api/busy` | yes | no | busy mode ("I'm using this machine"): whether it holds, the switch set by hand (since, until) and the program of `governor.busy_apps` that is running |
-| `POST /api/busy` | yes | no | switch busy mode on: at most `governor.busy_runs` runs at once and new run processes start at background priority; `hours` (above 0, at most 24) sets an end, without it busy mode stays on until it is switched off |
-| `DELETE /api/busy` | yes | no | switch busy mode off; busy mode that comes from a running program of `governor.busy_apps` stays until the program ends |
-| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes, and the monitor's settings with their ranges, defaults, values and whether config.yaml states them |
-| `GET /api/monitor/findings/:id` | yes | no | the evidence, bug stories and runs of one finding of the monitor |
-| `POST /api/monitor/story` | yes | no | make the bug story of one finding of the monitor now (the waiting rules do not apply; the off switch, mutes and the two tries do) |
-| `POST /api/monitor/off` | yes | no | stop the monitor from making bug stories |
-| `POST /api/monitor/on` | yes | no | let the monitor make bug stories again |
-| `POST /api/monitor/mutes` | yes | no | mute one detector or one finding of the monitor, with a reason, for a time or for good |
-| `DELETE /api/monitor/mutes/:id` | yes | no | end a mute |
-| `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
-| `POST /api/clean` | yes | no | clean up old runs |
-| `GET /api/providers` | yes | no | agent providers |
-| `GET /api/onboarding/progress` | yes | yes | where this account is in the Get started guide: `{ step, answers, at }`, or `{ step: null, answers: {} }` when nothing is saved; only your own account |
-| `PUT /api/onboarding/progress` | yes | yes | save where this account is in the Get started guide (`step`: one of the guide's steps; optional `answers`: an object of at most 20 keys, each a lowercase name, at most 16384 bytes as JSON and nested at most 8 deep); the guide's own answers are checked too (`starter`, `about` with `who` and `what`, `name`, `style`, `where`: `local` or `github`; length limits, no control characters); a bad body answers 400 without the value, answers that are too large 413; replaces the saved entry, but `repoId` (the made project) and `making` (a project being made) are only set by the server and stay as stored; only your own account |
-| `DELETE /api/onboarding/progress` | yes | yes | clear where this account is in the Get started guide; answers 200 also when nothing is saved; only your own account |
-| `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
-| `GET /api/onboarding/agents` | yes | no | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
-| `PUT /api/onboarding/agents` | yes | no | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |
-| `GET /api/starters` | yes | no | the starters you can make a project from (`id`, `title`, `description`, `needs`, `source`: `built-in` or `own`) and the broken own ones (`id`, `source`, `problem`); never a folder path; admins only; an invited Simple account asks its admin (#823) |
-| `POST /api/starters/:id/project` | yes | no | make a new project from a starter (`name`, optional `parent`, an existing absolute folder outside the data folder): a git folder with `main` and `develop`, connected as a local repository with the starter's test command and tested; answers 201 with `repo` and `connection`; with `guide: true` one project is made per account and recorded in the guide answers once it is complete: a repeat answers 200 with `existing: true` and the same id, 409 when the guide was started again meanwhile, a progress file that cannot be used answers a fixed 500; 409 when the folder exists or the starter is broken, 404 for an unknown or hidden starter; any failure removes what it made; writes the audit line `repo-add`; with `guide: true` the project gets the Simple daily cap (`simple_project_daily_budget_usd`, at most 1,000,000) as its own; admins only; an invited Simple account asks its admin (#823) |
-| `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
-| `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
-| `POST /api/providers/test` | yes | no | test a provider |
-| `GET /api/evals` | yes | no | eval reports |
-| `GET /api/stats` | yes | no | statistics |
-| `GET /api/flows` | yes | yes | list flows (a user sees the published flows only; an admin gets that list with `?published=1`) |
-| `GET /api/flows/:name` | yes | no | read a flow |
-| `PUT /api/flows/:name` | yes | no | save a flow |
-| `DELETE /api/flows/:name` | yes | no | delete a flow |
-| `GET /api/promotions` | yes | no | whether each component (`?kind=` and `?id=` narrow the list; `id` needs `kind`) is promoted, can be promoted or is blocked: its kind, id, version and hash, the promotion record (report ids and hashes) or the blocking suites with what to do; no report content |
-| `POST /api/promotions` | yes | no | promote one component (`kind`, `id`, `reportId` of a passing safety report) and write its record; a component that is blocked answers 409 with the `blocking` list and writes nothing; writes an audit line |
-| `GET /api/blocks` | yes | no | list blocks |
-| `PUT /api/blocks/:id` | yes | no | save a block |
-| `DELETE /api/blocks/:id` | yes | no | delete a block |
-| `POST /api/validate` | yes | no | check a flow; answers `{ ok, flow }` or `{ ok: false, error, issues }` (`issues` is `[{ path, message }]`, empty for a YAML syntax error) |
-| `POST /api/generate` | yes | no | write a flow with AI |
-| `GET /api/queue` | yes | yes | the queue (a user sees their own queued runs and how many are ahead) |
-| `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
-| `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
-| `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
-| `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
-| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending), any waiting promotion request with its token, who asked and who may approve it, the level of the newest run, and the accountable owner; read-only, changes nothing |
-| `GET /api/autonomy/history` | yes | no | the changes of the autonomy levels, newest first: every audit line whose action starts with `autonomy-` (at most 500, with `more` when older ones exist); `?target=repos:<id>` or `?target=flows:<name>` reads one component; read-only |
-| `POST /api/autonomy/promote` | yes | no | ask for one autonomy level more for a repository or flow (`kind` `repos` or `flows`, `id`, `to`, `reason` of 1 to 200 characters); `to` must be one level above the current one and the promotion gate must pass (else 409 with `gate`); the answer carries the request `token`; writes an audit line |
-| `POST /api/autonomy/approve` | yes | no | carry out a waiting promotion request (`kind`, `id`, `to`, `token`); only the accountable owner may approve, and a move to `guarded-write` or `delivery-handoff` needs an approver who did not ask (unless there is one active admin); the level and the gate are checked again, and a request that no longer fits expires (409); writes an audit line |
-| `POST /api/autonomy/demote` | yes | no | lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line |
-| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
-| `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
-| `GET /api/runs/:id/issue-limit` | yes | no | the spending limit of the run's issue: what the issue, its split parts and retries cost, the default, the override and the limit in effect |
-| `PUT /api/runs/:id/issue-limit` | yes | no | set (`limitUsd` above 0) or clear (`null`) the spending limit of the run's issue and its split parts; writes an audit line |
-| `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
-| `POST /api/runs/:id/not-now` | yes | own runs | put aside a run that failed ("Not now" in the Simple view) until it fails again; 409 when it did not fail; kept in the same store as Your turn dismissals |
-| `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
-| `POST /api/runs/:id/unarchive` | yes | own runs | take a run out of the archive again |
-| `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |
-| `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
-| `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note; 409 for a closed issue, as for resume |
-| `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
-| `POST /api/runs/:id/checks/add` | yes | own runs | add a check of your own to a change that waits for your check (`try`, `expect`, at most 300 characters each, `rev` optional); it is kept for the next round; 400 for an empty part, 409 when the run does not wait, is queued or moved on, the checks changed since `rev`, or it has 4 checks of your own |
-| `POST /api/runs/:id/checks` | yes | own runs | mark a check of a change that waits for your check (`check`: the id of a check from the plan, `mark`: `works`, `not-quite`, or `null` to take the mark back, `rev`: the `checksRev` you read, optional); the marks are kept with the run and shown again on its page; 400 for an unknown check or mark, 409 when the run does not wait, is queued or moved on, or the checks changed since `rev` |
-| `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
-| `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
-| `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |
-| `GET /api/runs/:id/context` | yes | own runs | the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle |
-| `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
-| `GET /api/next` | yes | no | what happens next, for all runs |
-| `GET /api/health` | yes | no | server health |
-| `GET /api/board` | yes | no | the board of all work |
-| `GET /api/search` | yes | yes | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
-| `GET /api/since` | yes | no | what changed since a time |
-| `GET /api/your-turn` | yes | no | what waits for you |
-| `POST /api/your-turn/dismiss` | yes | no | dismiss an item |
-| `POST /api/your-turn/restore` | yes | no | restore dismissed items; with `{ "key": "…" }` only that item |
-| `GET /api/your-turn/detail` | yes | yes | the questions, plan or split of an item; a user: only an item of a project they own whose watcher does not use the server's own GitHub login (any other item: 404, as for an unknown one) |
-| `POST /api/your-turn/act` | yes | yes | answer, approve, reject or retry an item, as a comment on the issue (on a local project: on the story, with no GitHub call); retry of a closed issue is 409, as for resume; a user: only on an item of a project they own, not with the server's own GitHub login (any other item: 404), and the answer is that of `your-turn/mine` |
-| `GET /api/your-turn/mine` | yes | yes | the items you may answer, approve or retry: `{ items: [{ key, kind, runId?, acts }] }` with opaque keys (a user: only items of projects they own, not with the server's own GitHub login; an admin: all); no repository name and no comment text |
-| `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
-| `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
-| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set) |
-| `PUT /api/me/view` | yes | yes | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
-| `GET /api/credentials` | yes | yes | your stored credentials |
-| `POST /api/credentials` | yes | yes | store a credential |
-| `DELETE /api/credentials/:id` | yes | yes | remove a credential |
-| `GET /api/users` | yes | no | list the accounts |
-| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (all three are enforced) |
-| `PUT /api/users/limits` | yes | no | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
-| `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token; optional `view` (`simple`, `advanced`, `admin`, open to the role): a Simple account opens the Get started guide after its first password |
-| `PUT /api/users/:id` | yes | no | change the name, e-mail or role of an account |
-| `PUT /api/users/:id/limits` | yes | no | set or clear the limits of one account; a cleared one follows the default again |
-| `POST /api/users/:id/block` | yes | no | block an account, end its sessions and cancel its queued jobs |
-| `POST /api/users/:id/unblock` | yes | no | unblock an account |
-| `POST /api/users/:id/link` | yes | no | a new set-password token for an account without a password |
-| `POST /api/users/:id/reset` | yes | no | take the password of an account away, end its sessions and give a one-time set-password token |
-| `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
-| `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
-| `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
-| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials |
-| `GET /api/skills/lifecycle` | yes | no | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
-| `POST /api/skills/lifecycle` | yes | no | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
-| `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards |
-| `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
-| `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
-| `GET /api/repos` | yes | yes | your repositories, each with its autonomy level |
-| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
-| `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
-| `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
-| `POST /api/repos/:id/move-to-github` | yes | no | move your local project to GitHub: create a private repository with your GitHub token sign-in (or use one of your GitHub repositories), push all branches and tags (never forced), move the stories, then move the watchers and settings and remove the local record; `dryRun` changes nothing and answers a single-use `confirm` token (valid for 10 minutes, none when a story cannot go along); a real move needs that token and stops with 409 ("Nothing was published") when it is missing, used, expired, for another request, or when the branches, tags or stories changed since the check; safe to repeat |
-| `POST /api/repos/:id/publish-remote` | yes | no | Yes, publish for the plain push to the folder's remote (only the owner of the local project): `{ dryRun: true, settings? }` shows the remote of the develop and of the main branch (addresses without sign-in), the branches and the tags, and answers a single-use `confirm` token; `{ confirm, settings? }` then saves the settings and turns `pushRemote` on in one step; 409 when the token does not fit, the remotes or the settings changed since the check, or the folder has no remote; writes an audit line |
-| `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
-| `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
-| `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
-| `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
-| `POST /api/repos/:id/safe-points/restore` | yes | yes | Restore a safe point of your repository (an admin: any repository): { commit, dryRun: true } answers the titles of the changes that would be taken back, what a restore does not undo and a single-use confirmation valid for 10 minutes, and changes nothing; { commit, confirm } opens one normal change (an issue with the build label, made with the owner's own GitHub sign-in) that takes the code back to that commit with new revert commits, with tests and review; nothing is pushed directly; 409 when the confirmation is used up or does not fit, the shown points changed, the commit is not a safe point or the project has no enabled issues watcher; writes one audit line |
-| `GET /api/repos/:id/safe-points` | yes | yes | the safe points of your repository: the last 10 commits of its develop branch (gitflow) or main branch that a successful run or a release left green, newest first, with the time, the change titles and who started them; read from the run records, no call to GitHub, changes nothing (an admin: any repository) |
-| `POST /api/repos/:id/preview` | yes | yes | start the develop version, or the version of a run that waits for your check (`version`, `runId`), of your repository (an admin: any repository) in a folder of its own; replaces a running one; answers 202 |
-| `GET /api/repos/:id/preview` | yes | yes | the state, URL, reason, version and redacted output of the preview of your repository (an admin: any repository) |
-| `DELETE /api/repos/:id/preview` | yes | yes | stop the preview of your repository and remove its folder |
-| `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
-| `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
-| `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |
-| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line. It cannot turn `pushRemote` on (409): that is the owner's Yes, publish (`POST repos/:id/publish-remote`); keeping it on and turning it off work |
-| `GET /api/admin/repos/:id/budget` | yes | no | the daily spending cap of a repository, the Simple default, the cap in effect and today's spend |
-| `PUT /api/admin/repos/:id/budget` | yes | no | set (a number above 0) or clear (null) the daily spending cap of a repository; writes an audit line |
-| `PUT /api/admin/repos/:id/workspace` | yes | no | set the workspace of a repository (`workspace`: an id from `workspaces` in config.yaml or from a plugin; `null` or `default` puts it back in the default workspace); writes an audit line |
-| `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
-| `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
-| `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
-| `POST /api/admin/repos/:id/watchers` | yes | no | add a watcher to a repository (GitHub, with a sign-in that can call the GitHub API) |
-| `PUT /api/admin/repos/:id/watchers/:wid` | yes | no | change a watcher of a repository, or enable or disable it |
-| `DELETE /api/admin/repos/:id/watchers/:wid` | yes | no | delete a watcher of a repository |
-| `POST /api/admin/view-as` | yes | no | start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line |
-| `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
-| `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
-| `GET /api/admin/components` | yes | no | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
-| `GET /api/changes` | yes | yes | your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; only your own |
-| `POST /api/changes` | yes | yes | ask for a change in plain words, `{ repo, text, pictures? }` (text at most 10,000 characters; `pictures` is a list of at most 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, found by its content, else 400; this route takes a body of up to 36 MiB, every other route 1 MB, else 413; 403 `not-yours` for a project that is not yours); the architect reads the pictures too; the architect then reads the code, asks its questions and writes the cards by itself (202, `thinking`) |
-| `GET /api/changes/:id` | yes | yes | one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words); only the owner (an admin who is not the owner: 403) |
-| `GET /api/changes/:id/pictures/:n` | yes | yes | one picture of a change request of yours (`n` from 1), as the raw image with its `image/*` type, `no-store` and `nosniff`; 404 for a number with no picture; only the owner (another account: 404, an admin who is not the owner: 403); no other route serves the pictures |
-| `POST /api/changes/:id/answers` | yes | yes | answer every open question of a change request at once, `{ answers: [{ question, option | text | unknown }] }`; the cards are then written (202); only the owner |
-| `PUT /api/changes/:id/cards/:did` | yes | yes | change the title and/or the criteria of a card of a change request; a card that is published is refused (409); only the owner |
-| `POST /api/changes/:id/build` | yes | yes | "Yes, build this": publishes every card and adds the build label (`Factory_go` on GitHub, state `go` locally); a repeat or a retry adds it once to each card; only the owner |
-| `POST /api/changes/:id/later` | yes | yes | "Not now": publishes every card without the build label; a later `build` adds it; only the owner |
-| `POST /api/changes/:id/retry` | yes | yes | starts the architect's step again after a change request is `stuck` (409 when it is not); only the owner |
-| `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use: your GitHub names, then your local projects (`local:<slug>-<id8>`) (an admin: the sessions of all accounts, with the owner) |
-| `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories or local projects, from an idea; from an open issue only on a GitHub repository (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it; 400 `bad-repo` for a local name with an issue; 403 `not-yours` for a local project that is not yours; 400 `bad-repo` for a malformed name); with `guide: true` (and nothing else) the session of the Get started guide on the guide's local project, made once from the saved answers (201, then 200 with the same session; 409 without a project of the guide or outside your workspaces) |
-| `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
-| `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
-| `PUT /api/refinement/:id` | yes | yes | rename your refinement session |
-| `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
-| `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
-| `POST /api/refinement/:id/source/remove-build-label` | yes | yes | remove the build label from the issue your refinement session came from, with the repository's sign-in (an admin who is not the owner: 403) |
-| `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
-| `POST /api/refinement/:id/round` | yes | yes | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time); `words: "simple"` asks for plain words |
-| `POST /api/refinement/:id/understand` | yes | yes | ask the architect to write 1 to 5 story drafts from the idea, the brief and the answered questions of your refinement session, linked by Depends on, or resume a paused run (one architect run per account at a time); `words: "simple"` asks for plain words; drafts it wrote before that are not on GitHub are replaced |
-| `POST /api/refinement/:id/ask` | yes | yes | ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time) |
-| `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
-| `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
-| `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | reject a proposed entry of your refinement session; it is removed |
-| `PUT /api/refinement/:id/map/:eid` | yes | yes | change the text of a rule, example or open question of your refinement session |
-| `DELETE /api/refinement/:id/map/:eid` | yes | yes | remove a rule, example or open question from your refinement session |
-| `POST /api/refinement/:id/drafts` | yes | yes | add an empty story draft to your refinement session (at most 20) |
-| `PUT /api/refinement/:id/drafts/:did` | yes | yes | save what you typed in a story draft of your refinement session; only the fields in the body change |
-| `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
-| `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
-| `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
-| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again, a split original is skipped, and `leftBehind` names split originals that still hold criteria; in a session that came from an issue, the draft that stands for it replaces the title and text of that issue first (one comment holds the old text, labels are added and kept) and is answered as `updated`, and a closed issue or one the Foundry builds is refused (409) with nothing written; when the issue's title or text changed on GitHub since the session read it, nothing is written and the answer is 409 with `changedOnGithub` (both versions and `seen`): send `source: { keep: "mine" | "github", seen }` to choose; a split source issue is replaced once all its parts are on GitHub (the issues that depend on it get the parts under "Depends on" and a comment with the old and new text, every trigger label of an issues watcher of the repository is taken off it, and it gets a comment naming the parts; it is then closed as not planned; it stays open, to be closed by hand, when more than 1,000 open issues were read, a dependant must be changed or checked by hand, or it is a story of the monitor, and an original closed in another way is left so) and the answer has `replaced: { issue, parts, dependants: [{ issue, outcome }], closed: "not_planned" | "other" | "open", closedAt? }`; an original that the Foundry builds is refused (409) before the first write, and so is a closed one unless its replacement had started already (it is then left closed), and a failed publish is finished by publishing again (an admin who is not the owner: 403); on a local project the stories are made in `.scf/stories/` with no GitHub sign-in, `go` is the build label, and 403 `not-yours` when the project is not yours (also if it was moved while the publish waited for the lock) |
-| `PUT /api/refinement/:id/drafts/:did/review-label` | yes | yes | choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub |
-| `POST /api/refinement/:id/drafts/:did/split` | yes | yes | ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes |
-| `POST /api/refinement/:id/drafts/:did/split/confirm` | yes | yes | confirm a split of a story draft of your refinement session: each part becomes a new draft and the original is kept as a record; no architect run starts |
-| `POST /api/refinement/:id/drafts/:did/criteria/:cid/move` | yes | yes | move an acceptance criterion between a split story draft of your refinement session and its parts, or between two parts |
-| `POST /api/refinement/:id/drafts/:did/merge` | yes | yes | merge another story draft of your refinement session into this one; the other draft is removed and no architect run starts |
-| `POST /api/refinement/:id/drafts/:did/impact` | yes | yes | ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes |
-| `POST /api/refinement/:id/drafts/:did/move-to-notes` | yes | yes | move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish |
-| `POST /api/refinement/:id/drafts/:did/ready-check` | yes | yes | check a story draft of your refinement session against the Definition of Ready of its repository: by code, and the architect judges what code cannot decide, or resume a paused check (one architect run per account at a time); no field changes |
-| `POST /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | accept an item of the Definition of Ready anyway for a story draft of your refinement session, with a reason; not for the implementation plan item |
-| `DELETE /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | remove the "accepted anyway" mark of an item from a story draft of your refinement session |
-| `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
-| `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
-| `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
-| `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403); on a local project it reads the local stories in `.scf/stories/` with no GitHub sign-in, `go` is the build label, and 403 `not-yours` when the project is not yours |
-| `GET /api/help/conversations` | yes | yes | your Ask Foundry conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask Foundry is switched on and whether it is paused (then you can read but not ask), and the limits; only your own, for an admin too, and not in a view of a user's display |
-| `GET /api/help/conversations/:id` | yes | yes | read one of your Ask Foundry conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
-| `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask Foundry conversations: it stays readable and takes no new question |
-| `POST /api/help/conversations/:id/feedback` | yes | yes | rate an answer in one of your Ask Foundry conversations: helpful or not helpful, with optional reasons from a fixed list and no free text; vote null (or none) takes it back; only counts are kept in the quality numbers; works while Ask Foundry is paused |
-| `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask Foundry conversations to the archive |
-| `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask Foundry conversations out of the archive; it gets the state it had |
-| `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask Foundry conversations: its title and messages are removed at once and cannot be brought back |
-| `POST /api/help/conversations` | yes | yes | ask Ask Foundry a question in a new conversation (`question`, and optionally `context`: the page and one selected thing); answers 202 with the conversation, whose reply is `pending` until the turn ends; one turn per account at a time (409), 429 when the queue is full or your turns of today are used, 503 while Ask Foundry is switched off |
-| `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask Foundry conversations; the same answers as for a new one |
-| `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask Foundry conversations again; no message is added, and it counts as a turn of today |
-| `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask Foundry conversations |
-| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask Foundry reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`, or runs a read-only check (read it again, test the connection) and stores its result as a check message of the conversation, answering `{type, outcome, conversation}`; 404 when the thing is gone or you can no longer see it, 403 when you may not do it now, 409 when the conversation is not open, is waiting, is full, changed while the check ran, or already runs a check, 410 for a deleted conversation. Or see what an action Ask Foundry proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask Foundry or its actions are switched off |
-| `POST /api/help/conversations/:id/actions/confirm` | yes | yes | carry out a previewed action with its token (`token`, `message`, `index`): the server checks the token, that the run did not change since the preview, the settings, your account and the rule of the same button on the run's page (your own runs only, an admin too), then reads the result back from the run and answers `{ outcome, stored }`; 409 for a token that is used, expired or does not fit, or a run that changed; writes an audit line |
-| `POST /api/help/conversations/:id/actions/cancel` | yes | yes | drop the confirmation token of a preview (`token`); nothing changes |
-| `GET /api/help/conversations/:id/handoffs` | yes | yes | the pages you may take one answer of your Ask Foundry conversation to (`?message=`), with what each would copy; checked again for your account now; nothing is written |
-| `POST /api/help/conversations/:id/handoffs` | yes | yes | record that you took an answer of your Ask Foundry conversation to another page (`message`, `offer`, and the `page` and `fill` you saw); only the conversation changes, never the target; 409 when the offer, its page or what it copies changed |
-| `POST /api/help/context` | yes | yes | what Ask Foundry would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask Foundry is switched off |
-| `GET /api/help/export` | yes | yes | all your Ask Foundry conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
-| `GET /api/help/usage` | yes | no | Ask Foundry for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
+| Call | Admin | User | Data | What it does |
+|---|---|---|---|---|
+| `GET /api/info` | yes | no | admin | server settings and today's cost |
+| `GET /api/config` | yes | no | secret | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` and `services` are not returned |
+| `GET /api/plugins` | yes | no | secret | the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options |
+| `GET /api/plugins/ui` | yes | yes | secret | the pages and menu items that plugins added and your role may see (`pages`: plugin, id, title, module address, roles; `menu`: plugin, page, label); never a folder, a file path or a plugin option. With `?as=` the role of the viewed user |
+| `PUT /api/config` | yes | no | secret | change the settings (not `plugins` or `services`: a body with either key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
+| `GET /api/settings` | yes | no | secret | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
+| `POST /api/settings/reset` | yes | no | secret | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
+| `GET /api/restart` | yes | no | secret | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
+| `POST /api/restart` | yes | no | secret | restart when no story is running: no new runs start until the active runs are done, and the watchers keep running (only a move of the data folder stops them); only when the server runs under the supervisor; writes an audit line |
+| `DELETE /api/restart` | yes | no | secret | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
+| `GET /api/watchers` | yes | no | admin | list the watchers |
+| `POST /api/watchers/:id/tick` | yes | no | admin | run a watcher now |
+| `GET /api/governor` | yes | no | admin | the load governor for the Overview page: the runs at once now and the caps that hold with their reasons, the free cores, the load of other programs with the top 5 programs by name, the Foundry's own load, and the changes of the cap in the last 24 hours; admins only, as it names programs |
+| `GET /api/busy` | yes | no | admin | busy mode ("I'm using this machine"): whether it holds, the switch set by hand (since, until) and the program of `governor.busy_apps` that is running |
+| `POST /api/busy` | yes | no | admin | switch busy mode on: at most `governor.busy_runs` runs at once and new run processes start at background priority; `hours` (above 0, at most 24) sets an end, without it busy mode stays on until it is switched off |
+| `DELETE /api/busy` | yes | no | admin | switch busy mode off; busy mode that comes from a running program of `governor.busy_apps` stays until the program ends |
+| `GET /api/monitor` | yes | no | admin | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes, and the monitor's settings with their ranges, defaults, values and whether config.yaml states them |
+| `GET /api/monitor/findings/:id` | yes | no | admin | the evidence, bug stories and runs of one finding of the monitor |
+| `POST /api/monitor/story` | yes | no | admin | make the bug story of one finding of the monitor now (the waiting rules do not apply; the off switch, mutes and the two tries do) |
+| `POST /api/monitor/off` | yes | no | admin | stop the monitor from making bug stories |
+| `POST /api/monitor/on` | yes | no | admin | let the monitor make bug stories again |
+| `POST /api/monitor/mutes` | yes | no | admin | mute one detector or one finding of the monitor, with a reason, for a time or for good |
+| `DELETE /api/monitor/mutes/:id` | yes | no | admin | end a mute |
+| `POST /api/monitor/retry` | yes | no | admin | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
+| `POST /api/clean` | yes | no | admin | clean up old runs |
+| `GET /api/providers` | yes | no | admin | agent providers |
+| `GET /api/onboarding/progress` | yes | yes | admin | where this account is in the Get started guide: `{ step, answers, at }`, or `{ step: null, answers: {} }` when nothing is saved; only your own account |
+| `PUT /api/onboarding/progress` | yes | yes | admin | save where this account is in the Get started guide (`step`: one of the guide's steps; optional `answers`: an object of at most 20 keys, each a lowercase name, at most 16384 bytes as JSON and nested at most 8 deep); the guide's own answers are checked too (`starter`, `about` with `who` and `what`, `name`, `style`, `where`: `local` or `github`; length limits, no control characters); a bad body answers 400 without the value, answers that are too large 413; replaces the saved entry, but `repoId` (the made project) and `making` (a project being made) are only set by the server and stay as stored; only your own account |
+| `DELETE /api/onboarding/progress` | yes | yes | admin | clear where this account is in the Get started guide; answers 200 also when nothing is saved; only your own account |
+| `POST /api/onboarding/sign-in` | yes | no | admin | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
+| `GET /api/onboarding/agents` | yes | no | secret | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
+| `PUT /api/onboarding/agents` | yes | no | secret | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |
+| `GET /api/starters` | yes | no | admin | the starters you can make a project from (`id`, `title`, `description`, `needs`, `source`: `built-in` or `own`) and the broken own ones (`id`, `source`, `problem`); never a folder path; admins only; an invited Simple account asks its admin (#823) |
+| `POST /api/starters/:id/project` | yes | no | admin | make a new project from a starter (`name`, optional `parent`, an existing absolute folder outside the data folder): a git folder with `main` and `develop`, connected as a local repository with the starter's test command and tested; answers 201 with `repo` and `connection`; with `guide: true` one project is made per account and recorded in the guide answers once it is complete: a repeat answers 200 with `existing: true` and the same id, 409 when the guide was started again meanwhile, a progress file that cannot be used answers a fixed 500; 409 when the folder exists or the starter is broken, 404 for an unknown or hidden starter; any failure removes what it made; writes the audit line `repo-add`; with `guide: true` the project gets the Simple daily cap (`simple_project_daily_budget_usd`, at most 1,000,000) as its own; admins only; an invited Simple account asks its admin (#823) |
+| `POST /api/onboarding/test-call` | yes | no | admin | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
+| `GET /api/setup-check` | yes | no | admin | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
+| `POST /api/providers/test` | yes | no | admin | test a provider |
+| `GET /api/evals` | yes | no | admin | eval reports |
+| `GET /api/stats` | yes | no | summary | statistics |
+| `GET /api/flows` | yes | yes | admin | list flows (a user sees the published flows only; an admin gets that list with `?published=1`) |
+| `GET /api/flows/:name` | yes | no | admin | read a flow |
+| `PUT /api/flows/:name` | yes | no | admin | save a flow |
+| `DELETE /api/flows/:name` | yes | no | admin | delete a flow |
+| `GET /api/promotions` | yes | no | admin | whether each component (`?kind=` and `?id=` narrow the list; `id` needs `kind`) is promoted, can be promoted or is blocked: its kind, id, version and hash, the promotion record (report ids and hashes) or the blocking suites with what to do; no report content |
+| `POST /api/promotions` | yes | no | admin | promote one component (`kind`, `id`, `reportId` of a passing safety report) and write its record; a component that is blocked answers 409 with the `blocking` list and writes nothing; writes an audit line |
+| `GET /api/blocks` | yes | no | admin | list blocks |
+| `PUT /api/blocks/:id` | yes | no | admin | save a block |
+| `DELETE /api/blocks/:id` | yes | no | admin | delete a block |
+| `POST /api/validate` | yes | no | admin | check a flow; answers `{ ok, flow }` or `{ ok: false, error, issues }` (`issues` is `[{ path, message }]`, empty for a YAML syntax error) |
+| `POST /api/generate` | yes | no | admin | write a flow with AI |
+| `GET /api/queue` | yes | yes | summary | the queue (a user sees their own queued runs and how many are ahead) |
+| `GET /api/runs` | yes | yes | summary | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
+| `GET /api/run-owners` | yes | no | summary | the accounts that have runs, for the owner filter |
+| `GET /api/run-filters` | yes | yes | summary | the repositories and flows of the runs you can see, for the filter menus |
+| `GET /api/outcomes` | yes | yes | summary | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
+| `GET /api/autonomy` | yes | no | secret | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending), any waiting promotion request with its token, who asked and who may approve it, the level of the newest run, and the accountable owner; read-only, changes nothing |
+| `GET /api/autonomy/history` | yes | no | secret | the changes of the autonomy levels, newest first: every audit line whose action starts with `autonomy-` (at most 500, with `more` when older ones exist); `?target=repos:<id>` or `?target=flows:<name>` reads one component; read-only |
+| `POST /api/autonomy/promote` | yes | no | secret | ask for one autonomy level more for a repository or flow (`kind` `repos` or `flows`, `id`, `to`, `reason` of 1 to 200 characters); `to` must be one level above the current one and the promotion gate must pass (else 409 with `gate`); the answer carries the request `token`; writes an audit line |
+| `POST /api/autonomy/approve` | yes | no | secret | carry out a waiting promotion request (`kind`, `id`, `to`, `token`); only the accountable owner may approve, and a move to `guarded-write` or `delivery-handoff` needs an approver who did not ask (unless there is one active admin); the level and the gate are checked again, and a request that no longer fits expires (409); writes an audit line |
+| `POST /api/autonomy/demote` | yes | no | secret | lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line |
+| `POST /api/runs` | yes | yes | summary | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
+| `GET /api/runs/:id` | yes | own runs | summary | read a run (a user: without costs and setup) |
+| `GET /api/runs/:id/issue-limit` | yes | no | admin | the spending limit of the run's issue: what the issue, its split parts and retries cost, the default, the override and the limit in effect |
+| `PUT /api/runs/:id/issue-limit` | yes | no | admin | set (`limitUsd` above 0) or clear (`null`) the spending limit of the run's issue and its split parts; writes an audit line |
+| `POST /api/runs/:id/cancel` | yes | own runs | summary | cancel a run that runs, is queued, waits or is stopped |
+| `POST /api/runs/:id/not-now` | yes | own runs | inbox | put aside a run that failed ("Not now" in the Simple view) until it fails again; 409 when it did not fail; kept in the same store as Your turn dismissals |
+| `POST /api/runs/:id/archive` | yes | own runs | summary | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
+| `POST /api/runs/:id/unarchive` | yes | own runs | summary | take a run out of the archive again |
+| `POST /api/runs/:id/resume` | yes | own runs | summary | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |
+| `POST /api/runs/:id/answer` | yes | own runs | inbox | answer the questions a run stopped with; the run continues with the answer |
+| `POST /api/runs/:id/approve` | yes | own runs | inbox | approve a run, with a note; 409 for a closed issue, as for resume |
+| `POST /api/runs/:id/reject` | yes | own runs | inbox | reject a run, with a note; 409 for a closed issue, as for resume |
+| `POST /api/runs/:id/checks/add` | yes | own runs | inbox | add a check of your own to a change that waits for your check (`try`, `expect`, at most 300 characters each, `rev` optional); it is kept for the next round; 400 for an empty part, 409 when the run does not wait, is queued or moved on, the checks changed since `rev`, or it has 4 checks of your own |
+| `POST /api/runs/:id/checks` | yes | own runs | inbox | mark a check of a change that waits for your check (`check`: the id of a check from the plan, `mark`: `works`, `not-quite`, or `null` to take the mark back, `rev`: the `checksRev` you read, optional); the marks are kept with the run and shown again on its page; 400 for an unknown check or mark, 409 when the run does not wait, is queued or moved on, or the checks changed since `rev` |
+| `GET /api/runs/:id/events` | yes | own runs | log | follow a run live (a user: without costs and setup) |
+| `GET /api/runs/:id/diff` | yes | own runs | diff | the changes of a run |
+| `GET /api/runs/:id/evidence` | yes | own runs | summary | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |
+| `GET /api/runs/:id/context` | yes | own runs | summary | the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle |
+| `GET /api/runs/:id/transcript/:n` | yes | no | log | the transcript of a step |
+| `GET /api/next` | yes | no | summary | what happens next, for all runs |
+| `GET /api/health` | yes | no | admin | server health |
+| `GET /api/board` | yes | no | summary | the board of all work |
+| `GET /api/search` | yes | yes | summary | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
+| `GET /api/since` | yes | no | summary | what changed since a time |
+| `GET /api/feed` | yes | yes | summary | what changed since `since` (the `seq` of your last answer): `{ seq, changes: [{ kind, id, at }] }` with the kinds `turn` (a Your turn item), `run`, `repo` and `change` (a change request), never any detail; `wait` (0 to 30 seconds) holds the call until a change you may read is recorded; `reset: true` when `since` is missing or older than what is kept (changes younger than 24 hours and the newest 10,000 are kept, within a hard cap of 20,000); only what you may read, and a service account only the kinds whose read route is in its scope; read the details through their own routes |
+| `GET /api/your-turn` | yes | no | inbox | what waits for you |
+| `POST /api/your-turn/dismiss` | yes | no | inbox | dismiss an item |
+| `POST /api/your-turn/restore` | yes | no | inbox | restore dismissed items; with `{ "key": "…" }` only that item |
+| `GET /api/your-turn/detail` | yes | yes | inbox | the questions, plan or split of an item; a user: only an item of a project they own whose watcher does not use the server's own GitHub login (any other item: 404, as for an unknown one) |
+| `POST /api/your-turn/act` | yes | yes | inbox | answer, approve, reject or retry an item, as a comment on the issue (on a local project: on the story, with no GitHub call); retry of a closed issue is 409, as for resume; a user: only on an item of a project they own, not with the server's own GitHub login (any other item: 404), and the answer is that of `your-turn/mine` |
+| `GET /api/your-turn/mine` | yes | yes | inbox | the items you may answer, approve or retry: `{ items: [{ key, kind, runId?, acts }] }` with opaque keys (a user: only items of projects they own, not with the server's own GitHub login; an admin: all); no repository name and no comment text |
+| `GET /api/clarity` | yes | no | inbox | how long items waited for you, and what Your turn missed |
+| `POST /api/password` | yes | yes | secret | change your own password (the other sessions of the account end) |
+| `GET /api/me/view` | yes | yes | admin | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set) |
+| `PUT /api/me/view` | yes | yes | admin | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
+| `GET /api/credentials` | yes | yes | secret | your stored credentials |
+| `POST /api/credentials` | yes | yes | secret | store a credential |
+| `DELETE /api/credentials/:id` | yes | yes | secret | remove a credential |
+| `GET /api/users` | yes | no | secret | list the accounts |
+| `GET /api/users/limits` | yes | no | secret | the default limits for all accounts and the overrides per account (all three are enforced) |
+| `PUT /api/users/limits` | yes | no | secret | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
+| `POST /api/users` | yes | no | secret | add an account without a password; the answer has its one-time set-password token; optional `view` (`simple`, `advanced`, `admin`, open to the role): a Simple account opens the Get started guide after its first password |
+| `PUT /api/users/:id` | yes | no | secret | change the name, e-mail or role of an account |
+| `PUT /api/users/:id/limits` | yes | no | secret | set or clear the limits of one account; a cleared one follows the default again |
+| `POST /api/users/:id/block` | yes | no | secret | block an account, end its sessions and cancel its queued jobs |
+| `POST /api/users/:id/unblock` | yes | no | secret | unblock an account |
+| `POST /api/users/:id/link` | yes | no | secret | a new set-password token for an account without a password |
+| `POST /api/users/:id/reset` | yes | no | secret | take the password of an account away, end its sessions and give a one-time set-password token |
+| `POST /api/users/:id/unlock` | yes | no | secret | remove the lock after too many wrong tries (a short wait for the address can remain) |
+| `GET /api/users/:id/app-repos` | yes | no | secret | the repositories an account may connect through the GitHub App |
+| `PUT /api/users/:id/app-repos` | yes | no | secret | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
+| `DELETE /api/users/:id` | yes | no | secret | delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials |
+| `GET /api/service-accounts` | yes | no | secret | list the service accounts (accounts for programs) with their scope, token state and last use, and the routes a scope may hold (`grantable`); never a token |
+| `POST /api/service-accounts` | yes | no | secret | add a service account (`name`, `scope`: rule keys such as `GET runs`); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400 |
+| `PUT /api/service-accounts/:id` | yes | no | secret | change the name or scope of a service account (same checks as when it is added) |
+| `POST /api/service-accounts/:id/rotate` | yes | no | secret | give a service account a new token; the old one stops at once; the answer has the new token, shown once |
+| `POST /api/service-accounts/:id/revoke` | yes | no | secret | revoke the token of a service account; it stops at once; rotate gives a new one |
+| `GET /api/skills/lifecycle` | yes | no | admin | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
+| `POST /api/skills/lifecycle` | yes | no | admin | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
+| `POST /api/skills/lifecycle/allow-run` | yes | no | admin | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards |
+| `GET /api/audit` | yes | no | log | read the audit log, newest first, with filters |
+| `GET /api/audit/export` | yes | no | secret | download the audit log as CSV, with the same filters |
+| `GET /api/repos` | yes | yes | summary | your repositories, each with its autonomy level |
+| `GET /api/repos/methods` | yes | yes | admin | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
+| `POST /api/repos` | yes | yes | admin | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
+| `PUT /api/repos/:id/auth` | yes | yes | admin | change the method, user name, token or address of your repository, or make a new deploy key |
+| `POST /api/repos/:id/move-to-github` | yes | no | admin | move your local project to GitHub: create a private repository with your GitHub token sign-in (or use one of your GitHub repositories), push all branches and tags (never forced), move the stories, then move the watchers and settings and remove the local record; `dryRun` changes nothing and answers a single-use `confirm` token (valid for 10 minutes, none when a story cannot go along); a real move needs that token and stops with 409 ("Nothing was published") when it is missing, used, expired, for another request, or when the branches, tags or stories changed since the check; safe to repeat |
+| `POST /api/repos/:id/publish-remote` | yes | no | secret | Yes, publish for the plain push to the folder's remote (only the owner of the local project): `{ dryRun: true, settings? }` shows the remote of the develop and of the main branch (addresses without sign-in), the branches and the tags, and answers a single-use `confirm` token; `{ confirm, settings? }` then saves the settings and turns `pushRemote` on in one step; 409 when the token does not fit, the remotes or the settings changed since the check, or the folder has no remote; writes an audit line |
+| `POST /api/repos/:id/test` | yes | yes | admin | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
+| `GET /api/repos/:id/ready` | yes | yes | summary | the Definition of Ready of your repository (an admin: any repository) |
+| `GET /api/repos/:id/epics` | yes | yes | summary | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
+| `GET /api/repos/:id/epics/:issue` | yes | yes | summary | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
+| `POST /api/repos/:id/safe-points/restore` | yes | yes | admin | Restore a safe point of your repository (an admin: any repository): { commit, dryRun: true } answers the titles of the changes that would be taken back, what a restore does not undo and a single-use confirmation valid for 10 minutes, and changes nothing; { commit, confirm } opens one normal change (an issue with the build label, made with the owner's own GitHub sign-in) that takes the code back to that commit with new revert commits, with tests and review; nothing is pushed directly; 409 when the confirmation is used up or does not fit, the shown points changed, the commit is not a safe point or the project has no enabled issues watcher; writes one audit line |
+| `GET /api/repos/:id/safe-points` | yes | yes | summary | the safe points of your repository: the last 10 commits of its develop branch (gitflow) or main branch that a successful run or a release left green, newest first, with the time, the change titles and who started them; read from the run records, no call to GitHub, changes nothing (an admin: any repository) |
+| `POST /api/repos/:id/preview` | yes | yes | admin | start the develop version, or the version of a run that waits for your check (`version`, `runId`), of your repository (an admin: any repository) in a folder of its own; replaces a running one; answers 202 |
+| `GET /api/repos/:id/preview` | yes | yes | log | the state, URL, reason, version and redacted output of the preview of your repository (an admin: any repository) |
+| `DELETE /api/repos/:id/preview` | yes | yes | admin | stop the preview of your repository and remove its folder |
+| `DELETE /api/repos/:id` | yes | yes | admin | remove your repository and its stored token or key |
+| `DELETE /api/repos/:owner/:name` | yes | yes | admin | remove a GitHub repository by name (old form) |
+| `GET /api/admin/repos` | yes | no | admin | the repositories of all accounts, with their settings and autonomy level |
+| `PUT /api/admin/repos/:id/settings` | yes | no | secret | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line. It cannot turn `pushRemote` on (409): that is the owner's Yes, publish (`POST repos/:id/publish-remote`); keeping it on and turning it off work |
+| `GET /api/admin/repos/:id/budget` | yes | no | admin | the daily spending cap of a repository, the Simple default, the cap in effect and today's spend |
+| `PUT /api/admin/repos/:id/budget` | yes | no | admin | set (a number above 0) or clear (null) the daily spending cap of a repository; writes an audit line |
+| `PUT /api/admin/repos/:id/workspace` | yes | no | admin | set the workspace of a repository (`workspace`: an id from `workspaces` in config.yaml or from a plugin; `null` or `default` puts it back in the default workspace); writes an audit line |
+| `PUT /api/admin/repos/:id/ready` | yes | no | admin | set the Definition of Ready of a repository, or put the default list back |
+| `POST /api/admin/repos/:id/transfer` | yes | no | admin | move a repository to another account, by e-mail |
+| `GET /api/admin/repos/:id/watchers` | yes | no | admin | the watchers of a repository, with status and holds |
+| `POST /api/admin/repos/:id/watchers` | yes | no | admin | add a watcher to a repository (GitHub, with a sign-in that can call the GitHub API) |
+| `PUT /api/admin/repos/:id/watchers/:wid` | yes | no | admin | change a watcher of a repository, or enable or disable it |
+| `DELETE /api/admin/repos/:id/watchers/:wid` | yes | no | admin | delete a watcher of a repository |
+| `POST /api/admin/view-as` | yes | no | secret | start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line |
+| `DELETE /api/admin/view-as` | yes | no | secret | end the view of a user's display |
+| `GET /api/admin/credentials` | yes | no | secret | the stored credentials of all accounts, without any secret |
+| `GET /api/admin/components` | yes | no | admin | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
+| `GET /api/changes` | yes | yes | inbox | your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; only your own |
+| `POST /api/changes` | yes | yes | inbox | ask for a change in plain words, `{ repo, text, pictures? }` (text at most 10,000 characters; `pictures` is a list of at most 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, found by its content, else 400; this route takes a body of up to 36 MiB, every other route 1 MB, else 413; 403 `not-yours` for a project that is not yours); the architect reads the pictures too; the architect then reads the code, asks its questions and writes the cards by itself (202, `thinking`) |
+| `GET /api/changes/:id` | yes | yes | inbox | one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words); only the owner (an admin who is not the owner: 403) |
+| `GET /api/changes/:id/pictures/:n` | yes | yes | inbox | one picture of a change request of yours (`n` from 1), as the raw image with its `image/*` type, `no-store` and `nosniff`; 404 for a number with no picture; only the owner (another account: 404, an admin who is not the owner: 403); no other route serves the pictures |
+| `POST /api/changes/:id/answers` | yes | yes | inbox | answer every open question of a change request at once, `{ answers: [{ question, option | text | unknown }] }`; the cards are then written (202); only the owner |
+| `PUT /api/changes/:id/cards/:did` | yes | yes | inbox | change the title and/or the criteria of a card of a change request; a card that is published is refused (409); only the owner |
+| `POST /api/changes/:id/build` | yes | yes | inbox | "Yes, build this": publishes every card and adds the build label (`Factory_go` on GitHub, state `go` locally); a repeat or a retry adds it once to each card; only the owner |
+| `POST /api/changes/:id/later` | yes | yes | inbox | "Not now": publishes every card without the build label; a later `build` adds it; only the owner |
+| `POST /api/changes/:id/retry` | yes | yes | inbox | starts the architect's step again after a change request is `stuck` (409 when it is not); only the owner |
+| `GET /api/refinement` | yes | yes | inbox | your refinement sessions and the repositories a new one can use: your GitHub names, then your local projects (`local:<slug>-<id8>`) (an admin: the sessions of all accounts, with the owner) |
+| `POST /api/refinement` | yes | yes | inbox | start a refinement session on one of your GitHub repositories or local projects, from an idea; from an open issue only on a GitHub repository (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it; 400 `bad-repo` for a local name with an issue; 403 `not-yours` for a local project that is not yours; 400 `bad-repo` for a malformed name); with `guide: true` (and nothing else) the session of the Get started guide on the guide's local project, made once from the saved answers (201, then 200 with the same session; 409 without a project of the guide or outside your workspaces) |
+| `GET /api/refinement/backlog` | yes | yes | inbox | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
+| `GET /api/refinement/:id` | yes | yes | inbox | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
+| `PUT /api/refinement/:id` | yes | yes | inbox | rename your refinement session |
+| `POST /api/refinement/:id/drop` | yes | yes | inbox | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
+| `POST /api/refinement/:id/restore` | yes | yes | inbox | restore your dropped refinement session |
+| `POST /api/refinement/:id/source/remove-build-label` | yes | yes | inbox | remove the build label from the issue your refinement session came from, with the repository's sign-in (an admin who is not the owner: 403) |
+| `POST /api/refinement/:id/architect` | yes | yes | inbox | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
+| `POST /api/refinement/:id/round` | yes | yes | inbox | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time); `words: "simple"` asks for plain words |
+| `POST /api/refinement/:id/understand` | yes | yes | inbox | ask the architect to write 1 to 5 story drafts from the idea, the brief and the answered questions of your refinement session, linked by Depends on, or resume a paused run (one architect run per account at a time); `words: "simple"` asks for plain words; drafts it wrote before that are not on GitHub are replaced |
+| `POST /api/refinement/:id/ask` | yes | yes | inbox | ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time) |
+| `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | inbox | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
+| `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | inbox | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
+| `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | inbox | reject a proposed entry of your refinement session; it is removed |
+| `PUT /api/refinement/:id/map/:eid` | yes | yes | inbox | change the text of a rule, example or open question of your refinement session |
+| `DELETE /api/refinement/:id/map/:eid` | yes | yes | inbox | remove a rule, example or open question from your refinement session |
+| `POST /api/refinement/:id/drafts` | yes | yes | inbox | add an empty story draft to your refinement session (at most 20) |
+| `PUT /api/refinement/:id/drafts/:did` | yes | yes | inbox | save what you typed in a story draft of your refinement session; only the fields in the body change |
+| `DELETE /api/refinement/:id/drafts/:did` | yes | yes | inbox | remove a story draft from your refinement session |
+| `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | inbox | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
+| `POST /api/refinement/:id/drafts/:did/review` | yes | yes | inbox | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/publish` | yes | yes | inbox | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again, a split original is skipped, and `leftBehind` names split originals that still hold criteria; in a session that came from an issue, the draft that stands for it replaces the title and text of that issue first (one comment holds the old text, labels are added and kept) and is answered as `updated`, and a closed issue or one the Foundry builds is refused (409) with nothing written; when the issue's title or text changed on GitHub since the session read it, nothing is written and the answer is 409 with `changedOnGithub` (both versions and `seen`): send `source: { keep: "mine" | "github", seen }` to choose; a split source issue is replaced once all its parts are on GitHub (the issues that depend on it get the parts under "Depends on" and a comment with the old and new text, every trigger label of an issues watcher of the repository is taken off it, and it gets a comment naming the parts; it is then closed as not planned; it stays open, to be closed by hand, when more than 1,000 open issues were read, a dependant must be changed or checked by hand, or it is a story of the monitor, and an original closed in another way is left so) and the answer has `replaced: { issue, parts, dependants: [{ issue, outcome }], closed: "not_planned" | "other" | "open", closedAt? }`; an original that the Foundry builds is refused (409) before the first write, and so is a closed one unless its replacement had started already (it is then left closed), and a failed publish is finished by publishing again (an admin who is not the owner: 403); on a local project the stories are made in `.scf/stories/` with no GitHub sign-in, `go` is the build label, and 403 `not-yours` when the project is not yours (also if it was moved while the publish waited for the lock) |
+| `PUT /api/refinement/:id/drafts/:did/review-label` | yes | yes | inbox | choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub |
+| `POST /api/refinement/:id/drafts/:did/split` | yes | yes | inbox | ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes |
+| `POST /api/refinement/:id/drafts/:did/split/confirm` | yes | yes | inbox | confirm a split of a story draft of your refinement session: each part becomes a new draft and the original is kept as a record; no architect run starts |
+| `POST /api/refinement/:id/drafts/:did/criteria/:cid/move` | yes | yes | inbox | move an acceptance criterion between a split story draft of your refinement session and its parts, or between two parts |
+| `POST /api/refinement/:id/drafts/:did/merge` | yes | yes | inbox | merge another story draft of your refinement session into this one; the other draft is removed and no architect run starts |
+| `POST /api/refinement/:id/drafts/:did/impact` | yes | yes | inbox | ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/drafts/:did/move-to-notes` | yes | yes | inbox | move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish |
+| `POST /api/refinement/:id/drafts/:did/ready-check` | yes | yes | inbox | check a story draft of your refinement session against the Definition of Ready of its repository: by code, and the architect judges what code cannot decide, or resume a paused check (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | inbox | accept an item of the Definition of Ready anyway for a story draft of your refinement session, with a reason; not for the implementation plan item |
+| `DELETE /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | inbox | remove the "accepted anyway" mark of an item from a story draft of your refinement session |
+| `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | inbox | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
+| `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | inbox | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
+| `PUT /api/refinement/:id/epic` | yes | yes | inbox | set or clear the Epic of your refinement session |
+| `GET /api/refinement/:id/publish` | yes | yes | inbox | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403); on a local project it reads the local stories in `.scf/stories/` with no GitHub sign-in, `go` is the build label, and 403 `not-yours` when the project is not yours |
+| `GET /api/help/conversations` | yes | yes | inbox | your Ask Foundry conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask Foundry is switched on and whether it is paused (then you can read but not ask), and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations/:id` | yes | yes | inbox | read one of your Ask Foundry conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
+| `POST /api/help/conversations/:id/complete` | yes | yes | inbox | close one of your Ask Foundry conversations: it stays readable and takes no new question |
+| `POST /api/help/conversations/:id/feedback` | yes | yes | inbox | rate an answer in one of your Ask Foundry conversations: helpful or not helpful, with optional reasons from a fixed list and no free text; vote null (or none) takes it back; only counts are kept in the quality numbers; works while Ask Foundry is paused |
+| `POST /api/help/conversations/:id/archive` | yes | yes | inbox | move one of your Ask Foundry conversations to the archive |
+| `POST /api/help/conversations/:id/restore` | yes | yes | inbox | take one of your Ask Foundry conversations out of the archive; it gets the state it had |
+| `DELETE /api/help/conversations/:id` | yes | yes | inbox | delete one of your Ask Foundry conversations: its title and messages are removed at once and cannot be brought back |
+| `POST /api/help/conversations` | yes | yes | inbox | ask Ask Foundry a question in a new conversation (`question`, and optionally `context`: the page and one selected thing); answers 202 with the conversation, whose reply is `pending` until the turn ends; one turn per account at a time (409), 429 when the queue is full or your turns of today are used, 503 while Ask Foundry is switched off |
+| `POST /api/help/conversations/:id/messages` | yes | yes | inbox | ask the next question in one of your Ask Foundry conversations; the same answers as for a new one |
+| `POST /api/help/conversations/:id/retry` | yes | yes | inbox | try the failed or stopped last answer of one of your Ask Foundry conversations again; no message is added, and it counts as a turn of today |
+| `POST /api/help/conversations/:id/cancel` | yes | yes | inbox | stop the answer that is being written in one of your Ask Foundry conversations |
+| `POST /api/help/conversations/:id/actions` | yes | yes | inbox | follow an offer of an Ask Foundry reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`, or runs a read-only check (read it again, test the connection) and stores its result as a check message of the conversation, answering `{type, outcome, conversation}`; 404 when the thing is gone or you can no longer see it, 403 when you may not do it now, 409 when the conversation is not open, is waiting, is full, changed while the check ran, or already runs a check, 410 for a deleted conversation. Or see what an action Ask Foundry proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask Foundry or its actions are switched off |
+| `POST /api/help/conversations/:id/actions/confirm` | yes | yes | inbox | carry out a previewed action with its token (`token`, `message`, `index`): the server checks the token, that the run did not change since the preview, the settings, your account and the rule of the same button on the run's page (your own runs only, an admin too), then reads the result back from the run and answers `{ outcome, stored }`; 409 for a token that is used, expired or does not fit, or a run that changed; writes an audit line |
+| `POST /api/help/conversations/:id/actions/cancel` | yes | yes | inbox | drop the confirmation token of a preview (`token`); nothing changes |
+| `GET /api/help/conversations/:id/handoffs` | yes | yes | inbox | the pages you may take one answer of your Ask Foundry conversation to (`?message=`), with what each would copy; checked again for your account now; nothing is written |
+| `POST /api/help/conversations/:id/handoffs` | yes | yes | inbox | record that you took an answer of your Ask Foundry conversation to another page (`message`, `offer`, and the `page` and `fill` you saw); only the conversation changes, never the target; 409 when the offer, its page or what it copies changed |
+| `POST /api/help/context` | yes | yes | inbox | what Ask Foundry would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask Foundry is switched off |
+| `GET /api/help/export` | yes | yes | inbox | all your Ask Foundry conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
+| `GET /api/help/usage` | yes | no | admin | Ask Foundry for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
 
 
 ### Automatic skills
@@ -7700,6 +7748,7 @@ server:
   listen: 127.0.0.1              # 127.0.0.1 (default), ::1, 0.0.0.0 or ::
   allowed_hosts: [mymac.local]   # names people type; a port is optional
   allow_insecure_http: false     # true: also accept plain HTTP from other computers
+  public_url: https://mymac.example.com  # optional; links in notifications and issue comments
 ```
 
 - `listen` is the address the server binds. `0.0.0.0` and `::` answer on every network; the other
@@ -7708,6 +7757,13 @@ server:
   the server port) always work. Any other `Host` header must be listed, else the answer is
   `403 forbidden host`. A change applies at once.
 - `allow_insecure_http` is off by default. A change applies at once.
+- `public_url` is the https address people use to reach the Foundry, for example the one of your
+  HTTPS proxy. It is optional and empty by default. The Foundry uses it for the links in macOS and
+  Slack notifications and in its comments on issues (the **Where:** line of the status comment and
+  the **Run:** line of a failure comment), so they open from another device. Only a plain address is
+  accepted: `https://` with a host name, no user, password, `?` or `#`; anything else is refused when
+  you save. The field is in the **Network** section as **Public address**. A change applies at the next
+  check or notification. A comment that was already posted keeps its link until the status comment is next edited.
 
 **The safe way: HTTPS through Caddy on the Mac.** The Foundry has no TLS of its own. A proxy on the
 same Mac does the HTTPS and talks to the Foundry on `127.0.0.1`.
@@ -7913,6 +7969,52 @@ A plugin can also add to the web interface. In `register(api)` it calls `api.ui(
 - **Checking.** `GET /api/plugins/ui` (any signed-in role) lists the pages and menu items you may see.
   It never shows a folder, a file path or a plugin option.
 - **Without plugins** the interface is unchanged: no plugin link, no plugin card, no plugin address.
+
+### Managed services
+
+A managed service is a companion program (for example an integration) that the Foundry starts, watches
+and restarts, so you do not need a second process manager. List it in `config.yaml`:
+
+```yaml
+services:
+  - name: echo-bot                            # a-z, 0-9 and -; 1 to 40 characters
+    command: /opt/scf-services/echo-bot       # an absolute path to the program file
+    args: ["--quiet"]                         # optional, at most 50
+    env: { BOT_CHANNEL: "factory" }           # optional; names starting SCF_ or FACTORY_ are reserved
+    public_key: "<base64 of a 32-byte Ed25519 key>"   # optional: checks <command>.sig before each start
+    scope: ["GET health", "GET runs"]         # the routes of the service account the Foundry keeps for it
+```
+
+- **When they start.** After the server listens and the watchers have started. Up to 10 services.
+- **What they get.** Their environment holds a few system variables (`PATH`, `HOME`, `USER`, `LANG`,
+  `TMPDIR` and others), your `env` values, `SCF_URL` (the server's address on this computer) and
+  `SCF_SERVICE_TOKEN`. The token is a new token of the service's own account on every start, and the
+  token of the run before is revoked. It is never on the command line. The account has only the routes
+  in `scope`; see the service accounts in section 7 above.
+- **What is refused.** A relative path, a web address, a path with `.` or `..` parts, and a program inside
+  the runs or workspaces folders are refused when the config loads. At start the program must exist, be a
+  file and be executable. Nothing runs through a shell.
+- **Signed programs.** With `public_key`, the Foundry checks `<command>.sig` (a detached Ed25519
+  signature of the program file) before every start. A program that does not match is not started, and
+  the Health page says why: the signature file is missing or is not a valid signature, or the signature
+  does not match the program. Fix the file or the signature, then restart the server; the check runs again
+  at each start.
+- **Restarts.** A program that exits is started again after 1 second, then 2, 4, 8 and so on, at most
+  5 minutes apart. A run that lasted 5 minutes or more starts the count again at 1 second.
+- **Stopping.** On shutdown, and before a self-update restart, each program gets a stop signal and is
+  killed after 5 seconds if it has not gone. Its token is revoked.
+- **Output.** Stdout and stderr go to `<data folder>/services/<name>.log`. When the file reaches 5 MB it
+  is moved to `<name>.log.1` (one older file is kept). The token and your `env` values are replaced
+  in the log. Each start and exit is a line of its own.
+- **Checking.** The Health page shows one line per service, for example "Service echo-bot: running, 1
+  restart, last exit code 1". A refused or waiting service counts as a problem on the health line.
+  `scf services` (or `scf services list`) prints the same: state, restarts, last exit and the problem. It
+  needs a running, signed-in server (admin).
+- **Where they are set.** In `config.yaml` only, and a change needs a restart. `PUT /api/config` refuses a
+  `services` key, and a save from the Settings page keeps the stored list. There is no control on the
+  Settings page, by choice: a program started with the Foundry's rights should be changed by the owner of
+  the file, not from a browser.
+- **Without services** nothing changes: no program starts, and the health line has no service entry.
 
 ---
 
@@ -8485,6 +8587,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
 | `scf plugins` (or `scf plugins list`) | List the plugins loaded at server start, with version, module and what each registered; needs a running, signed-in server (admin) ([Plugins](#plugins)) |
+| `scf services` (or `scf services list`) | List the managed services with their state, restarts, last exit and problem; needs a running, signed-in server (admin) ([Managed services](#managed-services)) |
 | `scf eval <suite.yaml> [--flows a,b] [--models …] [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run an eval suite; the `--…-bin` options use other programs ([Evals](#evals)) |
 | `scf eval safety [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run every offline safety suite in `evals/safety`; exits 1 when a case fails ([Safety suites](#safety-suites)) |
 | `scf eval help [--live]` | Check Ask Foundry against its fixed scenarios; without `--live` no model is called |

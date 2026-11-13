@@ -63,6 +63,19 @@ describe("renderHealth", () => {
     expect(e.all("button")).toHaveLength(0);
   });
 
+  it("shows a managed service with state, restarts, last exit and problem, and nothing when absent (#867)", () => {
+    const none = el();
+    ui.renderHealth(none, good);
+    expect(none.textContent).not.toContain("Service");
+    const e = el();
+    ui.renderHealth(e, { ...good, services: [
+      { name: "echo-bot", state: "waiting", restarts: 2, lastExit: { code: 1, signal: null, at: "x" } },
+      { name: "b", state: "refused", restarts: 0, problem: "the signature does not match the program" },
+    ] });
+    expect(e.textContent).toContain("Service echo-bot: waiting, 2 restarts, last exit code 1");
+    expect(e.textContent).toContain("Service b: refused — the signature does not match the program");
+  });
+
   it("says how often the load governor changed the limits today, and nothing when it did not", () => {
     const one = el();
     ui.renderHealth(one, { ...good, governor: { changesToday: 1 } });

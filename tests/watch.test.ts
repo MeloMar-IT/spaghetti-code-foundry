@@ -1069,6 +1069,15 @@ describe("watcher", () => {
     expect(body).toContain("- **Why:** Boom.");
   });
 
+  it("failureComment has a Run line only with a public address", () => {
+    const s = { runId: "r9", status: "failed", reason: "Boom", history: [] } as never;
+    const next = { who: "Something is wrong", action: "Fix it", why: "x" } as never;
+    const body = failureComment(s, next, "https://f.example.com");
+    expect(body).toContain("- **Run:** [run `r9`](https://f.example.com/#/runs/r9) in the Foundry app");
+    expect(body.indexOf("**Run:**")).toBeLessThan(body.indexOf("**Your options**"));
+    expect(failureComment(s, next)).not.toContain("**Run:**");
+  });
+
   it("failureComment names the failed child of a parallel step and shows its output", () => {
     const h = (id: string, ok: boolean, output: string, over = {}) => ({ id, type: "shell", ok, visit: 1, output, ...over });
     const s = {

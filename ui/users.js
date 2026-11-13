@@ -393,7 +393,7 @@ const noticeLine = (notice) => (notice ? h("p", { class: "status ok", role: "sta
 let reloads = 0; // the newest reload wins
 
 /** The Users page. `me` is the signed-in account's id; `notice` ({ text }) is a line kept from the last block. `data` is a list already loaded. Returns a cleanup. */
-export async function renderUsers(main, { me = "", notice, page = browserPage, data, readOnly = false, query = {}, go = defaultGo } = {}) {
+export async function renderUsers(main, { me = "", notice, page = browserPage, data, readOnly = false, query = {}, go = defaultGo, services } = {}) {
   const simpleOnly = query?.view === "simple";
   const mine = ++generation;
   if (!data && onPage()) mount(main, pageHeader({ layout: "toolbar", title: "Users", meta: h("span", { class: "muted" }, "Who can sign in") }), loadingState("Loading users…", { rows: 5, shape: "table" }));
@@ -411,7 +411,7 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
       if (my === reloads && mine === generation && onPage()) mount(note, noticeLine(next), staleNote(at, { failed: true, onRetry: () => reload(next) }));
       return;
     }
-    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh, readOnly, query, go });
+    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh, readOnly, query, go, services });
   };
 
   const add = async () => {
@@ -437,10 +437,11 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
   const shown = simpleOnly ? users.filter(isSimple) : users;
   const toggle = () => {
     go(simpleOnly ? "#/users" : "#/users?view=simple");
-    renderUsers(main, { me, notice, page, data: [users, limits], readOnly, query: simpleOnly ? {} : { view: "simple" }, go });
+    renderUsers(main, { me, notice, page, data: [users, limits], readOnly, query: simpleOnly ? {} : { view: "simple" }, go, services });
   };
   const filter = h("label", { class: "field-inline" }, h("input", { type: "checkbox", name: "simpleOnly", checked: simpleOnly, onChange: toggle }), " Only Simple accounts");
   const box = h("div", {});
+  const serviceBox = services ? h("section", { class: "stack", "aria-label": "Service accounts" }) : null;
   mount(main,
     pageHeader({ layout: "toolbar", title: "Users", meta: h("span", { class: "muted" }, "Who can sign in"),
       actions: [h("span", { class: "spacer" }), filter,
@@ -450,9 +451,13 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
     users.length === 0 ? (readOnly ? emptyState("No users yet.") : emptyState("No users yet.", { label: "+ Add user", onClick: add }))
       : simpleOnly && shown.length === 0 ? emptyState("No account uses the Simple view.")
       : table({ caption: "Users", hideCaption: true, columns, rows: shown, class: "table-box" }),
-    simpleOnly && shown.length > 0 ? box : null);
+    simpleOnly && shown.length > 0 ? box : null,
+    serviceBox);
   if (simpleOnly && shown.length > 0) renderSimpleProjects(box, shown, { readOnly, live: () => mine === generation && onPage() });
+  // the "Service accounts" section (#866) loads its own list; `services` is `renderServiceAccounts`, passed by the app
+  const stopServices = services ? services(serviceBox, { readOnly }) : undefined;
   return () => {
     generation++;
+    Promise.resolve(stopServices).then((stop) => stop?.());
   };
 }

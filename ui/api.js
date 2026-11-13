@@ -158,6 +158,11 @@ export const api = {
   saveDefaultLimits: (body) => req("PUT", "/api/users/limits", body),
   saveUserLimits: (id, body) => req("PUT", `/api/users/${enc(id)}/limits`, body),
   deleteUser: (id) => req("DELETE", `/api/users/${enc(id)}`),
+  serviceAccounts: () => req("GET", "/api/service-accounts"),
+  addServiceAccount: (body) => req("POST", "/api/service-accounts", body),
+  saveServiceAccount: (id, body) => req("PUT", `/api/service-accounts/${enc(id)}`, body),
+  rotateServiceToken: (id) => req("POST", `/api/service-accounts/${enc(id)}/rotate`, {}),
+  revokeServiceToken: (id) => req("POST", `/api/service-accounts/${enc(id)}/revoke`, {}),
   /** Which components are promoted, promotable or blocked; `kind` and `id` narrow the list (`id` needs `kind`). */
   promotions: (kind, id) => req("GET", `/api/promotions${kind ? `?kind=${enc(kind)}${id ? `&id=${enc(id)}` : ""}` : ""}`),
   promote: (kind, id, reportId) => req("POST", "/api/promotions", { kind, id, reportId }),

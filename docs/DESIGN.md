@@ -1976,6 +1976,9 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   runs the flows an admin published, on their own repositories, and sees only their own runs —
   no costs, no setup. Each role has its own display (`/` for admins, `/user/` for users); the
   server still decides what a call may do.
+- **Service accounts** (#866; `src/auth/service-accounts.ts`, `src/server/service-requests.ts`, `src/server/api-service-accounts.ts`). A `kind: "service"` record in `users.json`, with role `user`, no password, link, provider source, workspace, break-glass mark or view, and the reserved e-mail `<id>@service.invalid`. Its `scope` holds rule keys (`GET runs`), at most 200. `Authorization: Bearer scf_svc_…` is read only on a loopback connection, before the auth routes; the public sign-in routes refuse a bearer with 403. The token is 32 random bytes. Only its SHA-256 is stored (`token.id`). `token.used` is set on each live request, under the auth lock, and the token ends 30 days after the later of `created` and `used` (`tokenExpires`). A revoked or expired token is still found by its hash, so a refusal can name the account. Each bearer request writes one `service-request` line before its handler runs, under the same lock; if the line cannot be written, the request answers 503 with `Retry-After: 1`. An unknown token is audited as `anonymous`. The scope check (`serviceAllows`) runs on every request, and on each recheck of an open event stream (`serviceStillAllowed`), so a removed route or a revoke ends the stream. `NEVER_GRANTED` is checked when a scope is saved and on every request.
+- **Data classes** (#869; `src/server/data-classes.ts`, `dataClassOf` in `src/server/permissions.ts`). Each rule has one class: `inbox`, `summary`, `log`, `diff`, `admin` or `secret`. `secret` is derived from `NEVER_GRANTED`, so the two cannot drift apart. The other classes are listed by rule key in `CLASS_KEYS`, and the inbox class is also matched by path family (`changes`, `refinement`, `help`). A scope entry `class:<name>` is accepted for the grantable classes, only for GET rules; `serviceAllows` checks it after the exact key. `secret` and unknown classes are refused by `checkScopeShape`. A test fails when a rule has no class.
+- **Closed repositories** (`services: "none"`, `closedToServices` in `src/auth/repo-settings.ts`). `checkServiceRepos` in `src/server/service-requests.ts` runs after `authorize()` and again on each stream recheck. It checks, in order: the objects a request names (`repo` query, `runs/:id`, `repos/:id`, `admin/repos/:id`, sessions), Ask Foundry (closed while any repository is closed), admin-only routes that name no object (open only for the routes in `REPO_FREE`), and list routes that could include a closed repository (`Scheduler.repoOf` and `queuedRepos` in `src/queue/scheduler.ts` give the repository of a run). A refusal is a 403 with a `service-request` audit line; a failure to read the repositories answers 500.
 - **Published flows.** An admin decides per flow which variables a user may fill in, which are
   shown read-only and which stay hidden.
 - **Repositories per user**, each with its own way of signing in. Tokens are stored encrypted,
@@ -2094,6 +2097,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `workspaces/<id>/skills/` | The administrator skills of a workspace other than `default` (#825); `skills/` in the data folder is the one of `default` |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `feed.json` | The change feed (#868, `version: 1`): the last `seq`, the `floor` below which a cursor gets `reset`, the snapshot of the fingerprints of runs, repositories, change requests and Your-turn items (kind, id, owner, workspace; no detail), and the kept changes. Written with a temporary file and a rename, mode 0600 (`src/server/feed.ts`) |
 | `help.json` | The Ask Foundry conversations of every account (mode 0600) |
 | `help-stats.json` | The Ask Foundry quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
@@ -2128,6 +2132,31 @@ when an install was cut off, and puts the previous commit back once when the ser
 does not confirm in time. The new server confirms with `GET /api/ready` (loopback only) after it
 checked that `HEAD` and its build stamp are those of the install. A failed go-back is a terminal
 state (`failed.backOk = false`) that a person must repair. The monitor reads the same file. The release check (`release-daily` `verify`) writes `tested/<key>`, with `key` = `printf '%s\n%s\n' <tree> <cmd> | shasum | cut -c1-40`, as the one line `run <id>, <UTC time>, tree <sha>` only for a green run on a clean tree whose `HEAD^{tree}` did not change; self-update skips its test step only when the staged commit's tree and its own test command (alone or after `npm ci && `) match that exact line form, and runs the tests otherwise.
+
+**The change feed (#868).** `FeedRecorder` (`src/server/feed.ts`) takes a snapshot of what exists every 5 seconds (`feedTickMs`), 20 ms after a run ends (`kick`), and before an answer when the last snapshot is over a second old (`fresh`). A snapshot holds, per object, a fingerprint and its sides (owner, workspace, and for a change request the workspace of its architect run). `diffFeed` (`src/feed.ts`) compares it with the last one and appends one record per added, changed or removed object, with its kind, id, time, and the sides before and after. The record never holds detail. A kind whose source throws keeps its old entries, so a failed read records no false removals. Records are pruned to the last 24 hours and the newest 10,000, never above 20,000; a pruned record moves `floor` up, and a cursor below `floor` gets `reset`.
+
+Visibility is decided when the answer is made, not when the change is recorded: `feedAnswer` shows a record when one of its sides is visible to the caller (`sideVisible`), and drops an object that still exists but is no longer readable. Turn items are the exception: their id is opaque, so their records keep the owner they left, and the owner learns the item is gone. A service account sees a kind only when its scope holds that kind's read route (`KIND_ROUTE`).
+
+The long poll (`wait`, at most 30 s) is held in memory: a waiter is woken when a snapshot records something, and the caller's identity and scope are read again before each answer, so a revoked scope or a removed workspace does not leak a change. The response ends when the client closes.
+
+**Restarts.** The state is saved in `feed.json`, so the sequence goes on after a restart. The Your-turn source is not trusted right after a start: the watchers have not looked yet, so the turn kind is left out of the snapshot until every watcher has checked once or two minutes have passed (`SETTLE_MS`). A `feed.json` from a newer version is read only and the feed runs in memory. A broken file starts a new feed with `reset`.
+
+**Managed services (#867).** `ServiceSupervisor` (`src/services/supervisor.ts`) starts the
+`services:` of `config.yaml` in `start()`, after the server listens and the watchers are synced
+(`src/server/server.ts`). Before each start it checks the program (`programProblem`: absolute path
+already checked at load, real path a file, executable, not inside a runs or workspaces folder; with
+`public_key` the detached Ed25519 signature of `<command>.sig`, `signatureProblem`). A failed check puts the
+service in state `refused` with a fixed sentence; a program that exits goes to `waiting`. Both are
+retried with `nextDelay` (1 s, doubling, at most 5 min; a run of `stableMs` resets the count). The
+program is started detached in its own process group with `spawn` and an argument array, never a shell.
+Its environment is a fixed list of system variables, the configured `env`, `SCF_URL` and a fresh
+`SCF_SERVICE_TOKEN` from `serviceToken()` (a managed service account in `services-accounts.json`, next to
+`users.json`; the token is rotated on each start). `reconcileServiceTokens()` revokes what an earlier run
+left. Output goes through `redactStream` with the token and the `env` values to `ServiceLog`
+(`src/services/log.ts`, `<name>.log`, one `.1` file, 5 MB). Stop has two forms: `stop()` (async, on
+shutdown) and `stopNow()` (synchronous, from `withServicesStopped` before a self-update or other
+restart exit). The health answer carries `services` from `view()`, and `scf services` reads
+`GET /api/health`.
 
 ---
 

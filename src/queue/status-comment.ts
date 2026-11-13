@@ -6,6 +6,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { sameBody, STATUS_MARKER, withGhEnv } from "../github.js";
 import { storeFor } from "../stories/store.js";
 import { issueRank, issueRecord } from "../issue-record.js";
+import { appBase, appLink } from "../public-url.js";
 import { firstLine, nextStep, runNextStep, type NextBase, type NextData, type NextKind, type NextStep } from "../next-step.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
@@ -23,17 +24,19 @@ const upperFirst = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const needsYou = (n: NextStep) => n.who === "You" || n.who === "Something is wrong";
 
 /** Where to look, in words a reader of the issue understands: the app's pages are named, not linked. */
-function whereText(n: NextStep, issueUrl: string): string {
+function whereText(n: NextStep, issueUrl: string, appUrl?: string): string {
   const { label, url } = n.where;
   if (url === issueUrl) return "this issue";
   if (/^https:\/\/[^\s()<>]+$/.test(url)) return `[${plain(label)}](${url})`;
   const run = /^#\/runs\/([\w-]+)$/.exec(url);
+  const link = appLink(appUrl, url);
+  if (link) return run ? `[${plain(label)}](${link}) in the Foundry app (run \`${run[1]}\`)` : `[${plain(label)}](${link}) in the Foundry app`;
   if (run) return `the ${plain(label)} in the Foundry app (run \`${run[1]}\`)`;
   return `the ${plain(label)} in the Foundry app`;
 }
 
 /** The text of the status comment for a record. `issueUrl` is the issue's own address. */
-export function statusBody(next: NextStep, issueUrl: string): string {
+export function statusBody(next: NextStep, issueUrl: string, appUrl?: string): string {
   let detail = plain(next.text);
   if (!needsYou(next)) {
     const prefix = `${next.why.replace(/[.!?]+$/, "")} — `;
@@ -45,7 +48,7 @@ export function statusBody(next: NextStep, issueUrl: string): string {
     detail,
     "",
     ...(next.until ? [`- **Continues:** ${plain(next.until)}`] : []),
-    `- **Where:** ${whereText(next, issueUrl)}`,
+    `- **Where:** ${whereText(next, issueUrl, appUrl)}`,
     "",
     STATUS_NOTE,
     "",
@@ -100,7 +103,7 @@ export interface StatusTarget {
 }
 
 /** The text every issue should have now: one per issue, from the view that knows the most. */
-export function statusTargets(repo: string, views: StatusView[], known: ReadonlyMap<number, { owners: string[] }>, all: boolean): StatusTarget[] {
+export function statusTargets(repo: string, views: StatusView[], known: ReadonlyMap<number, { owners: string[] }>, all: boolean, appUrl?: string): StatusTarget[] {
   const best = new Map<number, StatusTarget>();
   const quiet = new Set(views.flatMap((v) => v.quiet ?? []));
   for (const v of views) {
@@ -160,10 +163,10 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
         const next = live && !run && !job
           ? nextStep("running", base, data) // a run that just started has no file yet
           : issueRecord({ base, data: job ? { ...data, forUser: true } : data, run, live, queuedJob: job, hold: hold && holdRecord(hold), done: t?.done, nextOf: runRecord }).next;
-        cand = { issue: n, body: statusBody(next, issueUrl), create: !!t, urgent: needsYou(next), final: false, rank: issueRank(live, !!t?.done) };
+        cand = { issue: n, body: statusBody(next, issueUrl, appUrl), create: !!t, urgent: needsYou(next), final: false, rank: issueRank(live, !!t?.done) };
       } else {
         const finished = run?.status === "succeeded" && run.history.at(-1)?.id !== "create_split";
-        cand = { issue: n, body: finished ? statusBody(nextStep("done", base, data), issueUrl) : leftBody(v.label), create: false, urgent: false, final: true, rank: 3 };
+        cand = { issue: n, body: finished ? statusBody(nextStep("done", base, data), issueUrl, appUrl) : leftBody(v.label), create: false, urgent: false, final: true, rank: 3 };
       }
       const have = best.get(n);
       if (!have || cand.rank < have.rank) best.set(n, cand);
@@ -217,7 +220,7 @@ export class StatusComments {
   /** The stamp of the identity the cached ids and the login belong to. */
   private stamp?: string;
 
-  constructor(private repo: string, private log: (msg: string) => void, private o: { file?: string; maxMs?: number; gh?: RepoGhIdentity; key?: string } = {}) {
+  constructor(private repo: string, private log: (msg: string) => void, private o: { file?: string; maxMs?: number; gh?: RepoGhIdentity; key?: string; publicUrl?: () => string | undefined } = {}) {
     this.maxMs = o.maxMs ?? MAX_MS;
     this.key = o.key ?? repo;
     if (o.file) {
@@ -317,7 +320,7 @@ export class StatusComments {
       if (!k.owners.length) this.known.delete(n);
     }
     const all = this.expected.every((id) => this.views.get(id)?.complete);
-    const targets = statusTargets(this.repo, views, this.known, all);
+    const targets = statusTargets(this.repo, views, this.known, all, appBase(this.o.publicUrl?.()));
     const work = targets
       .filter((t) => (this.known.has(t.issue) || t.create) && !sameBody(this.known.get(t.issue)?.body, t.body))
       .sort((a, b) => Number(b.urgent) - Number(a.urgent) || Number(a.final) - Number(b.final) || a.issue - b.issue);
