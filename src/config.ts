@@ -8,6 +8,7 @@ import { z } from "zod";
 import { editYamlText, removeYamlKey } from "./config-edit.js";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
+import { isPublicUrl, PUBLIC_URL_MESSAGE } from "./public-url.js";
 import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
@@ -259,6 +260,8 @@ const ServerSchema = z
     allowed_hosts: z.array(z.string().transform((s) => s.toLowerCase()).refine(hostEntryOk, "not a host name")).default([]),
     /** Accept requests from other computers over plain HTTP. Passwords and cookies are then unencrypted. */
     allow_insecure_http: z.boolean().default(false),
+    /** The https address people use to reach this server, for links in notifications and issue comments. Not set: links use this Mac's local address. */
+    public_url: z.string().max(2048).refine(isPublicUrl, PUBLIC_URL_MESSAGE).optional(),
   })
   .strict()
   .prefault({});

@@ -456,7 +456,7 @@ async function main(argv: string[]): Promise<number> {
       configureTelemetry(config, { log });
       const runsDir = resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs"));
       const scheduler = new Scheduler({ runsDir, config: () => config });
-      const watcher = new Watcher(cfg, { scheduler, runsDir, repo, dailyBudget: () => config.daily_budget_usd, log });
+      const watcher = new Watcher(cfg, { scheduler, runsDir, repo, dailyBudget: () => config.daily_budget_usd, publicUrl: () => config.server.public_url, log });
       if (values.once) {
         await watcher.tick();
         if (watcher.status.lastError) throw new Error(watcher.status.lastError);

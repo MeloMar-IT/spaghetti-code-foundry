@@ -286,6 +286,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   concurrency: A("Runs at the same time", "The most runs that work at the same time, over all repositories.", "now"),
   "server.listen": A("Listen on", "The address the server answers on: 127.0.0.1 or ::1 for this computer only, 0.0.0.0 or :: for all networks.", "restart"),
   "server.allowed_hosts": A("Allowed host names", "Host names, besides localhost, that people may type to reach this page.", "now"),
+  "server.public_url": A("Public address", "The https address of this server for links in notifications and in the Foundry's issue comments; empty uses this Mac's local address.", "now"),
   "server.allow_insecure_http": A("Allow plain HTTP", "Accept other computers over plain HTTP, which sends passwords and cookies unencrypted.", "now"),
   "audit.retention_days": A("Keep the audit log (days)", "Audit lines older than this are removed when the server starts and once a day.", "now"),
   protected_branches: A("Protected branches", "Pushes to these branches are refused during runs; glob patterns are allowed.", "new-runs"),

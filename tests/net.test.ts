@@ -142,6 +142,13 @@ describe("localUrl", () => {
 describe("server settings schema", () => {
   const parse = (server: unknown) => ConfigSchema.safeParse({ server });
   it("has defaults", () => expect(ConfigSchema.parse({}).server).toEqual({ listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false }));
+  it("accepts an https public_url", () => expect(parse({ public_url: "https://foundry.example.com" }).success).toBe(true));
+  it.each(["http://foundry.example.com", "ftp://x", "https://u:p@x.example.com", "https://x.example.com/?a=1", "https://x.example.com/#/a", "foundry.example.com", "https://x.example.com/a b", "https://x.example.com/(a)"])(
+    "refuses public_url %s", (public_url) => {
+      const r = parse({ public_url });
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.issues[0]).toMatchObject({ path: ["server", "public_url"], message: "must be an https address without user, password, ? or #" });
+    });
   it.each(["127.0.0.1", "::1", "0.0.0.0", "::"])("accepts listen %s", (listen) => expect(parse({ listen }).success).toBe(true));
   it.each(["localhost", "example.com", "", "127.0.0.2", "192.168.1.20", "0:0:0:0:0:0:0:1", "::ffff:7f00:1"])("rejects listen %j", (listen) =>
     expect(parse({ listen }).success).toBe(false));

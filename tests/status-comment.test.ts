@@ -64,6 +64,15 @@ describe("statusBody", () => {
     expect(statusBody(nextStep("approval", { repo: REPO, issue: 7 }, { watched: true }), URL7)).toContain("- **Where:** the Watchers page in the Foundry app\n");
   });
 
+  it("links a page of the app when a public address is given", () => {
+    const app = "https://f.example.com";
+    expect(statusBody(cases[5]![1], URL7, app)).toContain("- **Where:** [Run page](https://f.example.com/#/runs/r1) in the Foundry app (run `r1`)");
+    expect(statusBody(nextStep("approval", { repo: REPO, issue: 7 }, { watched: true }), URL7, app)).toContain("- **Where:** [Watchers page](https://f.example.com/#/watchers) in the Foundry app\n");
+    expect(statusBody(cases[1]![1], URL7, app)).toContain("- **Where:** this issue");
+    expect(statusBody(cases[3]![1], URL7, app)).toContain("- **Where:** [Release pull request #12](https://github.com/acme/app/pull/12)");
+    expect(statusBody(cases[5]![1], URL7, undefined)).toBe(statusBody(cases[5]![1], URL7));
+  });
+
   it("puts what to do first for a record that needs the reader, and the reason for one that does not", () => {
     const need = statusBody(cases[0]![1], URL7);
     expect(lines(need)[0]).toMatch(/^\*\*What you need to do:\*\* Answer 2 questions\.$/);
@@ -162,6 +171,7 @@ describe("statusTargets", () => {
   };
 
   it("gives a tracked done issue the done text and a comment to create", () => {
+    expect(only(statusTargets(REPO, [view({ tracked: [t7({ done: true })] })], new Map(), true, "https://f.example.com")).body).toContain("- **Where:** ");
     const t = only(statusTargets(REPO, [view({ tracked: [t7({ done: true })] })], new Map(), true));
     expect(t.body).toContain("it is done");
     expect(t).toMatchObject({ create: true, final: false, urgent: false, rank: 2 });
