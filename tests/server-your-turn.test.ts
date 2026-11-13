@@ -11,7 +11,9 @@ import { saveGuard, switchStories } from "../src/monitor/guard.js";
 import { markerHash } from "../src/monitor/story.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
 import type { Notice } from "../src/notify.js";
+import type { RaisedNotice } from "../src/notices.js";
 import { TurnNotifier } from "../src/server/notifier.js";
+import { NoticeLog } from "../src/server/notices.js";
 import { allNext, collectNext, knownRuns } from "../src/server/next.js";
 import { asideCheck, dismissTurn, putAside, restoreTurn, turnFor, withNotNow } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
@@ -638,7 +640,7 @@ describe("Your turn notifications", () => {
     run(id, { status: "succeeded", reason: undefined, source: "ui", startedAt: finishedAt, finishedAt, ...over });
   const channel = { macos: false, slack_webhook: "http://127.0.0.1:9/hook" };
 
-  function rig(notify: Record<string, unknown> = {}) {
+  function rig(notify: Record<string, unknown> = {}, record?: (n: RaisedNotice[]) => boolean) {
     const state = { config: ConfigSchema.parse({ watchers: [issuesWatcher], notify: { ...channel, ...notify } }), runs: [] as ReturnType<typeof run>[], tracked: [] as Tracked[] };
     const ctx = stub({ config: state.config, runs: state.runs });
     (ctx as unknown as { config: () => unknown }).config = () => state.config;
@@ -647,7 +649,7 @@ describe("Your turn notifications", () => {
     const slow = { ms: 0 };
     const make = () =>
       new TurnNotifier(ctx, {
-        baseUrl: BASE, timeZone: "UTC",
+        baseUrl: BASE, timeZone: "UTC", ...(record ? { record } : {}),
         send: async (n) => { if (slow.ms) await new Promise((r) => setTimeout(r, slow.ms)); sent.push(n); },
       });
     const holds = (...hs: { issue?: number }[]) => {
@@ -982,5 +984,124 @@ describe("Your turn notifications", () => {
     const t = rig();
     (t.ctx.scheduler as unknown as { list: () => never }).list = () => { throw new Error("boom"); };
     await expect(t.notifier.check(min(0))).resolves.toBeUndefined();
+  });
+
+  describe("notices for programs", () => {
+    const collect = () => {
+      const got: RaisedNotice[] = [];
+      return { got, record: (n: RaisedNotice[]) => (got.push(...n), true) };
+    };
+
+    it("records one turn notice per fresh item with the text of the Mac, the opaque key and the issue link", async () => {
+      const c = collect();
+      const t = rig({}, c.record);
+      t.holds(qh(3), qh(4));
+      await t.notifier.check(min(0));
+      expect(t.sent).toHaveLength(1); // the Mac gets one grouped notice
+      expect(c.got).toHaveLength(2);
+      const one = c.got.find((x) => x.link === issueUrl(3))!;
+      expect(one).toMatchObject({ kind: "turn", title: "Foundry · your turn" });
+      expect(one.key).toMatch(/^m-[0-9a-f]{24}$/);
+      expect(one.text).toContain("acme/app#3 T3");
+      expect(one.ref).toMatch(/^[0-9a-f]{64}$/);
+      expect(one.ref).not.toContain("acme");
+    });
+
+    it("gives the text a single notification would show", async () => {
+      const c = collect();
+      const t = rig({}, c.record);
+      t.holds(qh(3));
+      await t.notifier.check(min(0));
+      expect(c.got[0]!.text).toBe(t.sent[0]!.message);
+    });
+
+    it("records a success with its run id and a link that uses the public address", async () => {
+      const c = collect();
+      const t = rig({ successes: true }, c.record);
+      t.state.config = ConfigSchema.parse({ ...t.state.config, server: { public_url: "https://f.example.com" } });
+      await t.notifier.check(min(0));
+      t.runs.push(done("s1", min(5).toISOString()));
+      await t.notifier.check(min(10));
+      expect(c.got).toMatchObject([{ kind: "done", title: "Foundry · run succeeded", runId: "s1", link: "https://f.example.com/#/runs/s1" }]);
+      expect(c.got[0]!.text).toBe(t.sent[0]!.message);
+    });
+
+    it("records no success when success notices are off", async () => {
+      const c = collect();
+      const t = rig({}, c.record);
+      t.runs.push(done("s1", min(5).toISOString()));
+      await t.notifier.check(min(10));
+      expect(c.got).toEqual([]);
+    });
+
+    it("records the daily summary once", async () => {
+      const c = collect();
+      const t = rig({ daily_summary_at: "09:00" }, c.record);
+      t.runs.push(done("s2", at(6).toISOString()));
+      await t.notifier.check(at(8));
+      await t.notifier.check(at(9));
+      await t.notifier.check(at(10));
+      expect(c.got).toMatchObject([{ kind: "summary", title: "Foundry · daily summary", text: t.sent[0]!.message, link: `${BASE}/#/your-turn` }]);
+      expect(c.got[0]!.key).toBeUndefined();
+    });
+
+    it("records with no channel, sends nothing and does not record the same item again", async () => {
+      const c = collect();
+      const t = rig({ slack_webhook: undefined }, c.record);
+      t.holds(qh(3));
+      await t.notifier.check(min(0));
+      await t.notifier.check(min(10));
+      expect(t.sent).toEqual([]);
+      expect(c.got).toHaveLength(1);
+      expect(JSON.parse(readFileSync(join(home, "notifications.json"), "utf8")).notified).not.toEqual({});
+    });
+
+    it("does nothing with no channel and no record", async () => {
+      const t = rig({ slack_webhook: undefined });
+      t.holds(qh(3));
+      await t.notifier.check(min(0));
+      expect(t.sent).toEqual([]);
+      expect(existsSync(join(home, "notifications.json"))).toBe(false);
+    });
+
+    it("records nothing in quiet hours", async () => {
+      const c = collect();
+      const t = rig({ quiet_hours: { from: "11:00", to: "13:00" } }, c.record);
+      t.holds(qh(3));
+      await t.notifier.check(min(0));
+      expect(c.got).toEqual([]);
+    });
+
+    it("marks nothing as told while the notice is not saved, and tries again at the next check", async () => {
+      let ok = false;
+      const got: RaisedNotice[] = [];
+      const t = rig({}, (n) => (got.push(...n), ok));
+      t.holds(qh(3));
+      await t.notifier.check(min(0));
+      expect(t.sent).toEqual([]);
+      expect(JSON.parse(readFileSync(join(home, "notifications.json"), "utf8")).notified).toEqual({});
+      ok = true;
+      await t.notifier.check(min(1));
+      expect(got).toHaveLength(2);
+      expect(t.sent).toHaveLength(1);
+    });
+
+    it("stores one notice when the delivery failed and is tried again", async () => {
+      const log = new NoticeLog();
+      log.start();
+      const t = rig({}, (n) => log.record(n));
+      let fail = true;
+      const send = async (n: Notice) => { if (fail) return false; t.sent.push(n); return true; };
+      const n2 = new TurnNotifier(t.ctx, { baseUrl: BASE, timeZone: "UTC", send, record: (n) => log.record(n) });
+      t.holds(qh(3));
+      const before = log.answer(0).seq;
+      await n2.check(min(0));
+      fail = false;
+      await n2.check(min(1));
+      expect(t.sent).toHaveLength(1);
+      const a = log.answer(before);
+      expect(a.notices).toHaveLength(1);
+      log.stop();
+    });
   });
 });
