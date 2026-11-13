@@ -4,7 +4,14 @@ import { lookupServiceToken, recordServiceUse, type FoundToken, type ServiceAcco
 import { basename } from "node:path";
 import { HttpError } from "./http.js";
 import { requestAccess } from "./net.js";
-import { findRule, serviceAllows, type Rule } from "./permissions.js";
+import { findLocalRepo, listAllRepos, repoIdsOf, type RepoRecord } from "../auth/repos.js";
+import { isLocalRepoName } from "../auth/local-name.js";
+import { githubNameOf } from "../auth/repo-url.js";
+import { closedToServices } from "../auth/repo-settings.js";
+import type { User } from "../auth/users.js";
+import { getSession, listSessions } from "../refinement/store.js";
+import { REPO_FREE } from "./data-classes.js";
+import { findRule, ruleKey, serviceAllows, type Rule } from "./permissions.js";
 import type { ApiContext } from "./server.js";
 
 /**
@@ -118,9 +125,96 @@ export function serviceStillAllowed(ctx: ApiContext, req: IncomingMessage, call:
     const found = lookupServiceToken(call.token);
     if (!found || found.state !== "live" || found.account.status !== "active") return false;
     if (!requestAccess(req, ctx.config().server, ctx.opts.port).local) return false;
-    return call.rule !== undefined && serviceAllows(found.account, call.rule);
+    if (call.rule === undefined || !serviceAllows(found.account, call.rule)) return false;
+    // a repository closed since the stream began ends it
+    checkServiceRepos(ctx, found.account, call.rule, call.seg, new URL(req.url ?? "/", "http://x").searchParams);
+    return true;
   } catch {
     return false;
+  }
+}
+
+const CLOSED_REPO = "this repository is closed to service accounts";
+const CLOSED_SOME = "a repository is closed to service accounts";
+
+/** The records closed to service accounts (`services: none`). A read error answers 500 (fail closed). */
+function closedRecords(ctx: ApiContext): RepoRecord[] {
+  try {
+    return listAllRepos().filter((r) => closedToServices(r.settings));
+  } catch {
+    ctx.diagLog?.("service-request: repos.json cannot-read");
+    throw new HttpError(500, INTERNAL);
+  }
+}
+
+/** True when a repository name (`owner/name` or `local:…`) has a closed record. If several records hold it, any closed one counts. */
+function nameClosed(name: string, closed: ReadonlySet<string>): boolean {
+  if (isLocalRepoName(name)) {
+    const rec = findLocalRepo(name);
+    return rec !== undefined && closed.has(rec.id);
+  }
+  // an address (https or ssh, with or without ".git") or a bare "owner/name": both name the same GitHub repository
+  const gh = githubNameOf(name) ?? githubNameOf(`https://github.com/${name}`);
+  return gh !== undefined && repoIdsOf(gh).some((id) => closed.has(id));
+}
+
+/** The repositories an account has runs, queued jobs or refinement sessions on. */
+function ownedRepoNames(ctx: ApiContext, user: User): string[] {
+  const names = new Set<string>();
+  for (const b of ctx.scheduler.briefs()) if (b.owner === user.id && b.githubRepo) names.add(b.githubRepo);
+  for (const n of ctx.scheduler.queuedRepos(user.id)) names.add(n);
+  for (const s of listSessions(user.id)) names.add(s.repo);
+  return [...names];
+}
+
+/** The path names a run or a repository by its id or name (so the named-object check decides it). */
+const namesObject = (path: string): boolean => path.startsWith("runs/:id") || path.startsWith("repos/") || path.startsWith("admin/repos/:id");
+
+/**
+ * `services: none` (#869): a service account may not read or change anything about a repository closed to service accounts.
+ * Called after `authorize()` on every service request and on each recheck of an open stream. No-op for any other caller, and
+ * when no repository is closed. Order: (1) objects named by the request, (2) Ask Foundry, (3) admin-only routes that name no
+ * run or repository, (4) lists of the account's own work. Refuses with 403; a read error is 500 (fail closed).
+ */
+export function checkServiceRepos(ctx: ApiContext, user: User, rule: Rule, seg: string[], query: URLSearchParams): void {
+  if (user.kind !== "service") return;
+  try {
+    const records = closedRecords(ctx);
+    if (records.length === 0) return;
+    const closed = new Set(records.map((r) => r.id));
+    const refuse = (): never => {
+      throw new HttpError(403, CLOSED_REPO);
+    };
+    // 1. objects the request names
+    const q = query.get("repo");
+    if (q && nameClosed(q, closed)) refuse();
+    const p = rule.path;
+    if (p.startsWith("runs/:id")) {
+      const name = ctx.scheduler.repoOf(seg[1] ?? "");
+      if (name && nameClosed(name, closed)) refuse();
+    } else if (p === "repos/:owner/:name") {
+      if (nameClosed(`${seg[1]}/${seg[2]}`, closed)) refuse();
+    } else if (p.startsWith("repos/:id")) {
+      if (closed.has(seg[1] ?? "")) refuse();
+    } else if (p.startsWith("admin/repos/:id")) {
+      if (closed.has(seg[2] ?? "")) refuse();
+    } else if (p.startsWith("refinement/:id") || p.startsWith("changes/:id")) {
+      const s = getSession(seg[1] ?? "");
+      if (s && nameClosed(s.repo, closed)) refuse();
+    }
+    // 2. Ask Foundry stores and fetches repository text
+    if (p.startsWith("help/") && ruleKey(rule) !== "GET help/usage") throw new HttpError(403, CLOSED_SOME);
+    // 3. an admin-only rule about no named object may span every repository
+    if (rule.user === "no" && !namesObject(p) && !REPO_FREE.has(ruleKey(rule))) throw new HttpError(403, CLOSED_SOME);
+    // 4. a list of the account's own work
+    if (rule.user !== "no" && rule.scope === "list") {
+      if (records.some((r) => r.owner === user.id)) throw new HttpError(403, CLOSED_SOME);
+      if (ownedRepoNames(ctx, user).some((n) => nameClosed(n, closed))) throw new HttpError(403, CLOSED_SOME);
+    }
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    ctx.diagLog?.("service-request: closed repositories cannot-check");
+    throw new HttpError(500, INTERNAL);
   }
 }
 

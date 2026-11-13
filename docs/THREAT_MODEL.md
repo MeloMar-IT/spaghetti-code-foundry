@@ -276,11 +276,13 @@ password. This is a deliberate second way in, so it is a standing credential.
 - A scope cannot hold a route in `NEVER_GRANTED` (`src/server/permissions.ts`). It is refused when the scope is saved and again on every request, so an edited `users.json` does not help. A service account has no admin role and no password.
 - Every bearer request is audited, refused ones too. If the audit line cannot be written, the request answers 503 and the handler does not run.
 - A token ends 30 days after its last request, and an admin can revoke it at once. A refused request does not renew a token.
+- Data classes (#869, `src/server/data-classes.ts`): `secret` is the set of never-granted routes, so a scope cannot hold it. A `class:<name>` entry covers GET routes only, so a service account cannot change data through a class. A class that is not known is refused when the scope is saved, and `serviceAllows` checks the class again on every request.
+- A repository set to `services: none` is closed to every service account (`checkServiceRepos` in `src/server/service-requests.ts`). A refusal is a 403 and is audited. Admin-only routes that name no repository stay open only when they hold no repository data (`REPO_FREE`), and Ask Foundry is closed while any repository is closed, since it reads repository text.
 
 **Still open.**
 - A token is a bearer secret. Whoever holds it can use it on this computer until it is revoked or expires, within its scope.
 - The loopback check does not tell programs on the computer apart. Any program that can read the token can use it.
-- The scope is by route, not by data. Data classes come in part 4 of #865.
+- A class grant covers every GET route of the class, so a scope with `class:summary` also reads what each summary route shows, including the run list of every repository the account can see. Use `services: none` on a repository that must stay out of reach.
 - A route whose admin check sits in its handler and not in the role table was found only for `GET help/usage` and `GET/PUT runs/:id/issue-limit`, which now use `adminOrGranted()`. The other such routes were not reviewed.
 - Tokens are not renewed by the server on their own: a program that is not used for 30 days must be given a new token by an admin.
 

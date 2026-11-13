@@ -6,7 +6,8 @@ import { githubNameOf, RepoError } from "./repo-url.js";
  * `pushRemote` (a local repository only: the engine passes it to steps as `$FACTORY_LOCAL_PUSH`), `questions` (the engine passes `questions.decide_technical` to every step as `$FACTORY_DECIDE_TECHNICAL`) and
  * `releaseRecipe`: `tools/release-build` reads it through `findReleaseRecipe` in `src/release/recipe.ts` when the commit has
  * no `.factory/release-build.yaml`. `kind: "skill-library"` marks a repository the skill-write flow may publish to: `skillLibraryFor`
- * decides it for a run (src/engine/runner.ts), and it allows the second push to a protected branch (see guards.ts). Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
+ * decides it for a run (src/engine/runner.ts), and it allows the second push to a protected branch (see guards.ts). `services: "none"` closes the
+ * repository to every service account (#869): `checkServiceRepos` in src/server/service-requests.ts refuses their requests about it. Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
  */
 export const MAX_BRANCH = 200;
 export const MAX_RECIPE_TEXT = 16_384;
@@ -52,6 +53,7 @@ export const RepoSettingsSchema = z
     questions: z.object({ decide_technical: z.boolean() }).strict(),
     kind: z.literal("skill-library"),
     pushRemote: z.literal(true),
+    services: z.literal("none"),
   })
   .partial()
   .strict()
@@ -60,7 +62,7 @@ export const RepoSettingsSchema = z
 export type RepoSettings = z.infer<typeof RepoSettingsSchema>;
 
 const bad = (message: string) => new RepoError("bad-settings", message);
-const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions", "kind", "pushRemote"];
+const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions", "kind", "pushRemote", "services"];
 const PATTERN_HELP = '"*" matches any text, "?" one character';
 const shown = (t: string) => JSON.stringify(t.replace(CONTROL_G, "?").slice(0, 80));
 const CONTROL_G = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -130,6 +132,11 @@ export function checkRepoSettings(input: unknown): RepoSettings {
     if (typeof push !== "boolean") throw bad("pushRemote must be true or false");
     if (push) out.pushRemote = true;
   }
+  const services = o.services;
+  if (services !== undefined && services !== null) {
+    if (services === "none") out.services = "none";
+    else if (services !== "all") throw bad('services must be "none" or "all"');
+  }
   const kind = o.kind;
   if (kind !== undefined && kind !== null) {
     if (typeof kind !== "string") throw bad("kind must be text");
@@ -155,6 +162,9 @@ export function skillLibraryFor(githubRepo: string, records: readonly { url: str
 
 /** Whether the Foundry may decide technical questions itself for these settings: on unless switched off. */
 export const decidesTechnical = (s?: RepoSettings): boolean => s?.questions?.decide_technical !== false;
+
+/** True when the repository is closed to service accounts (#869): `services: "none"`. Only "none" is stored; "all" clears it. */
+export const closedToServices = (s?: RepoSettings): boolean => s?.services === "none";
 
 /** For a run's `github_repo` ("owner/name", any case, ".git" allowed): false when any record of it has the setting off; true when none matches. */
 export function decideTechnicalFor(githubRepo: string, records: readonly { url: string; settings?: RepoSettings }[]): boolean {

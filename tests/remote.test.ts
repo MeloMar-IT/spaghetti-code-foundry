@@ -199,8 +199,12 @@ describe("against a running server", () => {
     expect((await w.scf(["watchers"])).out).toContain("scf watchers list");
     const routes = await w.scf(["api", "routes", "watchers/:id"]);
     expect(routes.out.split("\n")).toHaveLength(2);
-    expect(routes.out).toContain("POST    watchers/:id/tick  admin");
+    expect(routes.out).toMatch(/POST\s+watchers\/:id\/tick\s+admin\s+admin\s/);
     expect((await w.scf(["api", "routes", "feed"])).out).toMatch(/^GET {5}feed +admin, user/m);
+    // the data class of a call (#869), also in the JSON
+    const diff = JSON.parse((await w.scf(["api", "routes", "runs/:id", "--json"])).out) as { path: string; data: string }[];
+    expect(Object.fromEntries(diff.map((r) => [r.path, r.data]))).toMatchObject({ "runs/:id/diff": "diff", "runs/:id/events": "log", "runs/:id": "summary" });
+    expect((await w.scf(["api", "routes", "diff"])).out).toContain("runs/:id/diff");
     expect(await w.scf(["nonsense"])).toMatchObject({ code: undefined });
     expect((await w.scf(["watchers", "nonsense"])).code).toBeUndefined();
   });

@@ -76,9 +76,10 @@ function runSettings(ctx) {
           { label: "Docs to update", value: list(s.docs) },
           { label: "Decides technical questions", value: s.questions?.decide_technical === false ? "No — asks every question" : "Yes" },
           ...(pushable ? [{ label: "Also push to the remote", value: s.pushRemote === true ? "Yes" : "No" }] : []),
+          { label: "Service accounts", value: s.services === "none" ? "Closed" : "Allowed" },
         ] }),
         readOnly ? null : h("div", { class: "row" },
-          h("button", { "data-action": "run-settings", onClick: editSettings(ctx, "run-settings", ["kind", "testCommand", "docs", "decideTechnical", ...(pushable ? ["pushRemote"] : [])], "Run settings") }, "Edit")),
+          h("button", { "data-action": "run-settings", onClick: editSettings(ctx, "run-settings", ["kind", "testCommand", "docs", "decideTechnical", "servicesNone", ...(pushable ? ["pushRemote"] : [])], "Run settings") }, "Edit")),
       ]
       : unavailable("The settings"),
     h("div", { class: "field mt-6" },

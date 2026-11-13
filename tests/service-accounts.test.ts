@@ -13,7 +13,8 @@ import {
   UserError, checkEmail, createUser, deleteUser, getUser, listUsers, newPasswordLink, publicUser, resetPassword, setBreakGlass, setPassword, setStatus, setView, updateUser, usersPath,
 } from "../src/auth/users.js";
 import { HttpError } from "../src/server/http.js";
-import { RULES, authorize, grantableRules, neverGranted, ruleKey, serviceAllows, findRule, adminOrGranted } from "../src/server/permissions.js";
+import { RULES, authorize, dataClassOf, grantableRules, neverGranted, permissionTable, ruleKey, serviceAllows, findRule, adminOrGranted } from "../src/server/permissions.js";
+import { CLASS_KEYS, GRANTABLE_CLASSES, REPO_FREE } from "../src/server/data-classes.js";
 import { checkServiceScope } from "../src/server/api-service-accounts.js";
 import { serviceBearer, serviceStillAllowed } from "../src/server/service-requests.js";
 
@@ -332,5 +333,74 @@ describe("the bearer header", () => {
     expect(serviceBearer(req("Basic dXNlcjpwYXNz"))).toBeUndefined();
     expect(serviceBearer(req("Bearer other"))).toBeUndefined();
     expect(serviceBearer(req())).toBeUndefined();
+  });
+});
+
+describe("data classes (#869)", () => {
+  const rule = (m: string, p: string) => findRule(m, p.split("/"))!;
+
+  it("gives every rule one class, and lists no key twice or outside the table", () => {
+    for (const r of RULES) expect(dataClassOf(r), ruleKey(r)).toBeDefined();
+    const keys = new Set(RULES.map(ruleKey));
+    const seen = new Set<string>();
+    for (const c of GRANTABLE_CLASSES) {
+      for (const k of CLASS_KEYS[c]) {
+        expect(keys.has(k), `${k} is not in RULES`).toBe(true);
+        expect(seen.has(k), `${k} twice`).toBe(false);
+        seen.add(k);
+      }
+    }
+  });
+
+  it("is secret exactly when the rule can never be granted", () => {
+    for (const r of RULES) expect(dataClassOf(r) === "secret", ruleKey(r)).toBe(neverGranted(r.path));
+    for (const c of GRANTABLE_CLASSES) for (const k of CLASS_KEYS[c]) expect(neverGranted(k.split(" ")[1]!), k).toBe(false);
+  });
+
+  it("classes the examples of the issue", () => {
+    expect(dataClassOf(rule("GET", "runs/x/diff"))).toBe("diff");
+    expect(dataClassOf(rule("GET", "runs/x/events"))).toBe("log");
+    expect(dataClassOf(rule("GET", "runs/x"))).toBe("summary");
+    expect(dataClassOf(rule("GET", "refinement/x"))).toBe("inbox");
+    expect(dataClassOf(rule("GET", "help/usage"))).toBe("admin");
+    expect(dataClassOf(rule("GET", "users"))).toBe("secret");
+  });
+
+  it("keeps REPO_FREE to admin-only rules, and out of the lifecycle write", () => {
+    const byKey = new Map(RULES.map((r) => [ruleKey(r), r]));
+    for (const k of REPO_FREE) expect(byKey.get(k)?.user, k).toBe("no");
+    expect(REPO_FREE.has("POST skills/lifecycle")).toBe(false);
+  });
+
+  it("grants the GET rules of a class, and nothing else", () => {
+    const u = { scope: ["class:summary"] };
+    expect(serviceAllows(u, rule("GET", "runs"))).toBe(true);
+    expect(serviceAllows(u, rule("POST", "runs/x/cancel"))).toBe(false);
+    expect(serviceAllows(u, rule("GET", "runs/x/diff"))).toBe(false);
+    expect(serviceAllows({ scope: ["class:diff"] }, rule("GET", "runs/x/diff"))).toBe(true);
+    expect(serviceAllows({ scope: ["class:admin"] }, rule("GET", "health"))).toBe(true);
+    expect(serviceAllows({ scope: ["class:summary", "POST runs/:id/cancel"] }, rule("POST", "runs/x/cancel"))).toBe(true);
+  });
+
+  it("never grants secret, also when the file was edited by hand", () => {
+    expect(serviceAllows({ scope: ["class:secret"] }, rule("GET", "users"))).toBe(false);
+    expect(serviceAllows({ scope: ["class:secret"] }, rule("GET", "audit/export"))).toBe(false);
+  });
+
+  it("checks class entries in a scope", () => {
+    expect(checkServiceScope(["class:summary", "GET health"])).toEqual(["class:summary", "GET health"]);
+    expect(() => checkServiceScope(["class:secret"])).toThrow(/can never be granted/);
+    expect(() => checkServiceScope(["class:nope"])).toThrow(/not a data class/);
+    expect(() => checkServiceScope(["class:log", "class:log"])).toThrow(/twice/);
+  });
+
+  it("takes class entries in the store, and refuses a bad shape", () => {
+    expect(make(["class:summary", "GET runs"], "C1").account.scope).toEqual(["class:summary", "GET runs"]);
+    for (const bad of ["class:", "class:Summary", "class:a-b"]) expect(() => make([bad], "C2"), bad).toThrow();
+  });
+
+  it("puts the class in the permission table and in the grantable list", () => {
+    expect(permissionTable().split("\n")[0]).toContain("Data");
+    expect(grantableRules().find((g) => g.key === "GET runs/:id/diff")?.data).toBe("diff");
   });
 });

@@ -4,7 +4,10 @@ import { isRefinementFlow } from "../flow/usage.js";
 import type { Flow } from "../flow/schema.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
+import { CLASS_KEYS, GRANTABLE_CLASSES, INBOX_FAMILIES, type DataClass, type GrantableClass } from "./data-classes.js";
 import { checkScope } from "./workspace-scope.js";
+
+export type { DataClass };
 
 /**
  * Who may make which API call. An admin may make every call in the table; a user only the calls marked `yes`,
@@ -279,7 +282,7 @@ export const RULES: Rule[] = [
 export const ruleKey = (rule: Rule) => `${rule.method} ${rule.path}`;
 
 /**
- * Routes a service account (#866) can never be given, as path prefixes (a path matches when it is the prefix or goes on with `/`):
+ * Routes a service account (#866) can never be given: the `secret` data class (#869, see dataClassOf). As path prefixes (a path matches when it is the prefix or goes on with `/`):
  * credentials, accounts (also service accounts and view-as), settings (the test command and release recipe are settings, so
  * `repos/:id/publish-remote`, which saves repository settings, is here too), autonomy, self-update, plugins and the audit export.
  */
@@ -292,8 +295,34 @@ export const NEVER_GRANTED: readonly string[] = [
 /** True when no scope may hold a rule with this path. */
 export const neverGranted = (path: string): boolean => NEVER_GRANTED.some((p) => path === p || path.startsWith(`${p}/`));
 
-/** True when the rule is in the service account's scope (an exact key) and can be granted at all. Checked on every request. */
-export const serviceAllows = (user: Pick<User, "scope">, rule: Rule): boolean => !neverGranted(rule.path) && (user.scope ?? []).includes(ruleKey(rule));
+const KEY_CLASS = new Map<string, GrantableClass>(GRANTABLE_CLASSES.flatMap((c) => CLASS_KEYS[c].map((k) => [k, c] as const)));
+
+/** The scope entry that grants a class, e.g. "class:summary". */
+export const classEntry = (c: DataClass): string => `class:${c}`;
+
+/**
+ * The data class of a rule (#869). `secret` is exactly the rules that can never be granted. Any other rule has the class that
+ * names its key in CLASS_KEYS, or the inbox class by its path family. undefined only for a rule nobody has classed (a test fails).
+ */
+export function dataClassOf(rule: Rule): DataClass | undefined {
+  if (neverGranted(rule.path)) return "secret";
+  const named = KEY_CLASS.get(ruleKey(rule));
+  if (named) return named;
+  return INBOX_FAMILIES.some((f) => rule.path === f || rule.path.startsWith(`${f}/`)) ? "inbox" : undefined;
+}
+
+/**
+ * True when the rule is in the service account's scope and can be granted at all: by its exact key, or (a GET rule only) by the
+ * `class:<name>` entry of its data class. `secret` is never granted, also when users.json was edited by hand. Checked on every request.
+ */
+export function serviceAllows(user: Pick<User, "scope">, rule: Rule): boolean {
+  if (neverGranted(rule.path)) return false;
+  const scope = user.scope ?? [];
+  if (scope.includes(ruleKey(rule))) return true;
+  if (rule.method !== "GET") return false;
+  const c = dataClassOf(rule);
+  return c !== undefined && c !== "secret" && scope.includes(classEntry(c));
+}
 
 /**
  * For a handler check of an admin-only (`no`) rule that `authorize()` has already let through: an admin, or a service account whose
@@ -302,8 +331,8 @@ export const serviceAllows = (user: Pick<User, "scope">, rule: Rule): boolean =>
 export const adminOrGranted = (user: Pick<User, "role" | "kind">): boolean => user.role === "admin" || user.kind === "service";
 
 /** The rules a scope may hold, each with its key, its note and whether it is an admin-only rule. */
-export const grantableRules = (): { key: string; note: string; adminOnly: boolean }[] =>
-  RULES.filter((rule) => !neverGranted(rule.path)).map((rule) => ({ key: ruleKey(rule), note: rule.note, adminOnly: rule.user === "no" }));
+export const grantableRules = (): { key: string; note: string; adminOnly: boolean; data: DataClass }[] =>
+  RULES.filter((rule) => !neverGranted(rule.path)).map((rule) => ({ key: ruleKey(rule), note: rule.note, adminOnly: rule.user === "no", data: dataClassOf(rule) ?? "admin" }));
 
 /** The rule for a call: the exact method and number of segments, and `:x` matches one segment. */
 export function findRule(method: string, seg: string[]): Rule | undefined {
@@ -401,8 +430,8 @@ export function checkReleaseRef(flow: Flow, given: Record<string, string>, runVa
 export function permissionTable(): string {
   const cell = (a: UserAccess) => (a === "yes" ? "yes" : a === "own" ? "own runs" : "no");
   return [
-    "| Call | Admin | User | What it does |",
-    "|---|---|---|---|",
-    ...RULES.map((rule) => `| \`${rule.method} /api/${rule.path}\` | yes | ${cell(rule.user)} | ${rule.note} |`),
+    "| Call | Admin | User | Data | What it does |",
+    "|---|---|---|---|---|",
+    ...RULES.map((rule) => `| \`${rule.method} /api/${rule.path}\` | yes | ${cell(rule.user)} | ${dataClassOf(rule) ?? ""} | ${rule.note} |`),
   ].join("\n");
 }

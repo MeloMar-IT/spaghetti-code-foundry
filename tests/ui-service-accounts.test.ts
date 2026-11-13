@@ -23,18 +23,20 @@ const account = (over: object = {}) => ({
 });
 let accounts: any[];
 let sent: { method: string; url: string; body: any }[];
+let classes: string[] = [];
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   accounts = [account(), account({ id: "s2", name: "Old", token: "expired", lastUse: new Date().toISOString(), scope: [] })];
   sent = [];
+  classes = [];
   delete (globalThis as any).location;
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).getElementById("main").replaceChildren();
   (document as any).listeners.keydown = [];
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
-    if (init.method === "GET") return reply({ accounts, grantable: GRANTABLE });
+    if (init.method === "GET") return reply({ accounts, grantable: GRANTABLE, classes });
     const body = init.body ? JSON.parse(init.body) : undefined;
     sent.push({ method: init.method, url, body });
     if (init.method === "POST" && url === "/api/service-accounts") return reply({ account: account({ id: "new", name: body.name, scope: body.scope }), token: TOKEN }, 201);
@@ -77,6 +79,10 @@ describe("pure helpers", () => {
     expect(ui.scopeBody({ name: "  Bot ", checked: new Set(["GET health"]) }, GRANTABLE)).toEqual({ name: "Bot", scope: ["GET health"] });
     expect(ui.scopeBody({ name: "x", checked: new Set() }, GRANTABLE)).toEqual({ name: "x", scope: [] });
   });
+  it("puts the checked class entries first, in the order of the classes", () => {
+    const checked = new Set(["GET health", "class:log", "class:summary"]);
+    expect(ui.scopeBody({ name: "x", checked }, GRANTABLE, ["summary", "log", "diff"])).toEqual({ name: "x", scope: ["class:summary", "class:log", "GET health"] });
+  });
 });
 
 describe("the section", () => {
@@ -116,6 +122,22 @@ describe("the section", () => {
     expect(root().textContent).toContain("Shown once");
     await press(button(root(), "Done"));
     expect(root().children.length).toBe(0);
+  });
+
+  it("draws a box for each kind of data above the routes, and keeps a ticked class when the scope is saved", async () => {
+    classes = ["inbox", "summary", "log", "diff", "admin"];
+    accounts = [account({ scope: ["class:log", "GET runs"] })];
+    const box = await show();
+    await press(button(rows()[0]!, "Edit scope"));
+    const dialog = root();
+    expect(dialog.textContent).toContain("Kinds of data (reads only)");
+    const boxes = walk(dialog).filter((e) => e.attrs.name === "scope");
+    expect(boxes.map((b) => b.value)).toEqual([...classes.map((c) => `class:${c}`), "GET runs", "GET health"]);
+    expect(boxes.some((b) => b.value === "class:secret")).toBe(false);
+    expect(boxes.filter((b) => b.checked).map((b) => b.value)).toEqual(["class:log", "GET runs"]);
+    await press(button(dialog, "Save"));
+    expect(sent[0]).toMatchObject({ method: "PUT", url: "/api/service-accounts/s1", body: { scope: ["class:log", "GET runs"] } });
+    expect(box).toBeDefined();
   });
 
   it("rotates and revokes with the right calls", async () => {

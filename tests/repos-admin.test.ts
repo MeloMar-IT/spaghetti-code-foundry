@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { decideTechnicalEnv } from "../src/engine/runner.js";
-import { RepoSettingsSchema, checkRepoSettings, decideTechnicalFor, decidesTechnical, skillLibraryFor, type RepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
+import { RepoSettingsSchema, checkRepoSettings, closedToServices, decideTechnicalFor, decidesTechnical, skillLibraryFor, type RepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
 import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoError, type TransferOptions, addRepo, listAllRepos, listRepos, ownsRepo, removeGithubRepo, removeRepo, reposPath, setRepoAuth, setRepoSettings, transferRepo, watchersRemovedDetail } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
 import { AuditEntrySchema, DETAIL_MAX } from "../src/auth/audit.js";
@@ -101,6 +101,25 @@ describe("checkRepoSettings", () => {
 
   it.each([undefined, null, {}, { decide_technical: true }, { decide_technical: null }])("stores nothing for questions %j", (questions) => {
     expect(checkRepoSettings({ questions })).toEqual({});
+  });
+
+  it("stores services none (#869); all and null clear it; anything else is refused", () => {
+    expect(checkRepoSettings({ services: "none" })).toEqual({ services: "none" });
+    expect(checkRepoSettings({ services: "all" })).toEqual({});
+    expect(checkRepoSettings({ services: null })).toEqual({});
+    expect(() => checkRepoSettings({ services: "some" })).toThrowError(expect.objectContaining({ code: "bad-settings" }));
+    expect(() => checkRepoSettings({ services: true })).toThrowError(expect.objectContaining({ code: "bad-settings" }));
+    expect(closedToServices({ services: "none" })).toBe(true);
+    expect(closedToServices({})).toBe(false);
+    expect(closedToServices(undefined)).toBe(false);
+  });
+
+  it("keeps services none in the record, and clears it with all", () => {
+    const id = addRepo(ANN, "acme/svc", OK).id;
+    setRepoSettings(id, { services: "none", mainBranch: "main" });
+    expect(listAllRepos().find((r) => r.id === id)?.settings).toEqual({ services: "none", mainBranch: "main" });
+    setRepoSettings(id, { services: "all", mainBranch: "main" });
+    expect(listAllRepos().find((r) => r.id === id)?.settings).toEqual({ mainBranch: "main" });
   });
 
   it("stores only the off value of decide_technical", () => {
