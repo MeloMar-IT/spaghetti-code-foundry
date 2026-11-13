@@ -1,13 +1,13 @@
 import { YAMLParseError } from "yaml";
 import { ZodError } from "zod";
-import { ConfigIssuesError, type Config, type PluginConfig } from "../config.js";
+import { ConfigIssuesError, type Config, type PluginConfig, type ServiceConfig } from "../config.js";
 
-type View = Omit<Config, "notify" | "plugins"> & { notify: Omit<Config["notify"], "slack_webhook"> & { slack_webhook_set: boolean } };
+type View = Omit<Config, "notify" | "plugins" | "services"> & { notify: Omit<Config["notify"], "slack_webhook"> & { slack_webhook_set: boolean } };
 
 /** The settings as the API shows them: no Slack webhook, only whether one is set. */
 export function configView(c: Config): View {
   const { slack_webhook, ...notify } = c.notify;
-  const { plugins: _plugins, ...rest } = c;
+  const { plugins: _plugins, services: _services, ...rest } = c;
   return { ...rest, notify: { ...notify, slack_webhook_set: typeof slack_webhook === "string" && slack_webhook !== "" } };
 }
 
@@ -31,6 +31,12 @@ export function withStoredWebhook(body: unknown, stored: string | undefined): un
 export function withStoredPlugins(body: unknown, stored: readonly PluginConfig[]): unknown {
   if (!isObj(body) || !stored.length) return body;
   return { ...body, plugins: stored };
+}
+
+/** The body of a save with the stored services put back (#867), so a save from the interface never removes them. Never changes `body`. */
+export function withStoredServices(body: unknown, stored: readonly ServiceConfig[]): unknown {
+  if (!isObj(body) || !stored.length) return body;
+  return { ...body, services: stored };
 }
 
 /** Why the stored file cannot be read, for an API answer. Never the YAML parser's own words: they quote the lines around the error. */

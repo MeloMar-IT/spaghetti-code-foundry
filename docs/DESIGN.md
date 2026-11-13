@@ -2139,6 +2139,23 @@ The long poll (`wait`, at most 30 s) is held in memory: a waiter is woken when a
 
 **Restarts.** The state is saved in `feed.json`, so the sequence goes on after a restart. The Your-turn source is not trusted right after a start: the watchers have not looked yet, so the turn kind is left out of the snapshot until every watcher has checked once or two minutes have passed (`SETTLE_MS`). A `feed.json` from a newer version is read only and the feed runs in memory. A broken file starts a new feed with `reset`.
 
+**Managed services (#867).** `ServiceSupervisor` (`src/services/supervisor.ts`) starts the
+`services:` of `config.yaml` in `start()`, after the server listens and the watchers are synced
+(`src/server/server.ts`). Before each start it checks the program (`programProblem`: absolute path
+already checked at load, real path a file, executable, not inside a runs or workspaces folder; with
+`public_key` the detached Ed25519 signature of `<command>.sig`, `signatureProblem`). A failed check puts the
+service in state `refused` with a fixed sentence; a program that exits goes to `waiting`. Both are
+retried with `nextDelay` (1 s, doubling, at most 5 min; a run of `stableMs` resets the count). The
+program is started detached in its own process group with `spawn` and an argument array, never a shell.
+Its environment is a fixed list of system variables, the configured `env`, `SCF_URL` and a fresh
+`SCF_SERVICE_TOKEN` from `serviceToken()` (a managed service account in `services-accounts.json`, next to
+`users.json`; the token is rotated on each start). `reconcileServiceTokens()` revokes what an earlier run
+left. Output goes through `redactStream` with the token and the `env` values to `ServiceLog`
+(`src/services/log.ts`, `<name>.log`, one `.1` file, 5 MB). Stop has two forms: `stop()` (async, on
+shutdown) and `stopNow()` (synchronous, from `withServicesStopped` before a self-update or other
+restart exit). The health answer carries `services` from `view()`, and `scf services` reads
+`GET /api/health`.
+
 ---
 
 ## 15. The web interface

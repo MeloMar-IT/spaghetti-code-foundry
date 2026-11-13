@@ -32,7 +32,7 @@ export const LOCAL_WORDS = ["run", "resume", "approve", "reject", "eval", "clean
 export const LOCAL_ACTIONS: Record<string, string[]> = { monitor: ["on", "off", "status"] };
 
 /** Words that run an action when none is given. */
-export const DEFAULT_ACTIONS: Record<string, string> = { plugins: "list" };
+export const DEFAULT_ACTIONS: Record<string, string> = { plugins: "list", services: "list" };
 
 const areasOf =(cmds: Cmd[]) => [...new Set(cmds.map((c) => c.area))].sort();
 

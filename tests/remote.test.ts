@@ -134,6 +134,25 @@ describe("against a running server", () => {
     expect((await w.scf(["plugins", "--help"])).out).toContain("scf plugins list");
   });
 
+  it("scf services lists by default, as a table or as JSON, and has help", async () => {
+    expect((await w.scf(["services"])).out).toBe("no services configured");
+    expect((await w.scf(["services", "list"])).out).toBe("no services configured");
+    expect((await w.scf(["services", "--json"])).json<Record<string, unknown>>()).not.toHaveProperty("services");
+    expect((await w.scf(["services", "--help"])).out).toContain("scf services list");
+  });
+
+  it("prints the services table", () => {
+    const show = ALL.find((c) => c.area === "services")!.show!;
+    const text = show({ services: [
+      { name: "echo-bot", state: "running", restarts: 1, lastExit: { code: 1, signal: null, at: "2026-11-13T10:00:00Z" } },
+      { name: "b", state: "refused", restarts: 0, problem: "the signature file is missing" },
+    ] });
+    expect(text).toContain("echo-bot");
+    expect(text).toContain("running");
+    expect(text).toContain("code 1");
+    expect(text).toContain("the signature file is missing");
+  });
+
   it("prints the plugin table and the problem lines", () => {
     const show = ALL.find((c) => c.area === "plugins")!.show!;
     const text = show({

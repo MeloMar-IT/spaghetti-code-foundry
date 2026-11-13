@@ -16,6 +16,19 @@ function pluginsText(d: unknown): string {
   return [table(rows, cols("plugin", "version", "registered", "module"), "no plugins loaded"), ...problems].join("\n");
 }
 
+interface ServicesAnswer {
+  services?: { name: string; state: string; restarts: number; lastExit?: { code: number | null; signal: string | null; at: string }; problem?: string }[];
+}
+
+function servicesText(d: unknown): string {
+  const rows = ((d ?? {}) as ServicesAnswer).services ?? [];
+  return table(rows.map((s) => ({
+    name: s.name, state: s.state, restarts: String(s.restarts),
+    "last exit": s.lastExit ? `${s.lastExit.code !== null ? `code ${s.lastExit.code}` : `signal ${s.lastExit.signal}`} at ${s.lastExit.at}` : "",
+    problem: s.problem ?? "",
+  })), cols("name", "state", "restarts", "last exit", "problem"), "no services configured");
+}
+
 /** The server itself and its watchers: the template for the other areas. */
 export const SYSTEM: Cmd[] = [
   { area: "server", action: "info", method: "GET", path: "info", show: (d) => fields(d) },
@@ -27,5 +40,6 @@ export const SYSTEM: Cmd[] = [
   { area: "watchers", action: "list", method: "GET", path: "watchers",
     show: (d) => table(Array.isArray(d) ? d : ((d as { watchers?: unknown[] })?.watchers ?? []), [...cols("id", "source", "flow", "every", "enabled"), { key: "github_repo", head: "repository" }], "no watchers") },
   { area: "plugins", action: "list", method: "GET", path: "plugins", help: "the plugins loaded at server start, in order", show: pluginsText },
+  { area: "services", action: "list", method: "GET", path: "health", help: "the managed services: state, restarts and last exit", show: servicesText },
   { area: "watchers", action: "tick", method: "POST", path: "watchers/:id/tick", args: ["id"], help: "run a watcher's check now" },
 ];

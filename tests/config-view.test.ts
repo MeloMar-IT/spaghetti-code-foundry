@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConfigSchema, parseConfigText } from "../src/config.js";
 import { ZodError } from "zod";
-import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredWebhook } from "../src/server/config-view.js";
+import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredServices, withStoredWebhook } from "../src/server/config-view.js";
 
 describe("configIssues", () => {
   const issuesOf = (input: unknown) => {
@@ -53,6 +53,23 @@ describe("plugins in the settings", () => {
     expect(withStoredPlugins("x", plugins)).toBe("x");
     const body = { concurrency: 2 };
     expect(withStoredPlugins(body, [])).toBe(body);
+  });
+});
+
+describe("services in the settings (#867)", () => {
+  const services = [{ name: "bot", command: "/usr/bin/true", env: { API_KEY: "SECRET-ENV" }, scope: ["GET health"] }];
+  it("configView leaves them out, env included", () => {
+    const v = configView(ConfigSchema.parse({ services }));
+    expect("services" in v).toBe(false);
+    expect(JSON.stringify(v)).not.toContain("SECRET-ENV");
+  });
+  it("withStoredServices puts the stored list back without changing the body", () => {
+    const stored = ConfigSchema.parse({ services }).services;
+    const body = { concurrency: 2 };
+    expect(withStoredServices(body, stored)).toEqual({ concurrency: 2, services: stored });
+    expect(body).toEqual({ concurrency: 2 });
+    expect(withStoredServices("x", stored)).toBe("x");
+    expect(withStoredServices(body, [])).toBe(body);
   });
 });
 

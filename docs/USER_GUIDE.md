@@ -5661,10 +5661,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` is not returned |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` and `services` are not returned |
 | `GET /api/plugins` | yes | no | the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options |
 | `GET /api/plugins/ui` | yes | yes | the pages and menu items that plugins added and your role may see (`pages`: plugin, id, title, module address, roles; `menu`: plugin, page, label); never a folder, a file path or a plugin option. With `?as=` the role of the viewed user |
-| `PUT /api/config` | yes | no | change the settings (not `plugins`: a body with that key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
+| `PUT /api/config` | yes | no | change the settings (not `plugins` or `services`: a body with either key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
 | `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
 | `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
@@ -7966,6 +7966,52 @@ A plugin can also add to the web interface. In `register(api)` it calls `api.ui(
   It never shows a folder, a file path or a plugin option.
 - **Without plugins** the interface is unchanged: no plugin link, no plugin card, no plugin address.
 
+### Managed services
+
+A managed service is a companion program (for example an integration) that the Foundry starts, watches
+and restarts, so you do not need a second process manager. List it in `config.yaml`:
+
+```yaml
+services:
+  - name: echo-bot                            # a-z, 0-9 and -; 1 to 40 characters
+    command: /opt/scf-services/echo-bot       # an absolute path to the program file
+    args: ["--quiet"]                         # optional, at most 50
+    env: { BOT_CHANNEL: "factory" }           # optional; names starting SCF_ or FACTORY_ are reserved
+    public_key: "<base64 of a 32-byte Ed25519 key>"   # optional: checks <command>.sig before each start
+    scope: ["GET health", "GET runs"]         # the routes of the service account the Foundry keeps for it
+```
+
+- **When they start.** After the server listens and the watchers have started. Up to 10 services.
+- **What they get.** Their environment holds a few system variables (`PATH`, `HOME`, `USER`, `LANG`,
+  `TMPDIR` and others), your `env` values, `SCF_URL` (the server's address on this computer) and
+  `SCF_SERVICE_TOKEN`. The token is a new token of the service's own account on every start, and the
+  token of the run before is revoked. It is never on the command line. The account has only the routes
+  in `scope`; see the service accounts in section 7 above.
+- **What is refused.** A relative path, a web address, a path with `.` or `..` parts, and a program inside
+  the runs or workspaces folders are refused when the config loads. At start the program must exist, be a
+  file and be executable. Nothing runs through a shell.
+- **Signed programs.** With `public_key`, the Foundry checks `<command>.sig` (a detached Ed25519
+  signature of the program file) before every start. A program that does not match is not started, and
+  the Health page says why: the signature file is missing or is not a valid signature, or the signature
+  does not match the program. Fix the file or the signature, then restart the server; the check runs again
+  at each start.
+- **Restarts.** A program that exits is started again after 1 second, then 2, 4, 8 and so on, at most
+  5 minutes apart. A run that lasted 5 minutes or more starts the count again at 1 second.
+- **Stopping.** On shutdown, and before a self-update restart, each program gets a stop signal and is
+  killed after 5 seconds if it has not gone. Its token is revoked.
+- **Output.** Stdout and stderr go to `<data folder>/services/<name>.log`. When the file reaches 5 MB it
+  is moved to `<name>.log.1` (one older file is kept). The token and your `env` values are replaced
+  in the log. Each start and exit is a line of its own.
+- **Checking.** The Health page shows one line per service, for example "Service echo-bot: running, 1
+  restart, last exit code 1". A refused or waiting service counts as a problem on the health line.
+  `scf services` (or `scf services list`) prints the same: state, restarts, last exit and the problem. It
+  needs a running, signed-in server (admin).
+- **Where they are set.** In `config.yaml` only, and a change needs a restart. `PUT /api/config` refuses a
+  `services` key, and a save from the Settings page keeps the stored list. There is no control on the
+  Settings page, by choice: a program started with the Foundry's rights should be changed by the owner of
+  the file, not from a browser.
+- **Without services** nothing changes: no program starts, and the health line has no service entry.
+
 ---
 
 ## 8. Costs, dashboard and evals
@@ -8537,6 +8583,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
 | `scf plugins` (or `scf plugins list`) | List the plugins loaded at server start, with version, module and what each registered; needs a running, signed-in server (admin) ([Plugins](#plugins)) |
+| `scf services` (or `scf services list`) | List the managed services with their state, restarts, last exit and problem; needs a running, signed-in server (admin) ([Managed services](#managed-services)) |
 | `scf eval <suite.yaml> [--flows a,b] [--models …] [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run an eval suite; the `--…-bin` options use other programs ([Evals](#evals)) |
 | `scf eval safety [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run every offline safety suite in `evals/safety`; exits 1 when a case fails ([Safety suites](#safety-suites)) |
 | `scf eval help [--live]` | Check Ask Foundry against its fixed scenarios; without `--live` no model is called |
