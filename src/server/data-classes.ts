@@ -24,7 +24,7 @@ export const CLASS_KEYS: Readonly<Record<GrantableClass, readonly string[]>> = {
     "GET next", "GET board", "GET search", "GET since", "GET feed","GET repos", "GET repos/:id/ready", "GET repos/:id/epics", "GET repos/:id/epics/:issue", "GET repos/:id/safe-points",
   ],
   admin: [
-    "GET info", "GET watchers", "POST watchers/:id/tick", "GET governor", "GET busy", "POST busy", "DELETE busy",
+    "GET info", "GET watchers", "POST watchers/:id/tick", "POST watchers/:id/pause", "POST watchers/:id/resume", "GET governor", "GET busy", "POST busy", "DELETE busy",
     "GET monitor", "GET monitor/findings/:id", "POST monitor/story", "POST monitor/off", "POST monitor/on", "POST monitor/mutes", "DELETE monitor/mutes/:id", "POST monitor/retry",
     "POST clean", "GET providers", "POST providers/test", "GET onboarding/progress", "PUT onboarding/progress", "DELETE onboarding/progress",
     "POST onboarding/sign-in", "POST onboarding/test-call", "GET starters", "POST starters/:id/project", "GET setup-check", "GET evals",

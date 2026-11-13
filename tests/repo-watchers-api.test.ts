@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";import { randomUUID } from "node:crypto";
 import { addRepo, removeRepo, reposPath } from "../src/auth/repos.js";
 import { saveConfig } from "../src/config.js";
+import { parseFlow } from "../src/flow/load.js";
 import { OWNER_BLOCKED, addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -288,6 +289,51 @@ describe("watchers of a repository: the routes", () => {
     kc.fail();
     expect(ctx.watchers.tracked().map((t) => t.watcher.id)).not.toContain("eve-w");
     expect((await call(admin, "DELETE", `/api/users/${eve.user.id}`)).status).toBe(200);
+  });
+
+  it("pauses and resumes a watcher through the API, leaving queued runs alone", async () => {
+    const rec = await add(admin, { url: "acme/pause" });
+    expect((await call(admin, "POST", path(rec.id), { id: "pause-w" })).status).toBe(201);
+    const flow = parseFlow("name: plain\nworkspace: empty\nsteps:\n  - {id: a, type: shell, run: \"true\"}\n");
+    const runId = ctx.scheduler.submit({ kind: "run", flow, task: "t", repo: tmp, vars: {} }, { source: "test" });
+    expect(ctx.scheduler.isQueued(runId)).toBe(true);
+    const ids = () => ctx.watchers.tracked().map((t) => t.watcher.id);
+    const post = (who: TestSession, id: string, what: string) => call(who, "POST", `/api/watchers/${id}/${what}`, {});
+
+    const p = await post(admin, "pause-w", "pause");
+    expect(p.status).toBe(200);
+    expect(p.json()).toMatchObject({ id: "pause-w", repoId: rec.id, enabled: false, state: { name: "disabled" } });
+    expect(p.json()).not.toHaveProperty("vars");
+    expect(p.json()).not.toHaveProperty("agent_env");
+    expect(ids()).not.toContain("pause-w");
+    expect(listRepoWatchers().find((w) => w.id === "pause-w")!.enabled).toBe(false);
+    expect(ctx.scheduler.isQueued(runId)).toBe(true); // the pause leaves the run alone
+
+    expect((await post(admin, "pause-w", "pause")).json()).toMatchObject({ enabled: false, state: { name: "disabled" } }); // no change, no audit line
+    const r = await post(admin, "pause-w", "resume");
+    expect(r.json()).toMatchObject({ enabled: true });
+    expect(ids()).toContain("pause-w");
+    expect((await auditFor(rec.id)).map((l) => l.detail).filter((d) => d?.startsWith("watcher pause-w"))).toEqual(["watcher pause-w: added", "watcher pause-w: paused", "watcher pause-w: resumed"]);
+
+    for (const what of ["pause", "resume"]) {
+      expect((await post(admin, "nope", what)).status).toBe(404);
+      expect((await post(ann, "pause-w", what)).status).toBe(403);
+    }
+    expect(listRepoWatchers().find((w) => w.id === "pause-w")!.enabled).toBe(true);
+    await call(admin, "DELETE", path(rec.id, "pause-w"));
+  });
+
+  it("answers 409 for a watcher of config.yaml and for one whose repository is gone", async () => {
+    const before = readFileSync(join(process.env.FACTORY_HOME!, "config.yaml"), "utf8");
+    const file = await call(admin, "POST", "/api/watchers/file-w/pause", {});
+    expect([file.status, file.error()]).toEqual([409, expect.stringMatching(/config\.yaml/)]);
+    expect(readFileSync(join(process.env.FACTORY_HOME!, "config.yaml"), "utf8")).toBe(before);
+    addRepoWatcher(randomUUID(), { id: "orphan-pw" });
+    const orphan = await call(admin, "POST", "/api/watchers/orphan-pw/pause", {});
+    expect([orphan.status, orphan.error()]).toEqual([409, expect.stringMatching(/not connected any more/)]);
+    const o = listRepoWatchers().find((w) => w.id === "orphan-pw")!;
+    expect(o.enabled).toBe(true);
+    await call(admin, "DELETE", path(o.repoId, "orphan-pw"));
   });
 
   describe("described variables", () => {
