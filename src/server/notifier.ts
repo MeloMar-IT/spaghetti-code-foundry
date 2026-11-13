@@ -4,7 +4,9 @@ import type { Config } from "../config.js";
 import { appBase } from "../public-url.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { clockMinutes, composeNotice, deliver, fit, hasChannel, inQuietHours, minutesNow, runMessage, summaryNotice, type Notice, type NoticeItem } from "../notify.js";
+import { refOf, type RaisedNotice } from "../notices.js";
 import { runOrigin } from "../your-turn.js";
+import { opaqueKey } from "./turn-actions.js";
 import type { ApiContext } from "./server.js";
 import { turnFor } from "./your-turn.js";
 
@@ -21,6 +23,8 @@ export interface NotifierDeps {
   baseUrl: string;
   /** Resolves false when no channel got the notice (it is then tried again at the next check). */
   send?: (n: Notice, cfg: Config["notify"]) => Promise<boolean | void>;
+  /** Saves one notice per item for programs (#871). True when they are on disk; false: nothing is marked as told, the next check tries again. */
+  record?: (n: RaisedNotice[]) => boolean;
   log?: (m: string) => void;
   /** Tests only; default: this machine's. */
   timeZone?: string;
@@ -114,7 +118,7 @@ export class TurnNotifier {
    */
   private baseline(now: Date, state = readState()): State {
     const cfg = this.ctx.config().notify;
-    if (!hasChannel(cfg)) return state;
+    if (!hasChannel(cfg) && !this.d.record) return state;
     const nowIso = now.toISOString();
     const age = now.getTime() - time(state.doneSince);
     if (!cfg.successes) {
@@ -153,7 +157,9 @@ export class TurnNotifier {
   private async run(now: Date) {
     const { ctx, d } = this;
     const cfg = ctx.config().notify;
-    if (!hasChannel(cfg)) return;
+    // With no channel the notices for programs are still recorded (when a log is wired in).
+    const channel = hasChannel(cfg);
+    if (!channel && !d.record) return;
     const base = appBase(ctx.config().server.public_url) ?? d.baseUrl;
     const tz = d.timeZone;
     const send = d.send ?? deliver;
@@ -167,7 +173,7 @@ export class TurnNotifier {
     const fresh = shown.filter((i) => state.notified[i.key]?.stamp !== i.stamp);
 
     const briefs = ctx.scheduler.briefs();
-    const doneRuns: { runId: string; finishedAt: string; item: NoticeItem }[] = [];
+    const doneRuns: { runId: string; finishedAt: string; item: NoticeItem; title: string }[] = [];
     if (cfg.successes) {
       const after = Math.max(time(state.doneSince), now.getTime() - DONE_WINDOW_MS);
       for (const b of briefs) {
@@ -176,7 +182,7 @@ export class TurnNotifier {
         const run = ctx.scheduler.get(b.runId);
         if (!run) continue;
         const what = run.vars?.issue ? `${run.vars.github_repo}#${run.vars.issue}` : run.task.split("\n")[0] || run.flow;
-        doneRuns.push({ runId: b.runId, finishedAt: b.finishedAt, item: { what, text: runMessage(ctx.config(), run), url: `${base}/#/runs/${b.runId}` } });
+        doneRuns.push({ runId: b.runId, finishedAt: b.finishedAt, title: "Foundry · run succeeded", item: { what, text: runMessage(ctx.config(), run), url: `${base}/#/runs/${b.runId}` } });
       }
     }
 
@@ -189,9 +195,27 @@ export class TurnNotifier {
         const url = u && /^https?:\/\//.test(u) ? u : u?.startsWith("#/") ? `${base}/${u}` : undefined;
         return { what, text: fit(what, i.next), url };
       });
-      const notice = composeNotice(items, doneRuns.map((r) => r.item), { turn: `${base}/#/your-turn`, runs: `${base}/#/runs` });
-      if (notice) {
-        if ((await send(notice, cfg)) === false) {
+      const notice = channel ? composeNotice(items, doneRuns.map((r) => r.item), { turn: `${base}/#/your-turn`, runs: `${base}/#/runs` }) : undefined;
+      if (notice || !channel) {
+        if (d.record) {
+          // One notice per item, with the text the Mac shows for that single item. Saved before anything is marked as told.
+          const raised: RaisedNotice[] = [
+            ...fresh.map((i, n): RaisedNotice => ({
+              kind: "turn", title: "Foundry · your turn", text: items[n]!.text, key: opaqueKey(i.key),
+              ...(i.next.runId ? { runId: i.next.runId } : {}),
+              link: items[n]!.url ?? `${base}/#/your-turn`,
+              ref: refOf(`turn|${i.key}|${i.stamp}`),
+            })),
+            ...doneRuns.map((r): RaisedNotice => ({
+              kind: "done", title: r.title, text: r.item.text, runId: r.runId, link: r.item.url, ref: refOf(`done|${r.runId}`),
+            })),
+          ];
+          if (!d.record(raised)) {
+            d.log?.("notices not saved; they are tried again at the next check");
+            return; // nothing is marked: the next check tries again
+          }
+        }
+        if (notice && (await send(notice, cfg)) === false) {
           d.log?.(`notification not delivered: ${notice.title}`);
           return; // nothing is marked: the next check tries again
         }
@@ -203,7 +227,7 @@ export class TurnNotifier {
         }
         state.lastSentAt = nowIso;
         writeState(state);
-        d.log?.(`notification: ${notice.title}`);
+        if (notice) d.log?.(`notification: ${notice.title}`);
         return;
       }
     }
@@ -231,12 +255,16 @@ export class TurnNotifier {
       `${base}/#/your-turn`,
     );
     if (notice) {
-      if ((await send(notice, cfg)) === false) {
+      if (d.record && !d.record([{ kind: "summary", title: notice.title, text: notice.message, link: notice.url ?? `${base}/#/your-turn`, ref: refOf(`summary|${owed}`) }])) {
+        d.log?.("notices not saved; the summary is tried again at the next check");
+        return;
+      }
+      if (channel && (await send(notice, cfg)) === false) {
         d.log?.(`notification not delivered: ${notice.title}`);
         return; // the summary is tried again at the next check
       }
       state.lastSentAt = nowIso;
-      d.log?.(`notification: ${notice.title}`);
+      if (channel) d.log?.(`notification: ${notice.title}`);
     }
     state.lastSummaryDay = owed;
     state.lastSummaryAt = nowIso;

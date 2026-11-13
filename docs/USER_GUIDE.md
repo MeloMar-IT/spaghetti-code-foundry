@@ -1370,6 +1370,28 @@ normal routes (`GET /api/your-turn/mine`, `GET /api/runs/:id`, `GET /api/repos`,
 
 From the command line: `scf api GET 'feed?since=812&wait=30'`.
 
+### Notices (API)
+
+`GET /api/notices` gives a program the notices the Mac shows, so it can pass them on. It is a
+long poll like the change feed above, and it needs the `inbox` data class (or the route `GET notices`
+in a service account's scope).
+
+- `?since=<seq>` — the `seq` of your last answer. The first call has no `since`: it answers
+  `reset: true`, no notices and the current `seq`; from then on, ask with that `seq`.
+- `?wait=<seconds>` — 0 to 30. The call is held until a notice is recorded, or the time is up.
+- The answer is `{ "seq": 57, "notices": [{ "seq": 57, "kind": "turn", "at": "2026-11-13T10:02:11.000Z", "title": "…", "text": "…", "key": "…", "runId": "…", "link": "https://…/#/your-turn" }] }`.
+  A notice has no `key`, `runId` or `link` when it has none.
+- `kind` — `turn` (a Your turn item is new or changed; the text is the one the Mac shows for that item),
+  `done` (a run succeeded; only when "Also notify when a run succeeds" is on) or `summary` (the daily summary).
+  `key` is the item's opaque key, as `GET /api/your-turn/mine` shows it.
+- `link` — the public address (**Public address** in Settings, see Network) when it is set, otherwise
+  this Mac's address.
+- Notices are recorded whether or not a macOS or Slack channel is set. With `FACTORY_NO_NOTIFY=1` the
+  notifier is off and nothing is recorded.
+- Known secret values are redacted from `title`, `text` and `link`.
+- Notices are kept for 7 days. A `since` older than that, or newer than `seq`, answers `reset: true`
+  with no notices: read the current state through the normal routes, then keep the new `seq`.
+
 ### Search (API)
 
 `GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
@@ -5752,6 +5774,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/search` | yes | yes | summary | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
 | `GET /api/since` | yes | no | summary | what changed since a time |
 | `GET /api/feed` | yes | yes | summary | what changed since `since` (the `seq` of your last answer): `{ seq, changes: [{ kind, id, at }] }` with the kinds `turn` (a Your turn item), `run`, `repo` and `change` (a change request), never any detail; `wait` (0 to 30 seconds) holds the call until a change you may read is recorded; `reset: true` when `since` is missing or older than what is kept (changes younger than 24 hours and the newest 10,000 are kept, within a hard cap of 20,000); only what you may read, and a service account only the kinds whose read route is in its scope; read the details through their own routes |
+| `GET /api/notices` | yes | no | inbox | the notices the Mac shows, for programs: `{ seq, notices: [{ seq, kind, at, title, text, key, runId, link }] }` after `since` (the `seq` of your last answer); one notice per Your turn item (`turn`), per run that succeeded (`done`, when success notices are on) and per daily summary (`summary`), with the text the Mac shows and a link that uses the public address when it is set; `wait` (0 to 30 seconds) holds the call until a notice is recorded; `reset: true` when `since` is missing or older than what is kept (7 days); known secret values are redacted; admin only, or a service account whose scope has `GET notices` or `class:inbox`; refused (403) to a service account while a repository is closed to service accounts |
 | `GET /api/your-turn` | yes | no | inbox | what waits for you |
 | `POST /api/your-turn/dismiss` | yes | no | inbox | dismiss an item |
 | `POST /api/your-turn/restore` | yes | no | inbox | restore dismissed items; with `{ "key": "…" }` only that item |
