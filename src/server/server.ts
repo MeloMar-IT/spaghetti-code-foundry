@@ -38,6 +38,7 @@ import type { UpdateView } from "../self-update.js";
 import { boardRoutes } from "./board.js";
 import { searchRoutes } from "./search.js";
 import { TurnNotifier } from "./notifier.js";
+import { FeedRecorder, feedRoutes } from "./feed.js";
 import { ClarityRecorder, clarityRoutes } from "./clarity.js";
 import { busyRoutes } from "./api-busy.js";
 import { onboardingRoutes } from "./api-onboarding.js";
@@ -127,6 +128,8 @@ export interface ServerOptions {
   ghTimeoutMs?: number;
   /** How many pages of 100 open issues are read to find dependants (default 10). A test makes it small. */
   openIssuePages?: number;
+  /** How often the change feed takes a snapshot, in ms (#868; default 5000). A test makes it short. */
+  feedTickMs?: number;
 }
 
 export interface ApiContext {
@@ -157,12 +160,14 @@ export interface ApiContext {
    * never for exception text. They must stay readable when the credential store is the thing that is broken.
    */
   diagLog?: (msg: string) => void;
+  /** The change feed (#868); set by startServer. */
+  feed?: FeedRecorder;
 }
 
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 
@@ -265,6 +270,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
+      ctx.feed?.kick();
       // A run that stopped for a missing skill may be the reason for a skill gap issue.
       if (s.status === "stopped" && s.skillPlan?.action === "stop") gapSweep?.kick();
       // The architect's read for a refinement session: the session takes in the end; no watcher has anything to do with it.
@@ -549,6 +555,9 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   }
   const clarity = new ClarityRecorder(ctx, { log });
   clarity.start();
+  const feed = new FeedRecorder(ctx, { tickMs: opts.feedTickMs, log });
+  ctx.feed = feed;
+  feed.start();
   return {
     url: localUrl(listen, opts.port),
     port: opts.port,
@@ -556,6 +565,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     notifier,
     close: () => {
       clarity.stop();
+      feed.stop();
       clearInterval(adoptTimer);
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);

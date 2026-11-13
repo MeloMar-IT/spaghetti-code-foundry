@@ -1341,6 +1341,35 @@ runs and starts again when steps are added, removed or renamed. It is an estimat
 promise. "Taking longer than usual" means a step runs much longer than it usually does. Nothing
 is wrong yet: look at the live log.
 
+### Change feed (API)
+
+`GET /api/feed` tells a program what changed since its last call, so it does not have to poll
+several routes every few seconds. It answers only kinds and ids. The details are read through the
+normal routes (`GET /api/your-turn/mine`, `GET /api/runs/:id`, `GET /api/repos`, `GET /api/changes/:id`).
+
+- `?since=<seq>` — the `seq` of your last answer. The first call has no `since`: it answers
+  `reset: true` and the current `seq`, so the caller reads everything once with the normal routes.
+- The answer is `{ "seq": 812, "changes": [{ "kind": "run", "id": "20261113-…", "at": "2026-11-13T10:02:11.000Z" }] }`.
+  The kinds are `turn` (an item of Your turn was added, changed or is gone), `run` (a run's state
+  changed), `repo` (a repository was added, changed or removed) and `change` (a change request
+  changed). One id appears once, with its newest change.
+- `?wait=<seconds>` — 0 to 30. The call is held until a change you may read is recorded, or the
+  time is up. A call that already has a change answers at once.
+- `reset: true` — `since` is missing, older than what is kept, or newer than `seq`. What is kept:
+  every change of the last 24 hours and the newest 10,000 changes, never more than 20,000. Read
+  everything once, then keep the new `seq`.
+- The sequence is kept in `feed.json` in the data folder, so it goes on after a restart. A feed
+  file that cannot be read starts a new feed, and the next call answers `reset: true`.
+- **Access.** You see a change only when you could read the object now or when you could read it
+  before the change (so a deletion or a move is still reported to the person who lost the item).
+  A user sees their own runs and repositories of their workspaces. Change requests are shown only
+  to their owner. An admin sees all, except another account's change requests. A service account
+  sees a kind only when its scope holds that kind's read route.
+- Errors: 400 for a `since` or `wait` that is not a whole number in range; 503 while the feed is
+  not running.
+
+From the command line: `scf api GET 'feed?since=812&wait=30'`.
+
 ### Search (API)
 
 `GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
@@ -5715,6 +5744,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/board` | yes | no | the board of all work |
 | `GET /api/search` | yes | yes | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
 | `GET /api/since` | yes | no | what changed since a time |
+| `GET /api/feed` | yes | yes | what changed since `since` (the `seq` of your last answer): `{ seq, changes: [{ kind, id, at }] }` with the kinds `turn` (a Your turn item), `run`, `repo` and `change` (a change request), never any detail; `wait` (0 to 30 seconds) holds the call until a change you may read is recorded; `reset: true` when `since` is missing or older than what is kept (changes younger than 24 hours and the newest 10,000 are kept, within a hard cap of 20,000); only what you may read, and a service account only the kinds whose read route is in its scope; read the details through their own routes |
 | `GET /api/your-turn` | yes | no | what waits for you |
 | `POST /api/your-turn/dismiss` | yes | no | dismiss an item |
 | `POST /api/your-turn/restore` | yes | no | restore dismissed items; with `{ "key": "…" }` only that item |
