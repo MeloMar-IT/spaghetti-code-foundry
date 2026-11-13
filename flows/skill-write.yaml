@@ -180,6 +180,8 @@ steps:
       {{steps.review.output}}
 
       When THE LAST REVIEW ends with VERDICT: CHANGES, the skill was measured and reviewed, and the reviewer found blocking points. Fix every point under its Blocking heading, in the skill and in evals/; keep what it did not object to.
+        The measurement showed which sample tasks tell a run with the skill from one without it (TASK lines: "it tells the two apart"). Keep those tasks and their checks as they are,
+        unless a Blocking point names that task; then fix exactly that point, and keep the rule the task tests hidden from the task text. Never make a task easier to pass without the skill.
       When THE LAST SCREEN ends with SCREEN: retask, an agent without the skill solved the tasks its SCREEN lines call too easy. Rewrite those tasks by the rules below, and keep the others.
       When THE LAST MEASUREMENT ends with MEASURE: retask, the skill was measured and the sample tasks did not tell a run with the skill from a run without it. Each TASK line says why. Change evals/ (and the skill only where it is wrong):
       - A task that passes without the skill tests nothing the skill teaches. Rewrite it so that only an agent that follows a rule of SKILL.md or references/ (a convention, a version fact, an edge case, a required order of steps) passes, and make its check test exactly that rule. Do not name the rule in the task text.
@@ -242,6 +244,7 @@ steps:
   - id: screen
     type: shell
     timeout_sec: 7200
+    max_visits: 11
     description: "Run each sample task once without the skill (scf skills effect --screen): a task that passes is too easy and goes back to the writer, at most twice"
     routes:
       - if: "^SCREEN: retask\\s*$"

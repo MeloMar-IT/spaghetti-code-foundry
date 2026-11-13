@@ -96,6 +96,10 @@ describe("skill-write flow", () => {
     const write = flow.steps.find((s) => s.id === "write") as { max_visits: number; allowed_tools: string[] };
     expect(write.max_visits).toBe(10);
     expect((flow.steps.find((s) => s.id === "check") as { max_visits: number }).max_visits).toBe(11);
+    // every write that passes the check is screened: screen may run as often as check (the default of 5 failed a run)
+    expect((flow.steps.find((s) => s.id === "screen") as { max_visits: number }).max_visits).toBe(11);
+    // a rewrite after the review keeps the sample tasks that told the two runs apart
+    expect((flow.steps.find((s) => s.id === "write") as { prompt: string }).prompt).toContain("Never make a task easier to pass without the skill.");
     // the writer runs one fixed command (the check pick wrote) and ls; never node, git or a shell of its own choice
     expect(write.allowed_tools).toEqual(["Read", "Edit", "Write", "Glob", "Grep", "Bash(ls*)", "Bash(sh .git/scf-check)"]);
     expect(flow.limits?.max_cost_usd).toBe(40);

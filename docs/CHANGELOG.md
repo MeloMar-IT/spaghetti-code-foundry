@@ -4,6 +4,8 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Hotfix: two follow-ups to the skill-write rebuild, from its first 21 runs. The `screen` step may run as often as `check` (11): with the default of 5, a run that went back to the writer several times failed on it. A rewrite after a review keeps the sample tasks that the measurement showed to tell a run with the skill from one without it, and changes a task only where a blocking point names it: three skills that helped were made easier to pass without the skill by the review rewrite, and then measured as not helping.
+
 - Hotfix: removing the trigger label now also drops a run the watcher had queued for that issue and that has not started yet. Before, the queued run started anyway, spent money and was only parked afterwards, and it ran the flow of the time it was queued. The watcher confirms on GitHub that the issue is open and without the label, and logs `#<n> has no <label> label → queued run <id> is dropped before it started`. Runs queued from the app (an answer, an approval) are left alone.
 
 - Hotfix: a question can be answered in the app again from Home. Since the Today home (#842, #855, #857), the button of a question card linked to the issue on GitHub; only the Admin home's Your turn list still opened the answer panel. A Today card in Simple and Advanced now opens the same panel (questions, or a plan or a request to approve) when the person may answer it here (`GET /api/your-turn/mine`), and keeps the link otherwise. The big button of a Simple project with a question goes to the project page, where it is answered in place.
