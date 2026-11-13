@@ -21,7 +21,11 @@ const withToken = (d: unknown) =>
     "The account sets its password at <server address>/#/set-password/<token>.",
   ].join("\n");
 
-const LIMIT_KEYS = ["maxConcurrent", "maxRunsPerDay", "dailyBudgetUsd"];
+const SERVICE_KEYS = ["id", "name", "status", "token", "lastUse", "expires", "scope", "created", "runs"];
+/** A service account with its token: printed because handing it over is what the call is for; the server keeps only a hash. */
+const serviceWithToken = (d: unknown) => [fields(obj(d).account, SERVICE_KEYS), "", `token (shown once): ${String(obj(d).token ?? "")}`, "Use it only on this computer: Authorization: Bearer <token>."].join("\n");
+
+const LIMIT_KEYS =["maxConcurrent", "maxRunsPerDay", "dailyBudgetUsd"];
 /** The defaults as lines, then one row per account that has limits of its own. */
 function limits(d: unknown): string {
   const users = Object.entries(obj(obj(d).users)).map(([account, own]) => ({ account, ...obj(own) }));
@@ -115,6 +119,20 @@ export const PEOPLE: Cmd[] = [
     flags: { repos: { type: "string", as: "list", required: true, help: 'all allowed repositories, with commas: owner/name or owner/*; "" allows none' } },
     help: "set the repositories an account may connect through the GitHub App (replaces the list)",
     confirm: "This replaces the whole list of repositories the account may connect through the GitHub App.", show: appRepos },
+
+  // ---- service accounts (admin): accounts for programs, with a bearer token and a scope of routes ----
+  { area: "service-accounts", action: "list", method: "GET", path: "service-accounts", help: "the service accounts with their scope, token state and last use",
+    show: (d) => table(list(obj(d).accounts).map((a) => ({ ...obj(a), lastUse: obj(a).lastUse ?? "never", scope: list(obj(a).scope).join(", ") || "none" })), [...cols("id", "name", "status", "token"), { key: "lastUse", head: "last use" }, { key: "scope", max: 70 }], "no service accounts") },
+  { area: "service-accounts", action: "add", method: "POST", path: "service-accounts", args: ["name"],
+    flags: { scope: { type: "string", as: "list", required: true, help: 'the routes it may call, with commas, as rule keys such as "GET runs"; "" allows none' } },
+    help: "add an account for a program; prints its token, which is shown once", show: serviceWithToken },
+  { area: "service-accounts", action: "set", method: "PUT", path: "service-accounts/:id", args: ["id"], help: "change the name or the scope of a service account (a scope replaces the whole list)",
+    flags: { name: { type: "string", help: "the new name" }, scope: { type: "string", as: "list", help: 'all routes it may call, with commas; "" allows none' } },
+    confirm: "This changes what the program may call.", confirmIf: (body) => body.scope !== undefined, show: (d) => fields(obj(d).account, SERVICE_KEYS) },
+  { area: "service-accounts", action: "rotate", method: "POST", path: "service-accounts/:id/rotate", args: ["id"],
+    help: "give a service account a new token; the old one stops at once; the new one is shown once", confirm: "The old token stops working at once.", show: serviceWithToken },
+  { area: "service-accounts", action: "revoke", method: "POST", path: "service-accounts/:id/revoke", args: ["id"],
+    confirm: "The token stops working at once; rotate gives a new one.", show: (d) => fields(obj(d).account, SERVICE_KEYS) },
 
   // ---- your own account ----
   { area: "account", action: "password", method: "POST", path: "password",

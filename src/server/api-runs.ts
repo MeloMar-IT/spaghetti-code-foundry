@@ -21,7 +21,7 @@ import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { isPublished, userVars } from "../flow/publish.js";
 import { isVarName, type Flow } from "../flow/schema.js";
 import { guardedRepos } from "./api-repos.js";
-import { checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissions.js";
+import { adminOrGranted, checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext, runSince } from "./next.js";
 import { asideCheck, putAside, withNotNow } from "./your-turn.js";
@@ -420,7 +420,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, hide({ step: rec.id, type: rec.type, events: readTranscript(rec.logFile) })), true;
   }
   if (action === "issue-limit" && !seg[3] && (method === "GET" || method === "PUT")) {
-    if (!admin) throw new HttpError(403, "only an admin can see or change the spending limit of an issue");
+    if (!admin && !adminOrGranted(user)) throw new HttpError(403, "only an admin can see or change the spending limit of an issue");
     const home = dirname(opts.runsDir);
     const ref = issueOfRun(s);
     if (!ref) throw new HttpError(404, "this run has no issue");

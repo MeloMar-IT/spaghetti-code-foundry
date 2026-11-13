@@ -5036,6 +5036,12 @@ as another admin. Change a role with
 `scf user role <e-mail> admin|user`. `scf user list` shows the last sign-in of each account
 ("never" when there is none).
 
+**Service accounts.** A service account is an account for a program, such as an integration. Admins make one in the **Service accounts** section of the Users page, or with `scf service-accounts add <name>`. `scf user list` shows service accounts apart from people, with their scope, token state and last use. A service account has no password and no browser session, and never has the admin role. It signs in with a bearer token, sent as `Authorization: Bearer <token>` from this computer only. The token is shown once, when it is made or rotated; the server keeps only its SHA-256 hash.
+
+A service account may call only the routes in its **scope**, a list of rule keys from the permission table such as `GET runs`. A request outside the scope gets 403 and is still written to the audit log with the account's name. A route inside the scope works as it does for a user of the same workspace. Some routes can never be granted: credentials, users, settings, autonomy, self-update, plugins and the audit export, among others. A scope that names one is refused when it is saved. An admin-only route can be in a scope only when it is listed by itself.
+
+**Rotate** gives the account a new token; the old one stops at once. **Revoke** ends the token until you rotate again. A token expires 30 days after its last use, and then it is refused until it is rotated. Cookie sign-in for people is not changed.
+
 ![The Users page under Administration, People and access](images/users.png)
 
 **The Users page.** Admins only: open **Administration** in the sidebar, then **Users** under **People and access** (`#/users`). It lists name, e-mail, role,
@@ -5733,6 +5739,11 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials |
+| `GET /api/service-accounts` | yes | no | list the service accounts (accounts for programs) with their scope, token state and last use, and the routes a scope may hold (`grantable`); never a token |
+| `POST /api/service-accounts` | yes | no | add a service account (`name`, `scope`: rule keys such as `GET runs`); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400 |
+| `PUT /api/service-accounts/:id` | yes | no | change the name or scope of a service account (same checks as when it is added) |
+| `POST /api/service-accounts/:id/rotate` | yes | no | give a service account a new token; the old one stops at once; the answer has the new token, shown once |
+| `POST /api/service-accounts/:id/revoke` | yes | no | revoke the token of a service account; it stops at once; rotate gives a new one |
 | `GET /api/skills/lifecycle` | yes | no | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
 | `POST /api/skills/lifecycle` | yes | no | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
 | `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards |

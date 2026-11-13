@@ -267,6 +267,23 @@ password. This is a deliberate second way in, so it is a standing credential.
   as the safer side: every attempt that could have succeeded is in the log.
 - A broken audit log shuts the break-glass admin out until the log is fixed. The log line says why.
 
+## Service accounts (#866)
+
+**Protected by.**
+- A bearer token is read only from a connection on this computer (`requestAccess` in `src/server/net.ts`). The public sign-in routes (`session`, `setup`, `set-password`) refuse it with 403 (`src/server/service-requests.ts`).
+- A cookie is ignored when a bearer is present (`sessionUser`, `sessionAlive` and view-as in `src/server/api-auth.ts`, `src/server/view-as.ts`). A bearer plus a stolen cookie never acts as the cookie's account.
+- Only the SHA-256 of the token is stored (`token.id`). The token is shown once, at creation and at rotation. The audit line names the account and the route, never the token.
+- A scope cannot hold a route in `NEVER_GRANTED` (`src/server/permissions.ts`). It is refused when the scope is saved and again on every request, so an edited `users.json` does not help. A service account has no admin role and no password.
+- Every bearer request is audited, refused ones too. If the audit line cannot be written, the request answers 503 and the handler does not run.
+- A token ends 30 days after its last request, and an admin can revoke it at once. A refused request does not renew a token.
+
+**Still open.**
+- A token is a bearer secret. Whoever holds it can use it on this computer until it is revoked or expires, within its scope.
+- The loopback check does not tell programs on the computer apart. Any program that can read the token can use it.
+- The scope is by route, not by data. Data classes come in part 4 of #865.
+- A route whose admin check sits in its handler and not in the role table was found only for `GET help/usage` and `GET/PUT runs/:id/issue-limit`, which now use `adminOrGranted()`. The other such routes were not reviewed.
+- Tokens are not renewed by the server on their own: a program that is not used for 30 days must be given a new token by an admin.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

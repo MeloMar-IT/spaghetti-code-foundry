@@ -26,6 +26,15 @@ export function groupsFor(u, now = Date.now()) {
 let generation = 0;
 let reloads = 0; // the newest reload wins
 
+/** True when the id is a service account (the list of people does not hold them). Any failure counts as no. */
+async function isServiceAccount(id) {
+  try {
+    return ((await api.serviceAccounts())?.accounts ?? []).some((a) => a.id === id);
+  } catch {
+    return false;
+  }
+}
+
 const onAccount = (id) => {
   if (typeof location === "undefined") return true;
   try {
@@ -54,6 +63,12 @@ export async function renderUserDetail(main, id, { me = "", page = browserPage, 
     generation++;
   };
   if (!u) {
+    // a service account is not in the list of people: its actor link opens the "Service accounts" section of the Users page
+    if (await isServiceAccount(id)) {
+      if (live()) page.go("#/users");
+      return stop;
+    }
+    if (!live()) return stop;
     mount(main, h("div", { class: "empty" }, h("p", {}, NO_ACCOUNT), h("a", { href: "#/users" }, "Back to Users")));
     return stop;
   }

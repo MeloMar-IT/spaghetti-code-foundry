@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { adminHint, terminalIo, userCommand, type UserIo } from "../src/auth/cli.js";
 import { startProviderSession } from "../src/auth/provider-users.js";
 import { readSessions } from "../src/auth/sessions.js";
+import { createServiceAccount } from "../src/auth/service-accounts.js";
 import { createUserWithLink, listUsers, startSession, verifyPassword } from "../src/auth/users.js";
 import { freePort } from "./helpers/port.js";
 
@@ -413,6 +414,22 @@ describe("userCommand with a fake terminal", () => {
     expect(f.calls).toEqual(["Name: ", "E-mail: ", "Password: ", "Repeat password: "]);
     expect(f.lines).toEqual(["created admin ann@example.com"]);
     expect(f.lines.join("\n")).not.toContain(PW);
+  });
+
+  it("lists people first, then the service accounts apart, with token state, last use and scope", async () => {
+    const f = fake(["Ann", "ann@example.com"], [PW, PW]);
+    await userCommand({ positionals: ["create"], values: { admin: true } }, f.io);
+    createServiceAccount({ name: "Robot", scope: ["GET runs", "GET health"] });
+    createServiceAccount({ name: "Empty", scope: [] });
+    const out = fake([], []);
+    expect(await userCommand({ positionals: ["list"], values: {} }, out.io)).toBe(0);
+    expect(out.lines).toHaveLength(4);
+    expect(out.lines[0]).toContain("ann@example.com");
+    expect(out.lines[1]).toBe("service accounts:");
+    expect(out.lines[2]).toBe("Robot  active  token: live  last use: never  scope: GET runs, GET health");
+    expect(out.lines[3]).toContain("Empty  active  token: live  last use: never  scope: none");
+    expect(out.lines.slice(0, 1).join("\n")).not.toContain("Robot");
+    expect(out.lines.join("\n")).not.toContain("scf_svc_");
   });
 
   it("stops when the passwords differ", async () => {

@@ -44,6 +44,7 @@ import { CheckNotStored, liveEvidence, offerConversation, runOffer } from "./hel
 import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
+import { adminOrGranted } from "./permissions.js";
 import { scopedRepos } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
@@ -307,7 +308,7 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   setRetentionDays(ctx.config().help.keep_days);
   if (seg.length === 2 && seg[1] === "usage" && method === "GET") {
     // the permission table lets only an administrator come here
-    if (user.role !== "admin") throw new HttpError(403, "not allowed for your role");
+    if (!adminOrGranted(user)) throw new HttpError(403, "not allowed for your role");
     send(res, 200, guardedHelp(ctx, () => usageView(ctx)));
     return true;
   }

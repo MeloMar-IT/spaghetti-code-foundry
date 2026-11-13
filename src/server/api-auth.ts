@@ -7,6 +7,8 @@ import { hasIdentityProvider } from "../auth/identity.js";
 import {
   changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, isBreakGlass, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
 } from "../auth/users.js";
+import { findServiceByToken } from "../auth/service-accounts.js";
+import { refuseBearer, serviceBearer } from "./service-requests.js";
 import { providerSignIn, recheckProviderSession } from "./identity-session.js";
 import { isView, viewOf, viewsFor } from "../auth/views.js";
 import { SESSION_TTL_MS, csrfToken, findSession, revokeSession, sessionId } from "../auth/sessions.js";
@@ -131,6 +133,9 @@ function passwordOf(body: Record<string, unknown>): string {
 
 /** Passes with a session (and a matching CSRF token unless the call only reads) and gives the account. Else 401 or 403. */
 export async function requireSession(ctx: ApiContext, req: IncomingMessage, method: string): Promise<User> {
+  // A service token has its own path (server.ts). Here (the files of plugins) it is refused and audited, and its request never falls back to a cookie.
+  const bearer = serviceBearer(req);
+  if (bearer !== undefined) refuseBearer(ctx, bearer, method, "plugin file");
   const cur = await guarded(ctx, () => currentSession(ctx, req));
   if (!cur) throw new HttpError(401, "sign in first");
   if (method !== "GET" && method !== "HEAD") {
@@ -153,6 +158,13 @@ export function sessionKey(ctx: ApiContext, req: IncomingMessage): string | unde
 
 /** The signed-in account of a request. Only `viewRunning` calls it: it needs the caller read fresh from the session. */
 export function sessionUser(ctx: ApiContext, req: IncomingMessage): User {
+  // a service request is the account of its token, never the cookie that may come with it
+  const bearer = serviceBearer(req);
+  if (bearer !== undefined) {
+    const service = findServiceByToken(bearer);
+    if (!service) throw new HttpError(401, "this service token is not valid");
+    return service;
+  }
   const cur = currentSession(ctx, req);
   if (!cur) throw new HttpError(401, "sign in first");
   return cur.user;
@@ -161,6 +173,8 @@ export function sessionUser(ctx: ApiContext, req: IncomingMessage): User {
 /** True while the request still has a live session; false when it ended or the store cannot be read. */
 export function sessionAlive(ctx: ApiContext, req: IncomingMessage): boolean {
   try {
+    const bearer = serviceBearer(req);
+    if (bearer !== undefined) return findServiceByToken(bearer) !== undefined; // a revoked, expired or blocked service ends its open streams
     return currentSession(ctx, req) !== undefined;
   } catch {
     return false;

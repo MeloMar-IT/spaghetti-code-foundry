@@ -21,6 +21,7 @@ const ADMIN_ONLY = "this is the only admin that is not blocked; make another adm
 
 type Answer = { status: number; error: string; after?: boolean };
 let users: any[];
+let services: any[] = [];
 let usersGets: { status?: number; gate?: Promise<void> }[]; // one entry per GET /api/users, taken in order
 let sent: { method: string; url: string; body: any }[];
 let answers: Answer[];
@@ -38,6 +39,7 @@ const user = (over: object = {}) => ({
 
 beforeEach(() => {
   users = [user({ id: "me", name: "Root", email: "root@example.com", role: "admin", runs: 0 }), user()];
+  services = [];
   usersGets = [];
   sent = [];
   answers = [];
@@ -59,6 +61,7 @@ beforeEach(() => {
       if (g?.status) return reply({ error: "down" }, g.status);
       return reply(users.map((u) => ({ ...u })));
     }
+    if (url === "/api/service-accounts" && init.method === "GET") return reply({ accounts: services, grantable: [] });
     if (url.endsWith("/limits") && init.method === "GET") return limitsFail ? reply({ error: "broken" }, 500) : reply(limits);
     if (url.endsWith("/app-repos") && init.method === "GET") {
       const a = answers.shift();
@@ -206,6 +209,12 @@ describe("the page", () => {
     expect(main().all("a").find((a) => a.attrs.href === "#/users")?.textContent).toBe("Back to Users");
     expect(main().all("button")).toHaveLength(0);
     expect(onName).not.toHaveBeenCalled();
+  });
+  it("sends the link of a service account to the Users page (its section) instead of saying there is no such account", async () => {
+    services = [{ id: "svc1", name: "Robot", scope: [] }];
+    await show("svc1");
+    expect(page.go).toHaveBeenCalledWith("#/users");
+    expect(main().textContent).not.toContain("This account does not exist.");
   });
   it("draws a skeleton while the account loads, and rejects when the list fails", async () => {
     let release!: () => void;
