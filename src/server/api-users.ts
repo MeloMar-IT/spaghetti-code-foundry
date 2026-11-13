@@ -19,10 +19,14 @@ import type { ApiContext, Route } from "./server.js";
 const INTERNAL = "the account list is not working; see the server log";
 const STATUS: Record<UserErrorCode, number> = {
   "bad-name": 400, "bad-email": 400, "bad-password": 400, "bad-role": 400, "email-taken": 409, "admin-exists": 409, "not-found": 404, "last-admin": 409, "has-password": 409,
-  "wrong-password": 403, "no-password": 409, "bad-limits": 400, "provider-account": 409,
+  "wrong-password": 403, "no-password": 409, "bad-limits": 400, "provider-account": 409, "service-account": 409, "name-taken": 409,
 };
 
 /** Turns an error into a 4xx for input problems; anything else is logged (file and kind, never a path or value) and answered with a plain 500. */
+export function failUsers(ctx: ApiContext, e: unknown): never {
+  return fail(ctx, e);
+}
+
 function fail(ctx: ApiContext, e: unknown): never {
   if (e instanceof UserError) throw new HttpError(STATUS[e.code], e.message);
   if (e instanceof AppReposError) throw new HttpError(e.code === "bad-list" ? 400 : 404, e.message);
@@ -94,7 +98,8 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
 
   if (seg.length === 1 && method === "GET") {
     const runs = runCounts(ctx);
-    return send(res, 200, guardedUsers(ctx, () => listUsers()).map((u) => view(ctx, u, runs.get(u.id) ?? 0, hasPassword(u)))), true;
+    // people only: service accounts have their own list (GET /api/service-accounts)
+    return send(res, 200, guardedUsers(ctx, () => listUsers().filter((u) => u.kind !== "service")).map((u) => view(ctx, u, runs.get(u.id) ?? 0, hasPassword(u)))), true;
   }
 
   if (seg.length === 1 && method === "POST") {

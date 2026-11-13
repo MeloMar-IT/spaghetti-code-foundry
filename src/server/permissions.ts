@@ -165,6 +165,11 @@ export const RULES: Rule[] = [
   r("GET", "users/:id/app-repos", "no", "the repositories an account may connect through the GitHub App"),
   r("PUT", "users/:id/app-repos", "no", "set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none"),
   r("DELETE", "users/:id", "no", "delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials"),
+  r("GET", "service-accounts", "no", "list the service accounts (accounts for programs) with their scope, token state and last use, and the routes a scope may hold (`grantable`); never a token"),
+  r("POST", "service-accounts", "no", "add a service account (`name`, `scope`: rule keys such as `GET runs`); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400"),
+  r("PUT", "service-accounts/:id", "no", "change the name or scope of a service account (same checks as when it is added)"),
+  r("POST", "service-accounts/:id/rotate", "no", "give a service account a new token; the old one stops at once; the answer has the new token, shown once"),
+  r("POST", "service-accounts/:id/revoke", "no", "revoke the token of a service account; it stops at once; rotate gives a new one"),
   r("GET", "skills/lifecycle", "no", "the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read"),
   r("POST", "skills/lifecycle", "no", "set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409)"),
   r("POST", "skills/lifecycle/allow-run", "no", "let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards"),
@@ -272,6 +277,33 @@ export const RULES: Rule[] = [
 /** The key of a rule, e.g. "POST runs/:id/approve". */
 export const ruleKey = (rule: Rule) => `${rule.method} ${rule.path}`;
 
+/**
+ * Routes a service account (#866) can never be given, as path prefixes (a path matches when it is the prefix or goes on with `/`):
+ * credentials, accounts (also service accounts and view-as), settings (the test command and release recipe are settings, so
+ * `repos/:id/publish-remote`, which saves repository settings, is here too), autonomy, self-update, plugins and the audit export.
+ */
+export const NEVER_GRANTED: readonly string[] = [
+  "credentials", "admin/credentials", "users", "service-accounts", "admin/view-as", "password",
+  "config", "settings", "restart", "onboarding/agents", "admin/repos/:id/settings", "repos/:id/publish-remote",
+  "autonomy", "self-update", "plugins", "audit/export",
+];
+
+/** True when no scope may hold a rule with this path. */
+export const neverGranted = (path: string): boolean => NEVER_GRANTED.some((p) => path === p || path.startsWith(`${p}/`));
+
+/** True when the rule is in the service account's scope (an exact key) and can be granted at all. Checked on every request. */
+export const serviceAllows = (user: Pick<User, "scope">, rule: Rule): boolean => !neverGranted(rule.path) && (user.scope ?? []).includes(ruleKey(rule));
+
+/**
+ * For a handler check of an admin-only (`no`) rule that `authorize()` has already let through: an admin, or a service account whose
+ * scope lists the rule by its key. Never use it on a rule that is open to users: there a service account answers as a user.
+ */
+export const adminOrGranted = (user: Pick<User, "role" | "kind">): boolean => user.role === "admin" || user.kind === "service";
+
+/** The rules a scope may hold, each with its key, its note and whether it is an admin-only rule. */
+export const grantableRules = (): { key: string; note: string; adminOnly: boolean }[] =>
+  RULES.filter((rule) => !neverGranted(rule.path)).map((rule) => ({ key: ruleKey(rule), note: rule.note, adminOnly: rule.user === "no" }));
+
 /** The rule for a call: the exact method and number of segments, and `:x` matches one segment. */
 export function findRule(method: string, seg: string[]): Rule | undefined {
   return RULES.find((rule) => {
@@ -287,7 +319,12 @@ export function findRule(method: string, seg: string[]): Rule | undefined {
  * workspaces answers 404, the same as an unknown one.
  */
 export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]): void {
-  if (user.role === "admin") return;
+  if (user.kind === "service") {
+    // A service account (#866) passes only a rule listed in its scope, and never one that can not be granted (also not when the file was edited by hand).
+    if (!serviceAllows(user, rule)) throw new HttpError(403, "outside the scope of this service account");
+    // An admin-only rule that the admin listed by its key answers as it answers an admin; the role of the account stays `user`.
+    if (rule.user === "no") return;
+  } else if (user.role === "admin") return;
   if (rule.user === "no") throw new HttpError(403, "not allowed for your role");
   // The same answer as for a run that does not exist: a guessed id tells nothing.
   if (rule.user === "own" && ctx.scheduler.ownerOf(seg[1] ?? "") !== user.id) throw new HttpError(404, "run not found");

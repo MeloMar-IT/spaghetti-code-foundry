@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { listServiceAccounts, tokenState } from "./service-accounts.js";
 import { checkEmail, checkName, checkPassword, createUser, deleteUser, findUserByEmail, hasAdmin, listUsers, setBreakGlass, setPassword, setStatus, updateUser, type User } from "./users.js";
 
 /** Everything the commands need from the terminal; tests pass a fake. */
@@ -175,9 +176,15 @@ export async function userCommand(args: { positionals: string[]; values: Record<
       return 0;
     }
     case "list": {
-      const users = listUsers();
-      if (!users.length) io.out("no accounts");
+      const all = listUsers();
+      const users = all.filter((u) => u.kind !== "service");
+      if (!all.length) io.out("no accounts");
       for (const u of users) io.out(`${u.email}  ${u.name}  ${u.role}  ${u.status}  last sign-in: ${u.lastSignIn ?? "never"}${u.source === "provider" ? "  provider" : u.passwordHash === undefined ? "  no password yet" : ""}${u.breakGlass ? "  break-glass" : ""}`);
+      const services = listServiceAccounts();
+      if (services.length) {
+        io.out("service accounts:");
+        for (const s of services) io.out(`${s.name}  ${s.status}  token: ${tokenState(s)}  last use: ${s.token?.used ?? "never"}  scope: ${s.scope.length ? s.scope.join(", ") : "none"}`);
+      }
       return 0;
     }
     case "password": {

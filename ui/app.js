@@ -27,6 +27,7 @@ import { renderRefinement } from "./refinement.js";
 import { SECTIONS, renderRepo } from "./repo-view.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
+import { renderServiceAccounts } from "./service-accounts.js";
 import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { needsOf, renderSetupCheck } from "./setup-check.js";
@@ -245,7 +246,7 @@ async function route() {
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "users") {
-      const off = await renderUsers(main, { me: S.me, readOnly, query: to.query, go });
+      const off = await renderUsers(main, { me: S.me, readOnly, query: to.query, go, services: renderServiceAccounts });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

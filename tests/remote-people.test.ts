@@ -33,7 +33,7 @@ describe("accounts and administration", () => {
     expect(cmd("secrets", "add").prompts).toEqual([{ field: "secret", label: "Secret", hidden: true }]);
     // every call that blocks, deletes, resets, transfers or changes a role asks first
     const asks = PEOPLE.filter((c) => c.confirm).map((c) => `${c.area} ${c.action}`).sort();
-    expect(asks).toEqual(["admin repo-ready", "admin repo-settings", "admin repo-transfer", "admin watcher-remove", "secrets remove", "users add", "users block", "users remove", "users reset", "users role", "users set-app-repos"]);
+    expect(asks).toEqual(["admin repo-ready", "admin repo-settings", "admin repo-transfer", "admin watcher-remove", "secrets remove", "service-accounts revoke", "service-accounts rotate", "service-accounts set", "users add", "users block", "users remove", "users reset", "users role", "users set-app-repos"]);
   });
 
   it("adds an account and hands its set-password token over once", async () => {
@@ -48,6 +48,23 @@ describe("accounts and administration", () => {
     expect([bob.user.role, bob.user.hasPassword, typeof bob.token]).toEqual(["admin", false, "string"]);
     const twice = await scf(["users", "add", "Ann", "ann@example.com"]);
     expect([twice.code, twice.err]).toEqual([1, "error: an account with that e-mail exists already"]);
+  });
+
+  it("adds a service account, lists it apart, rotates and revokes its token (#866)", async () => {
+    const added = await scf(["service-accounts", "add", "Robot", "--scope", "GET runs,GET health", "--json"]);
+    const made = added.json<{ account: { id: string; scope: string[] }; token: string }>();
+    expect(made.token).toMatch(/^scf_svc_\S{43}$/);
+    expect(made.account.scope).toEqual(["GET runs", "GET health"]);
+    expect((await accounts()).some((u) => u.id === made.account.id)).toBe(false);
+    const list = (await scf(["service-accounts", "list"])).out;
+    expect(list).toMatch(/Robot +active +live +never +GET runs, GET health/);
+    expect(list).not.toContain(made.token);
+    const refused = await scf(["service-accounts", "add", "Bad", "--scope", "GET users"]);
+    expect([refused.code, refused.err]).toEqual([1, 'error: "GET users" can never be granted to a service account']);
+    await expect(scf(["service-accounts", "rotate", made.account.id])).rejects.toThrow("The old token stops working at once.");
+    const rotated = (await scf(["service-accounts", "rotate", made.account.id, "--yes", "--json"])).json<{ token: string }>();
+    expect(rotated.token).not.toBe(made.token);
+    expect((await scf(["service-accounts", "revoke", made.account.id, "--yes"])).out).toMatch(/^token: +revoked$/m);
   });
 
   it("lists the accounts and changes a name or an e-mail", async () => {

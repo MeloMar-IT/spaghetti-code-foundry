@@ -76,6 +76,8 @@ import { auditRoutes } from "./api-audit.js";
 import { promotionRoutes } from "./api-promotions.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
+import { serviceAccountRoutes } from "./api-service-accounts.js";
+import { auditNetworkRefusal, auditRefused, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
 import { sinceRoutes } from "./since.js";
@@ -160,7 +162,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 
@@ -391,13 +393,27 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     const method = req.method ?? "GET";
     const seg = path.split("/").filter(Boolean).slice(1); // drop "api"
+    // A service token (#866) is recognised before anything else, also before the public sign-in routes. Every such request
+    // gets one audit line: the `ok` line before the handler runs, or a `failed` line here when it is refused before that.
+    const token = serviceBearer(req);
+    if (token === undefined) return apiRequest(req, res, method, seg);
+    const call = newServiceCall(token, method, seg);
+    try {
+      await apiRequest(req, res, method, seg, call);
+    } catch (e) {
+      auditRefused(ctx, call, e);
+      throw e;
+    }
+  }
+
+  async function apiRequest(req: IncomingMessage, res: ServerResponse, method: string, seg: string[], call?: ServiceCall) {
     // The guard comes first: without a session nothing is answered, not even the moved-folder message with its path.
     const as = asParam(req);
     if (as !== undefined && method !== "GET") throw new HttpError(403, READ_ONLY);
     // GET /api/session is the one call that ignores `as`; every other call with `as` passes the view checks below
     const plain = as === undefined || (seg.length === 1 && seg[0] === "session");
-    if (plain && (await authRoutes(ctx, req, res, seg, method))) return;
-    const caller = await requireSession(ctx, req, method);
+    if (!call && plain && (await authRoutes(ctx, req, res, seg, method))) return;
+    const caller = call ? serviceCaller(ctx, req, call, as) : await requireSession(ctx, req, method);
     // in a view an unexpected error gets the fixed sentence of a user
     const admin = as === undefined && caller.role === "admin";
     let user = caller;
@@ -411,8 +427,9 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       authorize(ctx, user, rule, seg);
       const moved = method === "GET" ? undefined : homeMoved();
       if (moved) throw new HttpError(503, movedText(moved, admin));
+      if (call) serviceOk(ctx, call);
       for (const route of ROUTES) {
-        if (await route(ctx, req, res, seg, method, user)) return watchSession(req, res, as);
+        if (await route(ctx, req, res, seg, method, user)) return watchSession(req, res, as, call);
       }
       throw new HttpError(404, "not found");
     } catch (e) {
@@ -424,10 +441,12 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   }
 
   /** A response that stays open (the run log stream) is closed when its session ends. */
-  function watchSession(req: IncomingMessage, res: ServerResponse, as?: string) {
+  function watchSession(req: IncomingMessage, res: ServerResponse, as?: string, call?: ServiceCall) {
     if (res.writableEnded || res.destroyed) return;
     const timer = setInterval(() => {
       if (!sessionAlive(ctx, req) || (as !== undefined && !viewRunning(ctx, req, as))) res.destroy();
+      // a service stream also ends when its route leaves the scope, or the token, account or computer no longer fits
+      else if (call && !serviceStillAllowed(ctx, req, call)) res.destroy();
     }, opts.sessionRecheckMs ?? SESSION_RECHECK_MS);
     timer.unref();
     res.on("close", () => clearInterval(timer));
@@ -440,7 +459,11 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     // since this server can execute code on the machine.
     const acc = requestAccess(req, config.server, opts.port);
     if (acc.https) res.setHeader("strict-transport-security", HSTS);
-    if (acc.refusal) return void res.writeHead(403).end(acc.refusal);
+    if (acc.refusal) {
+      // a service request refused by the network guard is audited too (#866); the answer stays the guard's own
+      auditNetworkRefusal(ctx, req, acc.refusal);
+      return void res.writeHead(403).end(acc.refusal);
+    }
     let path: string;
     try {
       path = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);

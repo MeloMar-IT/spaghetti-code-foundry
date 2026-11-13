@@ -7,7 +7,7 @@ import { emptyState, errorState, explainError, loadingState } from "./states.js"
 /** Every action a line can have; the same names as AUDIT_ACTIONS on the server, by alphabet. */
 export const ACTIONS = ["app-repos-change", "autonomy-demote", "autonomy-promote", "autonomy-promote-request", "block", "component-promote", "create", "credential-add", "credential-remove", "delete", "edit", "flow-publish", "help-action", "help-ask", "help-delete", "help-export", "limits-change", "link",
   "password", "policy-break-glass-end", "policy-break-glass-start", "policy-restore", "refinement-publish", "repo-add", "repo-change", "repo-remove", "repo-transfer", "restart-cancel", "restart-request", "role", "run-answer", "run-approve", "run-archive", "run-cancel", "run-reject",
-  "run-resume", "run-start", "run-unarchive", "safe-point-restore", "settings-change", "sign-in", "skill-auto-approve", "skill-auto-update", "turn-answer", "turn-approve", "turn-reject", "turn-retry", "unblock", "view-as"];
+  "run-resume", "run-start", "run-unarchive", "safe-point-restore", "service-request", "service-token-revoke", "service-token-rotate", "settings-change", "sign-in", "skill-auto-approve", "skill-auto-update", "turn-answer", "turn-approve", "turn-reject", "turn-retry", "unblock", "view-as"];
 
 /** A day from a date field ("2026-10-02") as an ISO time in the browser's time zone: its first moment, or its last with `end`. "" when it is not a real date. */
 export function dayTime(day, end = false) {
@@ -34,7 +34,7 @@ export function auditFilters({ user, action, from, to }) {
 /** The options of the user filter: one per account, by name. */
 export const userOptions = (users) => [...users]
   .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-  .map((u) => ({ value: u.id, label: `${u.name} (${u.email})` }));
+  .map((u) => ({ value: u.id, label: `${u.name} (${u.email ?? "service account"})` }));
 
 /** Who did it: the account's name, "command line" for cli, "not signed in" for anonymous. */
 export function actorText(actor) {
@@ -189,7 +189,14 @@ export function renderAudit(main) {
       return;
     }
     if (my !== starts || !live()) return;
-    mount(user, h("option", { value: "" }, "All users"), userOptions(users).map((o) => h("option", { value: o.value }, o.label)));
+    // service accounts (#866) are not in the list of people; the filter takes them too. A failure leaves them out.
+    try {
+      users = [...users, ...((await api.serviceAccounts())?.accounts ?? [])];
+    } catch {
+      // the people alone still work
+    }
+    if (my !== starts || !live()) return;
+    mount(user,h("option", { value: "" }, "All users"), userOptions(users).map((o) => h("option", { value: o.value }, o.label)));
     await load();
   };
   start();
