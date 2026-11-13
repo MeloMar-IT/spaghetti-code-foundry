@@ -4,6 +4,8 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Docs: `TRADEMARKS.md` (new) names the marks "Spaghetti Code Foundry", "SCF" and the logo, says what is allowed (saying a product is based on the Foundry, sharing it unchanged under its own name) and what is not (naming another product or service with these names, using the logo), and gives a contact. The README's licence section and the website's FAQ and footer link to it. The code is unchanged.
+
 - Hotfix: two follow-ups to the skill-write rebuild, from its first 21 runs. The `screen` step may run as often as `check` (11): with the default of 5, a run that went back to the writer several times failed on it. A rewrite after a review keeps the sample tasks that the measurement showed to tell a run with the skill from one without it, and changes a task only where a blocking point names it: three skills that helped were made easier to pass without the skill by the review rewrite, and then measured as not helping.
 
 - Hotfix: removing the trigger label now also drops a run the watcher had queued for that issue and that has not started yet. Before, the queued run started anyway, spent money and was only parked afterwards, and it ran the flow of the time it was queued. The watcher confirms on GitHub that the issue is open and without the label, and logs `#<n> has no <label> label → queued run <id> is dropped before it started`. Runs queued from the app (an answer, an approval) are left alone.
