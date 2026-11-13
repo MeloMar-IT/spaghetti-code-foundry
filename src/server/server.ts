@@ -76,7 +76,9 @@ import { auditRoutes } from "./api-audit.js";
 import { promotionRoutes } from "./api-promotions.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
-import { serviceAccountRoutes } from "./api-service-accounts.js";
+import { serviceAccountRoutes, checkServiceScope } from "./api-service-accounts.js";
+import { ServiceSupervisor, type ServicesHandle } from "../services/supervisor.js";
+import { hasServiceState } from "../services/setup.js";
 import { auditNetworkRefusal, auditRefused, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
@@ -152,6 +154,8 @@ export interface ApiContext {
   started?: Config;
   /** The plugins, loaded once at start; absent on a context built without startServer. */
   plugins?: PluginRegistry;
+  /** The managed services (#867), started after the server listens; absent on a context built without startServer. */
+  services?: ServicesHandle;
   /**
    * The log without redaction, only for diagnostics the code built itself from fixed words (a file name and a kind),
    * never for exception text. They must stay readable when the credential store is the thing that is broken.
@@ -523,6 +527,26 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   const breakGlassTimer = setInterval(breakGlassTick, BREAK_GLASS_WATCH_MS);
   breakGlassTimer.unref();
   if (opts.watchers !== false) watchers.sync();
+  // Managed services (#867): after the server listens and the watchers are in place; config.yaml as it was at start
+  if (config.services.length || hasServiceState()) {
+    const supervisor = new ServiceSupervisor({
+      services: ctx.started?.services ?? config.services,
+      home: process.env.FACTORY_HOME ?? FACTORY_HOME,
+      runsDir: opts.runsDir,
+      url: localUrl(listen, opts.port),
+      log,
+      checkScope: (scope) => {
+        try {
+          checkServiceScope(scope);
+          return undefined;
+        } catch {
+          return "the scope is not valid";
+        }
+      },
+    });
+    ctx.services = supervisor;
+    supervisor.start();
+  }
   // What the sweeps freed goes to the log and the monitor's activity; the monitor closes the orphan-lock finding at its next check.
   const reportFreed = (s: StaleSweep) => {
     for (const id of s.markers) {
@@ -563,6 +587,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       clearInterval(helpTimer);
       helpTurnsOf(ctx).stopAll();
       void previewsOf(ctx).stopAll();
+      void ctx.services?.stop();
       clearInterval(auditTimer);
       clearInterval(skillTimer);
       clearInterval(gapTimer);

@@ -66,6 +66,27 @@ const ctxOf = (s: Setup = {}): ApiContext => {
 };
 const kinds = (h: ReturnType<typeof health>) => h.problems.map((p) => p.kind);
 
+describe("health(): services (#867)", () => {
+  const view = (name: string, state: string, over: Record<string, unknown> = {}) => ({ name, state, since: NOW.toISOString(), restarts: 0, ...over });
+  it("has no services key without services", () => {
+    expect(health(ctxOf())).not.toHaveProperty("services");
+    const c = ctxOf();
+    c.services = { view: () => [], stop: async () => undefined, stopNow: () => undefined };
+    expect(health(c)).not.toHaveProperty("services");
+  });
+
+  it("lists the services; a refused one is a problem, a running one is not", () => {
+    const c = ctxOf();
+    c.services = { view: () => [view("a", "running"), view("b", "refused", { problem: "the signature does not match the program" })] as never, stop: async () => undefined, stopNow: () => undefined };
+    const h = health(c);
+    expect(h.services).toHaveLength(2);
+    expect(h.summary).toBe("1 problem");
+    expect(h.ok).toBe(false);
+    c.services = { view: () => [view("a", "running")] as never, stop: async () => undefined, stopNow: () => undefined };
+    expect(health(c).ok).toBe(true);
+  });
+});
+
 describe("health(): plugins", () => {
   it("adds nothing without plugins, or when the file matches", () => {
     expect(health(ctxOf())).not.toHaveProperty("pluginProblems");

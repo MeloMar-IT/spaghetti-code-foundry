@@ -2130,6 +2130,23 @@ does not confirm in time. The new server confirms with `GET /api/ready` (loopbac
 checked that `HEAD` and its build stamp are those of the install. A failed go-back is a terminal
 state (`failed.backOk = false`) that a person must repair. The monitor reads the same file. The release check (`release-daily` `verify`) writes `tested/<key>`, with `key` = `printf '%s\n%s\n' <tree> <cmd> | shasum | cut -c1-40`, as the one line `run <id>, <UTC time>, tree <sha>` only for a green run on a clean tree whose `HEAD^{tree}` did not change; self-update skips its test step only when the staged commit's tree and its own test command (alone or after `npm ci && `) match that exact line form, and runs the tests otherwise.
 
+**Managed services (#867).** `ServiceSupervisor` (`src/services/supervisor.ts`) starts the
+`services:` of `config.yaml` in `start()`, after the server listens and the watchers are synced
+(`src/server/server.ts`). Before each start it checks the program (`programProblem`: absolute path
+already checked at load, real path a file, executable, not inside a runs or workspaces folder; with
+`public_key` the detached Ed25519 signature of `<command>.sig`, `signatureProblem`). A failed check puts the
+service in state `refused` with a fixed sentence; a program that exits goes to `waiting`. Both are
+retried with `nextDelay` (1 s, doubling, at most 5 min; a run of `stableMs` resets the count). The
+program is started detached in its own process group with `spawn` and an argument array, never a shell.
+Its environment is a fixed list of system variables, the configured `env`, `SCF_URL` and a fresh
+`SCF_SERVICE_TOKEN` from `serviceToken()` (a managed service account in `services-accounts.json`, next to
+`users.json`; the token is rotated on each start). `reconcileServiceTokens()` revokes what an earlier run
+left. Output goes through `redactStream` with the token and the `env` values to `ServiceLog`
+(`src/services/log.ts`, `<name>.log`, one `.1` file, 5 MB). Stop has two forms: `stop()` (async, on
+shutdown) and `stopNow()` (synchronous, from `withServicesStopped` before a self-update or other
+restart exit). The health answer carries `services` from `view()`, and `scf services` reads
+`GET /api/health`.
+
 ---
 
 ## 15. The web interface

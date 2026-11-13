@@ -3,7 +3,7 @@ import { auditActions } from "../auth/audit.js";
 import { changeDetail, configChanges } from "../auth/audit-changes.js";
 import { emptyRegistry, pluginsView, readFilePlugins } from "../plugins/load.js";
 import { pluginSettingsProblem, settingSections, uiView } from "../plugins/ui.js";
-import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredWebhook } from "./config-view.js";
+import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredServices, withStoredWebhook } from "./config-view.js";
 import { hasIdentityProvider } from "../auth/identity.js";
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -144,7 +144,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       if (typeof body === "object" && body !== null && Object.hasOwn(body, "plugins")) {
         throw new HttpError(400, "plugins are set in config.yaml only: edit the file, then restart the server");
       }
-      const merged = withStoredPlugins(withStoredWebhook(body, before.notify.slack_webhook), before.plugins);
+      if (typeof body === "object" && body !== null && Object.hasOwn(body, "services")) {
+        throw new HttpError(400, "services are set in config.yaml only: edit the file, then restart the server");
+      }
+      const merged = withStoredServices(withStoredPlugins(withStoredWebhook(body, before.notify.slack_webhook), before.plugins), before.services);
       try {
         // Do not let a change shut out the browser that sends it (or the proxy it comes through).
         const parsed = ConfigSchema.parse(merged);

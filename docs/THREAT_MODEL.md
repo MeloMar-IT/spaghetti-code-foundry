@@ -284,6 +284,46 @@ password. This is a deliberate second way in, so it is a standing credential.
 - A route whose admin check sits in its handler and not in the role table was found only for `GET help/usage` and `GET/PUT runs/:id/issue-limit`, which now use `adminOrGranted()`. The other such routes were not reviewed.
 - Tokens are not renewed by the server on their own: a program that is not used for 30 days must be given a new token by an admin.
 
+## Managed services (#867)
+
+**Trust.** A managed service is a program the server starts as the same operating-system user, so
+the trust is that of whoever can edit `config.yaml`. Admins cannot add one from the browser or the
+API: `PUT /api/config` refuses a `services` key and keeps the stored list, and the settings page only
+shows the setting. The list is read at start; a change takes effect at the next restart.
+
+**Protected by.**
+- The program is started with `spawn` and an argument array, never through a shell. `command` is an
+  absolute path with no `.` or `..` parts and no URL (`serviceCommandProblem` in `src/config.ts`), and its
+  real path (symlinks followed) must be a file that can be run and must not be inside a runs or
+  workspaces folder (`programProblem` in `src/services/setup.ts`).
+- The environment is a fixed list of system variables, the configured `env` and two Foundry variables.
+  The server's own secrets (credentials, the GitHub and Slack settings) are not passed. `SCF_` and
+  `FACTORY_` names cannot be set in `env`, so a config cannot override the Foundry's variables.
+- The service token goes in the environment (`SCF_SERVICE_TOKEN`), never on the command line, so `ps`
+  does not show it as an argument (another process of the same user can still read the environment). It is a fresh token of the service's own account on each start (only its SHA-256
+  is stored), and the account has the scope the config names and nothing more (see Service accounts above).
+  The token of a run is revoked when the run stops, and leftovers are revoked at the next start.
+- With `public_key`, `<command>.sig` must be a valid Ed25519 signature of the program file, checked
+  before every start; a file that does not match is not started, and the reason is a fixed sentence on
+  Health. The signature file and the program are read with a size limit (1 KB and 256 MB).
+- The token and the values of `env` are removed from the program's output before it is written to
+  `<data folder>/services/<name>.log`, including when a secret is split between a line and the next
+  one. The log is not shown in the API or on the Health page.
+
+**Limits.**
+- No sandbox: the program has the server user's file access, including the data folder with the stored
+  credentials, as any plugin does. Do not add a program you have not reviewed.
+- The signature is checked against the file at each start, not while the program runs. A file that is
+  changed while it runs goes on until the next restart.
+- Without `public_key` nothing checks the program file.
+- The token is a bearer secret for its scope. The program holds it and can use it on this computer
+  until it is revoked, expires or the program stops. Any other program on the computer can use it once it
+  is read; the loopback check does not tell programs apart (see Service accounts above).
+- Redaction is by exact value: a secret that the program changes (for example encodes it) is not
+  removed from the log.
+- A program that ignores the stop signal is killed after 5 s; a program that starts its own detached
+  processes outside its process group may outlive the stop.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

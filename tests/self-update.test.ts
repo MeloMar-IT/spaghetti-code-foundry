@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { lookupServiceToken } from "../src/auth/service-accounts.js";
+import { ServiceSupervisor, withServicesStopped } from "../src/services/supervisor.js";
 import { ConfigSchema } from "../src/config.js";
 import { SelfUpdater } from "../src/self-update.js";
 import { confirmStart, loadUpdateState, readVersion, saveUpdateState, startGuard } from "../src/self-update-state.js";
@@ -624,6 +626,51 @@ describe("self-update: the record", () => {
     expect(readVersion(plain)).toBeUndefined();
     mkdirSync(join(f.install, "inside"));
     expect(readVersion(join(f.install, "inside"))).toBeUndefined();
+  });
+});
+
+describe("self-update: managed services (#867)", () => {
+  it("stops the services before the exit for the restart", async () => {
+    const program = resolve("tests/fixtures/services/fake-service.mjs");
+    chmodSync(program, 0o755);
+    const outFile = join(tmpdir(), `svc-update-${process.pid}.out`);
+    rmSync(outFile, { force: true });
+    const f = fixture();
+    f.publish({ "app.txt": "v2\n" });
+    const home = process.env.FACTORY_HOME!;
+    const sup = new ServiceSupervisor({
+      services: [{ name: "bot", command: program, args: ["--out", outFile], env: {}, scope: [] }],
+      home, runsDir: join(home, "runs"), url: "http://127.0.0.1:1", log: () => undefined, checkScope: () => undefined, graceMs: 300,
+    });
+    try {
+      sup.start();
+      await until(() => existsSync(outFile) && readFileSync(outFile, "utf8").includes("\n"));
+      const { pid, token } = JSON.parse(readFileSync(outFile, "utf8").split("\n")[0]!) as { pid: number; token: string };
+      const seen: { gone?: boolean; revoked?: boolean } = {};
+      const t = updater(f, {
+        beforeExit: withServicesStopped(() => {
+          // kill(pid, 0) still works on a zombie while the event loop is blocked: ask ps
+          let stat = "";
+          try {
+            stat = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+          } catch {
+            // ps exits 1 when the process is gone
+          }
+          seen.gone = stat === "" || stat.startsWith("Z");
+          seen.revoked = lookupServiceToken(token)?.state !== "live";
+        }, sup),
+      });
+      t.idle = false;
+      await t.u.tick(true);
+      t.idle = true;
+      await t.u.tick(true);
+      expect(t.exits).toEqual([RESTART_CODE]);
+      expect(seen).toEqual({ gone: true, revoked: true });
+      expect(readFileSync(outFile, "utf8")).toContain("term");
+    } finally {
+      await sup.stop();
+      rmSync(outFile, { force: true });
+    }
   });
 });
 
