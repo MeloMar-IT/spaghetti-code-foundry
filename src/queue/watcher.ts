@@ -1421,7 +1421,7 @@ export class Watcher {
     };
     const depHeldBefore = new Set((this.status.holds ?? []).filter((h) => h.next.kind === "dependency" && h.issue !== undefined).map((h) => h.issue!));
     const why = (n: number, normal: string) => (depHeldBefore.has(n) ? "its dependencies are done" : normal);
-    const keepAsking = new Set<number>(); // held for dependencies with open questions: the needs-info label stays
+    const keepAsking = new Set<number>(); // held for dependencies with open questions: the needs-info label stays (a stopped run that asks; an issue without a run only when no /defaults could be taken)
 
     // Open owner_action questions (something only a person can do): a hold with the action, or `met` when every file they wait for is there.
     let fileChecks = 0;
@@ -1619,7 +1619,12 @@ export class Watcher {
         const owner = answered ? undefined : await ownerWait(issue, comments);
         if (owner && "hold" in owner) { holds.push(owner.hold); continue; }
         if (owner) this.act(`#${n} ${owner.met} → it starts`);
-        if (!owner && !answered && this.canTakeDefaults(comments) && (await holdForDeps(issue))) { keepAsking.add(n); continue; }
+        // auto_defaults while it waits for its dependencies: nothing is needed from a person, so the recommendations are taken now.
+        // The needs-info label then goes (dropAnsweredLabels), and the story waits for its dependencies like any other.
+        if (!owner && !answered && this.canTakeDefaults(comments) && (await holdForDeps(issue))) {
+          if (!(await this.takeDefaults(n, comments))) keepAsking.add(n);
+          continue;
+        }
         if (!owner && !answered && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;

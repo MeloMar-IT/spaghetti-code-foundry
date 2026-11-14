@@ -241,6 +241,7 @@ describe("a comment read that does not work changes nothing", () => {
     });
 
     it("auto_defaults with a run: no /defaults, the needs-info label stays", async () => {
+      // The run asked: its own /defaults would not count as an answer at a later check, so it is taken when the run can go on.
       plant("stopped"); issues([4, [TRIGGER, ASKS], DEP], [7, []]); comments(question);
       const w = watcher({ auto_defaults: true });
       await w.tick();
@@ -250,15 +251,27 @@ describe("a comment read that does not work changes nothing", () => {
       expect(log()).not.toContain(`--remove-label ${ASKS}`);
     });
 
-    it("auto_defaults with no run: no /defaults, no start, the label stays", async () => {
+    it("auto_defaults with no run: /defaults now, no start, and the needs-info label goes", async () => {
       issues([4, [TRIGGER, ASKS], DEP], [7, []]); comments(question);
       const w = watcher({ auto_defaults: true });
       await w.tick();
-      expect(log()).not.toContain("comment on #4");
+      expect(log()).toContain("comment on #4");
       expect(submit).not.toHaveBeenCalled();
       expect(hold4(w)).toMatchObject({ next: { kind: "dependency" } });
       expect(hold4(w)?.next.runId).toBeUndefined();
-      expect(log()).not.toContain(`--remove-label ${ASKS}`);
+      expect(log()).toContain(`--remove-label ${ASKS}`);
+      // Without the label it waits like any story, and starts once the dependency is closed; no second /defaults.
+      const own = "/defaults\n\n<!-- spaghetti-code-foundry auto-defaults -->";
+      comments(question, { ...answer, author: { login: "bot" }, body: own });
+      issues([4, [TRIGGER], DEP], [7, []]);
+      const w2 = watcher({ auto_defaults: true });
+      await w2.tick();
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w2)).toMatchObject({ next: { kind: "dependency" } });
+      issues([4, [TRIGGER], DEP], [7, [], undefined, "CLOSED"]);
+      await w2.tick();
+      expect(submit).toHaveBeenCalledWith(expect.objectContaining({ kind: "run" }), expect.anything());
+      expect(log().split("comment on #4").length - 1).toBe(1);
     });
 
     it("without auto_defaults the questions need a person: the run's own hold", async () => {
