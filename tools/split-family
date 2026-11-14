@@ -39,8 +39,10 @@ const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", arg
 let storeForTool;
 let isStoryRepoName;
 let isLocalRepoName;
+let isTrackingEpic;
 try {
   ({ storeForTool, isStoryRepoName, isLocalRepoName } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  ({ isTrackingEpic } = await import(new URL("../dist/queue/issue-list.js", import.meta.url).href));
 } catch (e) {
   fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
 }
@@ -80,10 +82,19 @@ function plainLines(body) {
 }
 
 // The number named by the first Part line, if it is a real issue number and not the issue itself.
-function partOf(body, number) {
+function partLine(body, number) {
   const m = PART_OF.exec(plainLines(String(body ?? "")).join("\n"));
   const n = m ? Number(m[1]) : NaN;
   return Number.isInteger(n) && n >= 1 && n <= MAX_NUMBER && n !== number ? n : undefined;
+}
+
+// The original this issue was split from: the Part line's number, unless that issue is an epic. "Part 4 of 15 of #1"
+// under an epic only says where the story belongs (the same line the epic tracking reads), so it is no split.
+function partOf(body, number) {
+  const n = partLine(body, number);
+  if (n === undefined) return undefined;
+  const parent = node(n);
+  return parent && isTrackingEpic({ number: n, body: parent.body, labels: parent.labels }) ? undefined : n;
 }
 
 // One line, no control characters, no "<" (a title must not fake a <!-- … --> marker), at most 100 characters.
@@ -93,7 +104,7 @@ function title(t) {
 }
 
 const isOpen = (i) => !i.state || String(i.state).toUpperCase() === "OPEN";
-const FIELDS = "number,title,state,body";
+const FIELDS = "number,title,state,body,labels";
 const LIST_FIELDS = "number,title,state,body,labels";
 
 let openList;
@@ -105,6 +116,7 @@ try {
 if (!Array.isArray(openList)) fail(`could not read the open issues of ${repo}`);
 if (openList.length >= LIMIT) fail(`${repo} has ${LIMIT} or more open issues; could not check them all`);
 const open = new Map(openList.filter(isOpen).map((i) => [i.number, i]));
+const nodes = new Map(); // issues read one by one (see node)
 
 const kids = new Map(); // original number → open issues naming it
 for (const i of open.values()) {
@@ -115,7 +127,6 @@ for (const i of open.values()) {
 }
 
 // An issue from the open list, else read on its own (once); undefined when it can't be read.
-const nodes = new Map();
 function node(n) {
   if (open.has(n)) return open.get(n);
   if (!nodes.has(n)) {
