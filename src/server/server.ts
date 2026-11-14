@@ -39,6 +39,7 @@ import { boardRoutes } from "./board.js";
 import { searchRoutes } from "./search.js";
 import { TurnNotifier } from "./notifier.js";
 import { FeedRecorder, feedRoutes } from "./feed.js";
+import { NoticeLog, noticesRoutes } from "./notices.js";
 import { ClarityRecorder, clarityRoutes } from "./clarity.js";
 import { busyRoutes } from "./api-busy.js";
 import { onboardingRoutes } from "./api-onboarding.js";
@@ -166,12 +167,14 @@ export interface ApiContext {
   diagLog?: (msg: string) => void;
   /** The change feed (#868); set by startServer. */
   feed?: FeedRecorder;
+  /** The notices for programs (#871); set by startServer. */
+  notices?: NoticeLog;
 }
 
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 
@@ -573,9 +576,12 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   busyTimer.unref();
   const staleTimer = setInterval(() => reportFreed(sweepStaleRunning(opts.runsDir, (id) => scheduler.isActive(id))), RUNNING_SWEEP_MS);
   staleTimer.unref();
+  const notices = new NoticeLog({ log });
+  ctx.notices = notices;
+  notices.start();
   let notifier: TurnNotifier | undefined;
   if (process.env.FACTORY_NO_NOTIFY !== "1") {
-    notifier = new TurnNotifier(ctx, { baseUrl: localUrl(listen, opts.port), log });
+    notifier = new TurnNotifier(ctx, { baseUrl: localUrl(listen, opts.port), log, record: (n) => notices.record(n) });
     notifier.start();
   }
   const clarity = new ClarityRecorder(ctx, { log });
@@ -610,6 +616,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       clearTimeout(retryTimer);
       scheduler.close();
       notifier?.stop();
+      notices.stop();
       watchers.stopAll();
       stopSignIns();
       void closeTelemetry();

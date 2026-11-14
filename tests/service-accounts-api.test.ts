@@ -86,6 +86,15 @@ describe("a live token", () => {
     expect((await withToken(token, "GET", "/api/help/usage")).status).toBe(200);
   });
 
+  it("lists pause and resume one by one: pause in the scope grants neither resume nor tick", async () => {
+    const made = await makeAccount("Pauser", ["POST watchers/:id/pause"]);
+    const list = await json(await asAdmin("GET", "/api/service-accounts"));
+    for (const key of ["POST watchers/:id/pause", "POST watchers/:id/resume"]) expect(list.grantable).toContainEqual(expect.objectContaining({ key, adminOnly: true }));
+    expect((await withToken(made.token, "POST", "/api/watchers/nope/pause", {}, {})).status).toBe(404);
+    expect((await withToken(made.token, "POST", "/api/watchers/nope/resume", {}, {})).status).toBe(403);
+    expect((await withToken(made.token, "POST", "/api/watchers/nope/tick", {}, {})).status).toBe(403);
+  });
+
   it("keeps the CSRF check for a cookie session", async () => {
     const r = await fetch(`${base}/api/onboarding/progress`, { method: "DELETE", headers: { cookie: admin.cookie } });
     expect(r.status).toBe(403);

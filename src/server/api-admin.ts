@@ -21,6 +21,7 @@ import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
 import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
 import { watcherRows } from "./api-repos.js";
+import { setWatcherEnabled } from "./watcher-pause.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { describeSettings, startupSettings } from "../settings/describe.js";
 import { resolveClaudeBinAsync } from "../steps/claude.js";
@@ -207,6 +208,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       return send(res, 200, rows), true;
     }
     if (seg[1] && seg[2] === "tick" && method === "POST") return send(res, 200, await watchers.runNow(seg[1])), true;
+    if (seg[1] && seg.length === 3 && (seg[2] === "pause" || seg[2] === "resume") && method === "POST") return send(res, 200, setWatcherEnabled(ctx, seg[1], seg[2] === "resume", user.id)), true;
   }
 
   if (seg[0] === "clean" && method === "POST") {

@@ -64,7 +64,7 @@ export function guardedRepos<T>(ctx: ApiContext, fn: () => T): T {
 const WATCHER_STATUS = { "bad-watcher": 400, duplicate: 409, "not-found": 404 } as const;
 
 /** Like guardedRepos, for the watcher store: its input errors become 4xx; a broken store gives the fixed 500. */
-function guardedWatchers<T>(ctx: ApiContext, fn: () => T): T {
+export function guardedWatchers<T>(ctx: ApiContext, fn: () => T): T {
   try {
     return fn();
   } catch (e) {

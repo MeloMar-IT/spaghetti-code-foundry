@@ -195,11 +195,14 @@ describe("against a running server", () => {
   });
 
   it("lists the commands of an area and every call of the server", async () => {
-    expect(areaHelp(ALL, "watchers")).toContain("scf watchers tick <id>  run a watcher's check now");
+    const help = areaHelp(ALL, "watchers");
+    expect(help).toMatch(/scf watchers tick <id>\s+run a watcher's check now/);
+    expect(help).toMatch(/scf watchers pause <id>\s+pause a watcher/);
+    expect(help).toMatch(/scf watchers resume <id>\s+resume a paused watcher/);
     expect((await w.scf(["watchers"])).out).toContain("scf watchers list");
     const routes = await w.scf(["api", "routes", "watchers/:id"]);
-    expect(routes.out.split("\n")).toHaveLength(2);
-    expect(routes.out).toMatch(/POST\s+watchers\/:id\/tick\s+admin\s+admin\s/);
+    expect(routes.out.split("\n")).toHaveLength(4);
+    for (const a of ["tick", "pause", "resume"]) expect(routes.out).toMatch(new RegExp(`POST\\s+watchers/:id/${a}\\s+admin\\s+admin\\s`));
     expect((await w.scf(["api", "routes", "feed"])).out).toMatch(/^GET {5}feed +admin, user/m);
     // the data class of a call (#869), also in the JSON
     const diff = JSON.parse((await w.scf(["api", "routes", "runs/:id", "--json"])).out) as { path: string; data: string }[];

@@ -1370,6 +1370,28 @@ normal routes (`GET /api/your-turn/mine`, `GET /api/runs/:id`, `GET /api/repos`,
 
 From the command line: `scf api GET 'feed?since=812&wait=30'`.
 
+### Notices (API)
+
+`GET /api/notices` gives a program the notices the Mac shows, so it can pass them on. It is a
+long poll like the change feed above, and it needs the `inbox` data class (or the route `GET notices`
+in a service account's scope).
+
+- `?since=<seq>` — the `seq` of your last answer. The first call has no `since`: it answers
+  `reset: true`, no notices and the current `seq`; from then on, ask with that `seq`.
+- `?wait=<seconds>` — 0 to 30. The call is held until a notice is recorded, or the time is up.
+- The answer is `{ "seq": 57, "notices": [{ "seq": 57, "kind": "turn", "at": "2026-11-13T10:02:11.000Z", "title": "…", "text": "…", "key": "…", "runId": "…", "link": "https://…/#/your-turn" }] }`.
+  A notice has no `key`, `runId` or `link` when it has none.
+- `kind` — `turn` (a Your turn item is new or changed; the text is the one the Mac shows for that item),
+  `done` (a run succeeded; only when "Also notify when a run succeeds" is on) or `summary` (the daily summary).
+  `key` is the item's opaque key, as `GET /api/your-turn/mine` shows it.
+- `link` — the public address (**Public address** in Settings, see Network) when it is set, otherwise
+  this Mac's address.
+- Notices are recorded whether or not a macOS or Slack channel is set. With `FACTORY_NO_NOTIFY=1` the
+  notifier is off and nothing is recorded.
+- Known secret values are redacted from `title`, `text` and `link`.
+- Notices are kept for 7 days. A `since` older than that, or newer than `seq`, answers `reset: true`
+  with no notices: read the current state through the normal routes, then keep the new `seq`.
+
 ### Search (API)
 
 `GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
@@ -3395,6 +3417,7 @@ The page uses these routes. A watcher stored for a connected repository has the 
 repository. The source `monitor` is not allowed.
 
 - **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. A described variable whose value does not fit its kind or range is refused (400, the message names the variable, as `vars.<name>: …`); a stored value that is already out of range still runs and is refused only when the watcher is saved again. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
+- **Pause and resume:** `POST /api/watchers/:id/pause` and `POST /api/watchers/:id/resume` (admins; `scf watchers pause <id>`, `scf watchers resume <id>`) do what **Disable** and **Enable** do on the Watchers page: a paused watcher checks nothing and starts no new run, and runs that are queued or going on go on. The answer is `{ id, repoId, github_repo, enabled, state }` and does not include the watcher's other settings. An unknown id gives 404. A watcher kept in `config.yaml` (the monitor) or one whose repository is gone gives 409; change the monitor in the settings. A real change writes a `repo-change` audit line, "watcher <id>: paused" or "watcher <id>: resumed". A service account needs each route in its scope on its own: pause does not give resume.
 - **Which repositories:** GitHub only, with the sign-in `none` (the owner is an admin), `github-token` or `github-app`. `ssh-deploy-key`, `https-token` and other addresses are refused.
 - **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
 - **Runs** belong to the repository's owner, so they show under **Changes** for that user.
@@ -5676,6 +5699,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/restart` | yes | no | secret | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
 | `GET /api/watchers` | yes | no | admin | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | admin | run a watcher now |
+| `POST /api/watchers/:id/pause` | yes | no | admin | pause a watcher of a repository, as Disable on the Watchers page: it checks nothing and starts no new run; runs that are going on go on; answers its id, repository, `enabled` and state; a watcher in `config.yaml` answers 409; writes an audit line |
+| `POST /api/watchers/:id/resume` | yes | no | admin | resume a paused watcher of a repository, as Enable; answers as pause; writes an audit line |
 | `GET /api/governor` | yes | no | admin | the load governor for the Overview page: the runs at once now and the caps that hold with their reasons, the free cores, the load of other programs with the top 5 programs by name, the Foundry's own load, and the changes of the cap in the last 24 hours; admins only, as it names programs |
 | `GET /api/busy` | yes | no | admin | busy mode ("I'm using this machine"): whether it holds, the switch set by hand (since, until) and the program of `governor.busy_apps` that is running |
 | `POST /api/busy` | yes | no | admin | switch busy mode on: at most `governor.busy_runs` runs at once and new run processes start at background priority; `hours` (above 0, at most 24) sets an end, without it busy mode stays on until it is switched off |
@@ -5749,6 +5774,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/search` | yes | yes | summary | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
 | `GET /api/since` | yes | no | summary | what changed since a time |
 | `GET /api/feed` | yes | yes | summary | what changed since `since` (the `seq` of your last answer): `{ seq, changes: [{ kind, id, at }] }` with the kinds `turn` (a Your turn item), `run`, `repo` and `change` (a change request), never any detail; `wait` (0 to 30 seconds) holds the call until a change you may read is recorded; `reset: true` when `since` is missing or older than what is kept (changes younger than 24 hours and the newest 10,000 are kept, within a hard cap of 20,000); only what you may read, and a service account only the kinds whose read route is in its scope; read the details through their own routes |
+| `GET /api/notices` | yes | no | inbox | the notices the Mac shows, for programs: `{ seq, notices: [{ seq, kind, at, title, text, key, runId, link }] }` after `since` (the `seq` of your last answer); one notice per Your turn item (`turn`), per run that succeeded (`done`, when success notices are on) and per daily summary (`summary`), with the text the Mac shows and a link that uses the public address when it is set; `wait` (0 to 30 seconds) holds the call until a notice is recorded; `reset: true` when `since` is missing or older than what is kept (7 days); known secret values are redacted; admin only, or a service account whose scope has `GET notices` or `class:inbox`; refused (403) to a service account while a repository is closed to service accounts |
 | `GET /api/your-turn` | yes | no | inbox | what waits for you |
 | `POST /api/your-turn/dismiss` | yes | no | inbox | dismiss an item |
 | `POST /api/your-turn/restore` | yes | no | inbox | restore dismissed items; with `{ "key": "…" }` only that item |
