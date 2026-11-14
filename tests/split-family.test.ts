@@ -68,6 +68,23 @@ describe("tools/split-family", () => {
     }
   });
 
+  it("does not count a Part line that points at an epic as a split", () => {
+    const epic: Fake = { number: 1, title: "Epic: Cloud", body: "### Stories\n- [ ] #4\n- [ ] #5\n- [ ] #6" };
+    const story = (n: number, k: number) => ({ number: n, body: `Part ${k} of 3 of #1.\n\nAs a user…` });
+    const issues: Fake[] = [epic, story(4, 1), story(5, 2), story(6, 3)];
+    const asStory = family(issues, 5);
+    expect(asStory.status).toBe(0);
+    expect(asStory.last).toBe("FAMILY: none");
+    const asEpic = family(issues, 1);
+    expect(asEpic.status).toBe(0);
+    expect(asEpic.last).toBe("FAMILY: none");
+    // A closed epic is read on its own and still counts as an epic.
+    expect(family([{ ...epic, state: "closed" }, story(5, 2)], 5).last).toBe("FAMILY: none");
+    // A real split of a story under the epic is still a split.
+    const split = family([...issues, { number: 7, body: part(1, 2, 5) }], 7);
+    expect(split.last).toBe("FAMILY: part");
+  });
+
   it("says none for an issue with no Part line and no open parts", () => {
     const r = family([{ number: 5 }, { number: 6, body: part(1, 2, 7) }], 5);
     expect(r.status).toBe(0);
