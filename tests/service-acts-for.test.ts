@@ -126,13 +126,13 @@ describe("the acting user", () => {
   it("is what serviceCaller gives the request, and the audit lines name the person by id", async () => {
     const ann = await person("Ann", "ann@example.com");
     const { account, token } = createServiceAccount({ name: "Robot", scope: ["GET runs"], actsFor: ann.id });
-    const call = newServiceCall(token!, "GET", ["runs"]);
+    const call = newServiceCall(token!, "GET", ["runs"], "tablet");
     const user = serviceCaller(ctx, local("/api/runs"), call, undefined);
     expect(user.id).toBe(ann.id);
     expect(call.account!.id).toBe(account.id);
     expect(call.actingId).toBe(ann.id);
     serviceOk(ctx, call);
-    expect((await audit())[0]).toMatchObject({ by: account.id, result: "ok", detail: `acts for ${ann.id}` });
+    expect((await audit())[0]).toMatchObject({ by: account.id, result: "ok", detail: `acts for ${ann.id}; client tablet` });
 
     await setStatus(ann.id, "blocked");
     const refused = newServiceCall(token!, "GET", ["runs"]);

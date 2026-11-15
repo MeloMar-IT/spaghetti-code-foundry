@@ -122,6 +122,8 @@ describe("pure functions", () => {
     });
     expect(ui.auditFilters({ user: "", action: "edit", from: "", to: "" })).toEqual({ action: "edit" });
     expect(ui.auditFilters({ user: "", action: "", from: "2026-02-31", to: "" })).toEqual({});
+    expect(ui.auditFilters({ user: "", action: "", client: " Kitchen ", from: "", to: "" })).toEqual({ client: "Kitchen" });
+    expect(ui.auditFilters({ user: "", action: "", client: "  ", from: "", to: "" })).toEqual({});
   });
   it("userOptions", () => {
     expect(ui.userOptions(users)).toEqual([{ value: "u1", label: "Ann (ann@example.com)" }, { value: "u2", label: "Bob (bob@example.com)" }]);
@@ -192,6 +194,10 @@ describe("detail row", () => {
     expect(ui.detailFields(entry({ target: null }))[3]).toEqual({ label: "Target", value: "—" });
     expect(ui.detailFields(entry({ target: { type: "text", text: "" } }))[3]).toEqual({ label: "Target", value: "—" });
   });
+  it("detailFields shows the client label of a service line only when there is one", () => {
+    expect(ui.detailFields(entry({ client: "Kitchen tablet" })).at(-1)).toEqual({ label: "Client", value: "Kitchen tablet" });
+    expect(ui.detailFields(entry({})).map((x: any) => x.label)).not.toContain("Client");
+  });
   it("opens under the line with every field and no extra call, and Hide closes it", async () => {
     entries = [entry({ target: account("u9", "Cy"), detail: "x -> y" }), entry({ action: "edit" })];
     await show();
@@ -260,15 +266,16 @@ describe("filters", () => {
   });
   it("reloads on every change without redrawing the bar", async () => {
     await show();
-    const [user, action, from, to] = ["user", "action", "from", "to"].map(field);
+    const [user, action, client, from, to] = ["user", "action", "client", "from", "to"].map(field);
     await change("user", "u1");
     await change("action", "sign-in");
+    await change("client", "Kitchen");
     await change("from", "2026-10-01");
     await change("to", "2026-10-02");
-    expect(gets).toHaveLength(6);
+    expect(gets).toHaveLength(7);
     expect(gets.filter((g) => g === "/api/users")).toHaveLength(1);
-    expect(gets.at(-1)).toBe(`/api/audit?user=u1&action=sign-in&from=${enc(ui.dayTime("2026-10-01"))}&to=${enc(ui.dayTime("2026-10-02", true))}`);
-    expect([field("user"), field("action"), field("from"), field("to")]).toEqual([user, action, from, to]);
+    expect(gets.at(-1)).toBe(`/api/audit?user=u1&action=sign-in&client=Kitchen&from=${enc(ui.dayTime("2026-10-01"))}&to=${enc(ui.dayTime("2026-10-02", true))}`);
+    expect([field("user"), field("action"), field("client"), field("from"), field("to")]).toEqual([user, action, client, from, to]);
     expect(rows()).toHaveLength(1);
   });
   it("drops the old rows while the new list loads", async () => {

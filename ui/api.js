@@ -76,9 +76,9 @@ export const START_TIMEOUT_MS = 180000;
 /** How long a read or save of the guide's place may take: a stalled one must not hold the guide's buttons. */
 export const PROGRESS_TIMEOUT_MS = 15000;
 
-/** The audit filters as a query: only the ones that are set, in the order user, action, from, to. "" for none. */
+/** The audit filters as a query: only the ones that are set, in the order user, action, client, from, to. "" for none. */
 const auditQuery = (f = {}) => {
-  const q = ["user", "action", "from", "to"].filter((k) => f[k]).map((k) => `${k}=${enc(f[k])}`).join("&");
+  const q = ["user", "action", "client", "from", "to"].filter((k) => f[k]).map((k) => `${k}=${enc(f[k])}`).join("&");
   return q ? `?${q}` : "";
 };
 
