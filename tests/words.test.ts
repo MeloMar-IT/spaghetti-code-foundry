@@ -61,6 +61,9 @@ describe("glossary", () => {
     expect(statusName("dependency", { blockers: [87, 88] })).toBe("waiting for #87, #88");
     expect(statusName("dependency", { blockers: [] })).toBe("waiting for another story");
     expect(statusName("dependency")).toBe("waiting for another story");
+    expect(statusName("dependency", { blockers: ["acme/lib#3", 5] })).toBe("waiting for acme/lib#3, #5");
+    expect(statusName("dependency", { blockers: ["acme/lib#3"], dropped: ["acme/lib#3"] })).toBe("waiting for you — acme/lib#3 closed as not planned");
+    expect(statusHelp("dependency", { dropped: ["acme/lib#3"] })).toMatch(/^It needs acme\/lib#3, .*not planned.*\. Reopen it/);
   });
 
   it("has two sentences of help for every kind", () => {

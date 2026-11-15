@@ -249,6 +249,34 @@ describe("next-step records, one per kind", () => {
     expect(dep(nextStep("release", { issue: 88 }, { releaseAt: "17:00" }))).toBe("#89 waits for #88, which waits for the 17:00 release");
   });
 
+  it("names an issue of another repository it waits for", () => {
+    const n = nextStep("dependency", { repo: "acme/app", issue: 7 }, { blockers: [{ issue: 3, repo: "acme/lib" }] });
+    expect(n.why).toBe("#7 waits for acme/lib#3, which is to be done");
+    expect(n.until).toBe("after acme/lib#3");
+    expect(n.who).toBe("Another story");
+    expect(n.status).toBe("waiting for acme/lib#3");
+    expect(needsUser(n)).toBe(false);
+    // the same number in this repository and in another one are two issues
+    const both = nextStep("dependency", { issue: 7 }, { blockers: [{ issue: 3 }, { issue: 3, repo: "acme/lib" }] });
+    expect(both.why).toBe("#7 waits for #3, acme/lib#3 (to be done first)");
+    expect(both.status).toBe("waiting for #3, acme/lib#3");
+  });
+
+  it("puts a story whose other-repository dependency was closed as not planned in Your turn", () => {
+    const n = nextStep("dependency", { repo: "acme/app", issue: 4 }, { blockers: [{ issue: 3, repo: "acme/lib", notPlanned: true }, { issue: 9 }] });
+    expect(n.who).toBe("You");
+    expect(n.why).toBe("acme/lib#3 was closed as not planned");
+    expect(n.action).toBe("Reopen acme/lib#3, or take it out of Depends on of #4");
+    expect(n.until).toBeUndefined();
+    expect(n.status).toBe("waiting for you — acme/lib#3 closed as not planned");
+    expect(needsUser(n)).toBe(true);
+    // one level down: the story that waits names where to act
+    const up = nextStep("dependency", { issue: 5 }, { blockers: [{ issue: 4, next: n }] });
+    expect(up.who).toBe("Another story");
+    expect(up.why).toBe("#5 waits for #4, which waits for acme/lib#3, which was closed as not planned and #9, which is to be done");
+    expect(up.text).toContain("once you've handled acme/lib#3");
+  });
+
   it("says how to undo a wrong epic match, also as a blocker", () => {
     const n = nextStep("epic", { repo: "acme/app", issue: 7, title: "t" }, { watched: true, issueUrl: ISSUE });
     expect(n.who).toBe("Foundry");

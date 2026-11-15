@@ -303,8 +303,8 @@ export function ownRecord(rec: NextStep, mine: (runId: string) => boolean): Next
     }
   }
   if (out.blockers) {
-    // Every blocker is cut to its issue number: what it waits for in turn may be another account's run.
-    const blockers = out.blockers.map((b) => ({ issue: b.issue }));
+    // Every blocker is cut to its issue number (and repository): what it waits for in turn may be another account's run.
+    const blockers = out.blockers.map((b) => ({ issue: b.issue, ...(b.repo ? { repo: b.repo } : {}), ...(b.notPlanned ? { notPlanned: true as const } : {}) }));
     const again = nextStep("dependency", { repo: out.repo, issue: out.issue, title: out.title, runId: out.runId }, { blockers });
     out = { ...out, blockers, why: again.why, text: again.text };
   }

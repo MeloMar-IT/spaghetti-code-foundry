@@ -163,8 +163,14 @@ const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.n
     num=${all#*/issues/}; num=${num%% *}
     node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}const b=JSON.parse(s);if(b.title!==undefined)i.title=b.title;if(b.body!==undefined)i.body=b.body;const now=new Date().toISOString();if(b.state!==undefined){i.state=b.state;i.state_reason=b.state_reason??(b.state==="closed"?"completed":null);i.closed_at=b.state==="closed"?now:null}i.updated_at=now;fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- "+(b.state!==undefined?"closed":"updated")+" issue "+i.number+" (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$num"
     exit $? ;;
+  # $FAKE_GH_REPO_ISSUES (JSON {"owner/name": [RestIssue, …]}): a read of an issue of a listed repository answers from its list (404 when it is not there).
   "api repos/"*"/issues/"[0-9]*)
     api_fail read
+    if [ -n "$FAKE_GH_REPO_ISSUES" ]; then
+      ri_repo=${all#api repos/}; ri_repo=$(echo "$ri_repo" | cut -d/ -f1-2)
+      node -e 'const m=JSON.parse(process.env.FAKE_GH_REPO_ISSUES);const l=m[process.argv[1]];if(l===undefined)process.exit(3);const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify(i))' "$ri_repo" "${all##*/issues/}"
+      rc=$?; [ "$rc" -ne 3 ] && exit "$rc"
+    fi
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify(i))' "$FAKE_GH_LOG.issues.json" "${all##*/issues/}"
     exit $? ;;
   # A pull request by number, from $FAKE_GH_LOG.pulls.json (a list of { number, state, merged }); 404 when the number is not in it.

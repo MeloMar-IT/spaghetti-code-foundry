@@ -128,7 +128,7 @@ function unblocksOf(repo: string, roots: number[], deps: TurnSource[], own = fal
   for (const d of deps) {
     const n = d.next.issue;
     if (d.next.repo !== repo || n === undefined) continue;
-    for (const b of d.next.blockers ?? []) (dependents.get(b.issue) ?? dependents.set(b.issue, new Set()).get(b.issue)!).add(n);
+    for (const b of d.next.blockers ?? []) if (!b.repo) (dependents.get(b.issue) ?? dependents.set(b.issue, new Set()).get(b.issue)!).add(n);
   }
   const seen = new Set<number>();
   const todo = [...roots];
