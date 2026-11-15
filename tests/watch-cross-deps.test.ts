@@ -88,7 +88,7 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     expect(w.status.lastError).toBeUndefined();
     const h = hold(w)!;
     expect(h.next.kind).toBe("dependency");
-    expect(h.next.blockers).toEqual([{ issue: 3, repo: "acme/lib" }]);
+    expect(h.next.blockers).toEqual([{ issue: 3, repo: "acme/lib", url: "https://github.com/acme/lib/issues/3" }]);
     expect(h.next.who).not.toBe("You");
     expect(needsUser(h.next)).toBe(false);
     expect(h.reason).toContain("#4 waits for acme/lib#3, which is to be done");

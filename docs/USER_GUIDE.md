@@ -842,7 +842,7 @@ when the findings file cannot be read): counts only, never a name.
 
 - **Columns:** *Your turn* (something waits for you; here it also holds a run you stopped yourself, which Your turn on Today does not show), *Waiting for another story*, *Queued* (also paused by a limit), *Planning*, *Coding*, *Reviewing*, *Merging* (also finished work that waits for the scheduled release), *Done* (grouped Today and This week) and *Failed*.
 - **Which stories show:** every issue a watcher tracks, at any age. Other runs on an issue show for 7 days after they end. Done shows the last 7 days. Evaluation runs and runs without an issue never show.
-- **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"). A bug story has a "goes first" mark. Click the card to open its change page. A story that has no run yet is not a link; use the issue link on it.
+- **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"; a story in another repository is shown as an `owner/name#N` link). A bug story has a "goes first" mark. Click the card to open its change page. A story that has no run yet is not a link; use the issue link on it.
 - **Owner (admins):** a card that has a run shows the owner's name, `deleted user` when the account is gone, and nothing for a card without a run or owner. **All owners** above the board hides the cards of other owners in the page; it makes no new call. Users see no owner name.
 - **Highlight:** "What is in the way of #89?" marks the whole chain of stories that hold it back and dims the others. The line above the board lists the chain, also stories that have no card. **Show all** clears it.
 - **Narrow screens (below 768 px):** the board shows one column at a time. A picker named **Column** above it lists every column with its card count; the first column with cards shows by default. Your choice stays when the board refreshes, and if that column goes away the first column with cards shows. The owner filter and the highlight work as before; while a chain is highlighted, the picker marks the columns that hold cards of the chain. From 768 px up the board is unchanged.
@@ -4320,6 +4320,9 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   The other issue is read with that repository's own sign-in (at most 20 reads per check). When it
   is closed as not planned, the story shows in Your turn with the reason, because it will never be
   done; reopen it or take it out of **Depends on**.
+  A blocker in another repository is shown as an `owner/name#72` link to its issue on GitHub (it opens
+  in a new tab), on the Work page, in the story panel, on the run page under "What happens next" and
+  on the Board. A blocker in this repository is shown as `#72`, as before.
   So you can put `Factory_go` on a whole chain at once; each story is planned and coded on top of
   the code of the one before it.
   A story that has stopped (questions, approval, usage limit, budget) also waits there: it is not

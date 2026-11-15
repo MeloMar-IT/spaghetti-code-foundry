@@ -169,6 +169,56 @@ describe("panelView", () => {
   });
 });
 
+describe("a blocker of another repository", () => {
+  const URL = "https://github.com/acme/lib/issues/3";
+  const prefs = { layout: "board", props: ["next", "blockers"], compact: false };
+  const cross = (issue: number, after: number[]) => withTitles(waits(issue, after, {
+    next: nextStep("dependency", { repo: "acme/app", issue, title: `Story ${issue}`, runId: `r${issue}` }, { watched: true, blockers: [...after.map((i) => ({ issue: i })), { issue: 3, repo: "acme/lib" }] }),
+  }));
+  const links = (el: FakeElement) => el.all("a").filter((a) => a.textContent === "acme/lib#3");
+  const hrefs = (el: FakeElement) => el.all("a").map((a) => a.attrs.href);
+
+  it("a card blocked only by it says Blocked, links it, and offers What is in the way?", () => {
+    const onLeave = vi.fn();
+    const item = cross(89, []);
+    const el = b.workCard(item, prefs, { onLeave });
+    expect(el.textContent).toContain("Blocked");
+    expect(el.textContent).toContain("Blocked by acme/lib#3");
+    const [a] = links(el);
+    expect(a.attrs).toMatchObject({ href: URL, target: "_blank", rel: "noopener" });
+    a.click();
+    expect(onLeave).toHaveBeenCalledWith(item);
+    expect(el.querySelectorAll("[data-way]")).toHaveLength(1);
+  });
+
+  it("a list row shows it after the blockers of this repository, both as links, with the button", () => {
+    const rows = l.listView([{ id: "x", title: "X", items: [cross(89, [5])] }], { ...prefs, props: ["blockers"] }, {});
+    const after = rows[0].all("td").at(-1) as FakeElement;
+    expect(after.textContent).toBe("#5, acme/lib#3");
+    expect(after.all("a").map((a) => a.attrs.href)).toEqual(["https://github.com/acme/app/issues/5", URL]);
+    expect(rows[0].querySelectorAll("[data-way]")).toHaveLength(1);
+  });
+
+  it("the panel lists it as in another repository, not Nothing is in the way", () => {
+    const item = cross(89, []);
+    const el = p.panelView(item, [item], { now: NOW });
+    expect(el.textContent).not.toContain("Nothing is in the way.");
+    const li = el.all("li");
+    expect(li).toHaveLength(1);
+    expect(li[0].textContent).toBe("acme/lib#3 in another repository directly");
+    expect(links(el)[0].attrs).toMatchObject({ href: URL, "data-focus": "work-panel-cross-0" });
+  });
+
+  it("a card of this repository only looks as before", () => {
+    const item = withTitles(waits(89, [88]));
+    const el = b.workCard(item, prefs, {});
+    expect(el.textContent).toContain("Blocked by #88");
+    expect(hrefs(el)).toEqual(["https://github.com/acme/app/issues/89", "https://github.com/acme/app/issues/88"]);
+    const panel = p.panelView(item, [item], { now: NOW });
+    expect(panel.textContent).not.toContain("in another repository");
+  });
+});
+
 describe("the button", () => {
   const prefs = { layout: "board", props: [], compact: false };
   const way = (el: FakeElement) => el.querySelectorAll("[data-way]");

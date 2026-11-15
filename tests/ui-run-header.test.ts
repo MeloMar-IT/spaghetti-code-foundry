@@ -452,3 +452,45 @@ describe("the page", () => {
     delete (globalThis as any).EventSource;
   });
 });
+
+describe("a run that waits for an issue of another repository", () => {
+  const URL = "https://github.com/acme/lib/issues/3";
+  const waiting = (out: string) => {
+    const r = base({
+      status: "stopped", reason: 'stopped at step "wait_for_story" — needs attention', vars: { github_repo: "acme/app", issue: "7" },
+      history: [{ id: "wait_for_story", type: "shell", visit: 1, ok: true, output: out }],
+    });
+    return base({ ...r, next: runNextStep(r as never, { watched: true }) });
+  };
+  const show = (s: any) => {
+    const head = rh.createRunHeader({ admin: false, onAction: () => {} });
+    head.update(s, {});
+    return head;
+  };
+  // the links to an issue other than the run's own #7 (the header links that one in any case)
+  const issueLinks = (head: any) => head.el.all("a").filter((a: FakeElement) => /\/issues\/|^javascript:/.test(a.attrs.href ?? "") && !(a.attrs.href ?? "").endsWith("/issues/7"));
+  const crossSpans = (head: any) => head.el.all("span").filter((s: FakeElement) => s.attrs.class === "cross-blockers");
+
+  it("shows the blocker as a link to its issue on GitHub", () => {
+    const links = issueLinks(show(waiting("WAITS_FOR: #12, acme/lib#3\nPARKED")));
+    expect(links.map((a: FakeElement) => a.attrs.href)).toEqual([URL]);
+    expect(links[0].textContent).toBe("acme/lib#3");
+    expect(links[0].attrs.target).toBe("_blank");
+    expect(links[0].attrs.rel).toBe("noopener");
+  });
+
+  it("a wait for an issue of the same repository only shows no link", () => {
+    const head = show(waiting("WAITS_FOR: #12\nPARKED"));
+    expect(issueLinks(head)).toEqual([]);
+    expect(crossSpans(head)).toEqual([]);
+  });
+
+  it("does not link a url that is not the GitHub page of that issue", () => {
+    for (const url of ["javascript:alert(1)", "https://evil.example/acme/lib/issues/3", "https://github.com/acme/lib/issues/4", "http://github.com/acme/lib/issues/3"]) {
+      const rec = nextStep("dependency", { repo: "acme/app", issue: 7 }, { blockers: [{ issue: 3, repo: "acme/lib" }] });
+      const head = show(base({ status: "stopped", next: { ...rec, blockers: [{ issue: 3, repo: "acme/lib", url }] } }));
+      expect(issueLinks(head), url).toEqual([]);
+      expect(crossSpans(head), url).toEqual([]);
+    }
+  });
+});

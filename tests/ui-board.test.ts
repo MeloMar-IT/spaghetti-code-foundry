@@ -54,6 +54,34 @@ const view = (d: unknown, wanted?: string, h = handlers()) => {
 const find = (root: FakeElement, tag: string, cls: string): FakeElement[] => root.all(tag).filter((e) => (e.attrs.class ?? "").split(" ").includes(cls));
 const cardEl = (root: FakeElement) => find(root, "div", "board-card");
 
+describe("cardView: a blocker of another repository", () => {
+  const URL = "https://github.com/acme/lib/issues/3";
+  const crossNext = (blockers: any[]) => nextStep("dependency", { repo: "acme/app", issue: 89, title: "Eighty-nine", runId: "r89" }, { watched: true, blockers });
+  const deps = (el: FakeElement) => find(el, "div", "board-deps")[0];
+
+  it("is linked after the blockers of this repository", () => {
+    const h = handlers();
+    const c = card({ next: crossNext([{ issue: 88 }, { issue: 3, repo: "acme/lib" }]) });
+    const el = ui.cardView(c, "acme/app", { lit: null, ...h });
+    expect(deps(el).textContent).toBe("after #88, acme/lib#3");
+    const a = deps(el).all("a").at(-1) as FakeElement;
+    expect(a.attrs).toMatchObject({ href: URL, target: "_blank", rel: "noopener", "data-focus": "card-acme/app#89-cross-0" });
+    a.click();
+    expect(h.onLeave).toHaveBeenCalledWith(c);
+  });
+
+  it("shows the line also when it is the only blocker; a card of this repository only is as before", () => {
+    const only = ui.cardView(card({ after: [], chain: [], next: crossNext([{ issue: 3, repo: "acme/lib" }]) }), "acme/app", { lit: null, ...handlers() });
+    expect(deps(only).textContent).toBe("after acme/lib#3");
+    const same = ui.cardView(card(), "acme/app", { lit: null, ...handlers() });
+    expect(deps(same).textContent).toBe("after #88");
+    expect(deps(same).all("a").map((a) => a.attrs.href)).toEqual(["https://github.com/acme/app/issues/88"]);
+    // a url that is not the page of that issue is not linked
+    const bad = card({ after: [], next: { ...crossNext([]), blockers: [{ issue: 3, repo: "acme/lib", url: "javascript:alert(1)" }] } });
+    expect(deps(ui.cardView(bad, "acme/app", { lit: null, ...handlers() }))).toBeUndefined();
+  });
+});
+
 describe("boardView", () => {
   it("shows the nine columns with counts and the card text", () => {
     const root = view(board());

@@ -4,7 +4,7 @@ import { h, mount } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, withQuery } from "./filters.js";
 import { ALL_REPOS } from "./ia.js";
 import { keepScroll, liveStates, poller } from "./live.js";
-import { whereLink } from "./next.js";
+import { crossBlockers, crossLink, whereLink } from "./next.js";
 import { fieldFocused, ownerLabel } from "./runs.js";
 import { boardPage } from "./templates.js";
 import { pageViews } from "./views.js";
@@ -34,6 +34,7 @@ export function cardView(card, repo, { lit, onChain, onLeave }) {
   const n = card.next;
   const k = card.key;
   const link = (issue, focus) => issueLink(repo, issue, () => onLeave(card), focus);
+  const cross = crossBlockers(n);
   const open = () => { globalThis.location.hash = `#/runs/${card.runId}`; };
   const own = card.runId && n.where?.url === `#/runs/${card.runId}`;
   const cls = ["board-card", card.runId ? "link" : "", lit ? (lit.has(card.issue) ? "chain" : "dim") : ""].filter(Boolean).join(" ");
@@ -46,8 +47,11 @@ export function cardView(card, repo, { lit, onChain, onLeave }) {
     h("div", { class: "muted" }, plainServerText(n.text)),
     card.step ? h("div", { class: "board-step" }, card.step) : null,
     ownerLabel(card.ownerName) ? h("div", { class: "muted board-owner" }, `Owner: ${ownerLabel(card.ownerName)}`) : null,
-    card.after.length
-      ? h("div", { class: "board-deps muted" }, "after ", ...card.after.flatMap((i, j) => [j ? ", " : null, link(i, `card-${k}-after-${i}`)]))
+    card.after.length || cross.length
+      ? h("div", { class: "board-deps muted" }, "after ", ...[
+        ...card.after.map((i) => link(i, `card-${k}-after-${i}`)),
+        ...cross.map((c, j) => crossLink(c, { focus: `card-${k}-cross-${j}`, onClick: () => onLeave(card) })),
+      ].flatMap((l, j) => [j ? ", " : null, l]))
       : null,
     !own && n.where?.label ? h("div", { "data-a11y-skip": "stop", onClick: (e) => e?.stopPropagation?.() }, whereLink(n.where, `card-${k}-where`)) : null,
     card.chain.length

@@ -103,6 +103,34 @@ export function timingParts(n, { progress = true } = {}) {
 /** When it continues and how long it takes, for one-line lists. `progress: false` leaves out the step count ("Step 2 of 9"). */
 export const whenParts = (n, opts) => [untilPart(n), ...timingParts(n, opts)].filter(Boolean);
 
+// The same rules as validGithubName on the server (src/auth/repo-url.ts).
+const GITHUB_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const githubName = (name) => typeof name === "string" && GITHUB_NAME.test(name) && !name.endsWith("/.") && !name.endsWith("/..") && name.toLowerCase() !== "owner/repo";
+
+/**
+ * The direct blockers of another repository of a record: [{ ref: "owner/name#N", url }], in the server's order, each once.
+ * Only a url the server set and that is exactly the GitHub page of that issue is kept; nothing is built here. Pure.
+ */
+export function crossBlockers(n) {
+  const out = [];
+  const seen = new Set();
+  for (const b of Array.isArray(n?.blockers) ? n.blockers : []) {
+    if (!b?.repo || !githubName(b.repo) || !Number.isSafeInteger(b.issue) || b.issue < 1) continue;
+    if (typeof b.url !== "string" || b.url !== `https://github.com/${b.repo}/issues/${b.issue}`) continue;
+    const ref = `${b.repo}#${b.issue}`;
+    if (seen.has(ref.toLowerCase())) continue;
+    seen.add(ref.toLowerCase());
+    out.push({ ref, url: b.url });
+  }
+  return out;
+}
+
+/** The link of a blocker of another repository (an item of crossBlockers); opens GitHub in a new tab. */
+export const crossLink = (c, { focus, onClick } = {}) => h("a", {
+  href: c.url, target: "_blank", rel: "noopener", class: "mono", "data-focus": focus,
+  onClick: (e) => { e?.stopPropagation?.(); onClick?.(); },
+}, c.ref);
+
 /** The note on a record whose issue could not be checked on GitHub. */
 export const ISSUE_UNCHECKED = "The state of the issue on GitHub could not be checked";
 
@@ -110,6 +138,7 @@ export const ISSUE_UNCHECKED = "The state of the issue on GitHub could not be ch
 export function nextParts(n, { ref = true, status = true, focus } = {}) {
   const issueOk = ref && n.issue && /^[\w.-]+\/[\w.-]+$/.test(n.repo ?? "");
   const name = (part) => (focus ? `${focus}-${part}` : undefined);
+  const cross = n.kind === "dependency" ? crossBlockers(n) : [];
   return [
     h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)),
     ...(status ? nextStatus(n, name("help")) : []),
@@ -117,6 +146,7 @@ export function nextParts(n, { ref = true, status = true, focus } = {}) {
     ref && n.title ? h("span", { class: "hold-title" }, n.title) : null,
     h("span", { class: "hold-action" }, plainServerText(n.action)),
     h("span", { class: "muted" }, plainServerText(n.why)),
+    cross.length ? h("span", { class: "cross-blockers" }, ...cross.flatMap((c, k) => [k ? ", " : null, crossLink(c, { focus: name(`cross-${k}`) })])) : null,
     n.issueUnchecked ? h("span", { class: "muted issue-unchecked" }, ISSUE_UNCHECKED) : null,
     untilPart(n),
     ...timingParts(n),

@@ -1,7 +1,7 @@
 import { h, tableBox } from "./dom.js";
-import { whereLink, whereTarget, whoClass } from "./next.js";
+import { crossLink, whereLink, whereTarget, whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
-import { ageText } from "./work-model.js";
+import { ageText, crossAfter } from "./work-model.js";
 import { plainServerText, whoText } from "./change-words.js";
 
 // The list layout of the Work page: one table per group. Every word comes from the server's record.
@@ -18,9 +18,15 @@ export function issueLink(repo, issue, onClick, focus) {
     : h("span", { class: "mono" }, `#${issue}`);
 }
 
+/** The blockers of a story as links, separated by ", ": "#N" of its repository first, then "owner/name#N" of another one. */
+export function afterLinks(item, leave) {
+  const links = [...(item.after ?? []).map((i) => issueLink(item.repo, i, leave)), ...crossAfter(item).map((c) => crossLink(c, { onClick: leave }))];
+  return links.flatMap((l, k) => [k ? ", " : null, l]);
+}
+
 /** The "What is in the way?" button of a blocked story; null when nothing blocks it. */
 export function wayButton(item, handlers = {}) {
-  if (!(item.after ?? []).length) return null;
+  if (!(item.after ?? []).length && !crossAfter(item).length) return null;
   const key = item.key ?? `${item.repo}#${item.issue}`;
   return h("button", {
     type: "button", class: "ghost small work-way", "data-focus": `way:${key}`, "data-way": key,
@@ -49,7 +55,7 @@ function rowView(item, cols, handlers) {
         : null));
   }
   if (cols.blockers) {
-    cells.push(h("td", {}, ...(item.after ?? []).flatMap((i, k) => [k ? ", " : null, issueLink(item.repo, i, leave)])));
+    cells.push(h("td", {}, ...afterLinks(item, leave)));
   }
   if (cols.owner) cells.push(h("td", { class: "muted" }, ownerLabel(item.ownerName)));
   if (cols.age) cells.push(h("td", { class: "muted", "data-since": item.since }, ageText(item.since, now)));

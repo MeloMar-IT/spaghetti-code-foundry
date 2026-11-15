@@ -1,5 +1,6 @@
 import { ownerLabel } from "./runs.js";
 import { whoText } from "./change-words.js";
+import { crossBlockers } from "./next.js";
 
 // The Work page's data work: flatten the board answer, filter, group, order. Pure; the server's
 // record decides status, column, sentence and blockers — nothing here computes them.
@@ -46,7 +47,10 @@ const time = (iso) => {
 /** The key of a story: `repo#issue`. */
 export const keyOf = (item) => item.key ?? `${item.repo}#${item.issue}`;
 
-/** Every card of every repository: `{ ...card, repo, columnTitle }`. */
+/** The direct blockers of a story in another repository: [{ ref: "owner/name#N", url }]; [] when there are none. */
+export const crossAfter = (item) => crossBlockers(item?.next);
+
+/** Every card of every repository:`{ ...card, repo, columnTitle }`. */
 export function workItems(data) {
   const out = [];
   for (const r of data?.repos ?? []) {
