@@ -56,13 +56,13 @@ describe("optionsBody", () => {
 });
 
 describe("watcherOptions", () => {
-  it("has three closed groups and a default in every help text", () => {
+  it("has four closed groups and a default in every help text", () => {
     const x = mod.watcherOptions({}, []);
     const groups = walk(x.el).filter((e) => e.tag === "details");
-    expect(groups.map((g) => walk(g).find((e) => e.tag === "summary")!.textContent)).toEqual(["Labels", "Dependencies", "Comments"]);
+    expect(groups.map((g) => walk(g).find((e) => e.tag === "summary")!.textContent)).toEqual(["Labels", "Dependencies", "Comments", "Reference repositories"]);
     expect(groups.some((g) => (g as any).open)).toBe(false);
     const helps = walk(x.el).filter((e) => e.tag === "small");
-    expect(helps).toHaveLength(15);
+    expect(helps).toHaveLength(17);
     for (const s of helps) expect(s.textContent).toContain("Default:");
     expect(helps.map((s) => s.textContent)).toContain("The Foundry answers its own questions with its recommendations, at most twice per GitHub issue; after that a person answers. Default: off.");
   });
@@ -80,21 +80,58 @@ describe("watcherOptions", () => {
     const back = mod.optionsBody(x.values(), "issues", true);
     const { source, ...rest } = FULL;
     expect(source).toBe("issues");
-    expect(back).toEqual(rest);
+    expect(back).toEqual({ ...rest, reference_repos: null, reference_private_ok: null });
+  });
+  it("saves and loads the reference options, for every source", () => {
+    const w = { reference_repos: ["acme/lib", "acme/api"], reference_private_ok: true };
+    for (const source of ["issues", "schedule", "pr-feedback", "ci-failures"]) {
+      const x = mod.watcherOptions({ ...w, source }, []);
+      expect(x.controls.reference_repos.value).toBe("acme/lib, acme/api");
+      expect(x.controls.reference_private_ok.checked).toBe(true);
+      const back = mod.optionsBody(x.values(), source, true);
+      expect(back.reference_repos).toEqual(["acme/lib", "acme/api"]);
+      expect(back.reference_private_ok).toBe(true);
+      // the issues-only options stay issues-only
+      expect("auto_defaults" in back).toBe(source === "issues");
+    }
+  });
+  it("removes a cleared reference option on an edit and leaves it out on an add", () => {
+    const cleared = { reference_repos: " ", reference_private_ok: false };
+    expect(mod.optionsBody(o(cleared), "schedule", true)).toEqual({ reference_repos: null, reference_private_ok: null });
+    expect(mod.optionsBody(o(cleared), "schedule", false)).toEqual({});
+    expect(mod.optionsBody(o(cleared), "issues", false).reference_repos).toBeUndefined();
+    expect(mod.optionsBody(o({ reference_repos: "acme/lib," }), "ci-failures", false)).toEqual({ reference_repos: ["acme/lib"] });
+    expect(mod.optionsBody({ reference_repos: "acme/lib" }, "monitor", true)).toEqual({});
+  });
+  it("a body with the reference options passes the schema", async () => {
+    const { RepoWatcherSchema } = await import("../src/config.js");
+    const b = mod.optionsBody({ reference_repos: "acme/lib", reference_private_ok: true }, "schedule", false);
+    const body = { id: "w", source: "schedule", task: "tidy", flow: "chore", every: "1d", enabled: true, vars: {}, ...b };
+    expect(RepoWatcherSchema.safeParse(body).success).toBe(true);
   });
   it("lists None, the flows and an unknown stored flow", () => {
     const x = mod.watcherOptions({ precheck_flow: "gone" }, [{ name: "a" }]);
     expect(x.controls.precheck_flow.children.map((c: FakeElement) => c.textContent)).toEqual(["None", "a", "gone"]);
   });
-  it("hides for other sources without an inline style, and reveals one group", () => {
+  it("hides the issues options for other sources without an inline style, keeps the references, and reveals one group", () => {
     const x = mod.watcherOptions({}, []);
-    x.showFor("schedule");
-    expect(x.el.hidden).toBe(true);
+    const groups = () => walk(x.el).filter((e) => e.tag === "details");
+    const issuesPart = x.el.children[0] as FakeElement;
+    const refsGroup = groups()[3]!;
+    for (const s of ["schedule", "pr-feedback", "ci-failures"]) {
+      x.showFor(s);
+      expect(x.el.hidden).toBe(false);
+      expect(issuesPart.hidden).toBe(true);
+      expect(!!refsGroup.hidden).toBe(false);
+    }
     expect(Object.keys(x.el.style)).toEqual([]);
     x.showFor("issues");
     expect(x.el.hidden).toBe(false);
+    expect(issuesPart.hidden).toBe(false);
     x.reveal(x.controls.pause_while_pr_open);
-    expect(walk(x.el).filter((e) => e.tag === "details").map((g) => !!(g as any).open)).toEqual([false, true, false]);
+    expect(groups().map((g) => !!(g as any).open)).toEqual([false, true, false, false]);
+    x.reveal(x.controls.reference_repos);
+    expect(groups().map((g) => !!(g as any).open)).toEqual([false, true, false, true]);
   });
   it("reveals through contains() when the element has it, as a browser's does", () => {
     const x = mod.watcherOptions({}, []);
@@ -105,7 +142,7 @@ describe("watcherOptions", () => {
       (g as any).children = { length: g.children.length }; // no .some(), like an HTMLCollection
     }
     x.reveal(x.controls.one_at_a_time);
-    expect(groups.map((g) => !!(g as any).open)).toEqual([false, true, false]);
+    expect(groups.map((g) => !!(g as any).open)).toEqual([false, true, false, false]);
   });
   it("finds the control a server message names", () => {
     const x = mod.watcherOptions({}, []);
@@ -113,6 +150,9 @@ describe("watcherOptions", () => {
     expect(x.fieldOf("status_labels.needs_info: x")).toBe(x.controls["status_labels.needs_info"]);
     expect(x.fieldOf("priority_labels.0: x")).toBe(x.controls.priority_labels);
     expect(x.fieldOf("precheck_flow: x")).toBe(x.controls.precheck_flow);
+    expect(x.fieldOf('reference_repos: "acme/x" is not one of the repositories')).toBe(x.controls.reference_repos);
+    expect(x.fieldOf("reference_repos.0: owner/name")).toBe(x.controls.reference_repos);
+    expect(x.fieldOf("reference_private_ok: x")).toBe(x.controls.reference_private_ok);
     expect(x.fieldOf("every: x")).toBeUndefined();
   });
 });
@@ -129,6 +169,11 @@ describe("optionNotes", () => {
       "does not wait for dependencies", "labels that count as done: released", "removes on success: go", "no comment on failure", "no status comment", "one run at a time",
     ]);
     expect(mod.optionNotes({ source: "issues", priority_labels: [] })).toEqual(["no label goes first"]);
+  });
+  it("names the reference options for every source", () => {
+    const w = { reference_repos: ["acme/lib"], reference_private_ok: true };
+    expect(mod.optionNotes({ ...w, source: "schedule" })).toEqual(["reads acme/lib (read only)", "may read private references"]);
+    expect(mod.optionNotes({ ...w, source: "issues", one_at_a_time: true })).toEqual(["one run at a time", "reads acme/lib (read only)", "may read private references"]);
   });
 });
 

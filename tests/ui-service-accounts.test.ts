@@ -24,19 +24,21 @@ const account = (over: object = {}) => ({
 let accounts: any[];
 let sent: { method: string; url: string; body: any }[];
 let classes: string[] = [];
+let people: any[] = [];
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   accounts = [account(), account({ id: "s2", name: "Old", token: "expired", lastUse: new Date().toISOString(), scope: [] })];
   sent = [];
   classes = [];
+  people = [];
   delete (globalThis as any).location;
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).getElementById("main").replaceChildren();
   (document as any).listeners.keydown = [];
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
-    if (init.method === "GET") return reply({ accounts, grantable: GRANTABLE, classes });
+    if (init.method === "GET") return reply({ accounts, grantable: GRANTABLE, classes, people });
     const body = init.body ? JSON.parse(init.body) : undefined;
     sent.push({ method: init.method, url, body });
     if (init.method === "POST" && url === "/api/service-accounts") return reply({ account: account({ id: "new", name: body.name, scope: body.scope }), token: TOKEN }, 201);
@@ -78,6 +80,9 @@ describe("pure helpers", () => {
   it("sends only the checked keys, trimmed name", () => {
     expect(ui.scopeBody({ name: "  Bot ", checked: new Set(["GET health"]) }, GRANTABLE)).toEqual({ name: "Bot", scope: ["GET health"] });
     expect(ui.scopeBody({ name: "x", checked: new Set() }, GRANTABLE)).toEqual({ name: "x", scope: [] });
+    // actsFor (#876): "" is nobody (null); left out, the body has no actsFor
+    expect(ui.scopeBody({ name: "x", checked: new Set(), actsFor: "" }, GRANTABLE)).toEqual({ name: "x", scope: [], actsFor: null });
+    expect(ui.scopeBody({ name: "x", checked: new Set(), actsFor: "p1" }, GRANTABLE)).toEqual({ name: "x", scope: [], actsFor: "p1" });
   });
   it("puts the checked class entries first, in the order of the classes", () => {
     const checked = new Set(["GET health", "class:log", "class:summary"]);
@@ -153,6 +158,50 @@ describe("the section", () => {
     await press(button(root(), "Delete"));
     expect(sent[2]).toMatchObject({ method: "DELETE", url: "/api/users/s1" });
     expect(box).toBeDefined();
+  });
+
+  it("shows whom each account acts for: nobody, a name, or a name with the problem (#876)", async () => {
+    accounts = [
+      account(),
+      account({ id: "s2", name: "Two", actsFor: "p1", actsForName: "Ann" }),
+      account({ id: "s3", name: "Three", actsFor: "p2", actsForName: "Bob", actsForProblem: "the person this service account acts for is blocked" }),
+    ];
+    await show();
+    const r = rows();
+    expect(r[0]!.textContent).toContain("nobody");
+    expect(r[1]!.textContent).toContain("Ann");
+    expect(r[2]!.textContent).toContain("Bob");
+    expect(r[2]!.textContent).toContain("is blocked");
+  });
+
+  it("picks the person in the dialog and sends actsFor; Nobody sends null on an edit (#876)", async () => {
+    people = [{ id: "p1", name: "Ann", email: "ann@example.com", status: "active" }, { id: "p2", name: "Bob", email: "bob@example.com", status: "blocked" }];
+    accounts = [account({ actsFor: "p1", actsForName: "Ann" })];
+    await show();
+    await press(button(rows()[0]!, "Edit scope"));
+    const select = walk(root()).find((e) => e.attrs.name === "actsFor")!;
+    expect(root().textContent).toContain("Acts for");
+    expect(select.textContent).toContain("Nobody");
+    expect(select.textContent).toContain("Ann — ann@example.com");
+    expect(select.textContent).toContain("Bob — bob@example.com (blocked)");
+    expect(select.value).toBe("p1");
+    select.value = "p2";
+    await press(button(root(), "Save"));
+    expect(sent[0]).toMatchObject({ method: "PUT", url: "/api/service-accounts/s1", body: { actsFor: "p2" } });
+    await press(button(rows()[0]!, "Edit scope"));
+    walk(root()).find((e) => e.attrs.name === "actsFor")!.value = "";
+    await press(button(root(), "Save"));
+    expect(sent[1]!.body.actsFor).toBeNull();
+  });
+
+  it("a new account with a person chosen sends actsFor (#876)", async () => {
+    people = [{ id: "p1", name: "Ann", email: "ann@example.com", status: "active" }];
+    await show();
+    await press(button(main(), "+ Add service account"));
+    walk(root()).find((e) => e.attrs.name === "name")!.value = "Bot";
+    walk(root()).find((e) => e.attrs.name === "actsFor")!.value = "p1";
+    await press(button(root(), "Add"));
+    expect(sent[0]!.body).toEqual({ name: "Bot", scope: [], actsFor: "p1" });
   });
 
   it("shows a failure inside the section and leaves the page alone", async () => {

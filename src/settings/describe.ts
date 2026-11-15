@@ -339,7 +339,7 @@ export const ITEM_SETTINGS: Record<string, ItemSettingText> = {
       ...on("watcher-options.js", [
         "priority_labels", "status_labels.working", "status_labels.done", "status_labels.needs_info", "status_labels.waiting", "status_labels.failed",
         "wait_for_dependencies", "dependency_done_labels", "precheck_flow", "auto_defaults", "remove_on_done", "comment_on_failure", "status_comment",
-        "pause_while_pr_open", "one_at_a_time",
+        "pause_while_pr_open", "one_at_a_time", "reference_repos", "reference_private_ok",
       ]),
     },
   },

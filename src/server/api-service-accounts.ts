@@ -1,6 +1,7 @@
 import {
-  SCOPE_MAX, createServiceAccount, listServiceAccounts, revokeServiceToken, rotateServiceToken, tokenExpires, tokenState, updateServiceAccount, type ServiceAccount,
+  SCOPE_MAX, actsForProblem, createServiceAccount, isService, revokeServiceToken, rotateServiceToken, tokenExpires, tokenState, updateServiceAccount, type ServiceAccount,
 } from "../auth/service-accounts.js";
+import { listUsers, type User } from "../auth/users.js";
 import { failUsers } from "./api-users.js";
 import { HttpError, readJson, send } from "./http.js";
 import { GRANTABLE_CLASSES } from "./data-classes.js";
@@ -35,18 +36,34 @@ export function checkServiceScope(input: unknown): string[] {
   return [...input];
 }
 
-/** The service account as the API shows it, never the token or its hash. */
-function view(ctx: ApiContext, u: ServiceAccount, runs: Map<string, number>) {
+/** `actsFor` of a body: undefined (not sent), a person's account id, or null (`null` or `""`: nobody). Anything else is 400. */
+export function readActsFor(v: unknown): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null || v === "") return null;
+  if (typeof v !== "string") throw new HttpError(400, '"actsFor" must be an account id or null');
+  return v;
+}
+
+/** The service account as the API shows it, never the token or its hash. `users` is the account list of this answer. */
+function view(ctx: ApiContext, u: ServiceAccount, runs: Map<string, number>, users: User[]) {
   const state = tokenState(u);
   const expires = tokenExpires(u);
+  const person = u.actsFor === undefined ? undefined : users.find((p) => p.id === u.actsFor && p.kind !== "service");
+  const problem = u.actsFor === undefined ? undefined : actsForProblem(person);
   return {
     id: u.id, name: u.name, status: u.status, scope: u.scope, created: u.created,
     lastUse: u.token?.used ?? null,
     token: state,
     expires: state === "revoked" || expires === undefined ? null : new Date(expires).toISOString(),
     runs: runs.get(u.id) ?? 0,
+    actsFor: u.actsFor ?? null,
+    actsForName: person?.name ?? null,
+    ...(problem !== undefined ? { actsForProblem: problem } : {}),
   };
 }
+
+/** The person accounts an admin may pick for "Acts for". */
+const peopleOf = (users: User[]) => users.filter((u) => u.kind !== "service").map((u) => ({ id: u.id, name: u.name, email: u.email, status: u.status }));
 
 function runCounts(ctx: ApiContext): Map<string, number> {
   const counts = new Map<string, number>();
@@ -71,16 +88,20 @@ const guarded = <T,>(ctx: ApiContext, fn: () => T): T => {
 export const serviceAccountRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg[0] !== "service-accounts") return false;
   const by = caller.id;
+  const users = () => guarded(ctx, () => listUsers());
   if (seg.length === 1 && method === "GET") {
     const runs = runCounts(ctx);
-    return send(res, 200, { accounts: guarded(ctx, () => listServiceAccounts()).map((u) => view(ctx, u, runs)), grantable: grantableRules(), classes: GRANTABLE_CLASSES }), true;
+    const all = users();
+    const accounts = all.filter(isService).map((u) => view(ctx, u, runs, all));
+    return send(res, 200, { accounts, grantable: grantableRules(), classes: GRANTABLE_CLASSES, people: peopleOf(all) }), true;
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
     if (typeof body.name !== "string") throw new HttpError(400, '"name" must be a string');
     const scope = checkServiceScope(body.scope);
-    const r = guarded(ctx, () => createServiceAccount({ name: body.name as string, scope }, { by }));
-    return send(res, 201, { account: view(ctx, r.account, new Map()), token: r.token }), true;
+    const actsFor = readActsFor(body.actsFor) ?? undefined;
+    const r = guarded(ctx, () => createServiceAccount({ name: body.name as string, scope, ...(actsFor !== undefined ? { actsFor } : {}) }, { by }));
+    return send(res, 201, { account: view(ctx, r.account, new Map(), users()), token: r.token }), true;
   }
   const id = seg[1];
   if (id === undefined) return false;
@@ -88,16 +109,17 @@ export const serviceAccountRoutes: Route = async (ctx, req, res, seg, method, ca
     const body = await readJson(req);
     if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, '"name" must be a string');
     const scope = body.scope === undefined ? undefined : checkServiceScope(body.scope);
-    const u = guarded(ctx, () => updateServiceAccount(id, { name: body.name as string | undefined, scope }, { by }));
-    return send(res, 200, { account: view(ctx, u, runCounts(ctx)) }), true;
+    const actsFor = readActsFor(body.actsFor);
+    const u = guarded(ctx, () => updateServiceAccount(id, { name: body.name as string | undefined, scope, ...(actsFor !== undefined ? { actsFor } : {}) }, { by }));
+    return send(res, 200, { account: view(ctx, u, runCounts(ctx), users()) }), true;
   }
   if (seg.length === 3 && seg[2] === "rotate" && method === "POST") {
     const r = guarded(ctx, () => rotateServiceToken(id, { by }));
-    return send(res, 200, { account: view(ctx, r.account, runCounts(ctx)), token: r.token }), true;
+    return send(res, 200, { account: view(ctx, r.account, runCounts(ctx), users()), token: r.token }), true;
   }
   if (seg.length === 3 && seg[2] === "revoke" && method === "POST") {
     const u = guarded(ctx, () => revokeServiceToken(id, { by }));
-    return send(res, 200, { account: view(ctx, u, runCounts(ctx)) }), true;
+    return send(res, 200, { account: view(ctx, u, runCounts(ctx), users()) }), true;
   }
   return false;
 };

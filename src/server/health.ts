@@ -9,7 +9,9 @@ import { activeMutes, muteFor } from "../monitor/mutes.js";
 import { findingState } from "../monitor/state.js";
 import { runOrigin } from "../your-turn.js";
 import { cachedSkillRegistry } from "../skills/registry.js";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { foundryDir } from "../self-update-state.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { changesToday } from "../ops/governor.js";
 import { pluginProblems, readFilePlugins, type PluginProblem } from "../plugins/load.js";
@@ -44,6 +46,25 @@ export interface Health {
   pluginProblems?: PluginProblem[];
   /** The managed services (#867): state, restarts and last exit. Absent when none is configured. */
   services?: ServiceView[];
+  /** The `version` of the Foundry's package.json (#876), on a checkout and on an install. Absent when it cannot be read. */
+  package?: string;
+}
+
+const PACKAGE_VERSION = /^\d+\.\d+\.\d+[0-9A-Za-z.+-]*$/;
+let packageCache: { value: string | undefined } | undefined;
+
+/** The version in the Foundry's own package.json, read once. Undefined when the file cannot be read or the version has an odd shape. */
+export function packageVersion(): string | undefined {
+  if (packageCache) return packageCache.value;
+  let value: string | undefined;
+  try {
+    const v = (JSON.parse(readFileSync(join(foundryDir(), "package.json"), "utf8")) as { version?: unknown }).version;
+    value = typeof v === "string" && v.length <= 64 && PACKAGE_VERSION.test(v) ? v : undefined;
+  } catch {
+    value = undefined;
+  }
+  packageCache = { value };
+  return value;
 }
 
 const RUNS = { label: "Runs page", url: "#/runs" };
@@ -176,11 +197,12 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   const list = problems.map(safe);
   const pluginAll = ctx.plugins ? pluginProblems(ctx.plugins, readFilePlugins()) : [];
   const services = ctx.services?.view() ?? [];
-  const serviceProblems = services.filter((x) => x.state === "refused" || x.state === "waiting").length;
+  const serviceProblems = services.filter((x) => x.state === "refused" || x.state === "waiting" || x.problem !== undefined).length;
   const count = list.length + skillAll.length + pluginAll.length + serviceProblems;
   const self = ctx.selfUpdate?.view();
   const monitorFindings = findingsCount(cfg.monitor.report_to);
   const governorChanges = changesToday(join(process.env.FACTORY_HOME ?? FACTORY_HOME, "governor"), now);
+  const pkg = packageVersion();
   return {
     ok: count === 0,
     summary: count === 0 ? "All good" : count === 1 ? "1 problem" : `${count} problems`,
@@ -194,6 +216,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     ...(governorChanges > 0 ? { governor: { changesToday: governorChanges } } : {}),
     ...(self?.version ? { version: self.version } : {}),
     ...(self?.update ? { update: self.update } : {}),
+    ...(pkg !== undefined ? { package: pkg } : {}),
   };
 }
 

@@ -522,18 +522,21 @@ describe("the dialog", () => {
       expect(sent[1]!.body).toMatchObject({ pause_while_pr_open: null, precheck_flow: null, status_labels: { working: "W" } });
     });
 
-    it("another source hides the groups and sends none of the options", async () => {
+    it("another source hides the issues groups, keeps the references, and sends none of the issues options", async () => {
       const done = open();
       inputOf(root(), "Id").value = "w1";
       const source = field(root(), "source")!;
       source.value = "schedule";
       source.fire("change");
       const groups = walk(root()).filter((e) => e.tag === "details");
-      expect(groups).toHaveLength(3);
+      expect(groups).toHaveLength(4);
       expect(groups[0]!.parent!.hidden).toBe(true);
+      expect(!!groups[3]!.parent!.hidden).toBe(false);
+      field(root(), "reference_repos")!.value = "acme/lib";
       press(button(root(), "Save watcher"));
       await done;
       for (const k of keys) expect(k in sent[0]!.body, k).toBe(false);
+      expect(sent[0]!.body.reference_repos).toEqual(["acme/lib"]);
     });
 
     it("a refused value marks its field and opens its group", async () => {
@@ -544,7 +547,7 @@ describe("the dialog", () => {
       const input = field(root(), "status_labels.working")!;
       expect(input.attrs["aria-invalid"]).toBe("true");
       expect(root().textContent).toContain("status_labels.working: Invalid input");
-      expect(walk(root()).filter((e) => e.tag === "details").map((d) => !!(d as any).open)).toEqual([true, false, false]);
+      expect(walk(root()).filter((e) => e.tag === "details").map((d) => !!(d as any).open)).toEqual([true, false, false, false]);
     });
 
     it("the watcher page lists options that are not at their default, for a file and a repository watcher", async () => {

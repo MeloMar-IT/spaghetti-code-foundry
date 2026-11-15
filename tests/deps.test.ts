@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEPS_MARK, DEPS_MARK_END, DEP_REF_SOURCE, cleanReason, dependencies, dependencyDone, dependencyRange, dependencyText, foundryDependsOn,
-  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart,
+  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart, crossDependencies, crossState,
 } from "../src/queue/deps.js";
 
 const all = [
@@ -273,5 +273,53 @@ describe("the Foundry's part (#675)", () => {
     it("not itself", () => {
       expect(dependencies(mergeDependsOn("x", [4, 7], "r"), 4, all)).toEqual([7]);
     });
+  });
+});
+
+describe("issues of other repositories (owner/name#N)", () => {
+  it("are read from the person's text and the marked part, once each, sorted", () => {
+    const body = ["### Depends on", "- acme/lib#3", "- Acme/Lib#3 and zed/x#1, #5", DEPS_MARK, "- #7", "- acme/tools#9", "_Added by the Spaghetti Code Foundry._", DEPS_MARK_END].join("\n");
+    expect(crossDependencies(body)).toEqual([{ repo: "acme/lib", issue: 3 }, { repo: "acme/tools", issue: 9 }, { repo: "zed/x", issue: 1 }]);
+    expect(crossDependencies(body, { markedOnly: true })).toEqual([{ repo: "acme/tools", issue: 9 }]);
+  });
+
+  it("ignore #N, addresses, #0 and text outside Depends on", () => {
+    const body = "acme/lib#4 up here\n### Depends on\n- #3\n- github.com/acme/lib#5\n- foo.acme/lib#6\n- acme/lib#0\n### Notes\nacme/lib#7";
+    expect(crossDependencies(body)).toEqual([]);
+    expect(dependencies(body, 1, all)).toEqual([3]);
+  });
+
+  it("do not change the numbers, and a line with one is not read as a title", () => {
+    const list = [...all, { number: 40, title: "acme lib update", state: "OPEN" }];
+    expect(dependencies("### Depends on\n- acme/lib#3\n- #2", 1, list)).toEqual([2]);
+    const marked = [DEPS_MARK, "- #2", "- acme/lib#3", "_Added by the Spaghetti Code Foundry._", DEPS_MARK_END].join("\n");
+    expect(foundryDependsOn(marked)).toEqual([2]);
+    expect(dependencies(marked, 1, list)).toEqual([2]);
+  });
+
+  it("are kept by the writers of the marked part", () => {
+    const body = ["### Depends on", DEPS_MARK, "- #2", "- acme/lib#3", "_Added by the Spaghetti Code Foundry: r_", DEPS_MARK_END].join("\n");
+    const merged = mergeDependsOn(body, [5], "r");
+    expect(foundryDependsOn(merged)).toEqual([2, 5]);
+    expect(crossDependencies(merged, { markedOnly: true })).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    const removed = removeFromDependsOn(merged, [2, 5]);
+    expect(removed).toContain(DEPS_MARK);
+    expect(foundryDependsOn(removed)).toEqual([]);
+    expect(crossDependencies(removed, { markedOnly: true })).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(removed).toContain("_Added by the Spaghetti Code Foundry: r_");
+    // without a cross line the part goes, as before
+    expect(removeFromDependsOn(mergeDependsOn("x", [2], "r"), [2])).not.toContain(DEPS_MARK);
+  });
+
+  it("crossState: not planned first, any other close is done, an open issue is done with a done label", () => {
+    const rule = { doneLabels: ["Factory_done"] };
+    expect(crossState({ state: "open", labels: [] }, rule)).toBe("open");
+    expect(crossState({ state: "closed", state_reason: "completed" }, rule)).toBe("done");
+    expect(crossState({ state: "closed", state_reason: null }, rule)).toBe("done");
+    expect(crossState({ state: "closed", state_reason: "not_planned" }, rule)).toBe("not_planned");
+    expect(crossState({ state: "closed", state_reason: "not_planned", labels: [{ name: "Factory_done" }] }, rule)).toBe("not_planned");
+    expect(crossState({ state: "open", labels: [{ name: "Factory_done" }] }, rule)).toBe("done");
+    expect(crossState({ state: "open", labels: ["Done"] }, { doneLabels: [], doneLabel: "Done", gitflow: true })).toBe("done");
+    expect(crossState({ state: "open", labels: ["Done"] }, { doneLabels: [], doneLabel: "Done" })).toBe("open");
   });
 });

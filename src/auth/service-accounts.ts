@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { prepareAuditLocked, type AuditEvent } from "./audit.js";
 import { sessionId } from "./sessions.js";
 import { withAuthLock } from "./store.js";
-import { SERVICE_EMAIL_DOMAIN, UserError, checkName, publicUser, readUsersFile, writeUsersFileLocked, type PublicUser, type User } from "./users.js";
+import { hasIdentityProvider } from "./identity.js";
+import { SERVICE_EMAIL_DOMAIN, UserError, checkName, isBreakGlass, publicUser, readUsersFile, writeUsersFileLocked, type PublicUser, type User } from "./users.js";
 
 /**
  * Service accounts (#866): accounts for programs. They live in users.json (`kind: "service"`), so everything that is keyed
@@ -74,8 +75,43 @@ export interface ServiceResult {
   token?: string;
 }
 
+const ACTS_FOR_PREFIX = "the person this service account acts for";
+export const ACTS_FOR_GONE = `${ACTS_FOR_PREFIX} no longer exists`;
+export const ACTS_FOR_BLOCKED = `${ACTS_FOR_PREFIX} is blocked`;
+export const ACTS_FOR_NO_SIGN_IN = `${ACTS_FOR_PREFIX} cannot sign in`;
+
+/**
+ * Why a service account cannot act for this person (#876), or undefined when it can: the person is missing (or a service),
+ * blocked, or cannot sign in under the current sign-in mode (with an identity provider only provider accounts and the
+ * break-glass admin; without one, a local account with a password). Fixed sentences only: no name, no path.
+ */
+export function actsForProblem(person: User | undefined): string | undefined {
+  if (!person || person.kind === "service") return ACTS_FOR_GONE;
+  if (person.status !== "active") return ACTS_FOR_BLOCKED;
+  if (hasIdentityProvider()) return person.source === "provider" || isBreakGlass(person) ? undefined : ACTS_FOR_NO_SIGN_IN;
+  if (person.source === "provider" || person.passwordHash === undefined) return ACTS_FOR_NO_SIGN_IN;
+  return undefined;
+}
+
+/** The one person account whose e-mail (first) or name is exactly this, for `acts_for` in config.yaml. Names are not unique. */
+export function findPersonId(nameOrEmail: string): { id: string } | { problem: "none" | "several" } {
+  const people = readUsersFile().users.filter((u) => u.kind !== "service");
+  const key = nameOrEmail.trim();
+  const byEmail = people.filter((u) => u.email === key.toLowerCase());
+  const hits = byEmail.length > 0 ? byEmail : people.filter((u) => u.name === key);
+  if (hits.length === 0) return { problem: "none" };
+  if (hits.length > 1) return { problem: "several" };
+  return { id: hits[0]!.id };
+}
+
+/** Under the lock: `actsFor` must name a person in the file. */
+function checkActsFor(id: string, all: User[]): void {
+  const target = all.find((u) => u.id === id);
+  if (!target || target.kind === "service") throw new UserError("bad-role", "acts for must be the id of a person's account");
+}
+
 /** Makes a service account and its first token. Names are unique among service accounts (`name-taken`). */
-export function createServiceAccount(input: { name: string; scope: unknown }, opts: { by?: string } = {}): ServiceResult {
+export function createServiceAccount(input: { name: string; scope: unknown; actsFor?: string }, opts: { by?: string } = {}): ServiceResult {
   const name = checkName(input.name);
   const scope = checkScopeShape(input.scope);
   const token = newToken();
@@ -92,10 +128,12 @@ export function createServiceAccount(input: { name: string; scope: unknown }, op
     kind: "service",
     scope,
     token: { id: sessionId(token), created: now },
+    ...(input.actsFor !== undefined ? { actsFor: input.actsFor } : {}),
   };
   return withAuthLock(() => {
     const file = readUsersFile();
     if (file.users.some((u) => u.kind === "service" && u.name === name)) throw new UserError("name-taken", "a service account with that name exists already");
+    if (input.actsFor !== undefined) checkActsFor(input.actsFor, file.users);
     audited(opts.by, { action: "create", userId: id }, () => writeUsersFileLocked({ ...file, users: [...file.users, account] }));
     return { account, token };
   });
@@ -116,16 +154,19 @@ function changeService(id: string, apply: (u: ServiceAccount, all: User[]) => { 
   });
 }
 
-/** Changes the name and the scope (both optional). Nothing is written when nothing changes. */
-export function updateServiceAccount(id: string, changes: { name?: string; scope?: unknown }, opts: { by?: string } = {}): ServiceAccount {
+/** Changes the name, the scope and the person it acts for (all optional; `actsFor: null` clears it). Nothing is written when nothing changes. */
+export function updateServiceAccount(id: string, changes: { name?: string; scope?: unknown; actsFor?: string | null }, opts: { by?: string } = {}): ServiceAccount {
   const name = changes.name === undefined ? undefined : checkName(changes.name);
   const scope = changes.scope === undefined ? undefined : checkScopeShape(changes.scope);
   return changeService(
     id,
     (u, all) => {
       if (name !== undefined && all.some((o) => o.id !== id && o.kind === "service" && o.name === name)) throw new UserError("name-taken", "a service account with that name exists already");
-      const next: ServiceAccount = { ...u, name: name ?? u.name, scope: scope ?? u.scope };
-      if (next.name === u.name && next.scope.length === u.scope.length && next.scope.every((k, i) => k === u.scope[i])) return undefined;
+      if (typeof changes.actsFor === "string") checkActsFor(changes.actsFor, all);
+      const { actsFor: _old, ...rest } = u;
+      const actsFor = changes.actsFor === undefined ? u.actsFor : (changes.actsFor ?? undefined);
+      const next: ServiceAccount = { ...rest, name: name ?? u.name, scope: scope ?? u.scope, ...(actsFor !== undefined ? { actsFor } : {}) };
+      if (next.name === u.name && next.actsFor === u.actsFor && next.scope.length === u.scope.length && next.scope.every((k, i) => k === u.scope[i])) return undefined;
       return { next, event: { action: "edit", userId: id } };
     },
     opts.by,
@@ -194,7 +235,8 @@ export function recordServiceUse(id: string | undefined, use: ServiceUse, opts: 
     const account = id === undefined ? undefined : file.users.find((u) => u.id === id);
     const live = !!account && isService(account) && account.status === "active" && tokenState(account, now) === "live";
     const ok = use.result === "ok" && (id === undefined ? false : live);
-    const detail = use.detail ?? (use.result === "ok" && !ok ? "the token ended" : undefined);
+    const ended = use.result === "ok" && !ok;
+    const detail = ended ? (use.detail !== undefined ? `the token ended; ${use.detail}` : "the token ended") : use.detail;
     const log = prepareAuditLocked(id ?? "anonymous", {
       action: "service-request",
       result: ok ? "ok" : "failed",

@@ -106,9 +106,16 @@ export interface RunTiming {
 
 export interface BlockerInfo {
   issue: number;
+  /** The blocker is in another repository ("owner/name"); it has no record here. */
+  repo?: string;
+  /** (`repo`) It was closed as not planned: the story waits for the owner. */
+  notPlanned?: true;
   /** The blocker's own record, when there is one. */
   next?: NextStep;
 }
+
+/** "#3", or "acme/lib#3" for an issue of another repository. */
+const refOf = (b: BlockerInfo): string => (b.repo ? `${b.repo}#${b.issue}` : `#${b.issue}`);
 
 /** What the caller knows about a record. Every field is optional. */
 export interface NextData {
@@ -277,6 +284,7 @@ export const FAILURE_SHOWN_MS = 7 * 86_400_000;
 /** "#88, which is being coded" — what a blocker is doing, as one clause. */
 function blockerClause(b: BlockerInfo): string {
   const n = b.next;
+  if (b.notPlanned) return "which was closed as not planned";
   if (!n) return "which is to be done";
   switch (n.kind) {
     case "questions": case "planner_questions": return "which waits for answers";
@@ -305,11 +313,11 @@ function blockerClause(b: BlockerInfo): string {
 const NEEDS_YOU = new Set<NextKind>(["questions", "planner_questions", "owner_action", "approve_plan", "approve_split", "approval"]);
 
 /** The blockers that hold everything up: down every "waits for another story", each issue once. */
-function rootBlockers(bs: BlockerInfo[] | undefined, seen = new Set<number>()): BlockerInfo[] {
+function rootBlockers(bs: BlockerInfo[] | undefined, seen = new Set<string>()): BlockerInfo[] {
   const out: BlockerInfo[] = [];
   for (const b of bs ?? []) {
-    if (seen.has(b.issue) || b.next?.kind === "done") continue;
-    seen.add(b.issue);
+    if (seen.has(refOf(b)) || b.next?.kind === "done") continue;
+    seen.add(refOf(b));
     if (b.next?.kind === "dependency" && b.next.blockers?.length) out.push(...rootBlockers(b.next.blockers, seen));
     else out.push(b);
   }
@@ -317,32 +325,32 @@ function rootBlockers(bs: BlockerInfo[] | undefined, seen = new Set<number>()): 
 }
 
 /** Every issue in the tree, with repeats (a shared blocker shows up once per path). */
-function treeIssues(bs: BlockerInfo[] | undefined): number[] {
-  return (bs ?? []).flatMap((b) => [b.issue, ...(b.next?.kind === "dependency" ? treeIssues(b.next.blockers) : [])]);
+function treeIssues(bs: BlockerInfo[] | undefined): string[] {
+  return (bs ?? []).flatMap((b) => [refOf(b), ...(b.next?.kind === "dependency" ? treeIssues(b.next.blockers) : [])]);
 }
 
 /** "#88, which is being worked on" — blockers that are done are not described. */
 function chain(bs: BlockerInfo[] | undefined, depth = 0): string {
   const list = bs ?? [];
   if (!list.length) return "";
-  if (list.length > 1 && list.every((b) => !b.next)) return `${list.map((b) => `#${b.issue}`).join(", ")} (to be done first)`;
+  if (list.length > 1 && list.every((b) => !b.next && !b.notPlanned)) return `${list.map(refOf).join(", ")} (to be done first)`;
   // A short, straight chain reads well spelled out; a long or branching one names each issue once:
   // the stories it waits for, then what holds them up at the root.
   const all = treeIssues(list);
   if (depth > 0 || (all.length <= 4 && new Set(all).size === all.length)) {
     const one = (b: BlockerInfo): string => {
-      if (b.next?.kind === "done") return `#${b.issue}`; // done work is not described
-      if (b.next?.kind === "dependency" && depth < 3) return `#${b.issue}, which waits for ${chain(b.next.blockers, depth + 1) || "another story"}`;
-      return `#${b.issue}, ${blockerClause(b)}`;
+      if (b.next?.kind === "done") return refOf(b); // done work is not described
+      if (b.next?.kind === "dependency" && depth < 3) return `${refOf(b)}, which waits for ${chain(b.next.blockers, depth + 1) || "another story"}`;
+      return `${refOf(b)}, ${blockerClause(b)}`;
     };
     return list.map(one).join(" and ");
   }
   const short = (b: BlockerInfo) => blockerClause(b).replace(/^which /, "");
   const direct = list.filter((b) => b.next?.kind !== "done");
-  const shown = new Set(direct.map((b) => b.issue));
-  const parts = direct.map((b) => (b.next?.kind === "dependency" ? `#${b.issue}` : `#${b.issue} (${short(b)})`));
+  const shown = new Set(direct.map(refOf));
+  const parts = direct.map((b) => (b.next?.kind === "dependency" ? refOf(b) : `${refOf(b)} (${short(b)})`));
   const roots = rootBlockers(direct.filter((b) => b.next?.kind === "dependency").flatMap((b) => b.next!.blockers ?? []), new Set(shown));
-  return roots.length ? `${parts.join(", ")}; held up by ${roots.map((r) => `#${r.issue} (${short(r)})`).join(", ")}` : parts.join(", ");
+  return roots.length ? `${parts.join(", ")}; held up by ${roots.map((r) => `${refOf(r)} (${short(r)})`).join(", ")}` : parts.join(", ");
 }
 
 const sentence = (why: string, say: string) => `${why} — ${say}.`;
@@ -446,11 +454,21 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       who = "Another story";
       const c = chain(d.blockers) || "another story";
       why = `${ref} waits for ${c}`;
-      const all = (d.blockers ?? []).map((b) => `#${b.issue}`);
+      const all = (d.blockers ?? []).map(refOf);
       until = all.length ? `after ${all.join(", ")}` : undefined;
       // Somewhere down the chain a story waits for the owner: say which, so it's clear where to act.
-      const yours = rootBlockers(d.blockers).filter((b) => b.next && NEEDS_YOU.has(b.next.kind)).map((b) => `#${b.issue}`);
+      const yours = rootBlockers(d.blockers).filter((b) => b.notPlanned || (b.next && NEEDS_YOU.has(b.next.kind))).map(refOf);
       say = yours.length ? `nothing to do here, it starts by itself once you've handled ${yours.join(", ")}` : "nothing to do, it starts by itself";
+      // An issue it waits for directly was closed as not planned: it never gets done, so the owner decides.
+      const dropped = (d.blockers ?? []).filter((b) => b.notPlanned).map(refOf);
+      if (dropped.length) {
+        const many = dropped.length > 1;
+        who = "You";
+        why = `${dropped.join(", ")} ${many ? "were" : "was"} closed as not planned`;
+        action = `Reopen ${dropped.join(", ")}, or take ${many ? "them" : "it"} out of Depends on of ${ref}`;
+        say = action.charAt(0).toLowerCase() + action.slice(1);
+        until = undefined;
+      }
       break;
     }
     case "red_base": {
@@ -763,7 +781,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && (d.userLimit === "budget" || d.userLimit === "workspace_budget" || d.userLimit === "install_budget"), month: kind === "user_limit" && d.userLimit === "install_budget", workspace: kind === "user_limit" && /^workspace/.test(d.userLimit ?? ""),signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => (b.repo ? refOf(b) : b.issue)), dropped: kind === "dependency" ? (d.blockers ?? []).filter((b) => b.notPlanned).map(refOf) : undefined, factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && (d.userLimit === "budget" || d.userLimit === "workspace_budget" || d.userLimit === "install_budget"), month: kind === "user_limit" && d.userLimit === "install_budget", workspace: kind === "user_limit" && /^workspace/.test(d.userLimit ?? ""),signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,

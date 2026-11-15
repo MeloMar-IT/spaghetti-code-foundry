@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { StoreError } from "../auth/store.js";
-import { lookupServiceToken, recordServiceUse, type FoundToken, type ServiceAccount } from "../auth/service-accounts.js";
+import { actsForProblem, lookupServiceToken, recordServiceUse, type FoundToken, type ServiceAccount } from "../auth/service-accounts.js";
+import { getUser } from "../auth/users.js";
 import { basename } from "node:path";
 import { HttpError } from "./http.js";
 import { requestAccess } from "./net.js";
@@ -43,6 +44,8 @@ export interface ServiceCall {
   account?: ServiceAccount;
   /** Why the token was refused, for the audit line only. */
   why?: string;
+  /** The id the request acts as (the person of `actsFor`, else the account's own id), once the account is known. A stream ends when it changes. */
+  actingId?: string;
   /** True once this request has its audit line. */
   written: boolean;
   seg: string[];
@@ -59,6 +62,25 @@ const detailOf = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").
 const lost = (ctx: ApiContext, e: unknown) =>
   ctx.diagLog?.(e instanceof StoreError ? `auth: ${basename(e.file)} ${e.kind} (service-request)` : "auth: audit.jsonl not-valid (service-request)");
 
+/** The part of an audit detail that names the person an account acts for (by id), or undefined. */
+const actsForDetail = (found: FoundToken | undefined): string | undefined => (found?.account.actsFor ? `acts for ${found.account.actsFor}` : undefined);
+const withActsFor = (detail: string, found: FoundToken | undefined): string => {
+  const a = actsForDetail(found);
+  return a === undefined ? detail : `${detail}; ${a}`;
+};
+
+/**
+ * The user a service request counts as (#876). Without `actsFor` it is the account itself. With it, it is the account with the
+ * person's id: every owner and workspace check then decides for the person, while `kind`, `role` (user) and `scope` stay, so the
+ * account is never an admin and its scope still limits it. A person who is gone or cannot sign in throws 403 with the reason.
+ */
+export function resolveActing(account: ServiceAccount): ServiceAccount {
+  if (account.actsFor === undefined) return account;
+  const problem = actsForProblem(getUser(account.actsFor));
+  if (problem !== undefined) throw new HttpError(403, problem);
+  return { ...account, id: account.actsFor };
+}
+
 /**
  * Writes the `failed` line of a refused request, once. Best effort: it does not wait for a held lock and never throws. A token
  * that names no account is audited with `anonymous` as the actor.
@@ -69,7 +91,7 @@ export function auditRefused(ctx: ApiContext, call: ServiceCall, e: unknown): vo
   const status = e instanceof HttpError ? e.status : 500;
   const text = call.why ?? (e instanceof HttpError ? e.message : "error");
   try {
-    recordServiceUse(call.found?.account.id, { result: "failed", target: targetOf(call), detail: detailOf(`${status} ${text}`) }, { touch: call.account !== undefined });
+    recordServiceUse(call.found?.account.id, { result: "failed", target: targetOf(call), detail: withActsFor(detailOf(`${status} ${text}`), call.found) }, { touch: call.account !== undefined });
   } catch (err) {
     lost(ctx, err);
   }
@@ -84,7 +106,7 @@ export function refuseBearer(ctx: ApiContext, token: string, method: string, tar
     lost(ctx, e);
   }
   try {
-    recordServiceUse(call.found?.account.id, { result: "failed", target: `${method.slice(0, 16)} ${target}`, detail: "401 a service token does not work here" });
+    recordServiceUse(call.found?.account.id, { result: "failed", target: `${method.slice(0, 16)} ${target}`, detail: withActsFor("401 a service token does not work here", call.found) });
   } catch (e) {
     lost(ctx, e);
   }
@@ -112,13 +134,26 @@ export function serviceCaller(ctx: ApiContext, req: IncomingMessage, call: Servi
   else if (f.account.status !== "active") call.why = "the account is blocked";
   if (call.why !== undefined || !f) throw new HttpError(401, REFUSED_TOKEN);
   call.account = f.account;
-  return f.account;
+  let acting: ServiceAccount;
+  try {
+    acting = resolveActing(f.account);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      call.why = e.message;
+      throw e;
+    }
+    ctx.diagLog?.(e instanceof StoreError ? `auth: ${basename(e.file)} ${e.kind}` : "auth: unexpected error");
+    throw new HttpError(500, INTERNAL);
+  }
+  call.actingId = acting.id;
+  return acting;
 }
 
 /**
  * An open response (an event stream) of a service request keeps going only while the token is still live, the account active,
  * the connection still on this computer and the route still in the scope. Checked again on every recheck, so a removed
- * route or a revoke ends the stream at once. Any failure to read the account counts as gone.
+ * route or a revoke ends the stream at once. With `actsFor` the person must still be able to sign in, and the stream also ends
+ * when the account now acts for someone else or for nobody (#876). Any failure to read the account counts as gone.
  */
 export function serviceStillAllowed(ctx: ApiContext, req: IncomingMessage, call: ServiceCall): boolean {
   try {
@@ -126,8 +161,10 @@ export function serviceStillAllowed(ctx: ApiContext, req: IncomingMessage, call:
     if (!found || found.state !== "live" || found.account.status !== "active") return false;
     if (!requestAccess(req, ctx.config().server, ctx.opts.port).local) return false;
     if (call.rule === undefined || !serviceAllows(found.account, call.rule)) return false;
+    const acting = resolveActing(found.account);
+    if (call.actingId !== undefined && acting.id !== call.actingId) return false;
     // a repository closed since the stream began ends it
-    checkServiceRepos(ctx, found.account, call.rule, call.seg, new URL(req.url ?? "/", "http://x").searchParams);
+    checkServiceRepos(ctx, acting, call.rule, call.seg, new URL(req.url ?? "/", "http://x").searchParams);
     return true;
   } catch {
     return false;
@@ -248,7 +285,8 @@ export function auditNetworkRefusal(ctx: ApiContext, req: IncomingMessage, refus
 export function serviceOk(ctx: ApiContext, call: ServiceCall): void {
   let live: boolean;
   try {
-    live = recordServiceUse(call.account!.id, { result: "ok", target: targetOf(call) }, { touch: true });
+    const detail = actsForDetail(call.found);
+    live = recordServiceUse(call.account!.id, { result: "ok", target: targetOf(call), ...(detail !== undefined ? { detail } : {}) }, { touch: true });
   } catch (e) {
     lost(ctx, e);
     throw new HttpError(503, "the audit log is busy; try again in a moment", { "retry-after": "1" });

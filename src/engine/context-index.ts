@@ -32,7 +32,7 @@ export interface StepContextIndexDeps {
 const PLACEHOLDER = /\{\{\s*context\.index\s*\}\}/g;
 const FALLBACK = "{{steps.pull_ticket.output}}";
 /** A run folder path an agent rule (`Read(//path/**)`) can name without a glob or a pattern character. */
-const RULE_SAFE_PATH = /^\/[A-Za-z0-9._/@+~,:=% -]+$/;
+export const RULE_SAFE_PATH =/^\/[A-Za-z0-9._/@+~,:=% -]+$/;
 const BUNDLE_MAX_BYTES = 8 * 1024 * 1024;
 
 const unusable = (code: string, what: string): { refuse: string } => ({ refuse: `CONTEXT_UNUSABLE ${code}: ${what}; the step did not start` });

@@ -143,6 +143,8 @@ export class WatcherManager {
         peers: () => this.tracked(),
         afterCheck: isLocalRepoName(cfg.github_repo) ? undefined : () => this.noteRateLimit(),
         gh: this.identityOf(cfg),
+        // the watcher's own copy: it removes it when it stops
+        repoGh: (repoId) => (this.o.ghIdentity ? this.o.ghIdentity(repoId) : repoGhIdentity(repoId, { config: this.o.config, log: this.o.log })),
         skillReady: (run) => skillGapReady(run, this.o.config().skills),
       });
       this.running.set(id, { watcher, key: JSON.stringify(cfg), board });

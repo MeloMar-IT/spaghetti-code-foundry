@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { dataHome } from "./auth/store.js";
 import { prunePlanRecords } from "./skills/plan-record.js";
 import { unlockRunContext } from "./engine/run-context.js";
+import { removeReferences } from "./engine/reference-repos.js";
 import { listAllRunIds, loadRun, type RunSummary } from "./engine/state.js";
 import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "./evidence/version.js";
 
@@ -133,6 +134,7 @@ export function cleanRuns(o: CleanOptions): CleanResult {
       if (!o.dryRun) {
         if (ownWorkspace) removeWorkspace(s);
         unlockRunContext(dir);
+        removeReferences(dir); // a crash can leave a locked reference copy (#878)
         rmSync(dir,{ recursive: true, force: true });
       }
     } else if (ownWorkspace) {

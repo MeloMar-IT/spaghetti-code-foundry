@@ -236,6 +236,14 @@ describe("sandboxProfile for an agent step", () => {
       expect(at(t, line)).toBeGreaterThan(at(t, "(deny file-write* (literal \"/Users/mac/.data/runs/r1/evidence"));
     });
 
+    it("denies writes (and chmod) to the reference copies of the run, after the allow lines, in both variants (#878)", () => {
+      const line = '(deny file-write* (subpath "/Users/mac/.data/runs/r1/reference"))';
+      expect(at(sandboxProfile(base, same), line)).toBeGreaterThan(at(sandboxProfile(base, same), '(allow file-write* (subpath "/Users/mac/.data/runs/r1"))'));
+      for (const t of [sandboxProfile(base, same), sandboxProfile({ ...base, workspaceReadOnly: true }, same)]) {
+        expect(at(t, line)).toBeGreaterThan(at(t, '(deny file-write* (subpath "/Users/mac/.data/runs/r1/delivery"))'));
+      }
+    });
+
     it("denies writes to the context bundle and its marker, after the evidence line, in both variants", () => {
       const line = '(deny file-write* (literal "/Users/mac/.data/runs/r1/context.json") (literal "/Users/mac/.data/runs/r1/context.attempt") (subpath "/Users/mac/.data/runs/r1/context"))';
       for (const t of [sandboxProfile(base, same), sandboxProfile({ ...base, workspaceReadOnly: true }, same)]) {

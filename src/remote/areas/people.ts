@@ -21,7 +21,8 @@ const withToken = (d: unknown) =>
     "The account sets its password at <server address>/#/set-password/<token>.",
   ].join("\n");
 
-const SERVICE_KEYS = ["id", "name", "status", "token", "lastUse", "expires", "scope", "created", "runs"];
+const SERVICE_KEYS = ["id", "name", "status", "token", "lastUse", "expires", "scope", "actsFor", "actsForName", "created", "runs"];
+const ACTS_FOR_FLAG: Flag = { type: "string", help: 'the id of the person whose work it sees and answers; "" for nobody' };
 /** A service account with its token: printed because handing it over is what the call is for; the server keeps only a hash. */
 const serviceWithToken = (d: unknown) => [fields(obj(d).account, SERVICE_KEYS), "", `token (shown once): ${String(obj(d).token ?? "")}`, "Use it only on this computer: Authorization: Bearer <token>."].join("\n");
 
@@ -124,11 +125,11 @@ export const PEOPLE: Cmd[] = [
   { area: "service-accounts", action: "list", method: "GET", path: "service-accounts", help: "the service accounts with their scope, token state and last use",
     show: (d) => table(list(obj(d).accounts).map((a) => ({ ...obj(a), lastUse: obj(a).lastUse ?? "never", scope: list(obj(a).scope).join(", ") || "none" })), [...cols("id", "name", "status", "token"), { key: "lastUse", head: "last use" }, { key: "scope", max: 70 }], "no service accounts") },
   { area: "service-accounts", action: "add", method: "POST", path: "service-accounts", args: ["name"],
-    flags: { scope: { type: "string", as: "list", required: true, help: 'the routes it may call, with commas, as rule keys such as "GET runs"; "" allows none' } },
+    flags: { scope: { type: "string", as: "list", required: true, help: 'the routes it may call, with commas, as rule keys such as "GET runs"; "" allows none' }, "acts-for": ACTS_FOR_FLAG },
     help: "add an account for a program; prints its token, which is shown once", show: serviceWithToken },
-  { area: "service-accounts", action: "set", method: "PUT", path: "service-accounts/:id", args: ["id"], help: "change the name or the scope of a service account (a scope replaces the whole list)",
-    flags: { name: { type: "string", help: "the new name" }, scope: { type: "string", as: "list", help: 'all routes it may call, with commas; "" allows none' } },
-    confirm: "This changes what the program may call.", confirmIf: (body) => body.scope !== undefined, show: (d) => fields(obj(d).account, SERVICE_KEYS) },
+  { area: "service-accounts", action: "set", method: "PUT", path: "service-accounts/:id", args: ["id"], help: "change the name, the scope or the person of a service account (a scope replaces the whole list)",
+    flags: { name: { type: "string", help: "the new name" }, scope: { type: "string", as: "list", help: 'all routes it may call, with commas; "" allows none' }, "acts-for": ACTS_FOR_FLAG },
+    confirm: "This changes what the program may call or whose work it sees.", confirmIf: (body) => body.scope !== undefined || body.actsFor !== undefined, show: (d) => fields(obj(d).account, SERVICE_KEYS) },
   { area: "service-accounts", action: "rotate", method: "POST", path: "service-accounts/:id/rotate", args: ["id"],
     help: "give a service account a new token; the old one stops at once; the new one is shown once", confirm: "The old token stops working at once.", show: serviceWithToken },
   { area: "service-accounts", action: "revoke", method: "POST", path: "service-accounts/:id/revoke", args: ["id"],

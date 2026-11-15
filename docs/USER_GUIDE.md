@@ -3397,6 +3397,31 @@ For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h
 
 A field that is cleared is removed from the watcher, so the default applies. A value the server refuses is shown at its field with the server's message. The same options work for a watcher of a repository and for one still in `config.yaml`.
 
+### Reference repositories
+
+A run sees only its own checkout. When an issue depends on routes, file formats or names that live in another repository, a watcher can give its runs a read-only copy of that repository, so the planner and the coder look the facts up there instead of stopping with a question only you can answer.
+
+- **Set it.** In the form, the group **Reference repositories** (every source except the monitor) takes `reference_repos`: a list of `owner/name`, at most 10. The option `reference_private_ok` (default off) allows a private reference (see below). In `config.yaml` the same two keys are written under the watcher; through the API they are `reference_repos` and `reference_private_ok` in the watcher's body.
+- **Which repositories.** Only repositories already added to the Foundry, that the watcher's owner can see. The watcher's own repository is refused. A refused name is answered with `reference_repos: …` and the reason.
+- **Where.** Before a run's steps start, and again before each resume, each reference is cloned read-only, shallow, from the newest commit of its default branch, to `<run folder>/reference/<owner>-<name>` (lower case, for example `reference/acme-lib`). The copy sits next to the checkout, so it is never part of the pull request.
+- **The commit is in the history.** The run's `run.json` has a `references` list (the newest 50 preparations, each with the repository, the time, the commit and the folder, or the reason it was skipped), and the run log has the same lines.
+- **What the agents are told.** Each agent step starts with a block that lists the copies with their commits and says they are for reading only. A fact the agent finds there is not a question for the owner: it must not be asked as an `owner_action`.
+- **Read only.** The copy has no remote, so it cannot be pushed. Its files are read-only and its folders cannot be entered for writing (`.git` included). Claude's Edit and Write tools are denied there, and on macOS the sandbox refuses writes and `chmod` there. Nothing the run does can change the copy, commit it, or put it in the pull request.
+- **Removed.** The copies are deleted when the run ends, also when it waits or stops. If a crash leaves one behind, `scf clean` unlocks and removes it.
+- **Skipped, not failed.** A reference that cannot be used does not fail the run. The run log says `! reference <owner>/<name>: skipped — <reason>` and the run goes on. Reasons:
+  - it could not be fetched;
+  - the run's owner cannot use it;
+  - a policy refuses access to it;
+  - the privacy rule below refuses it;
+  - the run has no OS sandbox (see below).
+- **Privacy.** What a reference teaches the agent can end up in issue comments, the pull request or commits, so a reference is used only when it is safe for the target:
+  - a public reference is always used;
+  - a private one (or one whose visibility cannot be told) is used only when the target repository is known to be private, or `reference_private_ok` is on.
+
+  A 404 from GitHub does not count as proof that a repository is private. The privacy check runs again at every start and resume.
+- **Needs the OS sandbox.** A run without an OS sandbox (for example an admin's default-workspace run) skips every reference. Without the sandbox, a shell step could make the copy writable again.
+- **Off by default.** Without `reference_repos`, nothing changes: no copy, no block in the prompts, and no `references` in `run.json`.
+
 ### The Watchers page (admins)
 
 Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository under **Changes**, without the watcher's name.
@@ -3881,7 +3906,7 @@ watchers:
 | `status_labels` | Your own names for the status labels above |
 | `remove_on_done` | Labels to remove when a run succeeds (e.g. the trigger label) |
 | `one_at_a_time` | Never run two of this watcher's runs at once |
-| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue |
+| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
 | `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. Its question comments then say "Nothing needed from you", and the questions are not in **Your turn**: an issue that waits for other issues is answered when it can start, and you may answer first. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
@@ -4285,7 +4310,12 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   section, it starts only when those issues are done — closed, or `Factory_done` (in a gitflow
   flow, where `develop_branch` is set; it is set after the merge into develop, but a hotfix can
   finish while develop is behind). You can name them as `#72` or by title (`Story 4 — Download the
-  update safely`).
+  update safely`). An issue of another repository can be named as `owner/name#72`. It holds the story
+  only when that repository is a GitHub repository you added to the Foundry under the same owner as
+  this watcher's repository; any other repository is not waited for, and the activity log says so.
+  The other issue is read with that repository's own sign-in (at most 20 reads per check). When it
+  is closed as not planned, the story shows in Your turn with the reason, because it will never be
+  done; reopen it or take it out of **Depends on**.
   So you can put `Factory_go` on a whole chain at once; each story is planned and coded on top of
   the code of the one before it.
   A story that has stopped (questions, approval, usage limit, budget) also waits there: it is not
@@ -5099,6 +5129,10 @@ Every route has a **data class**, shown in the Data column of the permission tab
 
 A repository can be closed to service accounts: in its Run settings, tick **Closed to service accounts** (`services: none`). Then no service account can read or change anything about it. A request that names the repository, a run of it or a list that would include it gets 403, and the refusal is audited. Ask Foundry answers nothing while a repository is closed. Untick the box to open the repository again.
 
+**Acting for a person.** A service account can act for one person, so a program can follow that person's runs, repositories and Your-turn items, and answer them. Set **Acts for** in the account's dialog, `--acts-for <person>` on `scf service-accounts add` or `set` (`--acts-for ""` clears it), or `actsFor` in the API (`null` clears it). `actsFor` is the id of a person's account, not of another service account. With it, a bearer request sees and acts as that person for the owner and workspace checks: their runs, repositories, Your turn items (the list, the detail and the answer), change requests, the queue and the feed. The account stays a service account. It is never an admin, its scope still decides which routes it may call, and an admin-only route is still refused unless its key is in the scope. Without `actsFor`, nothing changes. Each `service-request` audit line names the person (`acts for <id>`).
+
+If the person is blocked, removed, or cannot sign in under the current sign-in mode, the account's requests get 403 with the reason, and an open stream ends. Health shows the same reason for a running managed service. The check runs on every request, so a block takes effect at once.
+
 **Rotate** gives the account a new token; the old one stops at once. **Revoke** ends the token until you rotate again. A token expires 30 days after its last use, and then it is refused until it is rotated. Cookie sign-in for people is not changed.
 
 ![The Users page under Administration, People and access](images/users.png)
@@ -5769,7 +5803,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs/:id/context` | yes | own runs | summary | the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle |
 | `GET /api/runs/:id/transcript/:n` | yes | no | log | the transcript of a step |
 | `GET /api/next` | yes | no | summary | what happens next, for all runs |
-| `GET /api/health` | yes | no | admin | server health |
+| `GET /api/health` | yes | no | admin | server health, with the package version (`package`) |
 | `GET /api/board` | yes | no | summary | the board of all work |
 | `GET /api/search` | yes | yes | summary | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
 | `GET /api/since` | yes | no | summary | what changed since a time |
@@ -5802,9 +5836,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/users/:id/app-repos` | yes | no | secret | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | secret | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | secret | delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials |
-| `GET /api/service-accounts` | yes | no | secret | list the service accounts (accounts for programs) with their scope, token state and last use, and the routes a scope may hold (`grantable`); never a token |
-| `POST /api/service-accounts` | yes | no | secret | add a service account (`name`, `scope`: rule keys such as `GET runs`); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400 |
-| `PUT /api/service-accounts/:id` | yes | no | secret | change the name or scope of a service account (same checks as when it is added) |
+| `GET /api/service-accounts` | yes | no | secret | list the service accounts (accounts for programs) with their scope, token state and last use, the person each acts for (`actsFor`, `actsForName`, `actsForProblem`), the routes a scope may hold (`grantable`) and the person accounts it may act for (`people`); never a token |
+| `POST /api/service-accounts` | yes | no | secret | add a service account (`name`, `scope`: rule keys such as `GET runs`, `actsFor`: the id of a person whose work it sees and answers); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400 |
+| `PUT /api/service-accounts/:id` | yes | no | secret | change the name, scope or `actsFor` of a service account (same checks as when it is added; `actsFor: null` clears it) |
 | `POST /api/service-accounts/:id/rotate` | yes | no | secret | give a service account a new token; the old one stops at once; the answer has the new token, shown once |
 | `POST /api/service-accounts/:id/revoke` | yes | no | secret | revoke the token of a service account; it stops at once; rotate gives a new one |
 | `GET /api/skills/lifecycle` | yes | no | admin | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
@@ -8009,6 +8043,7 @@ services:
     env: { BOT_CHANNEL: "factory" }           # optional; names starting SCF_ or FACTORY_ are reserved
     public_key: "<base64 of a 32-byte Ed25519 key>"   # optional: checks <command>.sig before each start
     scope: ["GET health", "GET runs"]         # the routes of the service account the Foundry keeps for it
+    acts_for: "ann@example.com"               # optional: the name or e-mail of one person; see section 7
 ```
 
 - **When they start.** After the server listens and the watchers have started. Up to 10 services.

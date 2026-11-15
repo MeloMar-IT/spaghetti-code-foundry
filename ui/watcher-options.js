@@ -23,7 +23,21 @@ const CHECK = "pre" + "check_flow";
 const TEXTS = [CHECK,"pause_while_pr_open"];
 const SWITCH_DEFAULTS = { auto_defaults: false, wait_for_dependencies: true, comment_on_failure: true, status_comment: true, one_at_a_time: false };
 const LIST_DEFAULTS = { priority_labels: ["bug"], dependency_done_labels: [], remove_on_done: [] };
-const KEYS = [...SWITCHES, ...LISTS, ...TEXTS, "status_labels"];
+// for every source (#878): sent only when set; a cleared one is null on an edit
+const REFERENCE_KEYS = ["reference_repos", "reference_private_ok"];
+const KEYS = [...SWITCHES, ...LISTS, ...TEXTS, "status_labels", ...REFERENCE_KEYS];
+const REF_HELP = "Other repositories of the same owner, as owner/name. Each run gets a read-only copy of their newest commit, and the planner and coder look facts up there. Default: none";
+const PRIVATE_HELP = "Lets the agents read a private reference repository even when this repository is public or not known to be private: what they read can end up in public GitHub issue comments and pull requests. Default: off";
+
+/** The reference options of a request body (any source). Nothing when the values have no reference keys. */
+function referenceBody(o, editing) {
+  if (!("reference_repos" in o) && !("reference_private_ok" in o)) return {};
+  const clear = editing ? null : undefined;
+  const repos = labelList(o.reference_repos);
+  const body = { reference_repos: repos.length ? repos : clear, reference_private_ok: o.reference_private_ok ? true : clear };
+  for (const k of Object.keys(body)) if (body[k] === undefined) delete body[k];
+  return body;
+}
 
 const AUTO_HELP = "The Foundry answers its own questions with its recommendations, at most twice per GitHub issue; after that a person answers. Default: off.";
 
@@ -31,16 +45,19 @@ const AUTO_HELP = "The Foundry answers its own questions with its recommendation
 export const labelList = (text) => String(text ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 
 /**
- * The option keys of a request body from raw values `o` (undefined → {}). Not an issues watcher → {}.
- * `editing`: a cleared precheck_flow / pause_while_pr_open is null (the API removes it), else it is left out.
+ * The option keys of a request body from raw values `o` (undefined → {}). The reference options go for every source;
+ * the others only for an issues watcher.
+ * `editing`: a cleared precheck_flow / pause_while_pr_open / reference option is null (the API removes it), else it is left out.
  * A list may be given as { text, stored }: untouched text keeps the stored array, so a label with a comma survives.
  */
 export function optionsBody(o, source, editing) {
-  if (!o || source !== "issues") return {};
+  if (!o || source === "monitor") return {};
+  const refs = referenceBody(o, editing);
+  if (source !== "issues") return refs;
   const text = (x) => String(x ?? "").trim();
   const clear = editing ? null : undefined;
   const list = (v) => (v && typeof v === "object" ? (v.stored && v.text === v.stored.join(", ") ? v.stored : labelList(v.text)) : labelList(v));
-  const body = {};
+  const body = { ...refs };
   for (const k of SWITCHES) body[k] = !!o[k];
   for (const k of LISTS) body[k] = list(o[k]);
   for (const k of TEXTS) body[k] = text(o[k]) || clear;
@@ -76,7 +93,9 @@ export function watcherOptions(w, flows) {
     return f(`Label for ${STATUS_WORDS[k]}`, controls[`status_labels.${k}`], `Your own name for this status label. Default: ${d}`);
   });
   const group = (title, ...kids) => (groups[title] =h("details", {}, h("summary", {}, title), h("div", { class: "stack" }, ...kids)));
-  const el = h("div", { class: "stack" },
+  controls.reference_repos = input((w.reference_repos ?? []).join(", "), { class: "mono", name: "reference_repos", placeholder: "owner/name, owner/name" });
+  controls.reference_private_ok = h("input", { type: "checkbox", class: "fit", name: "reference_private_ok", checked: !!w.reference_private_ok });
+  const issuesOnly = h("div", { class: "stack" },
     group("Labels",
       list1("priority_labels", "Labels that go first", "GitHub issues with one of these labels start before all others. Leave empty for none. Default: bug", "bug"),
       ...statusFields,
@@ -91,6 +110,11 @@ export function watcherOptions(w, flows) {
       sw1("comment_on_failure", "Comment when a run fails", "Posts the reason and the failing step's output on the GitHub issue. Default: on"),
       f("Questions check", select, "Runs this flow once over all new GitHub issues before any starts, e.g. epic-questions. Default: none"),
       sw1("auto_defaults", "Answer questions automatically", AUTO_HELP)));
+  const el = h("div", { class: "stack" },
+    issuesOnly,
+    group("Reference repositories",
+      f("Reference repositories", controls.reference_repos, REF_HELP),
+      h("div", {}, h("label", { class: "row tight" }, controls.reference_private_ok, h("span", {}, "Allow private references for a public repository")), h("small", { class: "muted" }, PRIVATE_HELP))));
   const groupOf = (control) => Object.values(groups).find((d) => hasChild(d, control));
   return {
     el,
@@ -101,8 +125,13 @@ export function watcherOptions(w, flows) {
       [CHECK]: controls[CHECK].value,
       pause_while_pr_open: controls.pause_while_pr_open.value,
       status_labels: Object.fromEntries(Object.keys(STATUS_DEFAULTS).map((k) => [k, controls[`status_labels.${k}`].value])),
+      reference_repos: controls.reference_repos.value,
+      reference_private_ok: controls.reference_private_ok.checked,
     }),
-    showFor: (source) => { el.hidden = source !== "issues"; },
+    showFor: (source) => {
+      el.hidden = source === "monitor";
+      issuesOnly.hidden = source !== "issues";
+    },
     fieldOf: (message) => {
       const m = String(message ?? "");
       const status = /^status_labels\.(\w+):/.exec(m)?.[1];
@@ -123,9 +152,12 @@ const hasChild = (node, target) => typeof node.contains === "function"
   ? node.contains(target)
   : Array.from(node.children ?? []).some((c) => c === target || (typeof c === "object" && hasChild(c, target)));
 
-/** Short texts for the options of `w` that are not at their default (issues watchers only; else []). */
+/** Short texts for the options of `w` that are not at their default (the reference options for every source, the others for issues watchers only). */
 export function optionNotes(w) {
-  if (w.source !== "issues") return [];
+  const refs = [];
+  if (w.reference_repos?.length) refs.push(`reads ${w.reference_repos.join(", ")} (read only)`);
+  if (w.reference_private_ok) refs.push("may read private references");
+  if (w.source !== "issues") return refs;
   const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
   const notes = [];
   if (w.auto_defaults) notes.push("answers its own questions (at most twice per GitHub issue)");
@@ -140,5 +172,5 @@ export function optionNotes(w) {
   if (w.comment_on_failure === false) notes.push("no comment on failure");
   if (w.status_comment === false) notes.push("no status comment");
   if (w.one_at_a_time) notes.push("one run at a time");
-  return notes;
+  return [...notes, ...refs];
 }

@@ -82,6 +82,31 @@ const watcherShape = {
     release_build: z.boolean().default(false),
     /** The e-mail of the account that owns this watcher's runs (default: the first admin). Only an admin can set it. */
     owner: z.string().max(254).optional(),
+    /** Other repositories of the same owner, copied read-only next to the checkout of each run (#878). */
+    reference_repos: z.array(z.string().regex(/^[\w.-]+\/[\w.-]+$/, "owner/name")).max(10).optional(),
+    /** Allow a private reference for a run on a repository that is not known to be private. */
+    reference_private_ok: z.boolean().optional(),
+};
+
+/** The folder of a reference copy under `<run folder>/reference`: "Acme/Lib" → "acme-lib". */
+export const referenceFolderName = (repo: string): string => repo.toLowerCase().replace("/", "-");
+
+/** The problem of a list of reference repositories, or undefined: names that are not valid, or two that share a folder. */
+export function referenceListProblem(names: readonly string[]): string | undefined {
+  const bad = names.find((n) => !validGithubName(n));
+  if (bad !== undefined) return `"${bad}" is not a GitHub repository name (owner/name)`;
+  const seen = new Set<string>();
+  for (const n of names) {
+    const folder = referenceFolderName(n);
+    if (seen.has(folder)) return `"${n}" is named twice (or shares its folder ${folder} with another one)`;
+    seen.add(folder);
+  }
+  return undefined;
+}
+
+const referencesOk = (w: { reference_repos?: string[] }, ctx: z.RefinementCtx) => {
+  const problem = w.reference_repos ? referenceListProblem(w.reference_repos) : undefined;
+  if (problem) ctx.addIssue({ code: "custom", message: problem, path: ["reference_repos"] });
 };
 
 const scheduleNeedsTask = (w: { source: string; task?: string }) => w.source !== "schedule" || !!w.task?.trim();
@@ -98,7 +123,8 @@ const RepoWatcherSchema = z
   .strict()
   .refine(scheduleNeedsTask, { message: "a schedule watcher needs a task", path: ["task"] })
   .refine(zoneKnown, { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] })
-  .refine(releaseNeedsSchedule, { message: "only a schedule watcher builds release files", path: ["release_build"] });
+  .refine(releaseNeedsSchedule, { message: "only a schedule watcher builds release files", path: ["release_build"] })
+  .superRefine(referencesOk);
 
 const WatcherSchema = z
   .object(watcherShape)
@@ -109,6 +135,7 @@ const WatcherSchema = z
   .superRefine((w, ctx) => {
     if (w.source !== "monitor") {
       if (!/^[\w.-]+\/[\w.-]+$/.test(w.github_repo)) ctx.addIssue({ code: "custom", message: "owner/repo", path: ["github_repo"] });
+      referencesOk(w, ctx);
       return;
     }
     const no = (path: string, set: boolean) => set && ctx.addIssue({ code: "custom", message: "a monitor does not use this", path: [path] });
@@ -116,6 +143,8 @@ const WatcherSchema = z
     no("flow", w.flow !== "default");
     no("precheck_flow", w.precheck_flow !== undefined);
     no("owner", w.owner !== undefined);
+    no("reference_repos", w.reference_repos !== undefined);
+    no("reference_private_ok", w.reference_private_ok !== undefined);
   });
 
 /** Thresholds of the monitor watcher. */
@@ -421,6 +450,8 @@ const ServiceSchema = z
     /** The scope of the service account the Foundry keeps for this program, such as `GET health`. */
     scope: z.array(z.string().regex(/^(GET|POST|PUT|DELETE) [A-Za-z0-9:/_-]{1,200}$/, "must be a route such as `GET runs`")).max(200, "at most 200 routes")
       .refine((l) => new Set(l).size === l.length, "names a route twice"),
+    /** The name or e-mail of the one person whose work the service account sees and answers (#876). Checked when the service starts. */
+    acts_for: z.string().trim().min(1, "must name a person").max(254).optional(),
   })
   .strict();
 export type ServiceConfig = z.infer<typeof ServiceSchema>;

@@ -147,6 +147,8 @@ const UserSchema = z
     scope: z.array(z.string().min(1).max(210)).max(200).optional(),
     /** Only a service: `id` is the SHA-256 of the token. `used` is the time of the last request; `revoked` is set when an admin revokes it (the hash stays so a refused request can still name the account). */
     token: z.object({ id: z.string().regex(/^[0-9a-f]{64}$/), created: z.iso.datetime(), used: z.iso.datetime().optional(), revoked: z.iso.datetime().optional() }).strict().optional(),
+    /** Only a service: the id of the person whose work it sees and answers (#876). Written only when set. */
+    actsFor: z.uuid().optional(),
   })
   .strict();
 
@@ -162,7 +164,7 @@ export function accountProblem(u: z.infer<typeof UserSchema>): string | undefine
     if (u.email !== `${u.id}@${SERVICE_EMAIL_DOMAIN}`) return "service with a wrong e-mail";
     return undefined;
   }
-  return u.scope !== undefined || u.token !== undefined ? "person with service fields" : undefined;
+  return u.scope !== undefined || u.token !== undefined || u.actsFor !== undefined ? "person with service fields" : undefined;
 }
 
 const FileSchema = z

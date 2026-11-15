@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -44,6 +44,18 @@ describe("clean", () => {
     writeFileSync(join(bundle, "sub", "s-1"), "x");
     writeFileSync(join(old.runDir, "context.json"), "{}");
     lockRunContext(old.runDir);
+    const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true });
+    expect(r.runs).toEqual([old.runId]);
+    expect(existsSync(old.runDir)).toBe(false);
+  });
+
+  it("purges a run that a crash left with a locked reference copy (#878)", async () => {
+    const old = await run("name: a\nsteps:\n  - {id: a, type: shell, run: 'true'}");
+    age(old.runId, 10);
+    const copy = join(old.runDir, "reference", "acme-lib");
+    mkdirSync(join(copy, "docs"), { recursive: true });
+    writeFileSync(join(copy, "docs", "a.md"), "x");
+    for (const [p, m] of [[join(copy, "docs", "a.md"), 0o444], [join(copy, "docs"), 0o555], [copy, 0o555], [join(old.runDir, "reference"), 0o555]] as const) chmodSync(p, m);
     const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true });
     expect(r.runs).toEqual([old.runId]);
     expect(existsSync(old.runDir)).toBe(false);

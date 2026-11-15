@@ -2,9 +2,9 @@ import { verify } from "node:crypto";
 import { accessSync, closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod";
-import { createServiceAccount, getServiceAccount, revokeServiceToken, rotateServiceToken, updateServiceAccount } from "../auth/service-accounts.js";
+import { actsForProblem, createServiceAccount, findPersonId, getServiceAccount, revokeServiceToken, rotateServiceToken, updateServiceAccount } from "../auth/service-accounts.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
-import { deleteUser } from "../auth/users.js";
+import { deleteUser, readUsersFile } from "../auth/users.js";
 import { serviceCommandProblem } from "../config.js";
 import { decodeBase64Exact, ed25519PublicKey } from "../skills/release-signature.js";
 
@@ -100,25 +100,28 @@ const ACCOUNT = "the service account cannot be used";
  * The managed account of a service with a fresh token (the old one is dead). The account is made when it is missing; the
  * mapping file records it. An account the mapping does not know is never taken over.
  */
-export function serviceToken(name: string, scope: string[]): { accountId: string; token: string } {
+export function serviceToken(name: string, scope: string[], actsFor?: string): { accountId: string; token: string } {
   let map: AccountMap;
   try {
     map = readMap();
   } catch {
     throw new ServiceProblem("the list of service accounts cannot be read");
   }
+  const personId = actsFor === undefined ? undefined : resolvePerson(actsFor);
   const known = map.accounts[name];
   const account = known ? getServiceAccountSafe(known) : undefined;
   try {
     if (account) {
       if (account.status !== "active") throw new ServiceProblem("the service account is blocked");
-      if (account.scope.length !== scope.length || account.scope.some((k, i) => k !== scope[i])) updateServiceAccount(account.id, { scope });
+      const scopeChanged = account.scope.length !== scope.length || account.scope.some((k, i) => k !== scope[i]);
+      // config.yaml decides `actsFor` of a managed account: without `acts_for` it is cleared
+      if (scopeChanged || account.actsFor !== personId) updateServiceAccount(account.id, { scope, actsFor: personId ?? null });
       const r = rotateServiceToken(account.id);
       return { accountId: account.id, token: r.token! };
     }
     let made;
     try {
-      made = createServiceAccount({ name, scope });
+      made = createServiceAccount({ name, scope, ...(personId !== undefined ? { actsFor: personId } : {}) });
     } catch {
       throw new ServiceProblem("a service account with that name exists already, or the account cannot be made");
     }
@@ -136,6 +139,36 @@ export function serviceToken(name: string, scope: string[]): { accountId: string
   } catch (e) {
     if (e instanceof ServiceProblem) throw e;
     throw new ServiceProblem(ACCOUNT);
+  }
+}
+
+export const ACTS_FOR_NONE = "acts_for names no person account";
+export const ACTS_FOR_SEVERAL = "acts_for names more than one person account; use the e-mail";
+
+/** The id of the one person `acts_for` names (a name or an e-mail), or a ServiceProblem with a fixed sentence. */
+function resolvePerson(nameOrEmail: string): string {
+  let r: ReturnType<typeof findPersonId>;
+  try {
+    r = findPersonId(nameOrEmail);
+  } catch {
+    throw new ServiceProblem("the list of accounts cannot be read");
+  }
+  if ("id" in r) return r.id;
+  throw new ServiceProblem(r.problem === "none" ? ACTS_FOR_NONE : ACTS_FOR_SEVERAL);
+}
+
+/**
+ * Why a managed account cannot act for its person now (#876), or undefined: no `actsFor`, or a person who can sign in. Used by
+ * Health for a running service, whether `actsFor` came from config.yaml or the API. Fixed sentences only.
+ */
+export function actsForState(accountId: string): string | undefined {
+  try {
+    const users = readUsersFile().users;
+    const account = users.find((u) => u.id === accountId);
+    if (!account?.actsFor) return undefined;
+    return actsForProblem(users.find((u) => u.id === account.actsFor));
+  } catch {
+    return "the list of accounts cannot be read";
   }
 }
 
