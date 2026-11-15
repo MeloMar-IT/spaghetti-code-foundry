@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { prepareAuditLocked, type AuditEvent } from "./audit.js";
+import { appendAuditLocked, prepareAuditLocked, type AuditEvent } from "./audit.js";
 import { sessionId } from "./sessions.js";
 import { withAuthLock } from "./store.js";
 import { hasIdentityProvider } from "./identity.js";
@@ -227,8 +227,10 @@ export interface ServiceUse {
  * with `touch`, the time of the request in `token.used` (exact, so the 30 days run from the real last request). Both happen
  * under one lock that is not waited for. Throws a StoreError when the line or the file cannot be written. A token that is not
  * live under the lock is not touched, and an `ok` line for it is written as `failed`: the result says whether the request may go on.
+ * With `defer`, an `ok` line of a live token is checked and the log opened, but not written: the caller writes it with
+ * `writeServiceLine` once the response is done (a change, #877). A `failed` line is always written at once.
  */
-export function recordServiceUse(id: string | undefined, use: ServiceUse, opts: { touch?: boolean; now?: number } = {}): boolean {
+export function recordServiceUse(id: string | undefined, use: ServiceUse, opts: { touch?: boolean; now?: number; defer?: boolean } = {}): boolean {
   const now = opts.now ?? Date.now();
   return withAuthLock(() => {
     const file = readUsersFile();
@@ -248,12 +250,24 @@ export function recordServiceUse(id: string | undefined, use: ServiceUse, opts: 
         const next: ServiceAccount = { ...account, token: { ...account.token!, used: new Date(now).toISOString() } };
         writeUsersFileLocked({ ...file, users: file.users.map((u) => (u.id === next.id ? next : u)) });
       }
-      log.write();
+      // with `defer` an `ok` line is only checked here (the log opens); the caller writes it later with writeServiceLine
+      if (!(ok && opts.defer)) log.write();
     } finally {
       log.close();
     }
     return ok;
   }, 0);
+}
+
+/**
+ * Writes one `service-request` line as given, without checking the token: the change it records has already happened (#877).
+ * Does not wait for a held lock. Throws a StoreError when the line cannot be written.
+ */
+export function writeServiceLine(id: string, use: ServiceUse): void {
+  withAuthLock(
+    () => appendAuditLocked(id, { action: "service-request", result: use.result, target: use.target, ...(use.detail !== undefined ? { detail: use.detail } : {}) }),
+    0,
+  );
 }
 
 export const serviceView = (u: ServiceAccount): ServiceView => publicUser(u) as ServiceView;

@@ -8,7 +8,7 @@ import {
   changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, isBreakGlass, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
 } from "../auth/users.js";
 import { findServiceByToken } from "../auth/service-accounts.js";
-import { refuseBearer, resolveActing, serviceBearer } from "./service-requests.js";
+import { clientLabel, refuseBearer, resolveActing, serviceBearer } from "./service-requests.js";
 import { providerSignIn, recheckProviderSession } from "./identity-session.js";
 import { isView, viewOf, viewsFor } from "../auth/views.js";
 import { SESSION_TTL_MS, csrfToken, findSession, revokeSession, sessionId } from "../auth/sessions.js";
@@ -135,7 +135,7 @@ function passwordOf(body: Record<string, unknown>): string {
 export async function requireSession(ctx: ApiContext, req: IncomingMessage, method: string): Promise<User> {
   // A service token has its own path (server.ts). Here (the files of plugins) it is refused and audited, and its request never falls back to a cookie.
   const bearer = serviceBearer(req);
-  if (bearer !== undefined) refuseBearer(ctx, bearer, method, "plugin file");
+  if (bearer !== undefined) refuseBearer(ctx, bearer, method, "plugin file", clientLabel(req));
   const cur = await guarded(ctx, () => currentSession(ctx, req));
   if (!cur) throw new HttpError(401, "sign in first");
   if (method !== "GET" && method !== "HEAD") {

@@ -1,6 +1,7 @@
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { StoreError } from "../auth/store.js";
-import { actsForProblem, lookupServiceToken, recordServiceUse, type FoundToken, type ServiceAccount } from "../auth/service-accounts.js";
+import { cleanClient } from "../auth/audit-client.js";
+import { actsForProblem, lookupServiceToken, recordServiceUse, writeServiceLine, type FoundToken, type ServiceAccount, type ServiceUse } from "../auth/service-accounts.js";
 import { getUser } from "../auth/users.js";
 import { basename } from "node:path";
 import { HttpError } from "./http.js";
@@ -18,7 +19,9 @@ import type { ApiContext } from "./server.js";
 /**
  * The request path of a service token (#866). A request with `Authorization: Bearer scf_svc_…` is a service request: only the
  * bearer counts (a cookie is ignored), it works only on this computer, it needs no CSRF token (nothing in a browser sends it
- * by itself), and every such request writes one `service-request` audit line, also a refused one.
+ * by itself), and every such request writes one `service-request` audit line, also a refused one. A read gets its `ok` line
+ * before the handler runs. A change (POST, PUT, PATCH, DELETE) passes the same check before the handler, and its one line is
+ * written with the status when the response is done (#877). The optional `X-SCF-Client` header adds `client <label>` to the line.
  */
 
 /** The routes that need no session. A service token is refused there: it never gets the answer of a cookie account. */
@@ -46,12 +49,30 @@ export interface ServiceCall {
   why?: string;
   /** The id the request acts as (the person of `actsFor`, else the account's own id), once the account is known. A stream ends when it changes. */
   actingId?: string;
-  /** True once this request has its audit line. */
+  /** True once this request has its audit line (or, for a change, once that line is sure to be written). */
   written: boolean;
   seg: string[];
+  /** The cleaned `X-SCF-Client` label, when one was sent. */
+  client?: string;
 }
 
-export const newServiceCall = (token: string, method: string, seg: string[]): ServiceCall => ({ token, method, seg, rule: findRule(method, seg), written: false });
+export const newServiceCall = (token: string, method: string, seg: string[], client?: string): ServiceCall => ({
+  token,
+  method,
+  seg,
+  rule: findRule(method, seg),
+  written: false,
+  ...(client !== undefined ? { client } : {}),
+});
+
+/** The client label of a request (`X-SCF-Client`), cleaned; undefined when none is sent or nothing printable is left. Never refused. */
+export function clientLabel(req: IncomingMessage): string | undefined {
+  const v = req.headers["x-scf-client"];
+  return typeof v === "string" ? cleanClient(v) : undefined;
+}
+
+/** The methods that change something: their line is written when the response is done, with the status. */
+const CHANGE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 const INTERNAL = "service accounts are not working; see the server log";
 const REFUSED_TOKEN = "this service token is not valid";
@@ -62,11 +83,18 @@ const detailOf = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").
 const lost = (ctx: ApiContext, e: unknown) =>
   ctx.diagLog?.(e instanceof StoreError ? `auth: ${basename(e.file)} ${e.kind} (service-request)` : "auth: audit.jsonl not-valid (service-request)");
 
-/** The part of an audit detail that names the person an account acts for (by id), or undefined. */
-const actsForDetail = (found: FoundToken | undefined): string | undefined => (found?.account.actsFor ? `acts for ${found.account.actsFor}` : undefined);
-const withActsFor = (detail: string, found: FoundToken | undefined): string => {
-  const a = actsForDetail(found);
-  return a === undefined ? detail : `${detail}; ${a}`;
+/**
+ * The detail of a line: the given text, then the person the account acts for (by id), then the client label, joined by "; ".
+ * The label is always last, so `clientOf` reads it back. Undefined when there is nothing.
+ */
+const detailWith = (base: string | undefined, found: FoundToken | undefined, client: string | undefined): string | undefined => {
+  const parts = [base, found?.account.actsFor ? `acts for ${found.account.actsFor}` : undefined, client !== undefined ? `client ${client}` : undefined];
+  const d = parts.filter((p): p is string => !!p).join("; ");
+  return d || undefined;
+};
+const withDetail = (base: string | undefined, found: FoundToken | undefined, client: string | undefined) => {
+  const detail = detailWith(base, found, client);
+  return detail !== undefined ? { detail } : {};
 };
 
 /**
@@ -91,14 +119,14 @@ export function auditRefused(ctx: ApiContext, call: ServiceCall, e: unknown): vo
   const status = e instanceof HttpError ? e.status : 500;
   const text = call.why ?? (e instanceof HttpError ? e.message : "error");
   try {
-    recordServiceUse(call.found?.account.id, { result: "failed", target: targetOf(call), detail: withActsFor(detailOf(`${status} ${text}`), call.found) }, { touch: call.account !== undefined });
+    recordServiceUse(call.found?.account.id, { result: "failed", target: targetOf(call), ...withDetail(detailOf(`${status} ${text}`), call.found, call.client) }, { touch: call.account !== undefined });
   } catch (err) {
     lost(ctx, err);
   }
 }
 
 /** A refusal of a service bearer on a path that serves no service call (the files of plugins): audited, then 401. */
-export function refuseBearer(ctx: ApiContext, token: string, method: string, target: string): never {
+export function refuseBearer(ctx: ApiContext, token: string, method: string, target: string, client?: string): never {
   const call: ServiceCall = { token, method, seg: [], written: false };
   try {
     call.found = lookupServiceToken(token);
@@ -106,7 +134,7 @@ export function refuseBearer(ctx: ApiContext, token: string, method: string, tar
     lost(ctx, e);
   }
   try {
-    recordServiceUse(call.found?.account.id, { result: "failed", target: `${method.slice(0, 16)} ${target}`, detail: withActsFor("401 a service token does not work here", call.found) });
+    recordServiceUse(call.found?.account.id, { result: "failed", target: `${method.slice(0, 16)} ${target}`, ...withDetail("401 a service token does not work here", call.found, client) });
   } catch (e) {
     lost(ctx, e);
   }
@@ -269,7 +297,7 @@ export function auditNetworkRefusal(ctx: ApiContext, req: IncomingMessage, refus
   } catch {
     seg = [];
   }
-  const call = newServiceCall(token, method, seg);
+  const call = newServiceCall(token, method, seg, clientLabel(req));
   try {
     call.found = lookupServiceToken(token);
   } catch (e) {
@@ -278,19 +306,94 @@ export function auditNetworkRefusal(ctx: ApiContext, req: IncomingMessage, refus
   auditRefused(ctx, call, new HttpError(403, refusal));
 }
 
+/** The response a change waits for: its status once it is done. */
+export type ServiceResponse = Pick<ServerResponse, "once" | "statusCode" | "writableFinished">;
+
 /**
- * The request passed the access checks: writes its `ok` line and the time of use before the handler runs. If the line cannot
- * be written the request answers 503 and the handler does nothing (the log is the record of what a service did).
+ * The request passed the access checks. Under one lock the token must still be live and the audit log must open, and the
+ * time of use is written; else the request answers 503 (or 401) and the handler does nothing (the log is the record of what a
+ * service did). A read writes its `ok` line now. A change, given its `res`, writes its one line when the response is done, with
+ * the status: `ok` below 400, else `failed` (#877).
  */
-export function serviceOk(ctx: ApiContext, call: ServiceCall): void {
+export function serviceOk(ctx: ApiContext, call: ServiceCall, res?: ServiceResponse): void {
+  const late = res !== undefined && CHANGE_METHODS.has(call.method.toUpperCase());
+  const id = call.account!.id;
+  const target = targetOf(call);
   let live: boolean;
   try {
-    const detail = actsForDetail(call.found);
-    live = recordServiceUse(call.account!.id, { result: "ok", target: targetOf(call), ...(detail !== undefined ? { detail } : {}) }, { touch: true });
+    live = recordServiceUse(id, { result: "ok", target, ...withDetail(undefined, call.found, call.client) }, { touch: true, defer: late });
   } catch (e) {
     lost(ctx, e);
     throw new HttpError(503, "the audit log is busy; try again in a moment", { "retry-after": "1" });
   }
   call.written = true;
   if (!live) throw new HttpError(401, REFUSED_TOKEN);
+  if (!late) return;
+  res.once("close", () => {
+    const status = res.statusCode;
+    const done = res.writableFinished;
+    const base = done ? String(status) : `${status} the connection closed early`;
+    writeLate({ id, use: { result: done && status < 400 ? "ok" : "failed", target, ...withDetail(base, call.found, call.client) }, log: ctx.diagLog });
+  });
 }
+
+// ---- the late line of a change ----------------------------------------------------------------------------------
+
+interface LateLine {
+  id: string;
+  use: ServiceUse;
+  log: ((msg: string) => void) | undefined;
+}
+
+/** How often, and how far apart, a late line is tried again while another process holds the lock (about half a second). */
+const LATE_TRIES = 20;
+const LATE_RETRY_MS = 25;
+
+const pending = new Set<LateLine>();
+let exitHooked = false;
+
+const lostLate = (l: LateLine, e: unknown) =>
+  l.log?.(e instanceof StoreError ? `auth: ${basename(e.file)} ${e.kind} (service-request late)` : "auth: audit.jsonl not-valid (service-request late)");
+
+function writeLate(l: LateLine): void {
+  pending.add(l);
+  if (!exitHooked) {
+    exitHooked = true;
+    process.on("exit", flushServiceLines);
+  }
+  attemptLate(l, 0);
+}
+
+function attemptLate(l: LateLine, tries: number): void {
+  try {
+    writeServiceLine(l.id, l.use);
+    pending.delete(l);
+  } catch (e) {
+    if (e instanceof StoreError && e.kind === "locked" && tries < LATE_TRIES) {
+      setTimeout(() => {
+        if (pending.has(l)) attemptLate(l, tries + 1);
+      }, LATE_RETRY_MS).unref();
+      return;
+    }
+    pending.delete(l);
+    lostLate(l, e);
+  }
+}
+
+/**
+ * Tries each late line still waiting once more, now (synchronous: it also runs on process exit). A line that still cannot be
+ * written goes to the server log. Never throws.
+ */
+export function flushServiceLines(): void {
+  for (const l of [...pending]) {
+    pending.delete(l);
+    try {
+      writeServiceLine(l.id, l.use);
+    } catch (e) {
+      lostLate(l, e);
+    }
+  }
+}
+
+/** The number of late lines still waiting (for tests). */
+export const pendingServiceLines = (): number => pending.size;

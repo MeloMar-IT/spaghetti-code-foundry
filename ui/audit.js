@@ -26,8 +26,8 @@ export function dayTime(day, end = false) {
 export const filterProblem = ({ from, to }) => (from && to && from > to ? "The From date is after the To date." : "");
 
 /** The form values as the API's filters: empty ones are left out, dates become ISO times. */
-export function auditFilters({ user, action, from, to }) {
-  const all = { user, action, from: dayTime(from), to: dayTime(to, true) };
+export function auditFilters({ user, action, client, from, to }) {
+  const all = { user, action, client: typeof client === "string" ? client.trim() : client, from: dayTime(from), to: dayTime(to, true) };
   return Object.fromEntries(Object.entries(all).filter(([, v]) => v));
 }
 
@@ -90,6 +90,8 @@ export function detailFields(e) {
     { label: "Target", ...who(e.target, targetText(e.target)) },
     { label: "Detail", value: e.detail || "—" },
     { label: "Result", value: e.result || "—" },
+    // the label a service account sent with X-SCF-Client (#877)
+    ...(e.client ? [{ label: "Client", value: String(e.client) }] : []),
   ];
 }
 
@@ -136,6 +138,7 @@ export function renderAudit(main) {
   const date = (name) => h("input", { name, type: "date", class: "small-select", onChange: () => load() });
   const user = select("user", "All users", []);
   const action = select("action", "All actions", ACTIONS.map((a) => ({ value: a, label: a })));
+  const client = h("input", { name: "client", type: "search", class: "small-select", maxlength: "64", onChange: () => load() });
   const from = date("from");
   const to = date("to");
   const labelled = (t, el) => h("label", { class: "row" }, h("span", { class: "muted" }, t), el);
@@ -146,7 +149,7 @@ export function renderAudit(main) {
 
   const load = async () => {
     const my = ++loads;
-    const values = { user: user.value, action: action.value, from: from.value, to: to.value };
+    const values = { user: user.value, action: action.value, client: client.value, from: from.value, to: to.value };
     const problem = filterProblem(values);
     if (problem) {
       mount(exportSlot);
@@ -173,7 +176,7 @@ export function renderAudit(main) {
 
   mount(main,
     pageHeader({ layout: "toolbar", title: "Audit", meta: h("span", { class: "muted" }, "Who did what"),
-      actions: [labelled("User", user), labelled("Action", action), labelled("From", from), labelled("To", to),
+      actions: [labelled("User", user), labelled("Action", action), labelled("Client", client), labelled("From", from), labelled("To", to),
         h("span", { class: "spacer" }), exportSlot] }),
     result);
 

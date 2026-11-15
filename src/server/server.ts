@@ -81,7 +81,7 @@ import { userRoutes } from "./api-users.js";
 import { serviceAccountRoutes, checkServiceScope } from "./api-service-accounts.js";
 import { ServiceSupervisor, type ServicesHandle } from "../services/supervisor.js";
 import { hasServiceState } from "../services/setup.js";
-import { auditNetworkRefusal, auditRefused, checkServiceRepos, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
+import { auditNetworkRefusal, auditRefused, checkServiceRepos, clientLabel, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
 import { sinceRoutes } from "./since.js";
@@ -407,10 +407,11 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     const method = req.method ?? "GET";
     const seg = path.split("/").filter(Boolean).slice(1); // drop "api"
     // A service token (#866) is recognised before anything else, also before the public sign-in routes. Every such request
-    // gets one audit line: the `ok` line before the handler runs, or a `failed` line here when it is refused before that.
+    // gets one audit line: for a read the `ok` line before the handler runs, for a change the line with the status when the
+    // response is done (after the same check before the handler), or a `failed` line here when it is refused before that.
     const token = serviceBearer(req);
     if (token === undefined) return apiRequest(req, res, method, seg);
-    const call = newServiceCall(token, method, seg);
+    const call = newServiceCall(token, method, seg, clientLabel(req));
     try {
       await apiRequest(req, res, method, seg, call);
     } catch (e) {
@@ -441,7 +442,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       checkServiceRepos(ctx, user, rule, seg, new URL(req.url ?? "/", "http://x").searchParams);
       const moved = method === "GET" ? undefined : homeMoved();
       if (moved) throw new HttpError(503, movedText(moved, admin));
-      if (call) serviceOk(ctx, call);
+      if (call) serviceOk(ctx, call, res);
       for (const route of ROUTES) {
         if (await route(ctx, req, res, seg, method, user)) return watchSession(req, res, as, call);
       }
