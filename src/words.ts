@@ -4,8 +4,10 @@ import type { NextKind } from "./next-step.js";
 export interface WordFacts {
   /** Label of the schedule watcher's release, e.g. "17:00" (a release without a pull request). */
   releaseAt?: string;
-  /** Issue numbers a dependency waits for. */
-  blockers?: number[];
+  /** Issue numbers a dependency waits for; "owner/name#12" for an issue of another repository. */
+  blockers?: (number | string)[];
+  /** `dependency`: issues of other repositories it waits for that were closed as not planned ("owner/name#12"). */
+  dropped?: string[];
   /** `red_base`: the record is the repository card (a person must act), not a held story. */
   redProblem?: boolean;
   /** The Foundry itself failed, not the code. */
@@ -37,7 +39,7 @@ interface Words {
   help: string | ((f: WordFacts) => string);
 }
 
-const list = (f: WordFacts) => (f.blockers?.length ? f.blockers.map((n) => `#${n}`).join(", ") : "another story");
+const list = (f: WordFacts) => (f.blockers?.length ? f.blockers.map((n) => (typeof n === "number" ? `#${n}` : n)).join(", ") : "another story");
 const scheduled = (f: WordFacts) => !!f.releaseAt;
 
 /**
@@ -59,8 +61,10 @@ const GLOSSARY: Record<NextKind, Words> = {
       : "A release pull request brings finished work to main, and this one is not merged yet. Merge it and the Foundry goes on."),
   },
   dependency: {
-    status: (f) => `waiting for ${list(f)}`,
-    help: (f) => `It needs ${list(f)} to be done first. Nothing to do — it starts by itself after that.`,
+    status: (f) => (f.dropped?.length ? `waiting for you — ${f.dropped.join(", ")} closed as not planned` : `waiting for ${list(f)}`),
+    help: (f) => (f.dropped?.length
+      ? `It needs ${f.dropped.join(", ")}, and that was closed as not planned, so it never gets done. Reopen it, or take it out of Depends on, and the story goes on.`
+      : `It needs ${list(f)} to be done first. Nothing to do — it starts by itself after that.`),
   },
   red_base: {
     status: "waiting — the base branch has failing tests",

@@ -30,6 +30,7 @@ import { runAutonomyAtStart } from "../governance/run-autonomy.js";
 import { autonomyRefuses } from "../governance/autonomy-rules.js";
 import { freshIssueList, isTrackingEpic } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
+import { CrossDeps } from "./cross-deps.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 import { appBase, appLink } from "../public-url.js";
@@ -135,6 +136,8 @@ export interface WatcherDeps {
   afterCheck?: () => Promise<void> | void;
   /** The sign-in of the watcher's repository (stored watchers); without it the watcher uses the host's `gh` login. */
   gh?: RepoGhIdentity;
+  /** The sign-in of another stored repository, for cross-repository dependencies; without it their issues cannot be read. */
+  repoGh?: (repoId: string) => RepoGhIdentity;
   /** Is every unknown skill of a skill-gap stop in the catalogue now? Without it, such a run is never resumed here. */
   skillReady?: (run: RunSummary) => boolean;
 }
@@ -176,6 +179,9 @@ export interface Hold {
   /** Built from the label alone: the comments could not be read in this check. */
   byLabel?: true;
 }
+
+/** An issue a story waits for: of this repository, or of another one (`repo`, "owner/name"). */
+type BlockerRef = { issue: number; repo?: string; notPlanned?: true };
 
 const holdKey = (h: Hold) => `${h.issue ?? ""}|${h.next.kind}|${h.next.runId ?? ""}`;
 
@@ -333,6 +339,11 @@ export class Watcher {
   private parkNegative = new Map<number, number>();
   /** Runs whose end will set the label (so a run is waited for once). */
   private waitingFor = new Set<string>();
+  /** The sign-ins of other repositories whose issues a story depends on, per record id; removed when the watcher stops and no check runs. */
+  private otherIds = new Map<string, RepoGhIdentity>();
+  /** Checks that are running now (a check given up by its timeout runs on until it ends). */
+  private checksRunning = 0;
+  private crossDeps?: CrossDeps;
 
   private L: LabelNames;
   private allStatus: string[];
@@ -394,6 +405,32 @@ export class Watcher {
     if (retire) this.retired = true;
     clearTimeout(this.timer);
     this.status.nextTick = undefined;
+    if (!this.checksRunning) this.disposeOthers();
+  }
+
+  /** Removes the sign-ins of other repositories (a running check still uses them: then it does this when it ends). */
+  private disposeOthers() {
+    for (const id of this.otherIds.values()) id.dispose();
+    this.otherIds.clear();
+  }
+
+  private otherIdentity(repoId: string): RepoGhIdentity | undefined {
+    if (!this.d.repoGh) return undefined;
+    let id = this.otherIds.get(repoId);
+    if (!id) this.otherIds.set(repoId, (id = this.d.repoGh(repoId)));
+    return id;
+  }
+
+  /** Issues of other repositories a story depends on (one reader per watcher: what is done stays known). */
+  private get cross(): CrossDeps {
+    return (this.crossDeps ??= new CrossDeps({
+      selfRepo: this.repo,
+      owner: watcherAccount(this.cfg),
+      rule: () => this.doneRule(),
+      identity: (id) => this.otherIdentity(id),
+      act: (m) => { if (!this.status.lastActions.some((a) => a.endsWith(m))) this.act(m); },
+      warn: (m) => this.d.log(`[${this.cfg.id}] ! ${m}`),
+    }));
   }
 
   private act(msg: string) {
@@ -479,6 +516,16 @@ export class Watcher {
 
   /** One check; throws when it fails. */
   private async check(token: number, checkStartedAt: number) {
+    this.checksRunning++;
+    try {
+      await this.checkNow(token, checkStartedAt);
+    } finally {
+      this.checksRunning--;
+      if (this.stopped && !this.checksRunning) this.disposeOthers();
+    }
+  }
+
+  private async checkNow(token: number, checkStartedAt: number) {
     parseInterval(this.cfg.every);
     const needsGitHub = this.access.local ? localWatcherProblem(this.cfg) : undefined;
     if (needsGitHub) throw new Error(needsGitHub);
@@ -1300,7 +1347,22 @@ export class Watcher {
       if (!marked.length) return [];
       return openDependencies(marked, await allIssues(), (rule ??= this.doneRule()));
     };
-    const blockedBy = async (issue: Issue) => (this.cfg.wait_for_dependencies ? openDepsOf(issue) : openFoundryDepsOf(issue));
+    const cross = this.cross;
+    // The read slots of this check go to the references of the open issues it looks at (see CrossDeps.startCheck).
+    cross.startCheck([...issues, ...(everyIssue ?? []).filter((i) => (i.state ?? "open").toUpperCase() !== "CLOSED")]);
+    // A stopped watcher reads no issue of another repository (its sign-ins go when this check ends).
+    const crossAlive = () => { alive(); if (this.stopped) throw new Error("this watcher was stopped"); };
+    /** Same-repository issues first, then issues of other repositories (`repo`). */
+    const blockedBy = async (issue: Issue): Promise<BlockerRef[]> => {
+      const own = await (this.cfg.wait_for_dependencies ? openDepsOf(issue) : openFoundryDepsOf(issue));
+      const body = issue.body ?? "";
+      const others = body.includes("#") ? await cross.blockers(issue, !this.cfg.wait_for_dependencies, crossAlive) : [];
+      return [...own.map((n) => ({ issue: n })), ...others];
+    };
+    const refText = (b: BlockerRef) => (b.repo ? `${b.repo}#${b.issue}` : `#${b.issue}`);
+    /** A blocker's record; an issue of another repository has none (it is not followed further). */
+    const describeRef = (b: BlockerRef, seen: Set<number>): Promise<BlockerInfo> =>
+      b.repo ? Promise.resolve({ issue: b.issue, repo: b.repo, ...(b.notPlanned ? { notPlanned: true as const } : {}) }) : describeBlocker(b.issue, seen);
     /** What a blocker is doing: its hold, its newest run (any flow), or what it waits for itself. */
     const describeBlocker = async (b: number, seen: Set<number>): Promise<BlockerInfo> => {
       const own = holds.find((h) => h.issue === b)?.next;
@@ -1310,11 +1372,11 @@ export class Watcher {
       if (r) return { issue: b, next: runNextStep(r, { watched: true, failedLabel: this.L.failed, retired: flowRetired(r) }) };
       const blocker = everyIssue?.find((i) => i.number === b);
       if (!blocker || seen.has(b)) return { issue: b };
-      const deps = (await blockedBy(blocker)).filter((d) => !seen.has(d));
+      const deps = (await blockedBy(blocker)).filter((d) => d.repo || !seen.has(d.issue));
       if (!deps.length) return { issue: b };
       const next = nextStep("dependency", { repo: this.repo, issue: b, title: blocker.title }, {
         watched: true, issueUrl: `https://github.com/${this.repo}/issues/${b}`,
-        blockers: await Promise.all(deps.map((d) => describeBlocker(d, new Set([...seen, b])))),
+        blockers: await Promise.all(deps.map((d) => describeRef(d, new Set([...seen, b])))),
       });
       return { issue: b, next };
     };
@@ -1408,9 +1470,13 @@ export class Watcher {
       const blockers = await blockedBy(issue);
       alive();
       if (!blockers.length) return false;
-      const msg = `#${issue.number} waits for ${blockers.map((b) => `#${b}`).join(", ")} (depends on)`;
+      const msg = `#${issue.number} waits for ${blockers.map(refText).join(", ")} (depends on)`;
       if (!this.status.lastActions.some((a) => a.endsWith(msg))) this.act(msg);
-      const info = await Promise.all(blockers.map((b) => describeBlocker(b, new Set([issue.number]))));
+      for (const b of blockers.filter((x) => x.notPlanned)) {
+        const m = `#${issue.number}: ${refText(b)} was closed as not planned`;
+        if (!this.status.lastActions.some((a) => a.endsWith(m))) this.act(m);
+      }
+      const info = await Promise.all(blockers.map((b) => describeRef(b, new Set([issue.number]))));
       alive();
       holds.push(this.held("dependency", issue, { blockers: info, ...(runId ? { runId } : {}) }));
       return true;
@@ -2036,7 +2102,8 @@ export class Watcher {
       if (!names.includes(this.L.needsInfo) || runs.has(String(n)) || keep.has(n)) continue;
       if (pending.some((p) => p.githubRepo === this.repo && p.issue === String(n))) continue;
       const hold = holds.find((h) => h.issue === n);
-      if (!hold || !notYours.includes(hold.next.kind)) continue;
+      // a dependency closed as not planned waits for the owner: the label stays
+      if (!hold || !notYours.includes(hold.next.kind) || (hold.next.kind === "dependency" && hold.next.who === "You")) continue;
       alive();
       await this.store.setLabels(n, undefined, [this.L.needsInfo]);
       this.act(`#${n} label ${this.L.needsInfo} removed (it no longer waits for you)`);

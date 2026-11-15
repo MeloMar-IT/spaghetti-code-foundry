@@ -108,7 +108,8 @@ export function ticketTitle(run: BoardRun | undefined): string {
 export function columnOf(next: NextStep, phase?: Phase): ColumnId | undefined {
   switch (next.kind) {
     case "failed": return "failed";
-    case "dependency": case "red_base": case "one_at_a_time": case "area_lock": case "bug_first": return "waiting";
+    case "dependency": return next.who === "You" ? "your_turn" : "waiting";
+    case "red_base": case "one_at_a_time": case "area_lock": case "bug_first": return "waiting";
     case "usage_limit": case "daily_budget": case "user_limit": case "project_limit": case "queued": case "checking": case "starting": case "restart": return "queued";
     case "running": return phase ?? "coding";
     case "done": return "done";
@@ -155,7 +156,8 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
       key: `${n.repo}#${n.issue}`, issue: n.issue!, title: n.title || ticketTitle(s.run), column, next: n,
       ...(showStep ? { step: stepText(progress) } : {}),
       runId: n.runId ?? s.runId,
-      after: [...new Set((n.blockers ?? []).map((b) => b.issue))].sort((a, b) => a - b),
+      // an issue of another repository is not a card here
+      after: [...new Set((n.blockers ?? []).filter((b) => !b.repo).map((b) => b.issue))].sort((a, b) => a - b),
       chain: [],
       since: s.since,
       ...(group ? { group } : {}),
@@ -172,7 +174,7 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
     const todo = [...(card.next.blockers ?? [])];
     while (todo.length) {
       const b = todo.pop()!;
-      if (b.issue === card.issue || seen.has(b.issue)) continue;
+      if (b.repo || b.issue === card.issue || seen.has(b.issue)) continue;
       seen.add(b.issue);
       todo.push(...(b.next?.blockers ?? cards.get(`${repo}#${b.issue}`.toLowerCase())?.next.blockers ?? []));
     }

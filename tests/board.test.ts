@@ -133,6 +133,8 @@ describe("columnOf", () => {
     ["release with a pull request", rec("release", { pr: { number: 3 } }), "your_turn"],
     ["scheduled release", rec("release", { releaseAt: "17:00" }), "merging"],
     ["dependency", rec("dependency", { blockers: [{ issue: 2 }] }), "waiting"],
+    ["dependency in another repository", rec("dependency", { blockers: [{ issue: 2, repo: "acme/lib" }] }), "waiting"],
+    ["dependency closed as not planned", rec("dependency", { blockers: [{ issue: 2, repo: "acme/lib", notPlanned: true }] }), "your_turn"],
     ["one at a time", rec("one_at_a_time"), "waiting"],
     ["area lock", rec("area_lock"), "waiting"],
     ["bug story goes first", rec("bug_first"), "waiting"],
@@ -185,6 +187,13 @@ describe("buildBoard", () => {
     const b = buildBoard([src(rec("queued", {}, 1))], { now: NOW, repos: ["acme/app", "acme/other"] });
     expect(b.empty).toBeUndefined();
     expect(b.repos.map((r) => r.repo)).toEqual(["acme/app", "acme/other"]);
+  });
+
+  it("leaves an issue of another repository out of After and the chain", () => {
+    const b = buildBoard([src(rec("dependency", { blockers: [{ issue: 2 }, { issue: 3, repo: "acme/lib" }] }, 1)), src(rec("queued", {}, 2))], { now: NOW });
+    const card = cardsOf(b, "waiting")[0]!;
+    expect(card.after).toEqual([2]);
+    expect(card.chain).toEqual([2]);
   });
 
   it("has no card for a run of a closed issue", () => {

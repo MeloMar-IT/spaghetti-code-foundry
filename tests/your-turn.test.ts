@@ -54,6 +54,14 @@ describe("buildTurn", () => {
     expect(buildTurn(cycle).data.groups[0]!.items[0]!.unblocks).toBe(1);
   });
 
+  it("does not count an issue of another repository with the same number as held back", () => {
+    const sources = [
+      src(rec("questions", { issue: 3 })),
+      src(rec("dependency", { issue: 5 }, { blockers: [{ issue: 3, repo: "acme/lib" }] })),
+    ];
+    expect(buildTurn(sources).data.groups[0]!.items.map((i) => [i.next.issue, i.unblocks])).toEqual([[3, 0]]);
+  });
+
   it("puts the older item first, and an item without a time last", () => {
     const items = buildTurn([
       src(rec("questions", { issue: 1 })),

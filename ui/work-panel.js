@@ -22,7 +22,7 @@ export function chainOrder(item, items) {
   };
   const walk = (blockers) => {
     for (const b of [...blockers].sort((x, y) => x.issue - y.issue)) {
-      if (seen.has(b.issue)) continue;
+      if (b.repo || seen.has(b.issue)) continue; // an issue of another repository is not listed here
       seen.add(b.issue);
       walk(b.next?.blockers ?? byKey.get(`${item.repo}#${b.issue}`)?.next?.blockers ?? []);
       add(b.issue);

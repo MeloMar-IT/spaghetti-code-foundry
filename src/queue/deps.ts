@@ -19,6 +19,47 @@ export function dependencyText(body: string): string {
 /** The source of the pattern for a "#12" reference: not part of a longer word or "owner/repo#12". */
 export const DEP_REF_SOURCE = "(?<![\\w/])#(\\d+)\\b";
 
+/**
+ * The source of the pattern for an "owner/name#12" reference to an issue in another GitHub repository:
+ * not part of a longer word, path or address ("github.com/owner/name#12" is not one).
+ */
+export const CROSS_REF_SOURCE = "(?<![\\w./-])([A-Za-z0-9][A-Za-z0-9-]{0,38}\\/[A-Za-z0-9._-]{1,100})#(\\d+)\\b";
+
+/** An issue in another GitHub repository. */
+export interface CrossRef {
+  /** "owner/name", as written */
+  repo: string;
+  issue: number;
+}
+
+function crossRefsIn(text: string, out: Map<string, CrossRef>): void {
+  for (const m of text.matchAll(new RegExp(CROSS_REF_SOURCE, "g"))) {
+    const issue = Number(m[2]);
+    if (!Number.isInteger(issue) || issue < 1 || issue > 2147483647) continue;
+    const key = `${m[1]!.toLowerCase()}#${issue}`;
+    if (!out.has(key)) out.set(key, { repo: m[1]!, issue });
+  }
+}
+
+const byRef = (a: CrossRef, b: CrossRef) => {
+  const x = a.repo.toLowerCase(), y = b.repo.toLowerCase();
+  return x < y ? -1 : x > y ? 1 : a.issue - b.issue;
+};
+
+/**
+ * Issues in other repositories this body depends on: "owner/name#12" in the person's "Depends on" text and
+ * "- owner/name#12" lines in the Foundry's marked part (only those with `markedOnly`). Once per repository and
+ * issue (any case), sorted.
+ */
+export function crossDependencies(body: string, o: { markedOnly?: boolean } = {}): CrossRef[] {
+  const text = body ?? "";
+  const out = new Map<string, CrossRef>();
+  const r = foundryRange(text);
+  if (r) crossRefsIn(text.slice(r.start, r.end), out);
+  if (!o.markedOnly) crossRefsIn(dependencyText(withoutFoundryPart(text)), out);
+  return [...out.values()].sort(byRef);
+}
+
 /** Where the "Depends on" text is in the body (what dependencyText gives), or undefined without a header. At most 1000 characters. */
 export function dependencyRange(body: string): { start: number; end: number } | undefined {
   const text = body ?? "";
@@ -62,10 +103,13 @@ function foundryRange(body: string): { start: number; end: number } | undefined 
   return { start: body.lastIndexOf(DEPS_MARK, e), end: e + DEPS_MARK_END.length };
 }
 
-function renderPart(issues: readonly number[], reason: string, eol: string): string {
+function renderPart(issues: readonly number[], reason: string, eol: string, cross: readonly CrossRef[] = []): string {
   const reasonLine = reason ? `_Added by the Spaghetti Code Foundry: ${reason}_` : "_Added by the Spaghetti Code Foundry._";
-  return [DEPS_MARK, ...issues.map((n) => "- #" + n), reasonLine, DEPS_MARK_END].join(eol);
+  return [DEPS_MARK, ...issues.map((n) => "- #" + n), ...cross.map((c) => `- ${c.repo}#${c.issue}`), reasonLine, DEPS_MARK_END].join(eol);
 }
+
+/** The "- owner/name#12" lines of the Foundry's part: the writers keep them. */
+const markedCross = (body: string): CrossRef[] => crossDependencies(body, { markedOnly: true });
 
 /** The issues in the Foundry's marked part, sorted, no length limit. */
 export function foundryDependsOn(body: string): number[] {
@@ -112,8 +156,9 @@ export function mergeDependsOn(body: string, issues: readonly number[], reason: 
   const eol = eolOf(b);
   const add = issues.filter((n) => Number.isInteger(n) && n > 0);
   const all = [...new Set([...foundryDependsOn(b), ...add])].sort((x, y) => x - y);
-  if (!all.length) return b;
-  const part = renderPart(all, cleanReason(reason), eol);
+  const cross = markedCross(b);
+  if (!all.length && !cross.length) return b;
+  const part = renderPart(all, cleanReason(reason), eol, cross);
   const r = foundryRange(b);
   if (r) return b.slice(0, r.start) + part + b.slice(r.end);
   const m = HEADER.exec(b);
@@ -124,16 +169,17 @@ export function mergeDependsOn(body: string, issues: readonly number[], reason: 
   return b + eol + eol + "### Depends on" + eol + part;
 }
 
-/** Takes issues out of the Foundry's part. When none are left, the part goes. */
+/** Takes issues out of the Foundry's part; its "- owner/name#12" lines stay. When nothing is left, the part goes. */
 export function removeFromDependsOn(body: string, issues: readonly number[]): string {
   const r = foundryRange(body);
   if (!r) return body;
   const have = foundryDependsOn(body);
   const left = have.filter((n) => !issues.includes(n));
   if (left.length === have.length) return body;
-  if (!left.length) return withoutFoundryPart(body);
+  const cross = markedCross(body);
+  if (!left.length && !cross.length) return withoutFoundryPart(body);
   const oldReason = /^_Added by the Spaghetti Code Foundry(?:: (.*?))?_[ \t]*\r?$/m.exec(body.slice(r.start, r.end))?.[1] ?? "";
-  return body.slice(0, r.start) + renderPart(left, cleanReason(oldReason), eolOf(body)) + body.slice(r.end);
+  return body.slice(0, r.start) + renderPart(left, cleanReason(oldReason), eolOf(body), cross) + body.slice(r.end);
 }
 
 /** Issue numbers this body depends on: "#12" references, items matching another issue's title, and the issues in the Foundry's marked part (no length limit). */
@@ -151,7 +197,8 @@ function addPersonsDependencies(text: string, self: number, all: DepIssue[], tit
   const titles = titleList ?? titleIndex(all);
   const selfTitle = ` ${norm(all.find((i) => i.number === self)?.title ?? "")} `;
   for (const raw of text.split(/[;\n]/)) {
-    const item = norm(raw.replace(/^\s*[-*+]\s*(\[[ x]\]\s*)?/i, "").replace(/#\d+/g, ""));
+    // "owner/name#12" is an issue of another repository, never a title
+    const item = norm(raw.replace(/^\s*[-*+]\s*(\[[ x]\]\s*)?/i, "").replace(new RegExp(CROSS_REF_SOURCE, "g"), " ").replace(/#\d+/g, ""));
     if (item.length < 3 || /^(none|n a|nothing|no)$/.test(item)) continue;
     // Best: the title starts with the text (or the other way round). Else: the text appears in a
     // title as whole words — e.g. "Story 7 — Daily check" in "Website Story 7 — Daily check …".
@@ -182,9 +229,26 @@ export interface DoneRule {
 export function dependencyDone(issue: DepIssue | undefined, rule: DoneRule): boolean {
   if (!issue) return true; // unknown issue (other repo, typo): don't block on it
   if (issue.state && issue.state.toUpperCase() !== "OPEN") return true;
-  const names = (issue.labels ?? []).map((l) => l.name);
+  return labelsDone((issue.labels ?? []).map((l) => l.name), rule);
+}
+
+/** Do these labels make an open issue done: a dependency done label, or (gitflow) the watcher's done label. */
+export function labelsDone(names: readonly string[], rule: DoneRule): boolean {
   if (names.some((l) => rule.doneLabels.includes(l))) return true;
   return !!rule.gitflow && !!rule.doneLabel && names.includes(rule.doneLabel);
+}
+
+/** How an issue of another repository stands as a dependency. */
+export type CrossState = "open" | "done" | "not_planned";
+
+/**
+ * An issue of another repository, as the REST API gives it. Closed as not planned is not done, also with a done label;
+ * any other close is done; an open issue is done with a done label (`labelsDone`).
+ */
+export function crossState(i: { state?: string | null; state_reason?: string | null; labels?: ({ name?: string } | string)[] }, rule: DoneRule): CrossState {
+  if (String(i.state ?? "").toLowerCase() === "closed") return i.state_reason === "not_planned" ? "not_planned" : "done";
+  const names = (i.labels ?? []).map((l) => (typeof l === "string" ? l : l.name ?? ""));
+  return labelsDone(names, rule) ? "done" : "open";
 }
 
 /** Dependencies that are not done yet. A string list is the old form: { doneLabels }. */
