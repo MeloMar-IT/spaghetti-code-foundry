@@ -7,8 +7,8 @@ import { getServiceAccount, tokenState, listServiceAccounts, createServiceAccoun
 import { ConfigSchema, serviceCommandProblem } from "../src/config.js";
 import { rawPublicKey } from "../src/skills/release-signature.js";
 import { nextDelay } from "../src/services/supervisor.js";
-import { ServiceProblem, hasServiceState, programProblem, reconcileServiceTokens, serviceToken, signatureProblem } from "../src/services/setup.js";
-import { deleteUser } from "../src/auth/users.js";
+import { ServiceProblem, actsForState, hasServiceState, programProblem, reconcileServiceTokens, serviceToken, signatureProblem } from "../src/services/setup.js";
+import { createUser, deleteUser, resetPassword, setStatus } from "../src/auth/users.js";
 
 // Managed services (#867): config schema, program and signature checks, accounts and tokens. No child process here.
 
@@ -199,6 +199,48 @@ describe("serviceToken", () => {
     createServiceAccount({ name: "other", scope: [] });
     expect(() => serviceToken("other", [])).toThrow(ServiceProblem);
     expect(listServiceAccounts().map((a) => a.name)).toEqual(["other"]);
+  });
+});
+
+describe("acts_for (#876)", () => {
+  const PASSWORD = "test-password-12345";
+
+  it("parses a name or e-mail, and refuses an empty one", () => {
+    expect(parse([entry({ acts_for: "ann@example.com" })]).data!.services[0]!.acts_for).toBe("ann@example.com");
+    expect(parse([entry({ acts_for: "" })]).success).toBe(false);
+    expect(parse([entry({ acts_for: "   " })]).success).toBe(false);
+    expect(parse([entry()]).data!.services[0]!.acts_for).toBeUndefined();
+  });
+
+  it("sets the person by e-mail or name, and a start without it clears it", async () => {
+    const ann = await createUser({ name: "Ann", email: "ann@example.com", password: PASSWORD });
+    const a = serviceToken("echo-bot", ["GET health"], "ann@example.com");
+    expect(getServiceAccount(a.accountId)!.actsFor).toBe(ann.id);
+    serviceToken("echo-bot", ["GET health"], "Ann");
+    expect(getServiceAccount(a.accountId)!.actsFor).toBe(ann.id);
+    serviceToken("echo-bot", ["GET health"]);
+    expect(getServiceAccount(a.accountId)!.actsFor).toBeUndefined();
+  });
+
+  it("refuses no match or several with a fixed sentence, and makes no account", async () => {
+    await createUser({ name: "Sam", email: "sam1@example.com", password: PASSWORD });
+    await createUser({ name: "Sam", email: "sam2@example.com", password: PASSWORD });
+    expect(() => serviceToken("echo-bot", [], "nobody-here")).toThrow(new ServiceProblem("acts_for names no person account"));
+    expect(() => serviceToken("echo-bot", [], "Sam")).toThrow(new ServiceProblem("acts_for names more than one person account; use the e-mail"));
+    expect(listServiceAccounts()).toHaveLength(0);
+    expect(getServiceAccount(serviceToken("echo-bot", [], "sam2@example.com").accountId)!.actsFor).toBeDefined();
+  });
+
+  it("actsForState gives the reason the person cannot be acted for", async () => {
+    const ann = await createUser({ name: "Ann", email: "ann@example.com", password: PASSWORD });
+    const { accountId } = serviceToken("echo-bot", [], "ann@example.com");
+    expect(actsForState(accountId)).toBeUndefined();
+    await setStatus(ann.id, "blocked");
+    expect(actsForState(accountId)).toBe("the person this service account acts for is blocked");
+    await setStatus(ann.id, "active");
+    await resetPassword(ann.id);
+    expect(actsForState(accountId)).toBe("the person this service account acts for cannot sign in");
+    expect(actsForState(serviceToken("plain", []).accountId)).toBeUndefined();
   });
 });
 

@@ -67,6 +67,18 @@ describe("accounts and administration", () => {
     expect((await scf(["service-accounts", "revoke", made.account.id, "--yes"])).out).toMatch(/^token: +revoked$/m);
   });
 
+  it("sets and clears the person a service account acts for (#876)", async () => {
+    const ann = await idOf("ann@example.com");
+    const bob = await idOf("bob@example.com");
+    expect(parseCmd(cmd("service-accounts", "set"), ["x", "--acts-for", ""]).call.body).toEqual({ actsFor: "" });
+    const made = (await scf(["service-accounts", "add", "Helper", "--scope", "GET runs", "--acts-for", ann, "--json"])).json<{ account: { id: string; actsFor: string } }>();
+    expect(made.account.actsFor).toBe(ann);
+    await expect(scf(["service-accounts", "set", made.account.id, "--acts-for", bob])).rejects.toThrow("whose work it sees");
+    expect((await scf(["service-accounts", "set", made.account.id, "--acts-for", bob, "--yes"])).out).toMatch(/^actsForName: +Bob$/m);
+    const cleared = (await scf(["service-accounts", "set", made.account.id, "--acts-for", "", "--yes", "--json"])).json<{ account: { actsFor: string | null } }>();
+    expect(cleared.account.actsFor).toBeNull();
+  });
+
   it("lists the accounts and changes a name or an e-mail", async () => {
     const out = (await scf(["users", "list"])).out.split("\n");
     expect(out[0]).toMatch(/^ID +NAME +EMAIL +ROLE +STATUS +PASSWORD +LAST SIGN-IN +RUNS$/);

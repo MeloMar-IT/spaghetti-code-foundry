@@ -23,10 +23,19 @@ export const lastUseText = (a) => (a?.lastUse ? timeAgo(a.lastUse) : "never");
  * The body for a new account or a changed scope: the trimmed name, the `class:x` entries that are checked (in the order of `classes`),
  * then the rule keys that are checked, in the order of `grantable`.
  */
-export const scopeBody = ({ name, checked }, grantable = [], classes = []) => ({
+export const scopeBody = ({ name, checked, actsFor }, grantable = [], classes = []) => ({
   name: text(name),
   scope: [...classes.map((c) => `class:${c}`).filter((k) => checked.has(k)), ...grantable.map((g) => g.key).filter((k) => checked.has(k))],
+  // the person whose work the account sees and answers (#876); "" is nobody
+  ...(actsFor !== undefined ? { actsFor: actsFor || null } : {}),
 });
+
+/** The "Acts for" cell: the person's name, or "nobody"; with a problem, a danger pill with the reason. */
+export const actsForCell = (a) => {
+  if (!a.actsFor) return h("span", { class: "muted" }, "nobody");
+  const who = a.actsForName ?? "a removed account";
+  return a.actsForProblem ? h("span", {}, `${who} `, statusPill("danger", a.actsForProblem)) : h("span", {}, who);
+};
 
 const stack = (...nodes) => h("div", { class: "stack" }, ...nodes);
 const para = (t) => h("p", { class: "flush" }, t);
@@ -85,14 +94,23 @@ function scopePicker(grantable, current, classes = []) {
 }
 
 /** Add or edit dialog. Resolves with the answer of the call (or undefined when closed). */
-function formDialog({ account, grantable, classes = [], clipboard }) {
+function formDialog({ account, grantable, classes = [], people = [], clipboard }) {
   let answer;
   return modal(account ? `Scope of ${account.name}` : "Add service account", (close) => {
     const name = h("input", { name: "name", value: account?.name ?? "", autocomplete: "off" });
     const picker = scopePicker(grantable, account?.scope ?? [], classes);
+    const current = account?.actsFor ?? "";
+    const known = current === "" || people.some((p) => p.id === current);
+    const actsFor = h("select", { name: "actsFor" },
+      h("option", { value: "" }, "Nobody"),
+      known ? null : h("option", { value: current }, "a removed account"),
+      people.map((p) => h("option", { value: p.id }, `${p.name} — ${p.email}${p.status === "blocked" ? " (blocked)" : ""}`)));
+    actsFor.value = current;
     const err = h("p", { class: "status bad flush", role: "alert" });
     const save = h("button", { class: "primary", onClick: async () => {
-      const body = scopeBody({ name: name.value, checked: picker.checked }, grantable, classes);
+      // a new account sends `actsFor` only when a person is chosen; an edit always sends it ("" clears it)
+      const pick = account || actsFor.value ? { actsFor: actsFor.value } : {};
+      const body = scopeBody({ name: name.value, checked: picker.checked, ...pick }, grantable, classes);
       if (!body.name) return showError(err, "Fill in the name.", { fields: [name], field: name });
       save.disabled = true;
       showError(err, "", { fields: [name] });
@@ -107,6 +125,8 @@ function formDialog({ account, grantable, classes = [], clipboard }) {
     return stack(
       para("A service account is for a program. It has no password. Choose the kinds of data it may read, and the routes it may call; it can call nothing else. A kind of data covers reads only; a change needs its own route. Routes for credentials, users, settings, autonomy, plugins and the audit export (the secret data) can never be chosen."),
       h("label", { class: "field" }, h("span", {}, "Name"), name),
+      h("label", { class: "field" }, h("span", {}, "Acts for"), actsFor),
+      para("With a person chosen, the program sees and answers that person's runs, repositories and Your-turn items. It is never an admin: the routes below still limit it."),
       ...picker.nodes, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   }).then(async (r) => {
     if (r?.token) await tokenDialog("Service token", r.token, clipboard);
@@ -131,6 +151,7 @@ export async function renderServiceAccounts(box, { readOnly = false, clipboard =
     if (!live) return undefined;
     const { accounts, grantable } = data;
     const classes = data.classes ?? [];
+    const people = data.people ?? [];
     const run = async (fn, done) => {
       try {
         const r = await fn();
@@ -146,15 +167,16 @@ export async function renderServiceAccounts(box, { readOnly = false, clipboard =
       { key: "status", label: "Status", cell: (a) => (a.status === "blocked" ? statusPill("danger", "blocked") : statusPill("success", "active")) },
       { key: "token", label: "Token", cell: (a) => statusPill(TOKEN_SEMANTIC[a.token] ?? "neutral", tokenText(a)) },
       { key: "lastUse", label: "Last use", cell: (a) => h("span", { class: "muted" }, lastUseText(a)) },
+      { key: "actsFor", label: "Acts for", cell: actsForCell },
       { key: "scope", label: "Scope", cell: scopeCell },
       ...(readOnly ? [] : [{ key: "actions", label: "Actions", cell: (a) => h("div", { class: "row" },
-        h("button", { onClick: async () => { await formDialog({ account: a, grantable, classes, clipboard: clipboard() }); load(); } }, "Edit scope"),
+        h("button", { onClick: async () => { await formDialog({ account: a, grantable, classes, people, clipboard: clipboard() }); load(); } }, "Edit scope"),
         h("button", { onClick: () => run(() => api.rotateServiceToken(a.id), "New service token") }, "Rotate"),
         h("button", { disabled: a.token === "revoked", onClick: async () => { if (await confirmDialog({ title: `Revoke the token of ${a.name}?`, text: "The token stops working at once. Rotate gives a new one.", confirm: "Revoke" })) run(() => api.revokeServiceToken(a.id), "Token revoked"); } }, "Revoke"),
         h("button", { class: "danger", onClick: async () => { if (await confirmDialog({ title: `Delete ${a.name}?`, text: "The account and its token are removed. Its runs are kept. This cannot be undone." })) run(() => api.deleteUser(a.id), `${a.name} was deleted`); } }, "Delete")) }]),
     ];
     return draw([
-      readOnly ? null : h("div", { class: "row" }, h("button", { class: "primary", onClick: async () => { await formDialog({ grantable, classes, clipboard: clipboard() }); load(); } }, "+ Add service account")),
+      readOnly ? null : h("div", { class: "row" }, h("button", { class: "primary", onClick: async () => { await formDialog({ grantable, classes, people, clipboard: clipboard() }); load(); } }, "+ Add service account")),
       accounts.length === 0 ? emptyState("No service accounts yet.") : table({ caption: "Service accounts", hideCaption: true, columns, rows: accounts, class: "table-box" }),
     ]);
   };

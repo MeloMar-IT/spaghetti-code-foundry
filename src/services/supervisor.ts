@@ -6,7 +6,7 @@ import { combineRedactors, liveRedactor, makeRedactor, redactStream } from "../c
 import { sleepSync } from "../home-migrate.js";
 import { holdLiveGroup, stopGroup } from "../steps/process.js";
 import { ServiceLog, MAX_LOG_BYTES } from "./log.js";
-import { ServiceProblem, programProblem, reconcileServiceTokens, revokeServiceTokenSafe, serviceToken, signatureProblem } from "./setup.js";
+import { ServiceProblem, actsForState, programProblem, reconcileServiceTokens, revokeServiceTokenSafe, serviceToken, signatureProblem } from "./setup.js";
 
 export type ServiceState = "starting" | "running" | "waiting" | "refused" | "stopped";
 
@@ -97,6 +97,14 @@ interface Slot {
 
 const now = () => new Date().toISOString();
 
+function actsForStateSafe(accountId: string): string | undefined {
+  try {
+    return actsForState(accountId);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Starts the configured programs, restarts them with a backoff, and stops them (#867). */
 export class ServiceSupervisor implements ServicesHandle {
   private readonly slots: Slot[];
@@ -127,14 +135,18 @@ export class ServiceSupervisor implements ServicesHandle {
   }
 
   view(): ServiceView[] {
-    return this.slots.map((s) => ({
-      name: s.cfg.name, state: s.state, since: s.since,
-      ...(s.run?.pid !== undefined && !s.run.exited ? { pid: s.run.pid } : {}),
-      restarts: s.restarts,
-      ...(s.lastExit ? { lastExit: s.lastExit } : {}),
-      ...(s.problem ? { problem: s.problem } : {}),
-      ...(s.nextStart ? { nextStart: s.nextStart } : {}),
-    }));
+    return this.slots.map((s) => {
+      // a running service whose person can no longer sign in gets every request refused (#876): Health shows why
+      const problem = s.problem ?? (s.state === "running" && s.accountId ? actsForStateSafe(s.accountId) : undefined);
+      return {
+        name: s.cfg.name, state: s.state, since: s.since,
+        ...(s.run?.pid !== undefined && !s.run.exited ? { pid: s.run.pid } : {}),
+        restarts: s.restarts,
+        ...(s.lastExit ? { lastExit: s.lastExit } : {}),
+        ...(problem ? { problem } : {}),
+        ...(s.nextStart ? { nextStart: s.nextStart } : {}),
+      };
+    });
   }
 
   private setState(s: Slot, state: ServiceState): void {
@@ -185,7 +197,8 @@ export class ServiceSupervisor implements ServicesHandle {
     }
     const badScope = this.o.checkScope(cfg.scope);
     if (badScope) return this.refuse(s, badScope);
-    const { accountId, token } = serviceToken(cfg.name, cfg.scope);
+    // a bad acts_for is refused here, before anything is launched
+    const { accountId, token } = serviceToken(cfg.name, cfg.scope, cfg.acts_for);
     s.accountId = accountId;
     const env: NodeJS.ProcessEnv = {};
     for (const k of BASE_ENV) if (process.env[k] !== undefined) env[k] = process.env[k];

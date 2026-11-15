@@ -3,10 +3,11 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { lookupServiceToken } from "../src/auth/service-accounts.js";
+import { lookupServiceToken, updateServiceAccount } from "../src/auth/service-accounts.js";
+import { createUser, setStatus } from "../src/auth/users.js";
 import type { ServiceConfig } from "../src/config.js";
 import { ServiceSupervisor, withServicesStopped, type SupervisorOptions } from "../src/services/supervisor.js";
-import { serviceToken } from "../src/services/setup.js";
+import { managedAccounts, serviceToken } from "../src/services/setup.js";
 import { rawPublicKey } from "../src/skills/release-signature.js";
 
 // Managed services (#867) with the real fixture program: start, exit, restart, signature, log, stop.
@@ -149,6 +150,25 @@ describe("signature", () => {
     } finally {
       rmSync(`${FIXTURE}.sig`, { force: true });
     }
+  });
+
+  it("refuses an acts_for that names no person before anything is launched (#876)", () => {
+    const s = make([cfg([], { acts_for: "nobody-here" })]);
+    s.start();
+    expect(s.view()[0]).toMatchObject({ state: "refused", problem: "acts_for names no person account" });
+    expect(starts()).toEqual([]);
+  });
+
+  it("shows on a running service that its person can no longer sign in, also when actsFor was set through the API (#876)", async () => {
+    const ann = await createUser({ name: "Ann", email: "ann@example.com", password: "test-password-12345" });
+    const s = make([cfg()]);
+    s.start();
+    await until(() => starts().length === 1, "the start");
+    const id = managedAccounts().bot!;
+    updateServiceAccount(id, { actsFor: ann.id });
+    expect(s.view()[0]!.problem).toBeUndefined();
+    await setStatus(ann.id, "blocked");
+    expect(s.view()[0]).toMatchObject({ state: "running", problem: "the person this service account acts for is blocked" });
   });
 
   it("refuses a scope the server does not grant", () => {
