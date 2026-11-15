@@ -71,6 +71,7 @@ vars:
   risk_threshold: "75"
   review_plan_label: Factory_review_plan
   auto_split_max_risk: "50"
+  split_family_gate: ask
   trigger_label: ""
   max_files: "15"
   max_code_lines: "800"
@@ -139,6 +140,10 @@ var_info:
     kind: number
     min: 0
     max: 100
+  split_family_gate:
+    label: Splits of earlier splits
+    help: "ask: a split of an issue that is itself a part of an earlier split, or that has open parts, waits for a person. split: it is created without asking, within the auto-split risk limit."
+    kind: text
   trigger_label:
     label: Trigger label
     help: "The label that starts the flow on an issue. Empty: the watcher decides."
@@ -767,6 +772,8 @@ steps:
       fam=$(node "$FACTORY_TOOLS/split-family" 2>&1) || fam=$(printf '%s\nFAMILY: unknown' "$fam")
       family=$(printf '%s\n' "$fam" | sed -n 's/^FAMILY: *\([a-z-]*\).*/\1/p' | tail -1); family=${family:-unknown}
       tree=$(printf '%s\n' "$fam" | sed '/^FAMILY:/d')
+      # split_family_gate=split: the owner lets splits of earlier splits go ahead without asking (the risk limit still applies).
+      [ "${FACTORY_VAR_SPLIT_FAMILY_GATE:-ask}" = split ] && [ "$family" != none ] && { echo "Earlier splits ($family), and split_family_gate is split — not asking for that."; family=none; }
       if [ -n "$agreed" ] && [ "$family" = none ]; then echo "The owner already agreed to the split — creating the issues."; echo "GATE: no"; exit 0; fi
       if [ "$family" = none ] && [ "$risk" -le "$limit" ] && [ -z "$forced" ] && [ ! -f "{{run.dir}}/hotfix" ]; then echo "Split risk $risk/100 (≤ $limit) — creating the issues without asking."; echo "GATE: no"; exit 0; fi
       why="the split risk is $risk/100 (above $limit)"; [ -n "$forced" ] && why="the issue has the \`$FACTORY_VAR_REVIEW_PLAN_LABEL\` label"
@@ -806,6 +813,8 @@ steps:
       fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
       # Only an approve_split after the last split_gate (and an approval, not a rejection) lets create-split split a family.
       if [ "${FACTORY_RAN_APPROVE_SPLIT:-0}" -gt "${FACTORY_RAN_SPLIT_GATE:-0}" ] && printf '%s\n' "$FACTORY_OUT_APPROVE_SPLIT" | grep -q "^approved"; then export FACTORY_SPLIT_CONFIRMED=1; fi
+      # split_family_gate=split: the owner has agreed to splits of earlier splits in advance.
+      [ "${FACTORY_VAR_SPLIT_FAMILY_GATE:-ask}" = split ] && export FACTORY_SPLIT_CONFIRMED=1
       printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}" | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"
     on_success: end
   - id: size_gate

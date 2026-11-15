@@ -241,6 +241,27 @@ describe.each(["issue-deliver", "issue-gitflow"])("%s split_gate", (flow) => {
   });
 });
 
+describe("issue-gitflow split_family_gate: split", () => {
+  const ON = { SPLIT_FAMILY_GATE: "split" };
+  it("splits a split part without asking, within the risk limit", () => {
+    const r = exec("issue-gitflow", "split_gate", FAMILY_723, 723, { FACTORY_OUT_PLAN: DIRECT, FACTORY_VAR_SPLIT_FAMILY_GATE: ON.SPLIT_FAMILY_GATE });
+    expect(r.out).toContain("GATE: no");
+    expect(r.out).toContain("split_family_gate is split");
+    expect(r.log).not.toContain("--- comment on");
+  });
+  it("still asks above the risk limit", () => {
+    const r = exec("issue-gitflow", "split_gate", FAMILY_723, 723, { FACTORY_OUT_PLAN: DIRECT.replace("SPLIT_RISK: 20", "SPLIT_RISK: 95"), FACTORY_VAR_SPLIT_FAMILY_GATE: "split", FACTORY_VAR_AUTO_SPLIT_MAX_RISK: "90" });
+    expect(r.out).toContain("GATE: yes");
+  });
+  it("create_split creates the parts of a split part without an approval", () => {
+    const r = exec("issue-gitflow", "create_split", FAMILY_723, 723, {
+      FACTORY_OUT_PLAN: DIRECT, FAKE_GH_PARENT: JSON.stringify({ title: "Add a feature", body: "", labels: [], comments: [] }), FACTORY_VAR_SPLIT_FAMILY_GATE: "split",
+    });
+    expect(r.status).toBe(0);
+    expect(r.log.match(/created issue/g)).toHaveLength(2);
+  });
+});
+
 describe("create_split", () => {
   const run = (extra: Record<string, string>) => exec("issue-deliver", "create_split", FAMILY_723, 723, {
     FACTORY_OUT_PLAN: DIRECT, FAKE_GH_PARENT: JSON.stringify({ title: "Add a feature", body: "", labels: [], comments: [] }), ...extra,
