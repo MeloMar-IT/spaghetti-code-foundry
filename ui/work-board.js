@@ -1,8 +1,8 @@
 import { h } from "./dom.js";
 import { whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
-import { issueLink, wayButton } from "./work-list.js";
-import { ageText, keyOf } from "./work-model.js";
+import { afterLinks, issueLink, wayButton } from "./work-list.js";
+import { ageText, crossAfter, keyOf } from "./work-model.js";
 import { plainServerText, whoText } from "./change-words.js";
 
 // The board layout of the Work page: one column per group, a compact card per story. Every word comes
@@ -41,7 +41,7 @@ export function workCard(item, prefs, handlers = {}) {
   const now = handlers.now ?? new Date();
   const leave = () => handlers.onLeave?.(item);
   const yours = item.column === "your_turn";
-  const blocked = (item.after ?? []).length > 0;
+  const blocked = (item.after ?? []).length > 0 || crossAfter(item).length > 0;
   const parts = [];
   parts.push(h("div", { class: "work-card-head" },
     issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title),
@@ -51,7 +51,7 @@ export function workCard(item, prefs, handlers = {}) {
   if (on("next") && (n.who || n.action)) parts.push(h("div", { class: "work-card-next" }, n.who ? h("span", { class: `pill ${whoClass(n)}` }, whoText(n.who)) : null, n.who ? " " : null, plainServerText(n.action ?? "")));
   if (blocked) {
     parts.push(h("div", { class: "work-card-deps" },
-      on("blockers") ? ["Blocked by ", ...item.after.flatMap((i, k) => [k ? ", " : null, issueLink(item.repo, i, leave)]), " "] : null,
+      on("blockers") ? ["Blocked by ", ...afterLinks(item, leave), " "] : null,
       wayButton(item, handlers)));
   }
   const age = on("age") ? ageText(item.since, now) : "";

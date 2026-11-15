@@ -7,7 +7,7 @@ import { WatcherSchema } from "../src/config.js";
 import { STOPPED_CANCEL_REASON, USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { statusName } from "../src/words.js";
 import type { RunNextOptions } from "../src/next-step.js";
-import { briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, splitMade, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
+import { blockerUrl, briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, splitMade, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
 import { needsUser } from "../src/your-turn.js";
 
 const run = (over: Partial<RunSummary> = {}) =>
@@ -260,6 +260,30 @@ describe("next-step records, one per kind", () => {
     const both = nextStep("dependency", { issue: 7 }, { blockers: [{ issue: 3 }, { issue: 3, repo: "acme/lib" }] });
     expect(both.why).toBe("#7 waits for #3, acme/lib#3 (to be done first)");
     expect(both.status).toBe("waiting for #3, acme/lib#3");
+  });
+
+  it("gives a blocker of another repository the url of its issue on GitHub, built from the checked name only", () => {
+    const n = nextStep("dependency", { repo: "acme/app", issue: 7 }, { blockers: [{ issue: 3, repo: "acme/lib" }] });
+    expect(n.blockers).toEqual([{ issue: 3, repo: "acme/lib", url: "https://github.com/acme/lib/issues/3" }]);
+    // the words are the same as without the url
+    expect(n.why).toBe("#7 waits for acme/lib#3, which is to be done");
+    expect(n.status).toBe("waiting for acme/lib#3");
+    // a blocker of this repository keeps its shape
+    expect(nextStep("dependency", { issue: 7 }, { blockers: [{ issue: 12 }] }).blockers).toEqual([{ issue: 12 }]);
+    // a planted url is replaced, and one for an invalid name is dropped
+    expect(nextStep("dependency", { issue: 7 }, { blockers: [{ issue: 3, repo: "acme/lib", url: "https://evil.example/x" }] }).blockers).toEqual([{ issue: 3, repo: "acme/lib", url: "https://github.com/acme/lib/issues/3" }]);
+    expect(nextStep("dependency", { issue: 7 }, { blockers: [{ issue: 3, repo: "a/..", url: "https://github.com/a/../issues/3" }] }).blockers).toEqual([{ issue: 3, repo: "a/.." }]);
+    // nested: the blocker's own record has the url too
+    const up = nextStep("dependency", { issue: 5 }, { blockers: [{ issue: 4, next: n }] });
+    expect(up.blockers?.[0].next?.blockers?.[0].url).toBe("https://github.com/acme/lib/issues/3");
+  });
+
+  it("blockerUrl is undefined for a name that is not a valid GitHub name or an issue that is not a positive number", () => {
+    expect(blockerUrl({ issue: 3, repo: "acme/lib" })).toBe("https://github.com/acme/lib/issues/3");
+    for (const b of [{ issue: 3, repo: "owner/repo" }, { issue: 3, repo: "OWNER/Repo" }, { issue: 3, repo: "a/.." }, { issue: 3, repo: "a/." }, { issue: 3, repo: "-x/y" }, { issue: 3, repo: "a/b/c" }, { issue: 3, repo: "a/b?x" }, { issue: 0, repo: "acme/lib" }, { issue: 1.5, repo: "acme/lib" }, { issue: 3 }]) {
+      expect(blockerUrl(b)).toBeUndefined();
+      expect(nextStep("dependency", { issue: 7 }, { blockers: [b] }).blockers?.[0].url).toBeUndefined();
+    }
   });
 
   it("puts a story whose other-repository dependency was closed as not planned in Your turn", () => {
@@ -623,7 +647,7 @@ describe("runNextStep: a story waiting for another story", () => {
 
   it("lists an issue of another repository as a blocker with its repository", () => {
     const n = stoppedAt("wait_for_story", [entry("WAITS_FOR: #12, acme/lib#3\nRecorded in Depends on of #7.\nPARKED")]);
-    expect(n.blockers).toEqual([{ issue: 12 }, { issue: 3, repo: "acme/lib" }]);
+    expect(n.blockers).toEqual([{ issue: 12 }, { issue: 3, repo: "acme/lib", url: "https://github.com/acme/lib/issues/3" }]);
   });
 
   it("reads the newest wait_for_story output", () => {

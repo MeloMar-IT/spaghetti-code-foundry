@@ -1,8 +1,8 @@
 import { h } from "./dom.js";
-import { whereLink, whereTarget, whoClass } from "./next.js";
+import { crossLink, whereLink, whereTarget, whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { issueLink } from "./work-list.js";
-import { ageText, keyOf } from "./work-model.js";
+import { ageText, crossAfter, keyOf } from "./work-model.js";
 import { plainServerText, whoText } from "./change-words.js";
 
 // The side panel of the Work page: what is in the way of one story, in the order it must finish. Every word
@@ -64,6 +64,10 @@ export function panelView(item, items, handlers = {}) {
         : [issueLink(item.repo, e.issue, leave, `work-panel-chain-${e.issue}`), " ", h("span", { class: "muted" }, "not on the board")],
       e.direct ? [" ", h("span", { class: "pill" }, "directly")] : null);
   });
+  // A blocker of another repository has no card here and is not followed further: only the direct ones.
+  for (const [k, c] of crossAfter(item).entries()) {
+    entries.push(h("li", {}, crossLink(c, { onClick: leave, focus: `work-panel-cross-${k}` }), " ", h("span", { class: "muted" }, "in another repository"), " ", h("span", { class: "pill" }, "directly")));
+  }
   const age = ageText(item.since, handlers.now ?? new Date());
   return h("div", { class: "work-panel", "aria-label": `#${item.issue} ${item.title}`, ...role },
     h("div", { class: "work-panel-head" },

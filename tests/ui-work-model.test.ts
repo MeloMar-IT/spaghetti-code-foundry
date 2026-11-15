@@ -151,6 +151,37 @@ describe("facets", () => {
   });
 });
 
+describe("crossAfter", () => {
+  const URL = "https://github.com/acme/lib/issues/3";
+  const of = (blockers: unknown) => m.crossAfter(card({ next: { kind: "dependency", blockers } }));
+  it("lists a blocker of another repository with the url the server set", () => {
+    expect(of([{ issue: 2 }, { issue: 3, repo: "acme/lib", url: URL }])).toEqual([{ ref: "acme/lib#3", url: URL }]);
+  });
+  it("is empty for blockers of this repository only, or without a record or blockers", () => {
+    expect(of([{ issue: 2 }, { issue: 5 }])).toEqual([]);
+    expect(m.crossAfter(card({ next: undefined }))).toEqual([]);
+    expect(m.crossAfter(card())).toEqual([]);
+    expect(m.crossAfter(undefined)).toEqual([]);
+    expect(of("x")).toEqual([]);
+  });
+  it("drops a url that is missing, not GitHub, not https, or not the page of that issue", () => {
+    for (const url of [undefined, 3, "", "javascript:alert(1)", "http://github.com/acme/lib/issues/3", "https://evil.example/acme/lib/issues/3", "https://github.com/acme/other/issues/3", "https://github.com/acme/lib/issues/4", `${URL}#x`]) {
+      expect(of([{ issue: 3, repo: "acme/lib", url }]), String(url)).toEqual([]);
+    }
+  });
+  it("drops a name the server would not accept, even with a matching url", () => {
+    for (const repo of ["owner/repo", "Owner/Repo", "a/.", "a/..", "-x/y", "a/b/c"]) {
+      expect(of([{ issue: 3, repo, url: `https://github.com/${repo}/issues/3` }]), repo).toEqual([]);
+    }
+    expect(of([{ issue: 0, repo: "acme/lib", url: "https://github.com/acme/lib/issues/0" }])).toEqual([]);
+  });
+  it("lists each issue once, in the server's order", () => {
+    const other = "https://github.com/acme/web/issues/1";
+    expect(of([{ issue: 3, repo: "Acme/Lib", url: "https://github.com/Acme/Lib/issues/3" }, { issue: 1, repo: "acme/web", url: other }, { issue: 3, repo: "acme/lib", url: URL }]))
+      .toEqual([{ ref: "Acme/Lib#3", url: "https://github.com/Acme/Lib/issues/3" }, { ref: "acme/web#1", url: other }]);
+  });
+});
+
 describe("isFiltered", () => {
   it("is false for the defaults and for a different group or order", () => {
     expect(m.isFiltered(D())).toBe(false);
