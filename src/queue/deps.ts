@@ -16,8 +16,11 @@ export function dependencyText(body: string): string {
   return r ? text.slice(r.start, r.end) : "";
 }
 
-/** The source of the pattern for a "#12" reference: not part of a longer word or "owner/repo#12". */
-export const DEP_REF_SOURCE = "(?<![\\w/])#(\\d+)\\b";
+/**
+ * The source of the pattern for a "#12" reference: not part of a longer word or "owner/repo#12". A name that ends in "-" or
+ * "." ("owner/lib-#12") is a cross reference too, so its "#12" is not a local one. A plain "#3-#8" still counts both.
+ */
+export const DEP_REF_SOURCE = "(?<![\\w/])(?<!\\/[A-Za-z0-9._-]{1,100}[-.])#(\\d+)\\b";
 
 /**
  * The source of the pattern for an "owner/name#12" reference to an issue in another GitHub repository:
@@ -150,15 +153,25 @@ export function cleanReason(text: string): string {
     .slice(0, 200).trimEnd();
 }
 
-/** Adds issues to the Foundry's part (made if missing). The text outside the part is never changed. */
-export function mergeDependsOn(body: string, issues: readonly number[], reason: string): string {
+const crossKey = (c: CrossRef) => `${c.repo.toLowerCase()}#${c.issue}`;
+const CROSS_REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const validCross = (c: CrossRef) =>
+  typeof c?.repo === "string" && CROSS_REPO.test(c.repo) && Number.isInteger(c.issue) && c.issue > 0 && c.issue <= 2147483647;
+
+/**
+ * Adds issues, and the "owner/name#12" references in `cross`, to the Foundry's part (made if missing). The text outside the
+ * part is never changed. A cross reference already in the part (in any case) stays as it is written.
+ */
+export function mergeDependsOn(body: string, issues: readonly number[], reason: string, cross: readonly CrossRef[] = []): string {
   const b = body ?? "";
   const eol = eolOf(b);
   const add = issues.filter((n) => Number.isInteger(n) && n > 0);
   const all = [...new Set([...foundryDependsOn(b), ...add])].sort((x, y) => x - y);
-  const cross = markedCross(b);
-  if (!all.length && !cross.length) return b;
-  const part = renderPart(all, cleanReason(reason), eol, cross);
+  const byKey = new Map<string, CrossRef>();
+  for (const c of [...markedCross(b), ...cross.filter(validCross)]) if (!byKey.has(crossKey(c))) byKey.set(crossKey(c), { repo: c.repo, issue: c.issue });
+  const crossLines = [...byKey.values()].sort(byRef);
+  if (!all.length && !crossLines.length) return b;
+  const part = renderPart(all, cleanReason(reason), eol, crossLines);
   const r = foundryRange(b);
   if (r) return b.slice(0, r.start) + part + b.slice(r.end);
   const m = HEADER.exec(b);
@@ -169,17 +182,22 @@ export function mergeDependsOn(body: string, issues: readonly number[], reason: 
   return b + eol + eol + "### Depends on" + eol + part;
 }
 
-/** Takes issues out of the Foundry's part; its "- owner/name#12" lines stay. When nothing is left, the part goes. */
-export function removeFromDependsOn(body: string, issues: readonly number[]): string {
+/**
+ * Takes issues out of the Foundry's part, and the "- owner/name#12" lines named in `cross` (in any case); the other cross
+ * lines stay. When nothing is left, the part goes.
+ */
+export function removeFromDependsOn(body: string, issues: readonly number[], cross: readonly CrossRef[] = []): string {
   const r = foundryRange(body);
   if (!r) return body;
   const have = foundryDependsOn(body);
   const left = have.filter((n) => !issues.includes(n));
-  if (left.length === have.length) return body;
-  const cross = markedCross(body);
-  if (!left.length && !cross.length) return withoutFoundryPart(body);
+  const gone = new Set(cross.map(crossKey));
+  const haveCross = markedCross(body);
+  const leftCross = haveCross.filter((c) => !gone.has(crossKey(c)));
+  if (left.length === have.length && leftCross.length === haveCross.length) return body;
+  if (!left.length && !leftCross.length) return withoutFoundryPart(body);
   const oldReason = /^_Added by the Spaghetti Code Foundry(?:: (.*?))?_[ \t]*\r?$/m.exec(body.slice(r.start, r.end))?.[1] ?? "";
-  return body.slice(0, r.start) + renderPart(left, cleanReason(oldReason), eolOf(body), cross) + body.slice(r.end);
+  return body.slice(0, r.start) + renderPart(left, cleanReason(oldReason), eolOf(body), leftCross) + body.slice(r.end);
 }
 
 /** Issue numbers this body depends on: "#12" references, items matching another issue's title, and the issues in the Foundry's marked part (no length limit). */

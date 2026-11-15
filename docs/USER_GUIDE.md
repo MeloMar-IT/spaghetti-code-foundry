@@ -4313,6 +4313,10 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   update safely`). An issue of another repository can be named as `owner/name#72`. It holds the story
   only when that repository is a GitHub repository you added to the Foundry under the same owner as
   this watcher's repository; any other repository is not waited for, and the activity log says so.
+  The planner can write this itself: when the work needs a change in another of your repositories,
+  it writes `WAITS_FOR: owner/name#72` (with `#N` for this repository; at most 10 references in all)
+  and does not ask you whether that issue is merged. A name that is not one of your Foundry
+  repositories is reported as a problem ("is not a repository of the Foundry") and not recorded.
   The other issue is read with that repository's own sign-in (at most 20 reads per check). When it
   is closed as not planned, the story shows in Your turn with the reason, because it will never be
   done; reopen it or take it out of **Depends on**.

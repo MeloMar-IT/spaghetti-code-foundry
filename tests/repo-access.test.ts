@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { ConfigSchema } from "../src/config.js";
+import { ownerReposEnv } from "../src/engine/repo-access.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { listBlocks } from "../src/flow/blocks.js";
@@ -230,4 +231,23 @@ describe("clone steps", { timeout: 60_000 }, () => {
       expect(url).toBe(gh.remote);
     });
   }
+});
+
+describe("ownerReposEnv", () => {
+  it("gives the GitHub names of the owner's repositories only, once each", () => {
+    const seen: string[] = [];
+    const list = (u: string) => {
+      seen.push(u);
+      return [
+        { url: "https://github.com/acme/lib" }, { url: "/work/local-project" }, { url: "git@github.com:acme/api.git" },
+        { url: "https://github.com/ACME/lib" }, { url: "https://gitlab.com/x/y" },
+      ];
+    };
+    expect(ownerReposEnv("ann", list)).toEqual({ FACTORY_OWNER_REPOS: "acme/lib,acme/api" });
+    expect(seen).toEqual(["ann"]);
+  });
+  it("is empty with no owner or when the list cannot be read", () => {
+    expect(ownerReposEnv(undefined, () => [{ url: "https://github.com/acme/lib" }])).toEqual({ FACTORY_OWNER_REPOS: "" });
+    expect(ownerReposEnv("ann", () => { throw new Error("registry"); })).toEqual({ FACTORY_OWNER_REPOS: "" });
+  });
 });

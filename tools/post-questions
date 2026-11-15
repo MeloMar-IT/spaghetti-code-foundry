@@ -7,14 +7,15 @@
 //   ### #76
 //   NO_QUESTIONS
 //   ### #77
-//   WAITS_FOR: #75
+//   WAITS_FOR: #75, owner/name#4
 //   WAITS_FOR_REASON: needs the API of #75
 //   (optionally followed by questions, or NO_QUESTIONS)
 // A WAITS_FOR request is recorded in the issue's "Depends on" (the Foundry part, through dist/queue/waits-for.js)
-// with no comment and no label. A request that cannot be recorded safely becomes the last question, with the
-// recommendation to plan the issue now without waiting. The commits of HEAD (the cwd is the clone) show landed work;
-// when they cannot be read, no wait is recorded and every request is asked.
-// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUES (the issues that were checked),
+// with no comment and no label. owner/name#4 is an issue in another of the run owner's repositories (FACTORY_OWNER_REPOS).
+// A request that cannot be recorded safely becomes the last question, with the recommendation to plan the issue now
+// without waiting. The commits of HEAD (the cwd is the clone) show landed work; when they cannot be read, a request that
+// names an issue of this repository is asked (one that names only other repositories' issues needs no commits).
+// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUES (the issues that were checked), FACTORY_OWNER_REPOS (set by the engine),
 //      FACTORY_VAR_NEEDS_INFO_LABEL (label for issues with questions), FACTORY_RUN_ID,
 //      FACTORY_NEXT_QUESTIONS (the closing sentence of the comment),
 //      FACTORY_FIRST_QUESTIONS (the first line of the comment), FACTORY_GH_BIN (the gh program, for tests),
@@ -177,7 +178,12 @@ if ([...sections].some(([n, l]) => checked.has(n) && WAITS_FOR_LINE.test(l.join(
   } catch (e) {
     fail(`could not load the waits-for library: ${String(e?.message ?? e).split("\n")[0]}`);
   }
-  waits = { lib, known: new Map(), commits: readCommits() };
+  waits = { lib, known: new Map(), commitsRead: false, commits: undefined, ownerRepos: lib.ownerReposFromEnv(process.env) };
+}
+// The commits of HEAD, read once and only when a request names an issue of this repository.
+function commitsOnce() {
+  if (!waits.commitsRead) { waits.commitsRead = true; waits.commits = readCommits(); }
+  return waits.commits;
 }
 
 const count = (t) => (t.match(/^\*\*Q\d+/gm) ?? []).length || "some";
@@ -187,18 +193,21 @@ for (const [n, lines] of sections) {
   let body = lines.join("\n").trim();
   if (waits && WAITS_FOR_LINE.test(body)) {
     const self = Number(n);
-    const request = waits.lib.parseWaitsFor(body);
+    // owner/name#N for this repository itself is #N.
+    const request = waits.lib.normalizeWaitsFor(waits.lib.parseWaitsFor(body), repo);
     body = body.split("\n").filter((l) => !WAITS_FOR_ANY.test(l)).join("\n").trim();
     const path = request.error ? undefined : loopInBatch(waits.known, self, request.issues.filter((x) => x !== self));
+    const commits = request.error || !request.issues.length ? [] : commitsOnce();
     let r;
-    if (!waits.commits) r = { outcome: "problem", wait: [], problems: ["The commits of this branch could not be read, so it is unknown whether the work already landed."] };
+    if (!commits) r = { outcome: "problem", wait: [], problems: ["The commits of this branch could not be read, so it is unknown whether the work already landed."] };
     else if (path) r = { outcome: "problem", wait: [], problems: [`Waiting for #${path[0]} would make a loop: ${[self, ...path, self].map((x) => "#" + x).join(" → ")}.`] };
     else {
-      r = waits.lib.recordWaitsFor(gh, repo, self, request, waits.commits);
+      r = waits.lib.recordWaitsFor(gh, repo, self, request, commits, waits.ownerRepos);
     }
     if (r.outcome !== "problem") {
       waits.known.set(self, r.wait);
-      console.log(`#${n}: waits for ${hash(r.wait)}${r.outcome === "unchanged" ? " (already recorded)" : ""}`);
+      const refs = [hash(r.wait), ...(r.crossWait ?? []).map((c) => `${c.repo}#${c.issue}`)].filter(Boolean).join(", ");
+      console.log(`#${n}: waits for ${refs}${r.outcome === "unchanged" ? " (already recorded)" : ""}`);
     } else {
       if (/^NO_QUESTIONS\b/m.test(body)) body = "";
       const k = Math.max(0, ...[...body.matchAll(/^\*\*Q(\d+)/gm)].map((m) => Number(m[1]))) + 1;

@@ -621,6 +621,11 @@ describe("runNextStep: a story waiting for another story", () => {
     expect(stoppedAt("build/wait_for_story", [entry("WAITS_FOR: #12\nPARKED")]).kind).toBe("dependency");
   });
 
+  it("lists an issue of another repository as a blocker with its repository", () => {
+    const n = stoppedAt("wait_for_story", [entry("WAITS_FOR: #12, acme/lib#3\nRecorded in Depends on of #7.\nPARKED")]);
+    expect(n.blockers).toEqual([{ issue: 12 }, { issue: 3, repo: "acme/lib" }]);
+  });
+
   it("reads the newest wait_for_story output", () => {
     const n = stoppedAt("wait_for_story", [entry("WAITS_FOR: #3\nPARKED"), entry("WAITS_FOR: #12\nPARKED")]);
     expect(n.blockers).toEqual([{ issue: 12 }]);

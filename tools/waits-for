@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Records that the issue being planned waits for another story, in the Foundry part of its "Depends on".
 // Usage: waits-for   (the plan comes on stdin; run it with node)
-// Input (stdin): the plan text with a line `WAITS_FOR: #12, #13` and optionally `WAITS_FOR_REASON: why`.
+// Input (stdin): the plan text with a line `WAITS_FOR: #12, #13, owner/name#4` and optionally `WAITS_FOR_REASON: why`.
+//   owner/name#4 is an issue in another of the run owner's repositories (FACTORY_OWNER_REPOS); it is read with this gh.
 // Output (stdout), exit 0:
-//   WAITS_FOR: #12 / Recorded in Depends on of #7. / PARKED     the wait is recorded (or was already); the run stops
+//   WAITS_FOR: #12, owner/name#4 / Recorded in Depends on of #7. / PARKED   the wait is recorded (or was already); the run stops
 //   <question text> / QUESTION                                  the wait is not possible; the flow asks one question
-// Exit 1 (message on stderr as `waits-for: …`): bad input or environment, the commits of HEAD cannot be read, or gh failed
-// (other than "issue not found"). Nothing is asked then; a failed write is undone by the library where it can be.
+// Exit 1 (message on stderr as `waits-for: …`): bad input or environment, the commits of HEAD cannot be read (only when the
+// line names an issue of this repository), or gh failed on this repository (other than "issue not found"). A failed read of
+// another repository's issue is a question. Nothing is asked on exit 1; a failed write is undone by the library where it can be.
 // The library is dist/queue/waits-for.js (build first). The commits of HEAD (the cwd is the clone) show landed work.
-// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_GH_BIN (the gh program, for tests).
+// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_OWNER_REPOS (comma-separated owner/name, set by the engine),
+//      FACTORY_GH_BIN (the gh program, for tests).
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -46,7 +49,9 @@ try {
   fail(`could not load the waits-for library: ${String(e?.message || e).split("\n")[0]}`);
 }
 
-const request = lib.parseWaitsFor(text) ?? { issues: [], reason: "", error: "The plan has no WAITS_FOR: line." };
+const parsed = lib.parseWaitsFor(text) ?? { issues: [], cross: [], reason: "", error: "The plan has no WAITS_FOR: line." };
+// owner/name#N for this repository itself is #N.
+const request = lib.normalizeWaitsFor(parsed, repo);
 
 function ask(problems) {
   console.log(lib.waitsForQuestion(self, request, problems));
@@ -67,29 +72,35 @@ function readCommits() {
     return fail(`could not read the commits of HEAD: ${String(e?.stderr || e?.message || e).trim().split("\n")[0]}`);
   }
 }
-const commits = readCommits();
+// Only issues of this repository need the commits: an issue of another repository has no landed-work check.
+const commits = request.issues.length ? readCommits() : [];
 
+// The value after --repo: a read of an issue in another repository is the library's problem line, never a failure here.
+const repoOf = (args) => { const i = args.indexOf("--repo"); return i >= 0 ? String(args[i + 1] ?? "") : ""; };
 let ghFailure;
 function gh(args, input) {
   try {
     return execFileSync(GH, args, { encoding: "utf8", input, timeout: 60_000, maxBuffer: 64 * 1024 * 1024, stdio: [input !== undefined ? "pipe" : "ignore", "pipe", "pipe"] });
   } catch (e) {
     const msg = String(e?.stderr || e?.message || e).trim();
+    const other = args[1] === "view" && repoOf(args).toLowerCase() !== repo.toLowerCase();
     // An unknown issue is a question, not a failure.
-    if (!(args[1] === "view" && /Could not resolve to an Issue|Not Found|HTTP 404/i.test(msg))) {
+    if (!other && !(args[1] === "view" && /Could not resolve to an Issue|Not Found|HTTP 404/i.test(msg))) {
       ghFailure ??= msg.split("\n")[0];
     }
     throw e;
   }
 }
 
-const r = lib.recordWaitsFor(gh, repo, self, request, commits);
+const r = lib.recordWaitsFor(gh, repo, self, request, commits, lib.ownerReposFromEnv(process.env));
 if (ghFailure) {
   for (const p of r.problems) process.stderr.write(`${p}\n`);
   fail(`gh failed: ${ghFailure}`);
 }
 if (r.outcome === "problem") ask(r.problems);
-console.log(`WAITS_FOR: ${r.wait.map((n) => "#" + n).join(", ")}`);
+const crossRef = (c) => `${c.repo}#${c.issue}`;
+console.log(`WAITS_FOR: ${[...r.wait.map((n) => "#" + n), ...(r.crossWait ?? []).map(crossRef)].join(", ")}`);
 console.log(r.outcome === "unchanged" ? `Already recorded in Depends on of #${self}.` : `Recorded in Depends on of #${self}.`);
 for (const a of r.already ?? []) console.log(`#${a.issue} already landed (commit ${String(a.commit ?? "").slice(0, 7)}).`);
+for (const c of r.crossDone ?? []) console.log(`${crossRef(c)} is already done (closed).`);
 console.log("PARKED");

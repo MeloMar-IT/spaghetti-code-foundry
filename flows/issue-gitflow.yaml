@@ -452,10 +452,13 @@ steps:
         policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
         An owner_action question that waits for a file adds `**Needs:** file <path>` (the path from the repository root): the Foundry goes on by itself once the file is there.
         Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
-      - WAITS_FOR: the work must wait for another open issue of this repository whose work has not landed, and its
-        "Depends on" does not name it yet. Don't ask about the order and don't plan it: write `WAITS_FOR: #<n>`
-        (up to 10 numbers, never this issue) and `WAITS_FOR_REASON: <one line why>`. The Foundry records it in
-        "Depends on" and plans again once that issue is done; only an invalid wait becomes a question.
+      - WAITS_FOR: the work must wait for another open issue, and its "Depends on" does not name it yet. Don't ask
+        about the order and don't plan it: write `WAITS_FOR: #<n>` for an issue of this repository whose work has not
+        landed (never this issue), or `WAITS_FOR: owner/name#<n>` for an issue in another of the owner's repositories
+        that is still open; both kinds may be on one line, up to 10 references in total. Never ask the owner whether
+        such an issue in another repository is merged or done: wait for it. Add `WAITS_FOR_REASON: <one line why>`.
+        The Foundry records it in "Depends on" and plans again once those issues are done; only an invalid wait
+        becomes a question.
       - READY: write the plan with these sections:
         ## Goal — what will work when this is done, in one or two sentences.
         ## Requirements — what the work must do, as a list.
@@ -636,10 +639,13 @@ steps:
         An owner_action question that waits for a file adds `**Needs:** file <path>` (the path from the repository root): the Foundry goes on by itself once the file is there.
         Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
       If you answer WAITS_FOR, write the WAITS_FOR: and WAITS_FOR_REASON: lines as described here:
-      - WAITS_FOR: the work must wait for another open issue of this repository whose work has not landed, and its
-        "Depends on" does not name it yet. Don't ask about the order and don't plan it: write `WAITS_FOR: #<n>`
-        (up to 10 numbers, never this issue) and `WAITS_FOR_REASON: <one line why>`. The Foundry records it in
-        "Depends on" and plans again once that issue is done; only an invalid wait becomes a question.
+      - WAITS_FOR: the work must wait for another open issue, and its "Depends on" does not name it yet. Don't ask
+        about the order and don't plan it: write `WAITS_FOR: #<n>` for an issue of this repository whose work has not
+        landed (never this issue), or `WAITS_FOR: owner/name#<n>` for an issue in another of the owner's repositories
+        that is still open; both kinds may be on one line, up to 10 references in total. Never ask the owner whether
+        such an issue in another repository is merged or done: wait for it. Add `WAITS_FOR_REASON: <one line why>`.
+        The Foundry records it in "Depends on" and plans again once those issues are done; only an invalid wait
+        becomes a question.
         For TOO_BIG, write the split in exactly this format so the factory can create the issues:
           ## Split
           ### ISSUE 1: <title>
