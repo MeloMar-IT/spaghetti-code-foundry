@@ -121,6 +121,8 @@ export interface NextData {
   /** `owner_action`: what the owner must do (the question, as one safe line), and the files the Foundry waits for. */
   ownerAction?: string;
   ownerFiles?: { paths: string[]; where: string };
+  /** `owner_action`: someone answered by taking the recommendation, which cannot do it; the question stays open. */
+  ownerIdle?: boolean;
   /** `questions` / `planner_questions`: the watcher answers them itself with the recommendations (auto_defaults), so nobody has to. */
   autoDefaults?: boolean;
   /** `planner_questions`: the answer is typed on the run page of the user display (no watcher follows the run, its flow reads the task). */
@@ -389,12 +391,17 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       why = "A question needs something only you can do";
       action = d.ownerAction || "Do what the question on the issue asks";
       const files = d.ownerFiles?.paths ?? [];
-      say = `${lowerFirst(action.replace(/[.!?:;,\s]+$/, ""))}, then answer on the issue`;
+      const todo = lowerFirst(action.replace(/[.!?:;,\s]+$/, ""));
+      say = `${todo}, then answer on the issue`;
       if (files.length && d.ownerFiles) {
         const list = files.map((p) => `\`${p}\``).join(", ");
         const when = `${list} ${files.length === 1 ? "is" : "are"} on ${d.ownerFiles.where}`;
-        say += ` — or it goes on by itself once ${when}`;
+        say = d.ownerIdle
+          ? `going with the recommendation cannot do this, so it does not go on: ${todo}; it goes on by itself once ${when}`
+          : `${say} — or it goes on by itself once ${when}`;
         until = `once ${when}`;
+      } else if (d.ownerIdle) {
+        say = `going with the recommendation cannot do this, so it does not go on: ${todo}, then answer on the issue`;
       }
       break;
     }

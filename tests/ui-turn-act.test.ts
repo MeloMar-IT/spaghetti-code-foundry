@@ -128,6 +128,14 @@ describe("questions", () => {
     expect(posted).toEqual([{ key: "k1", action: "answer", stamp: "S1", digest: "DS1", answers: [{ n: 1, text: "Go with the recommendation." }, { n: 2, text: "there" }] }]);
   });
 
+  it("offers no Use recommendation for an owner_action question, and says why", async () => {
+    const m = await open(item("owner_action"), "Show question", { stamp: "S3", digest: "DS3", acts: ["answer"], text: "",
+      questions: [{ n: 1, title: "Commit config/app.yaml", text: "", recommendation: "none", ownerAction: true }, { n: 2, title: "Which colour?", text: "", recommendation: "blue" }] });
+    click(button(m, "Answer…"));
+    expect(m.all("button").filter((b: any) => b.textContent === "Use recommendation")).toHaveLength(1);
+    expect(m.textContent).toContain("Going with the recommendation cannot do it.");
+  });
+
   it("offers one box when no questions were parsed, and Back returns to the questions", async () => {
     const m = await open(item("planner_questions", "kp"), "Show questions", { stamp: "S2", digest: "DS2", acts: ["answer"], text: "free prose" });
     click(button(m, "Answer…"));

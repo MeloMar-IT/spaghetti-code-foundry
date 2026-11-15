@@ -196,6 +196,54 @@ describe("owner_action questions", () => {
     expect(submit).toHaveBeenCalledTimes(2);
   });
 
+  const viaUi = (text = "Go with the recommendation.") => said(`**Q1.** ${text}\n\n— Marcel K, via Spaghetti Code Foundry`);
+
+  it("does not resume when the answer only takes the recommendation and the file is still missing", async () => {
+    plant(); issues(); comments(owner("**Needs:** file config/app.yaml\n"), viaUi());
+    process.env.FAKE_GH_FILES = "[]";
+    const w = watcher();
+    await w.tick();
+    await w.tick();
+    expect(submit).not.toHaveBeenCalled();
+    expect(log()).not.toContain(`--add-label ${WORKING}`);
+    expect(log()).not.toContain("auto-defaults");
+    expect(hold(w)?.next.kind).toBe("owner_action");
+    expect(hold(w)?.next.text).toContain("going with the recommendation cannot do this");
+    expect(hold(w)?.next.until).toContain("`config/app.yaml` is on `develop`");
+  });
+
+  it("resumes after such an answer once the file is there", async () => {
+    plant(); issues(); comments(owner("**Needs:** file config/app.yaml\n"), viaUi());
+    process.env.FAKE_GH_FILES = JSON.stringify(["develop:config/app.yaml"]);
+    await watcher().tick();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ kind: "resume" }), expect.anything());
+  });
+
+  it("resumes when the answer says more than the recommendation", async () => {
+    plant(); issues(); comments(owner("**Needs:** file config/app.yaml\n"), viaUi("Go with the recommendation. I committed it on main."));
+    process.env.FAKE_GH_FILES = "[]";
+    await watcher().tick();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ kind: "resume" }), expect.anything());
+  });
+
+  it("resumes when a product question next to the owner action is answered with the recommendation", async () => {
+    plant(); issues();
+    comments(bot(`${owner("**Needs:** file config/app.yaml\n").body}\n${product}`), said("**Q1.** Go with the recommendation.\n\n**Q2.** Go with the recommendation.\n\n— Marcel K, via Spaghetti Code Foundry"));
+    process.env.FAKE_GH_FILES = "[]";
+    await watcher().tick();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ kind: "resume" }), expect.anything());
+  });
+
+  it("does not start an issue with up-front questions on such an answer", async () => {
+    issues();
+    comments(bot("**Q1. Commit config/app.yaml**\n**Kind:** owner_action\n**Needs:** file config/app.yaml\n<!-- claude-factory run=pre1 questions -->"), viaUi());
+    process.env.FAKE_GH_FILES = "[]";
+    const w = watcher();
+    await w.tick();
+    expect(submit).not.toHaveBeenCalled();
+    expect(hold(w)?.next.kind).toBe("owner_action");
+  });
+
   it("still answers a product-only question with /defaults", async () => {
     plant(); issues(); comments(bot(`${product}<!-- claude-factory run=r1 -->`));
     await watcher().tick();

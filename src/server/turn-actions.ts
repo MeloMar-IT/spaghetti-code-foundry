@@ -4,7 +4,8 @@ import { canWrite, commentsAfter, ghActsAsApp, ghLogin, isBot, mayWrite, repoPer
 import { createHash } from "node:crypto";
 import { isLocalRepoName, isStoryRepoName, storeFor } from "../stories/store.js";
 import { StoryCommitError } from "../stories/local-store.js";
-import type { NextStep } from "../next-step.js";
+import { countQuestions, type NextStep } from "../next-step.js";
+import { filesToCheck, idleAnswers, ownerActions, questionKinds, takesRecommendationOnly } from "../queue/owner-action.js";
 import { labelNames } from "../queue/watcher.js";
 import { CLOSED_MESSAGE, gateRun } from "../run-gate.js";
 import { commentDigest, composeComment, findComment, parseProposal, parseQuestions, visibleText, type ComposeAction, type Proposal, type Question } from "../turn-actions.js";
@@ -38,7 +39,7 @@ export interface TurnDetail {
   kind: string;
   /** The comment as text (always set; for questions it is the fallback when none could be parsed). */
   text: string;
-  questions?: Question[];
+  questions?: (Question & { ownerAction?: boolean })[];
   proposal?: Proposal;
 }
 
@@ -159,7 +160,9 @@ export async function turnDetail(ctx: ApiContext, user: Pick<User, "id">, admin:
   const { repo, issue } = target(item);
   const { c } = await asRepo(ctx, item.watcher, () => foundryComment(repo, issue, item.next.kind, item.next.runId));
   if (item.next.kind === "questions" || item.next.kind === "planner_questions" || item.next.kind === "owner_action") {
-    const questions = parseQuestions(c.body);
+    // An owner_action question is marked: taking its recommendation cannot do it, so the panel offers no "Use recommendation".
+    const owner = new Set(questionKinds(c.body).filter((q) => q.kind === "owner_action").map((q) => q.n));
+    const questions = parseQuestions(c.body).map((q) => (owner.has(q.n) ? { ...q, ownerAction: true } : q));
     return { ...base, digest: commentDigest(c), text: visibleText(c.body), questions };
   }
   return { ...base, digest: commentDigest(c), text: visibleText(c.body), proposal: parseProposal(c.body) };
@@ -249,7 +252,15 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
         const { c, list } = await foundryComment(repo, issue, item.next.kind, item.next.runId);
         const approval = item.next.kind === "approve_plan" || item.next.kind === "approve_split" || item.next.kind === "approval";
         if (req.digest !== commentDigest(c)) throw new HttpError(409, "the comment on the issue changed since you opened it — look at it again");
-        let later = commentsAfter(list, (x) => x === c);
+        // Answers that cannot help an owner_action (idleAnswers) leave the question open: the watcher does not count them either.
+        const idle = item.next.kind === "owner_action" ? idleAnswers(list) : [];
+        let later = commentsAfter(list, (x) => x === c).filter((x) => !idle.includes(x));
+        if (item.next.kind === "owner_action" && req.action === "answer" && takesRecommendationOnly(body)) {
+          const files = filesToCheck({ actions: ownerActions(c.body), questions: countQuestions(c.body) });
+          if (files.length) {
+            throw new HttpError(409, `going with the recommendation cannot do this: put ${files.map((f) => `\`${f}\``).join(", ")} on the branch (commit it), and it goes on by itself`);
+          }
+        }
         if (approval && !local) {
           // Like the watcher: a /approve or /reject only counts from someone with write access (the app's own comment: gh says it is its own).
           later = later.filter((x) => /^\s*\/(approve|reject)\b/im.test(x.body));

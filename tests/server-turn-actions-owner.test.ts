@@ -26,6 +26,7 @@ const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd,
 
 const questionsComment = "**What you need to do:** Answer.\n\n**Q1. Which?**\nOptions.\n**Recommendation:** (a)\n\n**Q2. Where?**\nHere or there.\n**Recommendation:** here\n\n_Answer or /defaults._\n\n<!-- claude-factory run=r0 questions -->";
 const planComment = (run: string, risk: number) => `**What you need to do:** Decide.\n\n🤖 **Spaghetti Code Foundry plan**\n\n**Risk: ${risk}/100** — touches login\n\nthe plan\n\n✋ **A human decides before coding starts:** the risk score is above 75.\n\n_Reply._\n\n<!-- claude-factory run=${run} approval -->`;
+const ownerComment = "**What you need to do:** Commit a file.\n\n**Q1. Commit config/app.yaml**\n**Kind:** owner_action\n**Needs:** file config/app.yaml\n**Recommendation:** none\n\n**Q2. Which colour?**\n**Kind:** product\n**Recommendation:** blue\n\n<!-- claude-factory run=r7 -->";
 const story = (n: number, over: Partial<FileStory> = {}): FileStory => ({
   number: n, title: `Story ${n}`, state: "open", kind: "story", labels: [], dependsOn: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", body: "Do it.", comments: [], ...over,
 });
@@ -90,6 +91,7 @@ beforeEach(() => {
     ["6-p.md", story(6, { comments: [fc(planComment("r1", 80))] })],
     ["8-f.md", story(8, { labels: ["factory:failed"] })],
     ["9-c.md", story(9, { labels: ["factory:failed"], state: "closed" })],
+    ["7-o.md", story(7, { comments: [fc(ownerComment)] })],
   ];
   for (const [f, s] of files) writeFileSync(join(dir, ".scf", "stories", f), formatStoryFile(s));
   writeFileSync(join(dir, ".scf", "stories", "next-number"), "10\n");
@@ -212,6 +214,34 @@ describe("a local project, as its owner", () => {
     await act(ctx, owner, false, { key, action: "retry_hint", stamp: SINCE, text: "try X" });
     expect(await bodies(8)).toHaveLength(1);
     expect(await labels(8)).not.toContain("factory:failed");
+  });
+});
+
+describe("an owner_action question", () => {
+  const ctx = () => stub([{ id: "loc", repo: name, repoId, ownerId: OWNER, holds: [hold(rec(name, "owner_action", 7, "r7"))] }]);
+  const OK = () => keyOf(name, 7, "owner_action", "r7");
+  const rewrite = (body: string) => {
+    writeFileSync(join(dir, ".scf", "stories", "7-o.md"), formatStoryFile(story(7, { comments: [fc(body)] })));
+    git(dir, "commit", "-q", "-am", "only the owner action");
+  };
+
+  it("marks the owner_action question in the detail, so the panel offers no recommendation for it", async () => {
+    const d = await turnDetail(ctx(), owner, false, OK(), NOW);
+    expect(d.questions?.map((q) => [q.n, !!q.ownerAction])).toEqual([[1, true], [2, false]]);
+  });
+
+  it("refuses an answer that only takes the recommendation while every question waits for a file", async () => {
+    rewrite(ownerComment.replace(/\*\*Q2\.[\s\S]*?blue\n\n/, ""));
+    const answer = { key: OK(), action: "answer", stamp: SINCE, answers: [{ n: 1, text: "Go with the recommendation." }] };
+    await expect(act(ctx(), owner, false, answer)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("`config/app.yaml`") });
+    expect(await bodies(7)).toHaveLength(1);
+    await act(ctx(), owner, false, { ...answer, answers: [{ n: 1, text: "Committed it on develop." }] });
+    expect((await bodies(7))[1]).toContain("**Q1.** Committed it on develop.");
+  });
+
+  it("posts the recommendation when a product question is open too", async () => {
+    await act(ctx(), owner, false, { key: OK(), action: "answer", stamp: SINCE, answers: [{ n: 1, text: "Go with the recommendation." }, { n: 2, text: "Go with the recommendation." }] });
+    expect(await bodies(7)).toHaveLength(2);
   });
 });
 

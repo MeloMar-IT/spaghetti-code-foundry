@@ -1049,6 +1049,13 @@ describe("something to do (owner_action)", () => {
     expect(firstLine(n)).toBe("**What you need to do:** Commit config/app.yaml.");
   });
 
+  it("says plainly that going with the recommendation cannot do it", () => {
+    const n = nextStep("owner_action", { issue: 4 }, { watched: true, ownerAction: "Commit config/app.yaml.", ownerFiles: { paths: ["config/app.yaml"], where: "`develop`" }, ownerIdle: true });
+    expect(n.text).toContain("going with the recommendation cannot do this, so it does not go on: commit config/app.yaml; it goes on by itself once `config/app.yaml` is on `develop`");
+    expect(n.until).toBe("once `config/app.yaml` is on `develop`");
+    expect(nextStep("owner_action", {}, { ownerAction: "Commit a", ownerIdle: true }).text).toContain("going with the recommendation cannot do this, so it does not go on: commit a, then answer on the issue");
+  });
+
   it("has no waiting hint without files, and a plain action without text", () => {
     const n = nextStep("owner_action", {}, { ownerAction: "Create the account" });
     expect(n.until).toBeUndefined();

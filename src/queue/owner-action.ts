@@ -69,6 +69,44 @@ export function openOwnerActions(comments: readonly Comment[]): OwnerAsk | undef
   return undefined;
 }
 
+/** The signature the Your turn actions add to a comment (see composeComment in src/turn-actions.ts). */
+const SIGNATURE = /\n*\s*—[^\n]*, via Spaghetti Code Foundry\s*$/;
+/** One answer that only takes the recommendation: what "Use recommendation" fills in, a few close wordings, or /defaults. */
+const TAKES_RECOMMENDATION = /^(?:\/defaults|(?:go with|use|take|accept)\s+(?:the|your)\s+recommendations?)\s*[.!]?$/i;
+
+/** A comment that only takes the recommendation (for every question it answers) and says nothing else. */
+export function takesRecommendationOnly(body: string): boolean {
+  const text = String(body ?? "").replace(/\r\n?/g, "\n").replace(SIGNATURE, "").trim();
+  if (!text) return false;
+  return text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    .every((p) => TAKES_RECOMMENDATION.test(p.replace(/^\*\*Q\d+\.\*\*\s*/i, "").replace(/^Q\d+[.:]\s*/i, "").trim()));
+}
+
+/**
+ * The person comments after the newest question comment that cannot help: each only takes the recommendation, while every open
+ * question is an owner_action that waits for a file. Taking a recommendation does not put the file on the branch, so these
+ * comments are no answer (the run would only ask again). [] when any of them says more, or a question needs more than a file.
+ */
+export function idleAnswers(comments: readonly Comment[]): Comment[] {
+  const tail: Comment[] = [];
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i]!;
+    if (isStatusComment(c) || c.body.includes(OWNER_FILE_MARK)) continue;
+    if (isBot(c)) break;
+    tail.push(c);
+  }
+  if (!tail.length || !tail.every((c) => takesRecommendationOnly(c.body))) return [];
+  const ask = openOwnerActions(comments.filter((c) => !tail.includes(c)));
+  return ask && filesToCheck(ask).length ? tail.reverse() : [];
+}
+
+/** Like openOwnerActions, but answers that cannot help (idleAnswers) do not close the question; `idle` says there were some. */
+export function openOwnerAsk(comments: readonly Comment[]): (OwnerAsk & { idle: boolean }) | undefined {
+  const idle = idleAnswers(comments);
+  const ask = openOwnerActions(idle.length ? comments.filter((c) => !idle.includes(c)) : comments);
+  return ask ? { ...ask, idle: idle.length > 0 } : undefined;
+}
+
 /** The files to check: when every open question is owner_action with a valid file, and there are at most FILES_MAX of them; else []. */
 export function filesToCheck(ask: OwnerAsk): string[] {
   const files = ask.actions.map((a) => a.file);

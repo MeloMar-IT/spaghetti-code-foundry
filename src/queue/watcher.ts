@@ -35,7 +35,7 @@ import { StatusComments } from "./status-comment.js";
 import { appBase, appLink } from "../public-url.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
 import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSince, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
-import { filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
+import { filesToCheck, idleAnswers, openOwnerAsk, OWNER_FILE_MARK } from "./owner-action.js";
 import { validBranchName } from "../auth/repo-settings.js";
 
 /** Status labels the watcher puts on issues. Remove one to have the issue picked up again. */
@@ -514,7 +514,7 @@ export class Watcher {
   private canTakeDefaults(comments: Comment[]): boolean {
     if (!this.cfg.auto_defaults) return false;
     // Something only a person can do is never answered with a recommendation.
-    if (openOwnerActions(comments)) return false;
+    if (openOwnerAsk(comments)) return false;
     return comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length < AUTO_DEFAULTS_MAX;
   }
 
@@ -1379,8 +1379,12 @@ export class Watcher {
     const toCheck: Issue[] = [];
     // The status comment is ours too, and so is an overrule reply, but neither is a question or an approval request: they never end the wait.
     const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c) && !isTimeLimitNote(c);
-    // An /overrule changes a decision of the Foundry: it is never the answer to a question.
-    const answersOf = (c: Comment[]) => commentsAfter(c, asked).filter((x) => parseOverrule(x.body) === undefined);
+    // An /overrule changes a decision of the Foundry: it is never the answer to a question. Nor is taking the recommendation
+    // while every open question is an owner_action that waits for a file (idleAnswers): the run would only ask again.
+    const answersOf = (c: Comment[]) => {
+      const idle = idleAnswers(c);
+      return commentsAfter(c, asked).filter((x) => parseOverrule(x.body) === undefined && !idle.includes(x));
+    };
     const nowMs = Date.now();
     for (const [k, t] of this.slowUntil) if (t <= nowMs) this.slowUntil.delete(k);
     const reads = commentReads({
@@ -1428,7 +1432,7 @@ export class Watcher {
     const pressedBefore = this.filePressed;
     this.filePressed = false;
     const ownerWait = async (issue: Issue, comments: Comment[], runId?: string): Promise<{ met: string } | { hold: Hold } | undefined> => {
-      const ask: OwnerAsk | undefined = openOwnerActions(comments);
+      const ask = openOwnerAsk(comments);
       if (!ask) return undefined;
       const files = filesToCheck(ask);
       const target = files.length ? this.fileRef() : undefined;
@@ -1448,7 +1452,7 @@ export class Watcher {
       const ownerAction = ask.actions.length > 1 ? `${first} (and ${ask.actions.length - 1} more on the issue)` : first;
       return {
         hold: {
-          ...this.held("owner_action", issue, { runId, ownerAction, ...(auto ? { ownerFiles: { paths: files, where: target.where } } : {}) }),
+          ...this.held("owner_action", issue, { runId, ownerAction, ...(auto ? { ownerFiles: { paths: files, where: target.where } } : {}), ...(ask.idle ? { ownerIdle: true } : {}) }),
           since: ask.since,
         },
       };
@@ -1754,8 +1758,8 @@ export class Watcher {
               await this.store.setLabels(n, this.L.needsInfo, this.allStatus);
               this.act(`#${n} label → ${this.L.needsInfo}`);
             }
-            const ask = openOwnerActions(comments);
-            holds.push(ask ? { ...this.held("owner_action", issue, { runId: run.runId, ownerAction: ask.actions[0]!.action }), since: ask.since } : this.heldRun(issue, run, { questions: questionCount(comments) }));
+            const ask = openOwnerAsk(comments);
+            holds.push(ask ? { ...this.held("owner_action", issue, { runId: run.runId, ownerAction: ask.actions[0]!.action, ...(ask.idle ? { ownerIdle: true } : {}) }), since: ask.since } : this.heldRun(issue, run, { questions: questionCount(comments) }));
           } else {
             if (status !== this.L.waiting) {
               await this.store.setLabels(n, this.L.waiting, this.allStatus);

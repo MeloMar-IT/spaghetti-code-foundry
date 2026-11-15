@@ -117,7 +117,9 @@ export function questionsPanel(item, detail, { onAct, close }) {
         h("b", q.n === undefined ? {} : aiProps(`question ${q.n}`), q.n === undefined ? q.title : `Q${q.n}. ${q.title}`),
         q.recommendation ? h("div", { class: "muted", ...aiProps("recommendation") }, `Recommendation: ${q.recommendation}`) : null,
         box,
-        q.recommendation ? h("button", { class: "small", onClick: (e) => { e?.preventDefault?.(); box.value = FILLER; } }, "Use recommendation") : null)),
+        // Only the owner can do an owner_action question: taking the recommendation cannot do it, so it is not offered.
+        q.ownerAction ? h("div", { class: "muted" }, "Only you can do this: do it, then say so here. Going with the recommendation cannot do it.")
+          : q.recommendation ? h("button", { class: "small", onClick: (e) => { e?.preventDefault?.(); box.value = FILLER; } }, "Use recommendation") : null)),
       h("div", { class: "row" }, post, back));
   };
   show();

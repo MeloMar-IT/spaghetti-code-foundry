@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readQuestions } from "../tools/decide-questions.mjs";
-import { actionText, contentsPath, filesToCheck, openOwnerActions, ownerActions, OWNER_FILE_MARK, questionKinds, safeRepoPath } from "../src/queue/owner-action.js";
+import { actionText, contentsPath, filesToCheck, idleAnswers, openOwnerActions, openOwnerAsk, ownerActions, OWNER_FILE_MARK, questionKinds, safeRepoPath, takesRecommendationOnly } from "../src/queue/owner-action.js";
 
 const q = (kind: string, extra = "") => `**Q1. Add the file**\n${kind}\n${extra}**Recommendation:** none\n`;
 const bot = (body: string, createdAt = "2026-01-01T00:00:00Z") => ({ author: { login: "bot" }, body: `${body}\n<!-- claude-factory run=r1 -->`, createdAt });
@@ -73,6 +73,31 @@ describe("owner_action questions", () => {
     expect(filesToCheck(two(`${a}\n${q("**Kind:** owner_action").replace("Q1", "Q2")}`))).toEqual([]);
     const many = Array.from({ length: 6 }, (_, i) => q("**Kind:** owner_action", `**Needs:** file f${i}\n`).replace("Q1", `Q${i + 1}`)).join("\n");
     expect(filesToCheck(two(many))).toEqual([]);
+  });
+
+  it("knows an answer that only takes the recommendation", () => {
+    for (const t of ["**Q1.** Go with the recommendation.\n\n— Marcel K, via Spaghetti Code Foundry", "Go with the recommendation", "/defaults",
+      "**Q1.** Use the recommendation.\n\n**Q2.** Go with the recommendation.\n\n— A, via Spaghetti Code Foundry", "accept the recommendations!"]) {
+      expect(takesRecommendationOnly(t), t).toBe(true);
+    }
+    for (const t of ["", "**Q1.** Go with the recommendation. I committed it.\n\n— A, via Spaghetti Code Foundry", "Done, it is committed.",
+      "**Q1.** Go with the recommendation.\n\n**Q2.** red\n\n— A, via Spaghetti Code Foundry", "— A, via Spaghetti Code Foundry"]) {
+      expect(takesRecommendationOnly(t), t).toBe(false);
+    }
+  });
+
+  it("does not take the recommendation as an answer to an owner action that waits for a file", () => {
+    const ask = bot(q("**Kind:** owner_action", "**Needs:** file config/app.yaml\n"));
+    const rec = human("**Q1.** Go with the recommendation.\n\n— Marcel K, via Spaghetti Code Foundry");
+    const status = { author: { login: "bot" }, body: "x\n<!-- claude-factory status -->", createdAt: "2026-01-03T00:00:00Z" };
+    expect(idleAnswers([ask, rec, status, rec])).toEqual([rec, rec]);
+    expect(openOwnerAsk([ask, rec])).toMatchObject({ idle: true, actions: [{ file: "config/app.yaml" }] });
+    expect(openOwnerAsk([ask])).toMatchObject({ idle: false });
+    // anything more than the recommendation, a question without a file, or a product question next to it: a real answer
+    expect(idleAnswers([ask, rec, human("Committed it now.")])).toEqual([]);
+    expect(idleAnswers([bot(q("**Kind:** owner_action")), rec])).toEqual([]);
+    expect(idleAnswers([bot(`${q("**Kind:** owner_action", "**Needs:** file a\n")}\n${q("**Kind:** product").replace("Q1", "Q2")}`), rec])).toEqual([]);
+    expect(openOwnerAsk([ask, human("Committed it now.")])).toBeUndefined();
   });
 
   it("cleans the action text", () => {
