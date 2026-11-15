@@ -32,6 +32,7 @@ export const SETTING_EXCEPTIONS: Record<string, string> = {
   "services.*.env": "Services start programs with the Foundry's rights: they are set in config.yaml only, and the Health page shows their state read-only (#867).",
   "services.*.public_key": "Services start programs with the Foundry's rights: they are set in config.yaml only, and the Health page shows their state read-only (#867).",
   "services.*.scope": "Services start programs with the Foundry's rights: they are set in config.yaml only, and the Health page shows their state read-only (#867).",
+  "services.*.acts_for": "Services start programs with the Foundry's rights: whose work one sees is set in config.yaml only, and the Health page shows its problem read-only (#876).",
   "workspaces.*.id": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.name": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",
   "workspaces.*.members": "Workspaces are set in config.yaml or by a plugin (#816); a Settings control is a follow-up.",

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +15,8 @@ import { clearSkillRegistryCache, discoverSkills } from "../src/skills/registry.
 import type { ApiContext } from "../src/server/server.js";
 
 const NOW = new Date("2026-10-01T12:00:00Z");
+// GET /api/health carries the version of package.json (#876)
+const PKG = (JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version;
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -268,7 +270,7 @@ describe("health()", () => {
       return health(ctx, NOW);
     };
     const good = withMonitor(wstatus("mon", { lastOk: ago(MIN), lastTick: ago(MIN) }));
-    expect(good).toEqual({ ok: true, summary: "All good", problems: [], repos: [] });
+    expect(good).toEqual({ ok: true, summary: "All good", problems: [], repos: [], package: PKG });
     const bad = withMonitor(wstatus("mon", { lastError: "disk is gone" }));
     expect(bad.problems.map((p) => p.kind)).toEqual(["watcher_error"]);
     expect(bad.problems[0]!.repo).toBe("");
@@ -276,7 +278,7 @@ describe("health()", () => {
   });
 
   it("says All good when nothing is wrong", () => {
-    expect(health(ctxOf(), NOW)).toEqual({ ok: true, summary: "All good", problems: [], repos: [] });
+    expect(health(ctxOf(), NOW)).toEqual({ ok: true, summary: "All good", problems: [], repos: [], package: PKG });
   });
 
   it("a server that waits to restart says how many runs it waits for", () => {
@@ -398,7 +400,7 @@ describe("health()", () => {
       const env = factoryFailure({ vars: {}, reason: 'bot.gh_token_env is "MY_TOKEN_ENV" but that env var is not set' });
       const runsDir = "/secret/runs/dir";
       const h = health(ctxOf({ runs: [local, env], runsDir }), NOW);
-      expect(Object.keys(h).sort()).toEqual(["ok", "problems", "repos", "summary"]);
+      expect(Object.keys(h).sort()).toEqual(["ok", "package", "problems", "repos", "summary"]);
       expect(h.problems[0]).toMatchObject({ repo: "", title: "", why: "The Foundry failed, not the code" });
       expect(h.problems[1]!.action).toContain("Set that environment variable");
       const json = JSON.stringify(h);

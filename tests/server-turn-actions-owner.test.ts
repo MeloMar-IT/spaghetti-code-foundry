@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
+import { createServiceAccount } from "../src/auth/service-accounts.js";
+import { createUser } from "../src/auth/users.js";
+import { resolveActing } from "../src/server/service-requests.js";
 import { localRepoName } from "../src/auth/local-name.js";
 import { ConfigSchema } from "../src/config.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
@@ -294,5 +297,28 @@ describe("turnMine", () => {
     const before = turnMine(ctx, owner, false, NOW).items.length;
     await act(ctx, owner, false, { key: keyOf(name, 5, "questions"), action: "defaults", stamp: SINCE });
     expect(turnMine(ctx, owner, false, NOW).items.length).toBe(before - 1);
+  });
+});
+
+describe("a service account acting for the owner (#876)", () => {
+  // the request's user is what serviceCaller and sessionUser give: the account with the person's id
+  it("lists, opens and answers the person's items, signs as the program, and gets 404 on another person's item", async () => {
+    const ann = await createUser({ name: "Ann", email: "ann-acts@example.com", password: "test-password-12345" });
+    const robot = createServiceAccount({ name: "Robot", scope: [], actsFor: ann.id }).account;
+    const acting = resolveActing(robot);
+    const ctx = localCtx(ann.id);
+    const mine = turnMine(ctx, acting, false, NOW);
+    expect(mine.items.length).toBeGreaterThan(0);
+    const key = mine.items.find((i) => i.kind === "questions")!.key;
+    expect((await turnDetail(ctx, acting, false, key, NOW)).acts).toContain("answer");
+    await act(ctx, acting, false, { key, action: "answer", stamp: SINCE, answers: [{ n: 1, text: "a" }] });
+    expect((await bodies(5))[1]).toContain(`— ${robot.name}, via Spaghetti Code Foundry`);
+    // the account without the link owns nothing
+    const { actsFor: _a, ...plain } = robot;
+    expect(turnMine(ctx, resolveActing(plain), false, NOW).items).toEqual([]);
+    // an item of another person's project
+    const bobs = localCtx(OTHER);
+    expect(turnMine(bobs, acting, false, NOW).items).toEqual([]);
+    expect(await status(turnDetail(bobs, acting, false, keyOf(name, 6, "approve_plan", "r1"), NOW))).toBe(404);
   });
 });

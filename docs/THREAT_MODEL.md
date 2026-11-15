@@ -278,6 +278,8 @@ password. This is a deliberate second way in, so it is a standing credential.
 - A token ends 30 days after its last request, and an admin can revoke it at once. A refused request does not renew a token.
 - Data classes (#869, `src/server/data-classes.ts`): `secret` is the set of never-granted routes, so a scope cannot hold it. A `class:<name>` entry covers GET routes only, so a service account cannot change data through a class. A class that is not known is refused when the scope is saved, and `serviceAllows` checks the class again on every request.
 - A repository set to `services: none` is closed to every service account (`checkServiceRepos` in `src/server/service-requests.ts`). A refusal is a 403 and is audited. Admin-only routes that name no repository stay open only when they hold no repository data (`REPO_FREE`), and Ask Foundry is closed while any repository is closed, since it reads repository text.
+- Acting for a person (#876): `actsFor` swaps only the id the request acts as (`resolveActing` in `src/server/service-requests.ts`). The account keeps `kind: service`, role `user`, its scope and its data classes, so it is never an admin and every request is still checked against them. The link is read on every request, so a person who is blocked, removed or cannot sign in gets 403 with a fixed reason at once, and an open stream ends when the link changes. The audit line names the person by id.
+- The link can only point at a person's account, not at another service account (`checkActsFor`, `src/auth/service-accounts.ts`). A managed service's `acts_for` is resolved by name or e-mail at its start, and a name that matches no person or several is refused before anything runs.
 
 **Still open.**
 - A token is a bearer secret. Whoever holds it can use it on this computer until it is revoked or expires, within its scope.
@@ -285,6 +287,7 @@ password. This is a deliberate second way in, so it is a standing credential.
 - A class grant covers every GET route of the class, so a scope with `class:summary` also reads what each summary route shows, including the run list of every repository the account can see. Use `services: none` on a repository that must stay out of reach.
 - A route whose admin check sits in its handler and not in the role table was found only for `GET help/usage` and `GET/PUT runs/:id/issue-limit`, which now use `adminOrGranted()`. The other such routes were not reviewed.
 - Tokens are not renewed by the server on their own: a program that is not used for 30 days must be given a new token by an admin.
+- With `actsFor`, the token sees everything the person can see, within the scope: a scope with `class:summary` reads every run and repository of that person. Link a service account only to a person whose work the program may read and answer.
 
 ## Managed services (#867)
 

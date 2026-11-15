@@ -8,7 +8,7 @@ import {
   changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, isBreakGlass, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
 } from "../auth/users.js";
 import { findServiceByToken } from "../auth/service-accounts.js";
-import { refuseBearer, serviceBearer } from "./service-requests.js";
+import { refuseBearer, resolveActing, serviceBearer } from "./service-requests.js";
 import { providerSignIn, recheckProviderSession } from "./identity-session.js";
 import { isView, viewOf, viewsFor } from "../auth/views.js";
 import { SESSION_TTL_MS, csrfToken, findSession, revokeSession, sessionId } from "../auth/sessions.js";
@@ -163,7 +163,7 @@ export function sessionUser(ctx: ApiContext, req: IncomingMessage): User {
   if (bearer !== undefined) {
     const service = findServiceByToken(bearer);
     if (!service) throw new HttpError(401, "this service token is not valid");
-    return service;
+    return resolveActing(service); // the same acting user as the request itself (#876)
   }
   const cur = currentSession(ctx, req);
   if (!cur) throw new HttpError(401, "sign in first");
@@ -174,7 +174,13 @@ export function sessionUser(ctx: ApiContext, req: IncomingMessage): User {
 export function sessionAlive(ctx: ApiContext, req: IncomingMessage): boolean {
   try {
     const bearer = serviceBearer(req);
-    if (bearer !== undefined) return findServiceByToken(bearer) !== undefined; // a revoked, expired or blocked service ends its open streams
+    if (bearer !== undefined) {
+      // a revoked, expired or blocked service ends its open streams, and so does a person it acts for who can no longer sign in
+      const service = findServiceByToken(bearer);
+      if (!service) return false;
+      resolveActing(service);
+      return true;
+    }
     return currentSession(ctx, req) !== undefined;
   } catch {
     return false;

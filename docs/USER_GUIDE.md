@@ -5099,6 +5099,10 @@ Every route has a **data class**, shown in the Data column of the permission tab
 
 A repository can be closed to service accounts: in its Run settings, tick **Closed to service accounts** (`services: none`). Then no service account can read or change anything about it. A request that names the repository, a run of it or a list that would include it gets 403, and the refusal is audited. Ask Foundry answers nothing while a repository is closed. Untick the box to open the repository again.
 
+**Acting for a person.** A service account can act for one person, so a program can follow that person's runs, repositories and Your-turn items, and answer them. Set **Acts for** in the account's dialog, `--acts-for <person>` on `scf service-accounts add` or `set` (`--acts-for ""` clears it), or `actsFor` in the API (`null` clears it). `actsFor` is the id of a person's account, not of another service account. With it, a bearer request sees and acts as that person for the owner and workspace checks: their runs, repositories, Your turn items (the list, the detail and the answer), change requests, the queue and the feed. The account stays a service account. It is never an admin, its scope still decides which routes it may call, and an admin-only route is still refused unless its key is in the scope. Without `actsFor`, nothing changes. Each `service-request` audit line names the person (`acts for <id>`).
+
+If the person is blocked, removed, or cannot sign in under the current sign-in mode, the account's requests get 403 with the reason, and an open stream ends. Health shows the same reason for a running managed service. The check runs on every request, so a block takes effect at once.
+
 **Rotate** gives the account a new token; the old one stops at once. **Revoke** ends the token until you rotate again. A token expires 30 days after its last use, and then it is refused until it is rotated. Cookie sign-in for people is not changed.
 
 ![The Users page under Administration, People and access](images/users.png)
@@ -5769,7 +5773,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs/:id/context` | yes | own runs | summary | the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle |
 | `GET /api/runs/:id/transcript/:n` | yes | no | log | the transcript of a step |
 | `GET /api/next` | yes | no | summary | what happens next, for all runs |
-| `GET /api/health` | yes | no | admin | server health |
+| `GET /api/health` | yes | no | admin | server health, with the package version (`package`) |
 | `GET /api/board` | yes | no | summary | the board of all work |
 | `GET /api/search` | yes | yes | summary | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
 | `GET /api/since` | yes | no | summary | what changed since a time |
@@ -5802,9 +5806,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/users/:id/app-repos` | yes | no | secret | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | secret | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | secret | delete an account with its sessions, repositories, refinement sessions, Ask Foundry conversations and stored credentials |
-| `GET /api/service-accounts` | yes | no | secret | list the service accounts (accounts for programs) with their scope, token state and last use, and the routes a scope may hold (`grantable`); never a token |
-| `POST /api/service-accounts` | yes | no | secret | add a service account (`name`, `scope`: rule keys such as `GET runs`); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400 |
-| `PUT /api/service-accounts/:id` | yes | no | secret | change the name or scope of a service account (same checks as when it is added) |
+| `GET /api/service-accounts` | yes | no | secret | list the service accounts (accounts for programs) with their scope, token state and last use, the person each acts for (`actsFor`, `actsForName`, `actsForProblem`), the routes a scope may hold (`grantable`) and the person accounts it may act for (`people`); never a token |
+| `POST /api/service-accounts` | yes | no | secret | add a service account (`name`, `scope`: rule keys such as `GET runs`, `actsFor`: the id of a person whose work it sees and answers); no password, no browser session; the answer has the token, shown once; a scope with a route that can never be granted (credentials, users, settings, autonomy, self-update, plugins, the audit export) is refused with 400 |
+| `PUT /api/service-accounts/:id` | yes | no | secret | change the name, scope or `actsFor` of a service account (same checks as when it is added; `actsFor: null` clears it) |
 | `POST /api/service-accounts/:id/rotate` | yes | no | secret | give a service account a new token; the old one stops at once; the answer has the new token, shown once |
 | `POST /api/service-accounts/:id/revoke` | yes | no | secret | revoke the token of a service account; it stops at once; rotate gives a new one |
 | `GET /api/skills/lifecycle` | yes | no | admin | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
@@ -8009,6 +8013,7 @@ services:
     env: { BOT_CHANNEL: "factory" }           # optional; names starting SCF_ or FACTORY_ are reserved
     public_key: "<base64 of a 32-byte Ed25519 key>"   # optional: checks <command>.sig before each start
     scope: ["GET health", "GET runs"]         # the routes of the service account the Foundry keeps for it
+    acts_for: "ann@example.com"               # optional: the name or e-mail of one person; see section 7
 ```
 
 - **When they start.** After the server listens and the watchers have started. Up to 10 services.

@@ -421,6 +421,8 @@ const ServiceSchema = z
     /** The scope of the service account the Foundry keeps for this program, such as `GET health`. */
     scope: z.array(z.string().regex(/^(GET|POST|PUT|DELETE) [A-Za-z0-9:/_-]{1,200}$/, "must be a route such as `GET runs`")).max(200, "at most 200 routes")
       .refine((l) => new Set(l).size === l.length, "names a route twice"),
+    /** The name or e-mail of the one person whose work the service account sees and answers (#876). Checked when the service starts. */
+    acts_for: z.string().trim().min(1, "must name a person").max(254).optional(),
   })
   .strict();
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
