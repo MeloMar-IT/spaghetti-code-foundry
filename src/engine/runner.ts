@@ -47,6 +47,7 @@ import { endCheckRound, recordPlanChecks } from "./plan-checks.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
+import { checkedReferences, prepareReferences, removeReferences } from "./reference-repos.js";
 import type { Actor } from "../evidence/identity.js";
 import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
 import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
@@ -124,6 +125,8 @@ export interface RunOptions extends CommonOptions {
   toolProfile?: unknown;
   /** The id of the custom flow as `scf promote` knows it (its file name); without it the flow's name. */
   flowId?: string;
+  /** The reference repositories of the watcher that started the run (#878); checked, then saved in run.json. */
+  references?: unknown;
   /** A local test (#740): never checked against `promotion.enforce`, and it never counts as a promoted delivery. Governance (#665) still applies to a connected repository, unless `evalRun` is set. Set by `scf run --local-test` and by the Scheduler option for evals; never read from a job. */
   localTest?: boolean;
 }
@@ -214,6 +217,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   // a team's run (also one whose workspace came from the repository) never works in the server's folder or a branch of it
   const refused = earlyRefused ?? workspaceRefused(flow.workspace, owner, workspace);
   const runDir = join(workspaceRunsDir(opts.runsDir, workspace), runId);
+  const referenceRepos = checkedReferences(opts.references);
   const summary: RunSummary = {
     runId,
     autonomy: autonomy.autonomy,
@@ -232,6 +236,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     pid: process.pid,
     ...(opts.source ? { source: opts.source } : {}),
     ...(owner ? { owner } : {}),
+    ...(referenceRepos ? { referenceRepos } : {}),
     // never the raw value: JSON would drop a function and the run would quietly get the generated profile
     ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
     ...(opts.localTest ? { localTest: true as const } : {}),
@@ -582,6 +587,11 @@ async function drive(
     const next = resume ? resume.startAt : (summary.flowDef.steps.find((s) => !s.jump_only)?.id ?? summary.flowDef.steps[0]!.id);
     return finish(summary, opts, config, { outcome: "stopped", reason: skillStop, next, lastOutput: "" });
   }
+  // the read-only copies of the reference repositories (#878), made again at every start and resume
+  if (summary.referenceRepos) {
+    await prepareReferences(summary, config, { log, policy, signal: opts.signal, sandboxed: sandbox === "on" });
+    save();
+  }
   sweepRunning(opts.runsDir);
   const marker = markRunning(summary.runId, summary.workspace);
   if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
@@ -621,6 +631,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   s.waiting = undefined;
   s.finishedAt = new Date().toISOString();
   if (!removeSignInDir(s.runDir)) appendLiveLog(s.runDir, "! the sign-in folder of this run could not be removed");
+  if (!removeReferences(s.runDir)) appendLiveLog(s.runDir, REFERENCES_NOT_REMOVED);
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
@@ -639,6 +650,7 @@ export function cancelStoppedRun(runsDir: string, runId: string, config: Config 
   s.reason = STOPPED_CANCEL_REASON;
   s.finishedAt = new Date().toISOString();
   if (!removeSignInDir(s.runDir)) appendLiveLog(s.runDir, "! the sign-in folder of this run could not be removed");
+  if (!removeReferences(s.runDir)) appendLiveLog(s.runDir, REFERENCES_NOT_REMOVED);
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
@@ -681,8 +693,11 @@ function emitRunEnd(run: RunSummary): void {
   }
 }
 
+const REFERENCES_NOT_REMOVED = "! the reference copies of this run could not be removed";
+
 async function finish(summary: RunSummary, opts: CommonOptions, config: Config, r: LoopResult): Promise<RunSummary> {
   if (!removeSignInDir(summary.runDir)) appendLiveLog(summary.runDir, "! the sign-in folder of this run could not be removed");
+  if (!removeReferences(summary.runDir)) appendLiveLog(summary.runDir, REFERENCES_NOT_REMOVED);
   const back = codexLoginReturnLine(returnCodexLogin(summary.runDir));
   if (back) appendLiveLog(summary.runDir, back);
   summary.status = r.outcome;

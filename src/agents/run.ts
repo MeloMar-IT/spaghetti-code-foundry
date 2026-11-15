@@ -26,6 +26,7 @@ import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
 import { stepContextIndex } from "../engine/context-index.js";
+import { referencePrompt } from "../engine/reference-repos.js";
 import { boundAgentPrompt, boundEnv, classifyBound, stepTypesOf, UntrustedRefusal, type BoundPrompt, type OutputLabel } from "../engine/untrusted.js";
 import { GuardError } from "../help/guard.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
@@ -599,9 +600,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     return { ok: false, output: withIndex.refuse, error: withIndex.refuse };
   }
   if (withIndex.log) engine.log(`    ${withIndex.log}`);
-  const readOnlyDirs = withIndex.readOnlyDirs;
+  // the reference repositories of the run (#878): a block at the top of the prompt, and their folders read-only
+  const refs = referencePrompt(engine.summary);
+  const readOnlyDirs = refs?.dirs.length ? [...(withIndex.readOnlyDirs ?? []), ...refs.dirs] : withIndex.readOnlyDirs;
   try {
-    bounded = boundAgentPrompt({ ...step, prompt: withIndex.prompt }, withIndex.ctx, { stepTypes: stepTypesOf(scope.flow), patterns: config.help.sensitive_patterns });
+    bounded = boundAgentPrompt({ ...step, prompt: refs ? `${refs.text}\n\n${withIndex.prompt}` : withIndex.prompt }, withIndex.ctx, { stepTypes: stepTypesOf(scope.flow), patterns: config.help.sensitive_patterns });
   } catch (e) {
     if (!(e instanceof UntrustedRefusal || e instanceof GuardError)) throw e;
     engine.log(`    ! ${e.message}`);

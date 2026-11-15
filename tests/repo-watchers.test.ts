@@ -113,6 +113,50 @@ describe("the store", () => {
   });
 });
 
+describe("reference repositories (#878)", () => {
+  const msg = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return "";
+  };
+  it("refuses a bad name, an 11th entry and a folder clash with a message that names the option", () => {
+    expect(msg(() => addRepoWatcher(repo, { id: "w", reference_repos: ["no-slash"] }))).toMatch(/^reference_repos/);
+    expect(msg(() => addRepoWatcher(repo, { id: "w", reference_repos: ["owner/repo"] }))).toMatch(/^reference_repos: "owner\/repo" is not a GitHub repository name/);
+    expect(msg(() => addRepoWatcher(repo, { id: "w", reference_repos: Array.from({ length: 11 }, (_, i) => `a/r${i}`) }))).toMatch(/^reference_repos/);
+    expect(msg(() => addRepoWatcher(repo, { id: "w", reference_repos: ["Acme/Lib", "acme/lib"] }))).toMatch(/^reference_repos: "acme\/lib" is named twice/);
+    expect(msg(() => addRepoWatcher(repo, { id: "w", reference_private_ok: "yes" }))).toMatch(/^reference_private_ok/);
+    expect(listRepoWatchers()).toEqual([]);
+  });
+  it("asks the check on add, and on update only when the list is in the change", () => {
+    const asked: string[][] = [];
+    const check = (names: string[]) => (asked.push(names), names.includes("acme/no") ? '"acme/no" is not yours' : undefined);
+    expect(msg(() => addRepoWatcher(repo, { id: "w", reference_repos: ["acme/no"] }, { references: check }))).toBe('reference_repos: "acme/no" is not yours');
+    const w = addRepoWatcher(repo, { id: "w", source: "ci-failures", reference_repos: ["acme/lib"], reference_private_ok: true }, { references: check });
+    expect(w).toMatchObject({ reference_repos: ["acme/lib"], reference_private_ok: true });
+    addRepoWatcher(repo, { id: "plain" }, { references: check });
+    expect(asked).toEqual([["acme/no"], ["acme/lib"]]);
+    updateRepoWatcher(repo, "w", { every: "10m" }, { references: check });
+    expect(asked).toHaveLength(2);
+    expect(msg(() => updateRepoWatcher(repo, "w", { reference_repos: ["acme/no"] }, { references: check }))).toMatch(/^reference_repos: /);
+    const cleared = updateRepoWatcher(repo, "w", { reference_repos: null }, { references: check });
+    expect(cleared.watcher.reference_repos).toBeUndefined();
+    expect(asked).toHaveLength(3);
+  });
+  it("is accepted in config.yaml and refused for the monitor", () => {
+    expect(WatcherSchema.safeParse({ id: "w", github_repo: "acme/app", source: "schedule", task: "t", reference_repos: ["acme/lib"], reference_private_ok: false }).success).toBe(true);
+    const clash = WatcherSchema.safeParse({ id: "w", github_repo: "acme/app", reference_repos: ["a/b", "A/B"] });
+    expect(clash.success).toBe(false);
+    for (const extra of [{ reference_repos: ["acme/lib"] }, { reference_private_ok: true }]) {
+      const r = WatcherSchema.safeParse({ id: "m", source: "monitor", ...extra });
+      expect(r.success).toBe(false);
+      expect(r.error!.issues[0]!.message).toBe("a monitor does not use this");
+    }
+  });
+});
+
 describe("watcherRepoProblem", () => {
   const rec = (method: string, url = "https://github.com/acme/app") => ({ url, method, owner: "o" });
   const admin = { email: "a@b.io", role: "admin", status: "active" };
