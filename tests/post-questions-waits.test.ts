@@ -30,13 +30,14 @@ const makeRepo = (...messages: string[]) => {
 const issueList = (bodies: Record<number, string> = {}) =>
   JSON.stringify([6, 7, 8, 9].map((number) => ({ number, title: `Issue ${number}`, state: "OPEN", body: bodies[number] ?? "Text\n\n### Depends on\n" })));
 
-function run(input: string, issues: string, list = issueList()) {
+function run(input: string, issues: string, list = issueList(), extra: Record<string, string> = {}) {
   return spawnSync(process.execPath, [TOOL], {
     input, cwd: tmp, encoding: "utf8",
     env: {
       PATH: process.env.PATH, FACTORY_GH_BIN: FAKE_GH, FAKE_GH_LOG: log, FAKE_GH_ISSUES: list,
       FACTORY_VAR_GITHUB_REPO: "o/r", FACTORY_VAR_ISSUES: issues, FACTORY_VAR_NEEDS_INFO_LABEL: "Factory_needs_info", FACTORY_RUN_ID: "r1",
       GIT_CEILING_DIRECTORIES: dirname(tmp),
+      ...extra,
     },
   });
 }
@@ -145,10 +146,31 @@ describe("tools/post-questions with WAITS_FOR", () => {
     expect(comments(7)[0]).toContain("could not be read, so it is unknown whether the work already landed");
   });
 
+  it("records a wait for an issue in another repository of the owner, also without the commits", () => {
+    // no git repository here: only issues of this repository need the landed-work check
+    const env = { FACTORY_OWNER_REPOS: "acme/lib", FAKE_GH_REPO_ISSUES: JSON.stringify({ "acme/lib": [{ number: 3, state: "open" }] }) };
+    const r = run("### #7\nWAITS_FOR: acme/lib#3\nNO_QUESTIONS\n### #8\nWAITS_FOR: other/repo#1\n### #9\nWAITS_FOR: #6, acme/lib#3\n", "7 8 9", issueList(), env);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("#7: waits for acme/lib#3");
+    // the commits are read only for #9, which names an issue of this repository
+    expect(r.stdout.indexOf("note: could not read the commits of HEAD")).toBeGreaterThan(r.stdout.indexOf("#8:"));
+    expect(savedBody(7)).toContain("- acme/lib#3");
+    expect(comments(7)).toEqual([]);
+    expect(comments(8)[0]).toContain("- other/repo is not a repository of the Foundry.");
+    expect(comments(9)[0]).toContain("could not be read, so it is unknown whether the work already landed");
+    expect(r.stdout.trim().endsWith("QUESTIONS: 2")).toBe(true);
+  });
+
   it("the epic-questions prompt describes WAITS_FOR", () => {
     const flow = parse(readFileSync(resolve("flows/epic-questions.yaml"), "utf8"));
     const prompt = flow.steps.find((s: { id: string }) => s.id === "ask").prompt as string;
     expect(prompt).toContain("WAITS_FOR: #<n>");
     expect(prompt).toContain("WAITS_FOR_REASON:");
+    // local and cross-repository waits are told apart, with one limit for both
+    expect(prompt).toContain("`WAITS_FOR: owner/name#<n>` for an issue in another of the owner's repositories that is still open");
+    expect(prompt).toContain("whose work has not landed (never the issue itself)");
+    expect(prompt).toContain("up to 10 references in total");
+    expect(prompt).toContain("Never ask the owner whether such an issue in another repository");
+    expect(prompt).not.toContain("up to 10 numbers");
   });
 });

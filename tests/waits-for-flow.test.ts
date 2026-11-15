@@ -3,13 +3,15 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { reposPath } from "../src/auth/repos.js";
+import { addRepo, reposPath } from "../src/auth/repos.js";
+import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { runNextStep } from "../src/next-step.js";
 import { userRun } from "../src/server/user-view.js";
 import { claudeBin, fakeGithub, flowPath } from "./helpers/fake-github.js";
+import { TEST_PASSWORD } from "./helpers/session.js";
 
 type Step = { id: string; run?: string; prompt?: string; routes?: { if: string; goto: string }[]; [k: string]: unknown };
 const stepsOf = (f: string): Step[] => (parse(readFileSync(flowPath(f), "utf8")) as { steps: Step[] }).steps;
@@ -35,8 +37,15 @@ describe("WAITS_FOR in the planning flows (structure)", () => {
       expect(genericAt).toBeGreaterThanOrEqual(0);
       expect(waitsAt).toBeLessThan(genericAt);
       for (const id of ["plan", "revise_plan"]) {
-        expect(byId(steps, id).prompt).toContain("| WAITS_FOR");
-        expect(byId(steps, id).prompt).toContain("WAITS_FOR_REASON:");
+        const p = byId(steps, id).prompt!;
+        expect(p).toContain("| WAITS_FOR");
+        expect(p).toContain("WAITS_FOR_REASON:");
+        // local and cross-repository waits are told apart, with one limit for both
+        expect(p).toContain("`WAITS_FOR: #<n>` for an issue of this repository whose work has not");
+        expect(p).toContain("`WAITS_FOR: owner/name#<n>` for an issue in another of the owner's repositories");
+        expect(p).toContain("up to 10 references in total");
+        expect(p).toContain("Never ask the owner whether");
+        expect(p).not.toContain("up to 10 numbers");
       }
       const sb = byId(steps, "send_back").run!;
       expect(sb).toContain("wanted this issue to wait for another story");
@@ -170,5 +179,34 @@ describe("WAITS_FOR in the issue-plan flow", () => {
     const q = JSON.stringify(userRun(s).questions);
     expect(q).toContain("#7 is this issue itself");
     expect(q).toContain("Needs the API.");
+  });
+
+  // Last in this block: the accounts made here stay for the rest of the file.
+  describe("an issue in another repository of the owner", () => {
+    let OWNER = "";
+    // Making an account is slow: once. The repositories file is removed after each test, so they are added each time.
+    beforeAll(async () => {
+      OWNER = (await createUser({ name: "Ann", email: "ann@example.com", password: TEST_PASSWORD, role: "admin" })).id;
+    });
+    beforeEach(() => {
+      addRepo(OWNER, { url: "acme/app", method: "none" });
+      addRepo(OWNER, { url: "acme/lib", method: "none" });
+      process.env.FAKE_GH_REPO_ISSUES = JSON.stringify({ "acme/lib": [{ number: 3, state: "open" }] });
+    });
+    afterEach(() => { delete process.env.FAKE_GH_REPO_ISSUES; });
+    const goAs = (id: string) =>
+      runFlow(loadFlow("issue-plan", gh.tmp).flow, { task: "", repo: gh.tmp, runsDir: runsDir(), runId: id, claudeBin, config, owner: OWNER, vars: { github_repo: "acme/app", issue: "7" } });
+
+    // A refused repository (another account's, or none) is covered by tests/waits-for-tool.test.ts and ownerReposEnv's unit test.
+    it("records owner/name#N and parks; the engine passed the owner's repositories", async () => {
+      process.env.FAKE_ISSUE_PLAN = WAITS.replace("#12", "acme/lib#3");
+      const s = await goAs("20260101-000000-wf03");
+      expect(s.status, s.reason).toBe("stopped");
+      expect(s.reason).toContain("wait_for_story");
+      const bodies = JSON.parse(readFileSync(join(gh.tmp, "gh.log.issue-bodies.json"), "utf8"));
+      expect(bodies["acme/app#7"]).toContain("- acme/lib#3");
+      expect(gh.comments()).toEqual([]);
+      expect(runNextStep(s)).toMatchObject({ kind: "dependency", blockers: [{ issue: 3, repo: "acme/lib" }] });
+    });
   });
 });

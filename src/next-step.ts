@@ -1016,10 +1016,11 @@ export function releaseWatchersFor<W extends WatcherConfig>(watchers: W[], run: 
 /** Does a step id (with optional sub-flow prefix) end in one of `ids`? */
 export const stepIs = (id: string | null | undefined, ids: readonly string[]) => !!id && ids.includes(id.split("/").at(-1)!);
 
-/** The issues a run stopped at wait_for_story waits for: the WAITS_FOR line of its newest wait_for_story output. */
+/** The issues a run stopped at wait_for_story waits for (also "owner/name#N" ones): the WAITS_FOR line of its newest wait_for_story output. */
 function storyBlockers(run: RunSummary): BlockerInfo[] {
   const h = [...(run.history ?? [])].reverse().find((x) => stepIs(x.id, ["wait_for_story"]));
-  return (parseWaitsFor(h?.output ?? "")?.issues ?? []).map((issue) => ({ issue }));
+  const r = parseWaitsFor(h?.output ?? "");
+  return [...(r?.issues ?? []).map((issue) => ({ issue })), ...(r?.cross ?? []).map((c) => ({ issue: c.issue, repo: c.repo }))];
 }
 
 /**

@@ -52,7 +52,7 @@ describe("parseWaitsFor", () => {
   });
   it("lets the last WAITS_FOR line win and reads the reason", () => {
     const r = parseWaitsFor("WAITS_FOR: #1\nWAITS_FOR_REASON: first\nWAITS_FOR: #2\nWAITS_FOR_REASON:  needs the api ");
-    expect(r).toEqual({ issues: [2], reason: "needs the api" });
+    expect(r).toEqual({ issues: [2], cross: [], reason: "needs the api" });
     expect(parseWaitsFor("WAITS_FOR: #2")?.reason).toBe("");
   });
   it("gives undefined without a WAITS_FOR line", () => {
@@ -130,7 +130,7 @@ describe("judgeWaitsFor", () => {
     return { j: judgeWaitsFor(me, r, issueLookup(f.gh, "o/r"), commits), f };
   };
   it("puts an open issue on the wait list", () => {
-    expect(judge([mk(5, "Five")], req([5])).j).toEqual({ wait: [5], already: [], problems: [] });
+    expect(judge([mk(5, "Five")], req([5])).j).toEqual({ wait: [5], already: [], crossWait: [], crossDone: [], problems: [] });
   });
   it("reports self, loop guard, unknown, closed without commit and open with commit", () => {
     expect(judge([], req([12])).j.problems).toEqual(["#12 is this issue itself."]);
@@ -142,7 +142,7 @@ describe("judgeWaitsFor", () => {
   });
   it("keeps closed issues with a commit in already", () => {
     const commits = [{ sha: "abcdef123", message: "Merge #6: x" }];
-    expect(judge([mk(5, "F"), mk(6, "S", "", "CLOSED")], req([5, 6]), commits).j).toEqual({ wait: [5], already: [{ issue: 6, commit: "abcdef123" }], problems: [] });
+    expect(judge([mk(5, "F"), mk(6, "S", "", "CLOSED")], req([5, 6]), commits).j).toEqual({ wait: [5], already: [{ issue: 6, commit: "abcdef123" }], crossWait: [], crossDone: [], problems: [] });
     expect(judge([mk(6, "S", "", "CLOSED")], req([6]), commits).j.problems).toEqual(["Nothing left to wait for: #6 (commit abcdef1) already landed."]);
   });
   it("returns a request error without looking anything up", () => {
@@ -202,7 +202,7 @@ describe("recordWaitsFor", () => {
   it("records with one edit, body on stdin, and keeps the person's text", () => {
     const f = fakeGh(base());
     const r = recordWaitsFor(f.gh, "o/r", 12, req([5], "needs it"), []);
-    expect(r).toEqual({ outcome: "recorded", wait: [5], already: [], problems: [] });
+    expect(r).toEqual({ outcome: "recorded", wait: [5], already: [], crossWait: [], crossDone: [], problems: [] });
     expect(f.kinds()).toEqual(["issue list", "issue view", "issue edit", "issue view", "issue view"]);
     expect(f.edits()[0]!.args).toEqual(["issue", "edit", "12", "--repo", "o/r", "--body-file", "-"]);
     const body = f.st.get(12)!.body;

@@ -28,6 +28,7 @@ const VAR_INFO = {
   github_repo: RUN_SET, issue: RUN_SET, issues: RUN_SET, needs_info_label: RUN_SET, ask: RUN_SET, field: RUN_SET, items: RUN_SET, words: RUN_SET, pictures: RUN_SET,
   risk_threshold: { label: "Risk threshold", help: "A plan with a risk score above this number waits for a person to approve it. 0 to 100.", ...pct },
   auto_split_max_risk: { label: "Auto-split risk limit", help: "A plan above the threshold but not above this score is split into smaller issues instead of waiting for a person. 0 to 100.", ...pct },
+  split_family_gate: { label: "Splits of earlier splits", help: "ask: a split of an issue that is itself a part of an earlier split, or that has open parts, waits for a person. split: it is created without asking, within the auto-split risk limit.", kind: "text" },
   revise_above_risk: { label: "Revise above risk", help: "A plan with a risk score above this number is revised after Codex has reviewed it. 0 to 100.", ...pct },
   review_twice_above_risk: { label: "Review twice above risk", help: "Use off, or a risk score from 0 to 100. A plan above that score gets a second review.", kind: "text" },
   max_files: { label: "Most files per issue", help: "A plan that changes more files than this is split instead of built.", kind: "number", min: 1 },
@@ -397,10 +398,13 @@ const FRESH_PLAN = [
   'fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""',
 ].join("\n");
 const WAITS_FOR_LINES = [
-  "- WAITS_FOR: the work must wait for another open issue of this repository whose work has not landed, and its",
-  "  \"Depends on\" does not name it yet. Don't ask about the order and don't plan it: write `WAITS_FOR: #<n>`",
-  "  (up to 10 numbers, never this issue) and `WAITS_FOR_REASON: <one line why>`. The Foundry records it in",
-  "  \"Depends on\" and plans again once that issue is done; only an invalid wait becomes a question.",
+  "- WAITS_FOR: the work must wait for another open issue, and its \"Depends on\" does not name it yet. Don't ask",
+  "  about the order and don't plan it: write `WAITS_FOR: #<n>` for an issue of this repository whose work has not",
+  "  landed (never this issue), or `WAITS_FOR: owner/name#<n>` for an issue in another of the owner's repositories",
+  "  that is still open; both kinds may be on one line, up to 10 references in total. Never ask the owner whether",
+  "  such an issue in another repository is merged or done: wait for it. Add `WAITS_FOR_REASON: <one line why>`.",
+  "  The Foundry records it in \"Depends on\" and plans again once those issues are done; only an invalid wait",
+  "  becomes a question.",
 ];
 // The plan text of this round:the revised plan when it finished as READY, else the first draft.
 const PLAN_OUT = '"${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"';
@@ -2308,11 +2312,22 @@ write("issue-plan", {
     routes: [{ if: "^DONE\\s*$", goto: "docs" }],
   };
   // A hotfix is never split by itself and its risk gate says it goes straight to main (a feature is unchanged).
+  // split_family_gate=split (issue-gitflow only): the owner lets splits of earlier splits go ahead without asking.
   const hotfixSplitGate = (gate) => {
     const g = structuredClone(gate);
+    g.run = swap(g.run, "tree=$(printf '%s\\n' \"$fam\" | sed '/^FAMILY:/d')", "tree=$(printf '%s\\n' \"$fam\" | sed '/^FAMILY:/d')\n" +
+      "# split_family_gate=split: the owner lets splits of earlier splits go ahead without asking (the risk limit still applies).\n" +
+      '[ "${FACTORY_VAR_SPLIT_FAMILY_GATE:-ask}" = split ] && [ "$family" != none ] && { echo "Earlier splits ($family), and split_family_gate is split — not asking for that."; family=none; }');
     g.run = swap(g.run, '[ -z "$forced" ]; then', '[ -z "$forced" ] && [ ! -f "{{run.dir}}/hotfix" ]; then');
     g.run = swap(g.run, '{ echo "$FACTORY_FIRST_APPROVE_SPLIT"; echo', '[ -f "{{run.dir}}/hotfix" ] && why="this is a hotfix, and a hotfix is never split by itself"\n{ echo "$FACTORY_FIRST_APPROVE_SPLIT"; echo');
     return g;
+  };
+  const familyCreateSplit = (step) => {
+    const s = structuredClone(step);
+    const approved = 'grep -q "^approved"; then export FACTORY_SPLIT_CONFIRMED=1; fi';
+    s.run = swap(s.run, approved, approved + "\n# split_family_gate=split: the owner has agreed to splits of earlier splits in advance.\n" +
+      '[ "${FACTORY_VAR_SPLIT_FAMILY_GATE:-ask}" = split ] && export FACTORY_SPLIT_CONFIRMED=1');
+    return s;
   };
   const hotfixRiskGate = (gate) => {
     const g = structuredClone(gate);
@@ -2327,7 +2342,7 @@ write("issue-plan", {
     baselineMain,
     hotfixBranch,
     ...planPhase("size_gate", { risk: true, split: true, sized: true, reviseAbove: true, catalogue: true }),
-    ...splitSteps.map((x) => (x.id === "split_gate" ? hotfixSplitGate(x) : x)),
+    ...splitSteps.map((x) => (x.id === "split_gate" ? hotfixSplitGate(x) : x.id === "create_split" ? familyCreateSplit(x) : x)),
     sizeGate,
     forceSplit,
     hotfixRiskGate(riskGate),
@@ -2397,7 +2412,7 @@ write("issue-plan", {
       github_repo: "owner/repo", issue: "", test_cmd: "auto",
       develop_branch: "develop", main_branch: "main", feature_prefix: "feature/",
       forbidden_paths: "", docs_required: "", union_merge_files: "", agent_env: "",
-      risk_threshold: "75", review_plan_label: "Factory_review_plan", auto_split_max_risk: "50", trigger_label: "",
+      risk_threshold: "75", review_plan_label: "Factory_review_plan", auto_split_max_risk: "50", split_family_gate: "ask", trigger_label: "",
       max_files: "15", max_code_lines: "800", delete_merged_branches: "yes", close_when_merged: "yes",
       revise_above_risk: "75", review_twice_above_risk: "off", reuse_test_results: "yes", quick_test_cmd: "", test_slots: "2",
       hotfix_labels: "bug", hotfix_prefix: "hotfix/",
@@ -2880,9 +2895,12 @@ write("epic-questions", {
         "- Each question: short context, the options you see, and your recommendation with one line why.",
         "- Questions already answered in an issue's comments are answered — don't ask them again.",
         "- Put a question that concerns several issues on the earliest one, and mention the others.",
-        "- If an issue must wait for another open issue (of this batch or the repository) whose work has not landed, and its",
-        "  \"Depends on\" does not name it yet, don't ask: write `WAITS_FOR: #<n>` (up to 10 numbers, never the issue itself)",
-        "  and `WAITS_FOR_REASON: <one line why>` in its section. The Foundry records it; only an invalid one becomes a question.",
+        "- If an issue must wait for another open issue, and its \"Depends on\" does not name it yet, don't ask: write",
+        "  `WAITS_FOR: #<n>` for an issue of this batch or the repository whose work has not landed (never the issue itself),",
+        "  or `WAITS_FOR: owner/name#<n>` for an issue in another of the owner's repositories that is still open; both kinds",
+        "  may be on one line, up to 10 references in total. Never ask the owner whether such an issue in another repository",
+        "  is merged or done: wait for it. Add `WAITS_FOR_REASON: <one line why>` in its section. The Foundry records it;",
+        "  only an invalid one becomes a question.",
         ...QUESTION_KINDS.map((l) => `- ${l}`),
         "",
         "{{steps.read_issues.output}}",

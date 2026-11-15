@@ -3,7 +3,8 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isLocalRepoName } from "../auth/local-name.js";
-import { NO_RUN_OWNER, type RepoAccess, TOKEN_UNREADABLE, findLocalRepo, ownsProject, repoAccess } from "../auth/repos.js";
+import { githubNameOf, validGithubName } from "../auth/repo-url.js";
+import { NO_RUN_OWNER, type RepoAccess, TOKEN_UNREADABLE, findLocalRepo, listRepos, ownsProject, repoAccess } from "../auth/repos.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import type { Config } from "../config.js";
 import type { Step } from "../flow/schema.js";
@@ -353,5 +354,24 @@ export function localRepoEnv(githubRepo: string | undefined, find: (name: string
     return rec ? { FACTORY_LOCAL_REPO_DIR: rec.url, ...(rec.settings?.pushRemote === true ? { FACTORY_LOCAL_PUSH: "yes" } : {}) } : {};
   } catch {
     return {};
+  }
+}
+
+/**
+ * The GitHub names of the run owner's repositories, comma-separated, for the tools of a step (`FACTORY_OWNER_REPOS`): the
+ * repositories a wait may name as "owner/name#N". Names only, no credential. Always set: empty with no owner or when the list
+ * cannot be read, so an inherited value never counts.
+ */
+export function ownerReposEnv(owner: string | undefined, list: (userId: string) => readonly { url: string }[] = listRepos): { FACTORY_OWNER_REPOS: string } {
+  if (!owner) return { FACTORY_OWNER_REPOS: "" };
+  try {
+    const names = new Map<string, string>();
+    for (const r of list(owner)) {
+      const name = typeof r?.url === "string" ? githubNameOf(r.url) : undefined;
+      if (name && validGithubName(name) && !names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+    }
+    return { FACTORY_OWNER_REPOS: [...names.values()].join(",") };
+  } catch {
+    return { FACTORY_OWNER_REPOS: "" };
   }
 }

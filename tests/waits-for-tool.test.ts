@@ -148,6 +148,54 @@ describe("tools/waits-for", () => {
     expect(readFileSync(log, "utf8")).toBe("");
   });
 
+  describe("an issue in another repository (owner/name#N)", () => {
+    const owner = { FACTORY_OWNER_REPOS: "acme/lib", FAKE_GH_REPO_ISSUES: JSON.stringify({ "acme/lib": [{ number: 3, state: "open" }, { number: 4, state: "closed", state_reason: "completed" }, { number: 5, state: "closed", state_reason: "not_planned" }] }) };
+    it("records it in the Foundry part and parks, without the commits of HEAD", () => {
+      // no git repository here: an issue of another repository needs no landed-work check
+      const r = run("WAITS_FOR: acme/lib#3\n", { env: owner });
+      expect(r.status, r.stderr).toBe(0);
+      expect(lines(r.stdout)).toEqual(["WAITS_FOR: acme/lib#3", "Recorded in Depends on of #7.", "PARKED"]);
+      expect(savedBody(7)).toContain("- acme/lib#3");
+      expect(readFileSync(log, "utf8")).not.toContain("--- comment");
+    });
+    it("records a mixed line, and reports one that is already done", () => {
+      makeRepo("start");
+      const r = run("WAITS_FOR: #6, acme/lib#3, acme/lib#4\n", { env: owner });
+      expect(lines(r.stdout)).toEqual(["WAITS_FOR: #6, acme/lib#3", "Recorded in Depends on of #7.", "acme/lib#4 is already done (closed).", "PARKED"]);
+      expect(foundryDependsOn(savedBody(7)!)).toEqual([6]);
+    });
+    it("asks about a repository that is not the owner's, and writes nothing", () => {
+      const r = run("WAITS_FOR: other/repo#3\n", { env: owner });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("- other/repo is not a repository of the Foundry.");
+      expect(lines(r.stdout).at(-1)).toBe("QUESTION");
+      expect(savedBody(7)).toBeUndefined();
+      // without the variable, no repository counts
+      expect(run("WAITS_FOR: acme/lib#3\n", { env: { ...owner, FACTORY_OWNER_REPOS: "" } }).stdout).toContain("acme/lib is not a repository of the Foundry.");
+    });
+    it("asks about a missing, a not planned and an unreadable issue", () => {
+      expect(run("WAITS_FOR: acme/lib#9\n", { env: owner }).stdout).toContain("acme/lib#9 was not found.");
+      expect(run("WAITS_FOR: acme/lib#5\n", { env: owner }).stdout).toContain("acme/lib#5 was closed as not planned.");
+      const r = run("WAITS_FOR: acme/lib#3\n", { env: { ...owner, FAKE_GH_CROSS_VIEW_ERROR: "1" } });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("acme/lib#3 could not be read: HTTP 403");
+      expect(lines(r.stdout).at(-1)).toBe("QUESTION");
+    });
+    it("a repository name ending in - waits for that repository's issue, never a local #N", () => {
+      const env = { FACTORY_OWNER_REPOS: "acme/lib-", FAKE_GH_REPO_ISSUES: JSON.stringify({ "acme/lib-": [{ number: 8, state: "open" }] }) };
+      const r = run("WAITS_FOR: acme/lib-#8\n", { env });
+      expect(r.status, r.stderr).toBe(0);
+      expect(lines(r.stdout)).toEqual(["WAITS_FOR: acme/lib-#8", "Recorded in Depends on of #7.", "PARKED"]);
+      expect(savedBody(7)).toContain("- acme/lib-#8");
+      expect(foundryDependsOn(savedBody(7)!)).toEqual([]);
+    });
+    it("still needs the commits for an issue of this repository", () => {
+      const r = run("WAITS_FOR: #6, acme/lib#3\n", { env: owner });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("could not read the commits");
+    });
+  });
+
   it("fails on bad input", () => {
     makeRepo("start");
     for (const x of [{ env: { FACTORY_VAR_ISSUE: "abc" } }, { env: { FACTORY_VAR_GITHUB_REPO: "nope" } }, { args: ["x"] }]) {

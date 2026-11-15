@@ -175,6 +175,31 @@ describe("the Foundry's part (#675)", () => {
     expect(mergeDependsOn(merged, [12], "r")).toBe(merged);
     expect(removeFromDependsOn(merged, [12])).toBe(section);
   });
+  it("a cross reference ending in - or . is not a local #N in the Foundry part or the person's text", () => {
+    const b = mergeDependsOn("x", [], "r", [{ repo: "acme/lib-", issue: 8 }, { repo: "acme/lib.", issue: 9 }]);
+    expect(foundryDependsOn(b)).toEqual([]);
+    expect(crossDependencies(b, { markedOnly: true })).toEqual([{ repo: "acme/lib-", issue: 8 }, { repo: "acme/lib.", issue: 9 }]);
+    expect(dependencies(b, 7, [{ number: 8, title: "Eight" }, { number: 9, title: "Nine" }])).toEqual([]);
+    expect(dependencies("### Depends on\nacme/lib-#8", 7, [])).toEqual([]);
+    // a plain range or list keeps counting its numbers
+    expect(foundryDependsOn(mergeDependsOn("x", [3, 8], "r"))).toEqual([3, 8]);
+    expect(dependencies("### Depends on\n#3-#8", 7, [])).toEqual([3, 8]);
+  });
+  it("adds cross references, once in any case, and takes only the named ones out", () => {
+    const a = mergeDependsOn(section, [], "r", [{ repo: "acme/lib", issue: 3 }]);
+    expect(crossDependencies(a, { markedOnly: true })).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(foundryDependsOn(a)).toEqual([]);
+    const b = mergeDependsOn(a, [12], "r", [{ repo: "ACME/Lib", issue: 3 }, { repo: "acme/api", issue: 1 }, { repo: "bad name", issue: 2 }]);
+    expect(b.match(/- acme\/lib#3/gi)).toHaveLength(1);
+    expect(crossDependencies(b, { markedOnly: true })).toEqual([{ repo: "acme/api", issue: 1 }, { repo: "acme/lib", issue: 3 }]);
+    expect(mergeDependsOn(b, [12], "r")).toBe(b);
+    const c = removeFromDependsOn(b, [], [{ repo: "Acme/Api", issue: 1 }]);
+    expect(crossDependencies(c, { markedOnly: true })).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(foundryDependsOn(c)).toEqual([12]);
+    expect(removeFromDependsOn(c, [12])).toContain("- acme/lib#3");
+    expect(removeFromDependsOn(removeFromDependsOn(c, [12]), [], [{ repo: "acme/lib", issue: 3 }])).toBe(section);
+    expect(removeFromDependsOn(c, [], [{ repo: "acme/other", issue: 3 }])).toBe(c);
+  });
   it.each([
     "### Depends on", "### Depends on\n", "Depends on: #3", "Depends on: #3\nmore", "a\n**Depends on:** #5\n**Notes**\nz",
     "### Depends on\r\n", "x\r\n### Depends on\r\n#12\r\n\r\n### Notes\r\nabc", "Depends on: #3\r\n",
