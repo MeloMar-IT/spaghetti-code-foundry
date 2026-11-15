@@ -807,7 +807,10 @@ export class Watcher {
     const owner = this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
     // the owner's account also counts as the one that queued it, so a block or delete drops the job and holds it while blocked
     const queuedBy = this.cfg.repoId !== undefined ? { queuedBy: this.cfg.ownerId } : {};
-    const runId = this.d.scheduler.submit(job, { ...meta, ...queuedBy, ...(job.kind === "run" ? { owner } : {}) });
+    // a new run reads the watcher's reference repositories (#878); a resume keeps the list saved with the run
+    const refs = this.cfg.reference_repos;
+    const withRefs = job.kind === "run" && refs?.length ? { ...job, references: { repos: [...refs], ...(this.cfg.reference_private_ok ? { privateOk: true as const } : {}) } } : job;
+    const runId = this.d.scheduler.submit(withRefs, { ...meta, ...queuedBy, ...(job.kind === "run" ? { owner } : {}) });
     const actor = ActorSchema.safeParse({ kind: "watcher", id: this.cfg.id });
     emitLiveTelemetry("watcher", "watcher.queued", { ...this.teleLabels(), runId, ...(actor.success ? { actor: actor.data } : {}) });
     return runId;

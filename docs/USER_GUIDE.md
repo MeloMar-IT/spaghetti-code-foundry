@@ -3397,6 +3397,31 @@ For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h
 
 A field that is cleared is removed from the watcher, so the default applies. A value the server refuses is shown at its field with the server's message. The same options work for a watcher of a repository and for one still in `config.yaml`.
 
+### Reference repositories
+
+A run sees only its own checkout. When an issue depends on routes, file formats or names that live in another repository, a watcher can give its runs a read-only copy of that repository, so the planner and the coder look the facts up there instead of stopping with a question only you can answer.
+
+- **Set it.** In the form, the group **Reference repositories** (every source except the monitor) takes `reference_repos`: a list of `owner/name`, at most 10. The option `reference_private_ok` (default off) allows a private reference (see below). In `config.yaml` the same two keys are written under the watcher; through the API they are `reference_repos` and `reference_private_ok` in the watcher's body.
+- **Which repositories.** Only repositories already added to the Foundry, that the watcher's owner can see. The watcher's own repository is refused. A refused name is answered with `reference_repos: …` and the reason.
+- **Where.** Before a run's steps start, and again before each resume, each reference is cloned read-only, shallow, from the newest commit of its default branch, to `<run folder>/reference/<owner>-<name>` (lower case, for example `reference/acme-lib`). The copy sits next to the checkout, so it is never part of the pull request.
+- **The commit is in the history.** The run's `run.json` has a `references` list (the newest 50 preparations, each with the repository, the time, the commit and the folder, or the reason it was skipped), and the run log has the same lines.
+- **What the agents are told.** Each agent step starts with a block that lists the copies with their commits and says they are for reading only. A fact the agent finds there is not a question for the owner: it must not be asked as an `owner_action`.
+- **Read only.** The copy has no remote, so it cannot be pushed. Its files are read-only and its folders cannot be entered for writing (`.git` included). Claude's Edit and Write tools are denied there, and on macOS the sandbox refuses writes and `chmod` there. Nothing the run does can change the copy, commit it, or put it in the pull request.
+- **Removed.** The copies are deleted when the run ends, also when it waits or stops. If a crash leaves one behind, `scf clean` unlocks and removes it.
+- **Skipped, not failed.** A reference that cannot be used does not fail the run. The run log says `! reference <owner>/<name>: skipped — <reason>` and the run goes on. Reasons:
+  - it could not be fetched;
+  - the run's owner cannot use it;
+  - a policy refuses access to it;
+  - the privacy rule below refuses it;
+  - the run has no OS sandbox (see below).
+- **Privacy.** What a reference teaches the agent can end up in issue comments, the pull request or commits, so a reference is used only when it is safe for the target:
+  - a public reference is always used;
+  - a private one (or one whose visibility cannot be told) is used only when the target repository is known to be private, or `reference_private_ok` is on.
+
+  A 404 from GitHub does not count as proof that a repository is private. The privacy check runs again at every start and resume.
+- **Needs the OS sandbox.** A run without an OS sandbox (for example an admin's default-workspace run) skips every reference. Without the sandbox, a shell step could make the copy writable again.
+- **Off by default.** Without `reference_repos`, nothing changes: no copy, no block in the prompts, and no `references` in `run.json`.
+
 ### The Watchers page (admins)
 
 Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository under **Changes**, without the watcher's name.

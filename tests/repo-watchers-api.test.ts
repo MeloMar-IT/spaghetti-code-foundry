@@ -152,6 +152,26 @@ describe("watchers of a repository: the routes", () => {
     await call(admin, "DELETE", path(annRepo, "opt-w"));
   });
 
+  it("takes only repositories of the owner as reference repositories, never its own one (#878)", async () => {
+    const lib = await add(ann, { url: "acme/lib", method: "github-token", token: TOKEN });
+    const ok = await call(admin, "POST", path(annRepo), { id: "ref-w", source: "schedule", task: "tidy", reference_repos: ["Acme/Lib"], reference_private_ok: true });
+    expect(ok.status).toBe(201);
+    expect(ok.json()).toMatchObject({ reference_repos: ["Acme/Lib"], reference_private_ok: true });
+    const notAdded = await call(admin, "POST", path(annRepo), { id: "ref-x", reference_repos: ["acme/web"] }); // the admin's, not Ann's
+    expect([notAdded.status, notAdded.error()]).toEqual([400, expect.stringMatching(/^reference_repos: "acme\/web" is not one of the repositories/)]);
+    const own = await call(admin, "PUT", path(annRepo, "ref-w"), { reference_repos: ["acme/app"] });
+    expect([own.status, own.error()]).toEqual([400, expect.stringMatching(/^reference_repos: "acme\/app" is the watcher's own repository/)]);
+    const many = await call(admin, "PUT", path(annRepo, "ref-w"), { reference_repos: Array.from({ length: 11 }, (_, i) => `acme/r${i}`) });
+    expect([many.status, many.error()]).toEqual([400, expect.stringMatching(/^reference_repos/)]);
+    expect(listRepoWatchers().find((w) => w.id === "ref-w")!.reference_repos).toEqual(["Acme/Lib"]);
+    const cleared = await call(admin, "PUT", path(annRepo, "ref-w"), { reference_repos: null, reference_private_ok: null });
+    expect(cleared.status).toBe(200);
+    const w = listRepoWatchers().find((x) => x.id === "ref-w")!;
+    expect("reference_repos" in w || "reference_private_ok" in w).toBe(false);
+    await call(admin, "DELETE", path(annRepo, "ref-w"));
+    removeRepo(ann.user.id, lib.id);
+  });
+
   it("keeps ids unique on the install, in the store and in config.yaml", async () => {
     expect((await call(admin, "POST", path(adminRepo), { id: "admin-w" })).status).toBe(409);
     expect((await call(admin, "POST", path(annRepo), { id: "admin-w" })).error()).toMatch(/exists already/);

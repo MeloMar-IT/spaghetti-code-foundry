@@ -94,6 +94,25 @@ export const LOCAL_TEST_LINE = "local test: this run never counts as a promoted 
 /** One stop at a step's time limit that the Foundry answers with a retry (auto_retry.timeouts). Only an event with `startedAt` (the retry began) counts. */
 export interface TimeLimitEvent { at: string; step: string; attempt: number; of: number; startedAt?: string }
 
+/** The folder in a run folder with the read-only reference copies (#878): the server alone writes it. */
+export const REFERENCE_DIR = "reference";
+
+/** The reference repositories a run reads (#878): `owner/name` names, and whether a private one may feed a public target. */
+export interface RunReferences {
+  repos: string[];
+  privateOk?: true;
+}
+
+/** One reference at one preparation: its commit and folder (relative to the run folder) when it is there, else why not. */
+export interface ReferenceRecord {
+  repo: string;
+  at: string;
+  ok: boolean;
+  commit?: string;
+  folder?: string;
+  reason?: string;
+}
+
 export interface RunSummary {
   runId: string;
   /** The workspace (#816). Absent: "default" (also older runs). */
@@ -146,6 +165,10 @@ export interface RunSummary {
   source?: string;
   /** The id of the account that started the run. Absent for runs of watchers, the CLI and older versions. */
   owner?: string;
+  /** The reference repositories of the watcher that started the run (#878), checked at start. Trusted like `owner`. Absent: none. */
+  referenceRepos?: RunReferences;
+  /** What each preparation of the reference copies found, oldest first (the newest 50). Absent: no reference was prepared. */
+  references?: ReferenceRecord[];
   /** The declared tool profile saved at start: the parsed profile, or `null` when the supplied one could not be read (`null` always refuses). Trusted like `owner`. Absent: steps get the profile their settings give. */
   toolProfile?: unknown;
   /** True for a local test (`scf run --local-test`, evals): it is not checked against `promotion.enforce` and never counts as a promoted delivery (#740). Only evals skip governance (#665). */

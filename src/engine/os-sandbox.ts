@@ -9,7 +9,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { checkOutbound, evaluationLimits, READ_DENY_REFUSED } from "./eval-limits.js";
 import { TOOLS_DIR as TOOLS } from "./guards.js";
 import { heldWorkspace, userAccount } from "./isolation.js";
-import { workspaceDir, workspaceFolderIn } from "./state.js";
+import { REFERENCE_DIR, workspaceDir, workspaceFolderIn } from "./state.js";
 
 /**
  * Holds a step (shell or agent) of a user's run in a generated `sandbox-exec` profile (macOS): it cannot read other runs, the data folder,
@@ -254,6 +254,8 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   out.push(`(deny file-write* (literal ${quote(join(runDir, EVIDENCE_EVENTS_FILE))}) (literal ${quote(join(runDir, EVIDENCE_MANIFEST_FILE))}) (literal ${quote(join(runDir, EVIDENCE_DIFF_FILE))}) (literal ${quote(join(runDir, EVIDENCE_INCOMPLETE_FILE))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, CONTEXT_BUNDLE_FILE))}) (literal ${quote(join(runDir, CONTEXT_ATTEMPT_FILE))}) (subpath ${quote(join(runDir, CONTEXT_SOURCES_DIR))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(runDir, RUN_DELIVERY_DIR))}))`);
+  // the read-only copies of the reference repositories (#878): no write and no chmod
+  out.push(`(deny file-write* (subpath ${quote(join(runDir, REFERENCE_DIR))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(runDir, "step-pids"))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(lockDir, ".running"))}))`);
   // the run folder and the lock folder themselves cannot be moved or removed

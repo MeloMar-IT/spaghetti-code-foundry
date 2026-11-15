@@ -88,6 +88,17 @@ function checkVars(options: RepoWatcherOptions, describe?: DescribeVars): void {
   }
 }
 
+/** The problem of a list of reference repositories (without the option's name), or undefined when it may be used. */
+export type ReferenceCheck = (names: string[]) => string | undefined;
+
+/** Refuses reference repositories the check does not allow (#878). Without a check, or without references, nothing is asked. */
+function checkReferences(options: RepoWatcherOptions, check?: ReferenceCheck): void {
+  const names = options.reference_repos;
+  if (!check || !names?.length) return;
+  const problem = check(names);
+  if (problem) throw bad(`reference_repos: ${problem}`);
+}
+
 /** A sentence (starting with the option's name) when a watcher with these options needs GitHub, so a local repository cannot have it. */
 export function localWatcherProblem(o: { source: string; release_build?: boolean; pause_while_pr_open?: string }): string | undefined {
   if (o.source === "pr-feedback") return "source: a local project has no pull requests, so it cannot have a watcher for review comments";
@@ -98,11 +109,12 @@ export function localWatcherProblem(o: { source: string; release_build?: boolean
 }
 
 /** Adds a watcher. `taken` are the ids that exist elsewhere (config.yaml); an id is unique on the whole install. `describe` turns on the variable check. `local` refuses options that need GitHub. */
-export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string; describe?: DescribeVars; local?: boolean } = {}): StoredWatcher {
+export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string; describe?: DescribeVars; local?: boolean; references?: ReferenceCheck } = {}): StoredWatcher {
   const options = parseOptions(input);
   const refused = opts.local ? localWatcherProblem(options) : undefined;
   if (refused) throw bad(refused);
   checkVars(options, opts.describe);
+  checkReferences(options, opts.references);
   return withAuthLock(() => {
     const all = read();
     if (all.some((w) => w.id === options.id) || (opts.taken ?? []).includes(options.id)) throw dup(options.id);
@@ -116,7 +128,7 @@ export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: s
  * Changes a watcher: a value sets, `null` removes an option. The id cannot change. `changed` names the options that differ.
  * With `describe`, a patch that names vars, flow or source is checked; one that only enables or disables is not.
  */
-export function updateRepoWatcher(repoId: string, id: string, patch: unknown, opts: { describe?: DescribeVars; local?: boolean } = {}): { watcher: StoredWatcher; changed: string[]; before: Record<string, unknown>; after: Record<string, unknown> } {
+export function updateRepoWatcher(repoId: string, id: string, patch: unknown, opts: { describe?: DescribeVars; local?: boolean; references?: ReferenceCheck } = {}): { watcher: StoredWatcher; changed: string[]; before: Record<string, unknown>; after: Record<string, unknown> } {
   if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw bad("the change must be an object");
   const p = patch as Record<string, unknown>;
   if ("id" in p && p.id !== id) throw bad("the id of a watcher cannot be changed");
@@ -134,6 +146,7 @@ export function updateRepoWatcher(repoId: string, id: string, patch: unknown, op
     const refused = opts.local ? localWatcherProblem(options) : undefined;
     if (refused) throw bad(refused);
     if ("vars" in p || "flow" in p || "source" in p) checkVars(options, opts.describe);
+    if ("reference_repos" in p) checkReferences(options, opts.references);
     const before = current as Record<string, unknown>;
     const after = options as Record<string, unknown>;
     const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));

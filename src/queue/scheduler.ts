@@ -10,7 +10,7 @@ import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../wo
 import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
-import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -37,7 +37,7 @@ const MAX_LOG_LINES = 5000;
 const CAP_RECHECK_MS = 30_000;
 
 export type Job =
-  | { kind: "run"; flow: Flow; task: string; repo: string; vars: Record<string, string>; /** `vars` is final: the folder's settings were applied when it was queued. */ frozenVars?: boolean; /** Files copied into the workspace (server code only). */ files?: RunInputFile[] }
+  | { kind: "run"; flow: Flow; task: string; repo: string; vars: Record<string, string>; /** `vars` is final: the folder's settings were applied when it was queued. */ frozenVars?: boolean; /** Files copied into the workspace (server code only). */ files?: RunInputFile[]; /** The watcher's reference repositories (#878); checked again by runFlow. */ references?: RunReferences }
   | { kind: "resume"; runId: string; from?: string; decision?: ApprovalDecision };
 
 export interface QueuedJob {
@@ -1218,6 +1218,7 @@ export class Scheduler {
             vars: j.vars,
             frozenVars: j.frozenVars,
             ...(j.files ? { files: j.files } : {}),
+            ...(j.references ? { references: j.references } : {}),
             workspace: queuedWorkspace(q),
             source: q.source,
             owner: q.owner,

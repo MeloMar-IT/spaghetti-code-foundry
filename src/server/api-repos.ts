@@ -3,12 +3,12 @@ import { basename } from "node:path";
 import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
 import { spentTodayByProject, type ProjectRef } from "../engine/state.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, allowRemotePush, checkNewRepo, checkRepoAuth, checkRepoBudget, getRepo, projectDailyBudget, setRepoBudget, setRepoWorkspace, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, allowRemotePush, checkNewRepo, checkRepoAuth, checkRepoBudget, getRepo, projectDailyBudget, setRepoBudget, setRepoWorkspace, listAllRepos, listRepos, ownsRepo, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
 import { localHasRemote, localRepoName } from "../auth/local-repo.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
-import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
+import { githubKey, githubNameOf, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
 import { StoreError } from "../auth/store.js";
@@ -299,6 +299,17 @@ function describeVars(ctx: ApiContext): DescribeVars {
   };
 }
 
+/** The reference repositories of a watcher (#878): repositories of the same owner, never the watcher's own one. */
+export function referenceProblem(rec: Pick<RepoRecord, "owner" | "url">, names: string[], owns: (owner: string, name: string) => boolean = ownsRepo): string | undefined {
+  const own = githubNameOf(rec.url);
+  for (const n of names) {
+    if (!validGithubName(n)) return `"${n}" is not a GitHub repository name (owner/name)`;
+    if (own !== undefined && githubKey(n) === githubKey(own)) return `"${n}" is the watcher's own repository`;
+    if (!owns(rec.owner, n)) return `"${n}" is not one of the repositories of this repository's owner; add it first`;
+  }
+  return undefined;
+}
+
 /** The watchers of one repository (admin only): list, add, change (also enable and disable), delete. */
 async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   const repoId = seg[2]!;
@@ -320,7 +331,7 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
     const rec = known();
     const problem = guardedRepos(ctx, () => watcherRepoProblem(rec, getUser(rec.owner)));
     if (problem) throw new HttpError(400, problem);
-    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx), local: rec.method === "local" }));
+    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx), local: rec.method === "local", references: (names) => referenceProblem(rec, names) }));
     audit(`watcher ${w.id}: added`);
     ctx.watchers.sync();
     return send(res, 201, rowOf(w.id, w)), true;
@@ -328,7 +339,7 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
   if (seg.length === 5 && method === "PUT") {
     const body = await readJson(req);
     const rec = known();
-    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx), local: rec.method === "local" }));
+    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx), local: rec.method === "local", references: (names) => referenceProblem(rec, names) }));
     if (r.changed.length) {
       auditActions(ctx.diagLog, by, "repo-change", repoId, watcherChanges(r.before, r.after).map((c) => changeDetail(c, `watcher ${wid}: `)));
       ctx.watchers.sync();

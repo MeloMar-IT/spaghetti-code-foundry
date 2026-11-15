@@ -95,9 +95,22 @@ function runGit(bin: string, args: string[], env: NodeJS.ProcessEnv, cwd: string
 const FAILED = "the project could not be checked out";
 const failed = (detail = FAILED): CheckoutResult => ({ ok: false, reason: "checkout-failed", detail });
 
-/** Clones one branch of one source (depth 1, no hooks) into `dir` and reads `.factory/preview.yaml` of that commit through git. */
-export async function checkoutPreview(o: CheckoutOptions): Promise<CheckoutResult> {
-  if (!validBranchName(o.branch)) return failed("the branch name is not valid");
+export interface ShallowCloneOptions {
+  source: PreviewSource;
+  /** Without it: the default branch of the source. */
+  branch?: string;
+  dir: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  gitBin?: string;
+  /** Extra git settings for the clone, as `-c key=value`. */
+  gitConfig?: [string, string][];
+}
+
+export type ShallowCloneResult = { ok: true } | { ok: false; reason: "no-branch" | "no-source" | "checkout-failed"; detail: string };
+
+/** Clones one branch (or the default branch) of one source, depth 1, without hooks or tags, into `dir`. Never throws; a clone git refused leaves no `dir`. */
+export async function shallowClone(o: ShallowCloneOptions): Promise<ShallowCloneResult> {
   const bin = o.gitBin ?? "git";
   const timeoutMs = o.timeoutMs ?? CHECKOUT_TIMEOUT_MS;
   let tmp: string | undefined;
@@ -126,9 +139,10 @@ export async function checkoutPreview(o: CheckoutOptions): Promise<CheckoutResul
       address = local ? `file://${local}` : o.source.url;
     }
     mkdirSync(dirname(o.dir), { recursive: true, mode: 0o700 });
+    const settings = (o.gitConfig ?? []).flatMap(([k, v]) => ["-c", `${k}=${v}`]);
     const clone = await runGit(
       bin,
-      [...SAFE_OPTIONS, ...authArgs, "clone", "--quiet", "--no-tags", "--single-branch", "--depth", "1", "--template=", ...extra, `--branch=${o.branch}`, "--", address, o.dir],
+      [...SAFE_OPTIONS, ...authArgs, ...settings, "clone", "--quiet", "--no-tags", "--single-branch", "--depth", "1", "--template=", ...extra, ...(o.branch !== undefined ? [`--branch=${o.branch}`] : []), "--", address, o.dir],
       env,
       dirname(o.dir),
       o.signal,
@@ -136,16 +150,34 @@ export async function checkoutPreview(o: CheckoutOptions): Promise<CheckoutResul
     );
     if (clone.code !== 0) {
       rmSync(o.dir, { recursive: true, force: true });
-      if (clone.stopped) return failed();
+      if (clone.stopped) return { ok: false, reason: "checkout-failed", detail: FAILED };
       if (/not found in upstream|Remote branch .* not found/.test(clone.stderr)) return { ok: false, reason: "no-branch", detail: "the branch is not in the project" };
-      return failed();
+      return { ok: false, reason: "checkout-failed", detail: FAILED };
     }
-    return await readConfig(bin, o.dir, o.signal, timeoutMs);
+    return { ok: true };
   } catch {
-    return failed();
+    return { ok: false, reason: "checkout-failed", detail: FAILED };
   } finally {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/** Clones one branch of one source (depth 1, no hooks) into `dir` and reads `.factory/preview.yaml` of that commit through git. */
+export async function checkoutPreview(o: CheckoutOptions): Promise<CheckoutResult> {
+  if (!validBranchName(o.branch)) return failed("the branch name is not valid");
+  const cloned = await shallowClone(o);
+  if (!cloned.ok) return cloned;
+  try {
+    return await readConfig(o.gitBin ?? "git", o.dir, o.signal, o.timeoutMs ?? CHECKOUT_TIMEOUT_MS);
+  } catch {
+    return failed();
+  }
+}
+
+/** Runs one git command (no shell, own process group, clean environment) in `dir`. For callers that need a commit after a clone. */
+export async function gitIn(dir: string, args: string[], o: { gitBin?: string; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<{ code: number | null; stdout: string }> {
+  const r = await runGit(o.gitBin ?? "git", [...SAFE_OPTIONS, ...args], cleanEnv({ LC_ALL: "C" }), dir, o.signal, o.timeoutMs ?? CHECKOUT_TIMEOUT_MS);
+  return { code: r.code, stdout: r.stdout.toString("utf8") };
 }
 
 /** Reads the file from the checked-out commit, not from the working tree, so a link in the tree points nowhere. */
