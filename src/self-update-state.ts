@@ -162,8 +162,8 @@ const MIN = 60_000;
 export const DEFAULT_STEPS: UpdateStep[] = [
   { name: "install", cmd: "npm", args: ["ci", "--no-audit", "--no-fund"], timeoutMs: 10 * MIN },
   { name: "build", cmd: "npm", args: ["run", "build"], timeoutMs: 10 * MIN },
-  // The whole suite takes about 13 minutes on a quiet machine: 15 left no room for a busy one.
-  { name: "test", cmd: "npm", args: ["test"], timeoutMs: 30 * MIN },
+  // The whole suite takes about 19 minutes on a quiet machine and up to 31 while stories run their tests: 30 was no longer enough.
+  { name: "test", cmd: "npm", args: ["test"], timeoutMs: 60 * MIN },
 ];
 
 const running = new Set<ChildProcess>();

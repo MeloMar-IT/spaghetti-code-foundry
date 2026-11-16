@@ -237,8 +237,8 @@ describe("self-update: the tests run in a test slot", () => {
 });
 
 describe("self-update: a test run that runs out of time", () => {
-  it("gives the whole suite 30 minutes", () => {
-    expect(DEFAULT_STEPS.find((s) => s.name === "test")?.timeoutMs).toBe(30 * MIN);
+  it("gives the whole suite 60 minutes", () => {
+    expect(DEFAULT_STEPS.find((s) => s.name === "test")?.timeoutMs).toBe(60 * MIN);
   });
 
   it("marks a step stopped at its limit, and only that one", async () => {
