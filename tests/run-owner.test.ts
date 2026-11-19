@@ -220,6 +220,16 @@ describe("ownRecord", () => {
     expect(out.text).toContain("#3");
   });
 
+  it("keeps the url of a blocker of another repository, built again from its name", () => {
+    const URL = "https://github.com/acme/lib/issues/3";
+    const running = nextStep("running", { repo: "o/r", issue: 1, runId: "X" });
+    const rec = nextStep("dependency", { repo: "o/r", issue: 3 }, { blockers: [{ issue: 3, repo: "acme/lib", next: running }, { issue: 2 }] });
+    expect(ownRecord(rec, () => false).blockers).toEqual([{ issue: 3, repo: "acme/lib", url: URL }, { issue: 2 }]);
+    // a wrong url in a stored record is not copied
+    const planted = { ...rec, blockers: [{ issue: 3, repo: "acme/lib", url: "https://evil.example/x" }] };
+    expect(ownRecord(planted, () => false).blockers).toEqual([{ issue: 3, repo: "acme/lib", url: URL }]);
+  });
+
   it("removes a foreign afterRun and links to the runs page; an own one stays", () => {
     const rec = nextStep("one_at_a_time", { repo: "o/r", runId: "mine" }, { blockingRun: "theirs" });
     expect(rec.afterRun).toBe("theirs");

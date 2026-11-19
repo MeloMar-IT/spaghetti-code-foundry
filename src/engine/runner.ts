@@ -36,7 +36,7 @@ import { explainFailure } from "../failure-explain.js";
 import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { heldWorkspace, stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, runSandbox } from "./os-sandbox.js";
-import { localRepoEnv, removeSignInDir } from "./repo-access.js";
+import { localRepoEnv, ownerReposEnv, removeSignInDir } from "./repo-access.js";
 import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
 import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
@@ -472,6 +472,8 @@ async function drive(
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...localRepoEnv(summary.vars.github_repo),
+      // the GitHub names of the owner's repositories, which a wait may name as owner/name#N (names only, no credential)
+      ...ownerReposEnv(summary.owner),
       // the run's watcher answers questions itself (auto_defaults): question comments say that nothing is needed
       ...nextStepEnv({ autoDefaults: summary.vars.auto_defaults === "true" }),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it

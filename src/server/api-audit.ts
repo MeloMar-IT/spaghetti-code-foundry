@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { AUDIT_ACTIONS, MONITOR_ACTOR, auditTime, isAccountId, latestAudit, scanAudit, type AuditFilter, type AuditRecord } from "../auth/audit.js";
+import { cleanClient, clientOf } from "../auth/audit-client.js";
 import { ownerNames } from "../auth/run-owner.js";
 import { validTarget } from "../governance/autonomy-store.js";
 import { StoreError } from "../auth/store.js";
@@ -11,7 +12,7 @@ export const AUDIT_CSV_HEADER = ["time", "actor", "actor_name", "action", "targe
 
 const INTERNAL = "the audit log is not working; see the server log";
 const GONE = "deleted user";
-const FILTERS = ["user", "action", "from", "to"];
+const FILTERS = ["user", "action", "client", "from", "to"];
 
 /** An error from the log is logged (file and kind, never a path or value) and answered with a plain 500. */
 function fail(ctx: ApiContext, e: unknown): never {
@@ -25,7 +26,7 @@ function fail(ctx: ApiContext, e: unknown): never {
 /** The filters of the query. Strict: unknown, repeated and empty ones answer 400, and no message holds the given value. */
 function filterOf(req: { url?: string }): AuditFilter {
   const q = new URL(req.url ?? "/", "http://x").searchParams;
-  for (const k of new Set(q.keys())) if (!FILTERS.includes(k)) throw new HttpError(400, "the filters are user, action, from and to");
+  for (const k of new Set(q.keys())) if (!FILTERS.includes(k)) throw new HttpError(400, "the filters are user, action, client, from and to");
   for (const k of FILTERS) if (q.getAll(k).length > 1) throw new HttpError(400, `"${k}" is given more than once`);
   const filter: AuditFilter = {};
   const user = q.get("user");
@@ -37,6 +38,13 @@ function filterOf(req: { url?: string }): AuditFilter {
   if (action !== null) {
     if (!AUDIT_ACTIONS.includes(action)) throw new HttpError(400, '"action" is not an audit action');
     filter.action = action;
+  }
+  const client = q.get("client");
+  if (client !== null) {
+    // the label of a service request (#877): cleaned like the header, so it matches what was written
+    const clean = cleanClient(client);
+    if (clean === undefined) throw new HttpError(400, '"client" must be printable text');
+    filter.client = clean;
   }
   for (const k of ["from", "to"] as const) {
     const v = q.get(k);
@@ -53,7 +61,8 @@ function view(r: AuditRecord, names: Map<string, string>) {
   const account = (id: string) => ({ type: "account", id, name: names.get(id) ?? GONE });
   const actor = r.by === "cli" || r.by === "anonymous" || r.by === MONITOR_ACTOR ? { type: r.by } : account(r.by);
   const target = r.userId !== undefined ? account(r.userId) : r.target !== undefined ? { type: "text", text: r.target } : null;
-  return { time: r.time, actor, action: r.action, target, result: r.result, ...(r.detail !== undefined ? { detail: r.detail } : {}) };
+  const client = clientOf(r);
+  return { time: r.time, actor, action: r.action, target, result: r.result, ...(r.detail !== undefined ? { detail: r.detail } : {}), ...(client !== undefined ? { client } : {}) };
 }
 
 function row(r: AuditRecord, names: Map<string, string>): string[] {

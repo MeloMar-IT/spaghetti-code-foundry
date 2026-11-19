@@ -3,6 +3,7 @@ import { closeSync, createReadStream, fstatSync, lstatSync, openSync, readSync }
 import { isDeepStrictEqual } from "node:util";
 import { basename, join } from "node:path";
 import { z } from "zod";
+import { clientOf } from "./audit-client.js";
 import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock } from "./store.js";
 
 /**
@@ -253,6 +254,8 @@ export interface AuditFilter {
   actionPrefix?: string;
   /** Keeps the lines with exactly this target text. */
   target?: string;
+  /** Keeps the service lines whose client label holds this text, in any case (#877). */
+  client?: string;
   from?: number;
   to?: number;
 }
@@ -341,6 +344,7 @@ export async function* scanAudit(filter: AuditFilter = {}): AsyncGenerator<Audit
     if (filter.action !== undefined && r.action !== filter.action) continue;
     if (filter.actionPrefix !== undefined && !r.action.startsWith(filter.actionPrefix)) continue;
     if (filter.target !== undefined && r.target !== filter.target) continue;
+    if (filter.client !== undefined && !clientOf(r)?.toLowerCase().includes(filter.client.toLowerCase())) continue;
     if (filter.from !== undefined || filter.to !== undefined) {
       const t = Date.parse(r.time);
       if (filter.from !== undefined && t < filter.from) continue;

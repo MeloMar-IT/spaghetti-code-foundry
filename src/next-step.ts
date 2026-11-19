@@ -1,4 +1,5 @@
 import { isLocalRepoName } from "./auth/local-name.js";
+import { validGithubName } from "./auth/repo-url.js";
 import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
 import { isIssueLimitStop, isProjectBudgetStop, isStoppedCancel, isTimeLimitStop, isUserBudgetStop, type RunSummary } from "./engine/state.js";
@@ -110,8 +111,24 @@ export interface BlockerInfo {
   repo?: string;
   /** (`repo`) It was closed as not planned: the story waits for the owner. */
   notPlanned?: true;
+  /** (`repo`) The issue on GitHub; set by nextStep, only for a valid repository name. */
+  url?: string;
   /** The blocker's own record, when there is one. */
   next?: NextStep;
+}
+
+/** The GitHub page of a blocker in another repository; undefined unless `repo` is a valid GitHub name and `issue` a positive number. */
+export function blockerUrl(b: Pick<BlockerInfo, "issue" | "repo">): string | undefined {
+  if (!b.repo || !validGithubName(b.repo) || !Number.isSafeInteger(b.issue) || b.issue < 1) return undefined;
+  return `https://github.com/${b.repo}/issues/${b.issue}`;
+}
+
+/** A blocker of another repository with its url (built here, never copied); one of this repository as it is. */
+function withBlockerUrl(b: BlockerInfo): BlockerInfo {
+  if (!b.repo) return b;
+  const { url: _old, ...rest } = b;
+  const url = blockerUrl(b);
+  return url ? { ...rest, url } : rest;
 }
 
 /** "#3", or "acme/lib#3" for an issue of another repository. */
@@ -788,7 +805,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     text: sentence(why.replace(/[.!?]+$/, ""), say.replace(/[.!?]+$/, "")),
     ...(kind === "one_at_a_time" && d.blockingRun ? { afterRun: d.blockingRun } : {}),
     ...(kind === "area_lock" && d.areaWait?.runId ? { afterRun: d.areaWait.runId } : {}),
-    ...(kind === "dependency" ? { blockers: d.blockers ?? [] } : {}),
+    ...(kind === "dependency" ? { blockers: (d.blockers ?? []).map(withBlockerUrl) } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
     ...(kind === "failed" && d.issueClosed ? { issueClosed: true as const } : {}),
@@ -1016,10 +1033,11 @@ export function releaseWatchersFor<W extends WatcherConfig>(watchers: W[], run: 
 /** Does a step id (with optional sub-flow prefix) end in one of `ids`? */
 export const stepIs = (id: string | null | undefined, ids: readonly string[]) => !!id && ids.includes(id.split("/").at(-1)!);
 
-/** The issues a run stopped at wait_for_story waits for: the WAITS_FOR line of its newest wait_for_story output. */
+/** The issues a run stopped at wait_for_story waits for (also "owner/name#N" ones): the WAITS_FOR line of its newest wait_for_story output. */
 function storyBlockers(run: RunSummary): BlockerInfo[] {
   const h = [...(run.history ?? [])].reverse().find((x) => stepIs(x.id, ["wait_for_story"]));
-  return (parseWaitsFor(h?.output ?? "")?.issues ?? []).map((issue) => ({ issue }));
+  const r = parseWaitsFor(h?.output ?? "");
+  return [...(r?.issues ?? []).map((issue) => ({ issue })), ...(r?.cross ?? []).map((c) => ({ issue: c.issue, repo: c.repo }))];
 }
 
 /**

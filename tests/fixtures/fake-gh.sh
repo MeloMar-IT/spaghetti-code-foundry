@@ -348,6 +348,12 @@ case "$1 $2" in
     esac ;;
   "issue view")
     case "$*" in
+      # "issue view <n> --repo R --json number,state,stateReason" (tools/waits-for, a wait on an issue of another repository):
+      # from $FAKE_GH_REPO_ISSUES[R] (RestIssue form) as {number, state (upper-case), stateReason (upper-case or "")};
+      # a missing repository or issue: "Could not resolve to an Issue", exit 1. $FAKE_GH_CROSS_VIEW_ERROR=1: HTTP 403, exit 1.
+      *"--json number,state,stateReason"*)
+        if [ "$FAKE_GH_CROSS_VIEW_ERROR" = 1 ]; then echo "HTTP 403: Resource not accessible by integration" >&2; exit 1; fi
+        node -e 'const m=JSON.parse(process.env.FAKE_GH_REPO_ISSUES||"{}");const l=m[process.argv[1]]||[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+process.argv[2]+". (repository.issue)");process.exit(1)}console.log(JSON.stringify({number:i.number,state:String(i.state||"open").toUpperCase(),stateReason:i.state_reason?String(i.state_reason).toUpperCase():""}))' "$fake_repo" "$3" || exit 1 ;;
       *"--json body,number,title,updatedAt"*) if [ -n "$FAKE_GH_ISSUE_JSON" ]; then printf '%s\n' "$FAKE_GH_ISSUE_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
       *"--json comments --jq"*) if [ -n "${FAKE_GH_FOUNDRY_COMMENTS_JSON+x}" ]; then printf '%s' "$FAKE_GH_FOUNDRY_COMMENTS_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
       *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f,cf]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_VIEW_ISSUES||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
