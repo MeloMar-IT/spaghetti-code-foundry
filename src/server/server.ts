@@ -75,6 +75,7 @@ import { HELP_SWEEP_MS, helpRoutes, helpSweeper, helpTurnsOf } from "./api-help.
 import { previewsOf } from "./api-preview.js";
 import { refinementPublishRoutes } from "./api-refinement-publish.js";
 import { auditRoutes } from "./api-audit.js";
+import { serviceLineRoutes } from "./api-service-line.js";
 import { promotionRoutes } from "./api-promotions.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
@@ -174,7 +175,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, serviceLineRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 

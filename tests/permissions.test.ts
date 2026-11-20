@@ -250,6 +250,8 @@ const EXAMPLES: Record<string, Example> = {
   "GET audit": no("audit", 200),
   // the walk reads every answer as JSON; a good export is CSV and is covered in audit-api.test.ts
   "GET audit/export": no("audit/export?user=x", 400),
+  // only a service account writes its own line: an admin person gets 403 too (#884)
+  "POST audit/service-line": no("audit/service-line", 403, { event: "x", result: "ok" }),
   "DELETE credentials/:id": { path: `credentials/${UNKNOWN}`, user: 404, admin: 404 },
   "GET repos": { path: "repos", user: 200, admin: 200 },
   "GET repos/methods": { path: "repos/methods", user: 200, admin: 200 },

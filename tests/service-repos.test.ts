@@ -117,6 +117,10 @@ describe("with a closed repository", () => {
     expect(status("GET", "help/usage")).toBe(200);
   });
 
+  it("lets a service account's own audit line pass: it names no repository (#884)", () => {
+    expect(status("POST", "audit/service-line")).toBe(200);
+  });
+
   it("lets a user-open list rule pass when the account has nothing on a closed repository", () => {
     expect(status("GET", "runs")).toBe(200);
     expect(status("GET", "queue")).toBe(200);
