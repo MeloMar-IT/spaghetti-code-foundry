@@ -5,8 +5,9 @@ import { adoptRuns } from "../auth/run-owner.js";
 import { writeAudit } from "../auth/audit.js";
 import { hasIdentityProvider } from "../auth/identity.js";
 import {
-  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, isBreakGlass, PROVIDER_ACCOUNT, redeemPasswordLink, setView, startSession, UserError, type User,
+  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, isBreakGlass, PROVIDER_ACCOUNT, redeemPasswordLink, setMetricsSharing, setView, sharingAnswer, startSession, UserError, type User,
 } from "../auth/users.js";
+import { asParam } from "./view-as.js";
 import { findServiceByToken } from "../auth/service-accounts.js";
 import { clientLabel, refuseBearer, resolveActing, serviceBearer } from "./service-requests.js";
 import { providerSignIn, recheckProviderSession } from "./identity-session.js";
@@ -388,8 +389,38 @@ export async function authRoutes(ctx: ApiContext, req: IncomingMessage, res: Ser
   return false;
 }
 
+export const SHARING_NOT_IN_PREVIEW = "the sharing answer of another account is not shown or changed";
+export const SHARING_OFF = "metrics sharing is switched off by an admin";
+
+const sharingFields = (u: User, allowed: boolean) => ({ allowed, answer: sharingAnswer(u), changed: u.metricsSharing?.changed ?? null });
+
+/**
+ * GET and PUT /api/account/metrics-sharing (#887): the caller's own answer to "may the metrics of my runs be shared?".
+ * There is no account id: an admin's preview of another account (`?as=`) is refused for both methods.
+ */
+async function metricsSharingRoute(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, method: string, user: User): Promise<boolean> {
+  if (method !== "GET" && method !== "PUT") return false;
+  if (asParam(req) !== undefined) throw new HttpError(403, SHARING_NOT_IN_PREVIEW);
+  const allowed = ctx.config().metrics_sharing.allowed;
+  if (method === "GET") return send(res, 200, sharingFields(user, allowed)), true;
+  const body = await readJson(req);
+  const answer = body.answer;
+  if (answer !== "yes" && answer !== "no") throw new HttpError(400, '"answer" must be "yes" or "no"');
+  if (!allowed) throw new HttpError(409, SHARING_OFF);
+  await guarded(ctx, () => {
+    try {
+      send(res, 200, sharingFields(setMetricsSharing(user.id, answer), true));
+    } catch (e) {
+      if (e instanceof UserError) throw new HttpError(e.code === "not-found" ? 404 : 403, e.message);
+      throw e;
+    }
+  });
+  return true;
+}
+
 /** GET and PUT /api/me/view: the account's own view (GET also carries the contact text of the Help page). It changes what the display shows, never what the server allows. */
 export const meRoutes: Route = async (ctx, req, res, seg, method, user) => {
+  if (seg[0] === "account" && seg[1] === "metrics-sharing" && seg.length === 2) return metricsSharingRoute(ctx, req, res, method, user);
   if (seg[0] !== "me" || seg[1] !== "view" || seg.length !== 2) return false;
   if (method === "GET") return send(res, 200, { ...viewFields(user), helpContact: ctx.config().simple.help_contact ?? "" }), true;
   if (method !== "PUT") return false;

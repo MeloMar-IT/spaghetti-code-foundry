@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
 import { keepScroll, liveStates, poller } from "./live.js";
+import { mountSharingAsk } from "./metrics-sharing.js";
 import { whereTarget } from "./next.js";
 // This module, ./today.js and ./simple-model.js import each other: none of them uses another at the top level, only inside functions.
 import { greeting, todayModel, todayView } from "./today.js";
@@ -46,6 +47,9 @@ export function homeView(model) {
 export async function renderHome(main, { a = api, setup = false } = {}) {
   const box = h("div", { class: "home" });
   mount(main, box);
+  // the sharing question (#887): made once per page, so the 30-second refresh does not ask the server again
+  const ask = h("div", { class: "today-ask-slot" });
+  const stopAsk = mountSharingAsk(ask, { a });
   let poll;
   const states = liveStates({
     body: box,
@@ -65,11 +69,14 @@ export async function renderHome(main, { a = api, setup = false } = {}) {
     draw: ({ runs, pending, mine }) => {
       const [head, ...rest] = homeView(todayModel(runs, pending, { role: "user", mine }));
       const more = setup ? h("p", { class: "muted" }, h("a", { href: "#/setup" }, "Setup check"), " — what this computer still needs") : null;
-      keepScroll(box, () => mount(box, head, states.alert, ...rest, more, states.note));
+      keepScroll(box, () => mount(box, ask, head, states.alert, ...rest, more, states.note));
     },
     every: REFRESH_MS,
     onState: states.onState,
   });
   await poll.ready;
-  return () => poll.stop();
+  return () => {
+    stopAsk();
+    poll.stop();
+  };
 }

@@ -2114,6 +2114,16 @@ The audit lines of a save come from the diff of the parsed configs before and af
 
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
 
+### Sharing answer (#887)
+
+Each person account has `metricsSharing: { answer, changed }` in `users.json`; no field means `unasked`, and
+a service account never has one (the file fails to load if it does). `setMetricsSharing` (`users.ts`) opens the
+audit log before it writes and adds one `settings-change` line; the same answer writes nothing. The admin
+setting `metrics_sharing.allowed` is audited like the other settings, but a save of it fails when the log
+cannot be written (`api-admin.ts`). `sharingAnswer` and `sharingAccounts()` (`metrics-share/sources.ts`) are
+the only readers: sharing off or an unreadable `config.yaml` means no account counts. The UI keeps one store
+(`ui/metrics-sharing.js`) for the Today item and the Account settings switch.
+
 ### Shared metrics (#893)
 
 `src/metrics-share/` builds the daily report that a later part of #886 may share. Today only

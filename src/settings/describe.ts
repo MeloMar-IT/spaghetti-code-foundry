@@ -144,7 +144,7 @@ export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
   if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns" || key === "governance.owner" || key.startsWith("skills.releases.auto_key.")) return false;
   if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "simple_project_daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
-  return ["limits.", "monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry.", "simple."].some((p) => key.startsWith(p));
+  return ["limits.", "monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry.", "simple.", "metrics_sharing."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -183,6 +183,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "simple.help_contact": G("Help contact", "Who people in the Simple view can ask, shown as plain text on their Help page, for example a name and an e-mail address; empty hides the line."),
   "simple.hidden_starters": G("Hidden starters", "Ids of built-in starters that are not offered for a new project, where an own starter of yours is always offered and an empty list offers all."),
   "simple.projects_folder": G("Projects folder", "An absolute path outside the Foundry data folder where new projects from a starter are made; not set means scf-projects in the home folder of the person who runs the Foundry."),
+  "metrics_sharing.allowed": G("Ask to share metrics", "Whether each account is asked once to share the numbers-only metrics of its runs and can change it in Account settings; off, nobody is asked, nothing is sent, and the answers given are kept."),
   "help.enabled": G("Ask Foundry", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask Foundry", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),

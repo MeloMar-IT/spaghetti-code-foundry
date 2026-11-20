@@ -1,6 +1,8 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
-import { auditActions } from "../auth/audit.js";
-import { changeDetail, configChanges } from "../auth/audit-changes.js";
+import { auditActions, prepareAuditLocked, type PreparedAudit } from "../auth/audit.js";
+import { changeDetail, configChanges, type SettingChange } from "../auth/audit-changes.js";
+import { StoreError, withAuthLock } from "../auth/store.js";
+import { basename } from "node:path";
 import { emptyRegistry, pluginsView, readFilePlugins } from "../plugins/load.js";
 import { pluginSettingsProblem, settingSections, uiView } from "../plugins/ui.js";
 import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredServices, withStoredWebhook } from "./config-view.js";
@@ -37,6 +39,42 @@ function fileSnapshot(text: string): Config | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Settings whose change must be in the audit log: without a log that can be written, config.yaml is not changed. */
+const AUDIT_REQUIRED = new Set(["metrics_sharing.allowed"]);
+export const AUDIT_REQUIRED_FAILED = "the settings were not saved: the audit log cannot be written; see the server log";
+
+/**
+ * Writes config.yaml. For a change of a setting in AUDIT_REQUIRED, the audit lines are prepared under the auth lock before
+ * the file is written (fail closed) and added after it. Returns the details of the other changes, for the best-effort log.
+ */
+function writeConfig(ctx: Parameters<Route>[0], by: string, text: string, changes: SettingChange[]): string[] {
+  const required = changes.filter((c) => AUDIT_REQUIRED.has(c.path)).map((c) => changeDetail(c));
+  const write = () => {
+    mkdirSync(dirname(CONFIG_PATH()), { recursive: true });
+    writeFileSync(CONFIG_PATH(), text);
+  };
+  if (!required.length) {
+    write();
+    return changes.map((c) => changeDetail(c));
+  }
+  try {
+    withAuthLock(() => {
+      const logs: PreparedAudit[] = [];
+      try {
+        for (const detail of required) logs.push(prepareAuditLocked(by, { action: "settings-change", result: "ok", target: "config.yaml", detail }));
+        write();
+        for (const log of logs) log.write();
+      } finally {
+        for (const log of logs) log.close();
+      }
+    });
+  } catch (e) {
+    ctx.diagLog?.(e instanceof StoreError ? `audit: ${basename(e.file)} ${e.kind} (settings-change)` : "audit: audit.jsonl not-valid (settings-change)");
+    throw new HttpError(500, AUDIT_REQUIRED_FAILED);
+  }
+  return changes.filter((c) => !AUDIT_REQUIRED.has(c.path)).map((c) => changeDetail(c));
 }
 
 /** A plugin setting that PUT /api/config refuses: the dotted key path and the reason. */
@@ -106,11 +144,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     }
     const removed = out.text !== text;
     if (removed) {
-      mkdirSync(dirname(CONFIG_PATH()), { recursive: true });
-      writeFileSync(CONFIG_PATH(), out.text);
+      const changes = configChanges(before, out.config);
+      const details = writeConfig(ctx, user.id, out.text, changes);
       // An effective value that stays the same (a stored default) is not a change, so the removal itself is logged.
-      const details = configChanges(before, out.config).map((c) => changeDetail(c));
-      auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", details.length ? details : [`${key}: removed from config.yaml`]);
+      auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", changes.length ? details : [`${key}: removed from config.yaml`]);
       ctx.reloadConfig();
       watchers.sync();
     }
@@ -180,10 +217,6 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         const edited = editConfigText(text, toWrite);
         out = edited;
         saved = edited.config;
-        if (edited.text !== text) {
-          mkdirSync(dirname(CONFIG_PATH()), { recursive: true });
-          writeFileSync(CONFIG_PATH(), edited.text);
-        }
       } catch (e) {
         if (e instanceof PluginSettingsIssue) {
           throw new HttpError(400, `invalid config: ${e.path}: ${e.message}`, undefined, { issues: [{ path: e.path, message: e.message }] });
@@ -191,7 +224,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         const issues = configIssues(e);
         throw new HttpError(400, `invalid config: ${(e as Error).message}`, undefined, issues ? { issues } : undefined);
       }
-      auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", configChanges(before, saved).map((c) => changeDetail(c)));
+      const changes = configChanges(before, saved);
+      // still no await since the version check: two saves cannot interleave
+      const details = out.text !== text ? writeConfig(ctx, user.id, out.text, changes) : changes.map((c) => changeDetail(c));
+      auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", details);
       ctx.reloadConfig();
       watchers.sync();
       res.setHeader("x-config-version", configVersion(out.text));

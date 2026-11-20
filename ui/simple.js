@@ -2,6 +2,7 @@ import { api, keepPage } from "./api.js";
 import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
+import { mountSharingAsk } from "./metrics-sharing.js";
 import { changeRepoOf, changesOf } from "./simple-change-model.js";
 import { homeModel, projectsModel } from "./simple-model.js";
 import { currentLook, homeLayout } from "./simple-home.js";
@@ -379,7 +380,10 @@ export async function renderSimpleHelp(main, { a = api } = {}) {
  */
 export function renderSimpleHome(main, { a = api, openGuide, alive = () => true, list = "", look = currentLook } = {}) {
   let first = true;
-  return live(main, {
+  // the sharing question (#887): one slot for the whole page, above Today; the cleanup disposes it
+  const ask = h("div", { class: "today-ask-slot" });
+  const stopAsk = mountSharingAsk(ask, { a });
+  const done = live(main, {
     a,
     // the current project of the home reads its newest safe point
     safeFor: ({ repos, runs, pending }) => homeModel(runs, pending, repos, projectsModel(repos, runs, pending)).project?.id ?? null,
@@ -398,9 +402,19 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true,
       // Today first, drawn by the layout of the person's look (work of the person's projects only), then My projects.
       // A counter opens `list` on this page.
       const model = homeModel(runs, pending, repos, projects, { list, safe, mine: mineItems });
-      return [...homeLayout(model, look(), { focus: "simple-today" }), ...projectsView(projects)];
+      return [ask, ...homeLayout(model, look(), { focus: "simple-today" }), ...projectsView(projects)];
     },
   });
+  return done.then(
+    (stop) => () => {
+      stopAsk();
+      stop();
+    },
+    (e) => {
+      stopAsk();
+      throw e;
+    },
+  );
 }
 
 /** The project page for repository `id`. */
