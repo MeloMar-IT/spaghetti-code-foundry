@@ -11,6 +11,8 @@ import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock
  * data-folder move leaves it alone). The file is only appended; a reader skips lines that do not parse. A line never
  * holds a password, hash, token, key, name or e-mail. Lines also record actions made in the web interface; they never
  * hold a note or task text; the exception is a governance reason (autonomy-*), which is short free text with no credential. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
+ * A `service-line` detail holds text a service account wrote itself (#884): it is the program's claim, checked only for its
+ * shape, and never a token.
  */
 export const auditPath = () => join(dataHome(), "audit.jsonl");
 
@@ -63,6 +65,8 @@ export const EVENT_ACTIONS = [
   "skill-auto-update",
   "safe-point-restore",
   "service-request",
+  "service-line",
+  "service-line-dropped",
   "service-token-rotate",
   "service-token-revoke",
 ] as const;

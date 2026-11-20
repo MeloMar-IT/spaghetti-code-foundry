@@ -182,6 +182,7 @@ export const RULES: Rule[] = [
   r("POST", "skills/lifecycle/allow-run", "no", "let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards"),
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
+  r("POST", "audit/service-line", "no", "for a service account only (a person, also an admin, gets 403): write one line of its own into the audit log (`event`, `result` ok, refused or failed, optional `code` and `detail` of at most 300 characters), with its client label and the person it acts for; the text is the program's claim; at most 120 lines a minute (429 with Retry-After); granted only by its own key"),
   r("GET", "repos", "yes", "your repositories, each with its autonomy level"),
   r("GET", "repos/methods", "yes", "the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App"),
   r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`)"),
