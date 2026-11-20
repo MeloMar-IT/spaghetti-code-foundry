@@ -234,7 +234,7 @@ describe("a service is not a person", () => {
 
 describe("the scope", () => {
   it("never grants credentials, users, settings, autonomy, self-update, plugins or the audit export", () => {
-    for (const path of ["credentials", "credentials/:id", "admin/credentials", "users", "users/:id/link", "service-accounts", "service-accounts/:id/rotate", "admin/view-as", "password", "config", "settings", "settings/reset", "restart", "onboarding/agents", "admin/repos/:id/settings", "repos/:id/publish-remote", "autonomy", "autonomy/promote", "self-update", "self-update/apply", "plugins", "plugins/ui", "audit/export"]) {
+    for (const path of ["credentials", "credentials/:id", "admin/credentials", "users", "users/:id/link", "service-accounts", "service-accounts/:id/rotate", "admin/view-as", "password", "config", "settings", "settings/reset", "restart", "onboarding/agents", "admin/repos/:id/settings", "repos/:id/publish-remote", "autonomy", "autonomy/promote", "self-update", "self-update/apply", "plugins", "plugins/ui", "audit/export", "account/metrics-sharing"]) {
       expect(neverGranted(path), path).toBe(true);
     }
     for (const path of ["audit", "runs", "runs/:id", "health", "help/usage", "repos", "users-x"]) expect(neverGranted(path), path).toBe(false);

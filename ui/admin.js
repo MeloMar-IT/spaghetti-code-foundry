@@ -9,6 +9,7 @@ import { componentsPanel } from "./admin-components.js";
 import { pluginsPanel } from "./admin-plugins.js";
 import { pluginSettingCards } from "./plugins.js";
 import { loadingState } from "./states.js";
+import { refreshSharing } from "./metrics-sharing.js";
 import { settingsPage } from "./templates.js";
 
 const num = (el) => (el.value.trim() === "" ? undefined : Number(el.value));
@@ -159,15 +160,16 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const gateCard = generatedSection("Promotion gate", "governance.", c, described, { section, readOnly });
   const retryCard = generatedSection("Retries", "auto_retry.", c, described, { section, readOnly });
   const limitsCard = generatedSection("Spending limits", "limits.", c, described, { section, readOnly });
+  const sharingCard = generatedSection("Metrics sharing", "metrics_sharing.", c, described, { section, readOnly });
   // one card per settings section a plugin registered; none without plugins
   const pluginCards = pluginSettingCards(c, s?.plugins, { section, readOnly });
   // the hand-built controls and the current controls of the described cards (those are drawn again when their message changes)
-  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...simpleCard.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs(), ...governorCard.inputs(), ...gateCard.inputs(), ...retryCard.inputs(), ...limitsCard.inputs(), ...pluginCards.inputs() });
+  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...simpleCard.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs(), ...governorCard.inputs(), ...gateCard.inputs(), ...retryCard.inputs(), ...limitsCard.inputs(), ...sharingCard.inputs(), ...pluginCards.inputs() });
   const QUOTED = new Set(["name", "email", "repo", "command", "pass"]);
   const SETTINGS_PAIRS = Object.keys(fieldsNow()).map((k) => [new RegExp(QUOTED.has(k) ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
-    const bad = extra.check() ?? askScf.check() ?? simpleCard.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check() ?? governorCard.check() ?? gateCard.check() ?? retryCard.check() ?? limitsCard.check() ?? pluginCards.check();
+    const bad = extra.check() ?? askScf.check() ?? simpleCard.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check() ?? governorCard.check() ?? gateCard.check() ?? retryCard.check() ?? limitsCard.check() ?? sharingCard.check() ?? pluginCards.check();
     if (bad) {
       mount(err);
       saveNote.setAttribute("class", "status bad");
@@ -213,6 +215,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       governance: gateCard.values(),
       auto_retry: retryCard.values(),
       limits: limitsCard.values(),
+      metrics_sharing: sharingCard.values(),
       ...(pluginCards.active ? { plugin_settings: pluginCards.value() } : {}),
       isolate_agents: v.isolate_agents,
       failure_summary: v.failure_summary,
@@ -248,7 +251,9 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       gateCard.restore();
       retryCard.restore();
       limitsCard.restore();
+      sharingCard.restore();
       pluginCards.restore();
+      void refreshSharing(); // the Account settings button and the Today item follow the new value
       saveNote.setAttribute("class", "status ok");
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
@@ -275,6 +280,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       gateCard.restore();
       retryCard.restore();
       limitsCard.restore();
+      sharingCard.restore();
       pluginCards.restore();
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");
@@ -355,6 +361,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     promotionPanel({ readOnly }),
     ...(retryCard.card ? [retryCard.card] : []),
     ...(limitsCard.card ? [limitsCard.card] : []),
+    ...(sharingCard.card ? [sharingCard.card] : []),
     ...pluginCards.cards,
     componentsPanel(),
     pluginsPanel(),

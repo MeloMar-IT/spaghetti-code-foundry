@@ -920,6 +920,8 @@ export const ConfigSchema = z
       .prefault({}),
     /** Lifecycle telemetry: one value-free event per line in <data folder>/telemetry/events-YYYY-MM-DD.jsonl (the UTC day). */
     telemetry: TelemetrySchema.prefault({}),
+    /** Shared metrics (#887): whether each person account is asked once to share the numbers-only metrics of its runs. Off, nobody is asked or counted; the answers stay. */
+    metrics_sharing: z.object({ allowed: z.boolean().default(true) }).strict().prefault({}),
     /** What a run is given as context: the limits and the privacy of its sources (read from #696 part 2 on). */
     context: ContextSettingsSchema.prefault({}),
     /** Prices (USD per million tokens) by model name, for the usage events and the cost of Codex steps. They win over the built-in table. */

@@ -40,6 +40,8 @@ export const API_ONLY: Record<string, string> = {
   "PUT admin/repos/:id/workspace": "puts a repository in a workspace (#816); only the API for now, a command is a follow-up with the other parts of #784",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",
+  "GET account/metrics-sharing": "the own answer to sharing the metrics of one's runs (#887); asked on Today and changed in Account settings of the web interface",
+  "PUT account/metrics-sharing": "sets that answer; done on Today or in Account settings",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask Foundry drawer: it opens a page, runs a read-only check, or previews an action Ask Foundry proposed (#568); the command line has none of these",
   "POST help/conversations/:id/actions/confirm": "the confirmation of an action Ask Foundry proposed; done in the Ask Foundry drawer (#568), not from the command line",
   "POST help/conversations/:id/actions/cancel": "the dropped token of an action Ask Foundry proposed; done in the Ask Foundry drawer (#568), not from the command line",

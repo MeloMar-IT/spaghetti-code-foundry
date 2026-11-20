@@ -238,6 +238,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST password": { path: "password", body: {}, user: 400, admin: 400 },
   "GET me/view": { path: "me/view", user: 200, admin: 200 },
   "PUT me/view": { path: "me/view", body: {}, user: 400, admin: 400 },
+  "GET account/metrics-sharing": { path: "account/metrics-sharing", user: 200, admin: 200 },
+  "PUT account/metrics-sharing": { path: "account/metrics-sharing", body: {}, user: 400, admin: 400 },
   "DELETE users/:id": no(`users/${UNKNOWN}`, 404),
   "GET service-accounts": no("service-accounts", 200),
   "POST service-accounts": no("service-accounts", 400, {}),

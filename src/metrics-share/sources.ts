@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { isService } from "../auth/service-accounts.js";
-import { listUsers } from "../auth/users.js";
+import { listUsers, sharingAnswer } from "../auth/users.js";
 import { loadConfig } from "../config.js";
 import { DECIDED_FILE, readDecidedQuestions, type DecidedRound } from "../engine/questions.js";
 import { listRunBriefsAsync, loadRunAsync, type RunBrief, type RunSummary, type StepRecord } from "../engine/state.js";
@@ -104,9 +104,13 @@ export function defaultShareDeps(runsDir: string): ShareDeps {
   };
 }
 
-/** The accounts that share. Until #887 stores the answers: every account that is not a service account. */
-export function sharingAccounts(): string[] {
-  return listUsers().filter((u) => !isService(u)).map((u) => u.id);
+/** Whether an admin allows metrics sharing; a config.yaml that cannot be read counts as not allowed. */
+const readAllowed = (): boolean => safely(() => loadConfig().metrics_sharing.allowed, false);
+
+/** The accounts that share: the person accounts that said yes (#887). None while an admin does not allow sharing. */
+export function sharingAccounts(allowed: boolean = readAllowed()): string[] {
+  if (!allowed) return [];
+  return listUsers().filter((u) => !isService(u) && sharingAnswer(u) === "yes").map((u) => u.id);
 }
 
 /** A copy of run.json with only what the report needs: no task, no step output, no paths, no answers. */

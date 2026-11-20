@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy — Spaghetti Code Foundry</title>
+  <script src="/prefs-boot.js"></script>
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/looks.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main id="main" class="statement">
+    <h1>Privacy</h1>
+    <p><a href="/">Back to Spaghetti Code Foundry</a></p>
+    <h2 id="shared-metrics">Shared metrics</h2>
+    <p>Each account is asked once, on Today, whether the metrics of its runs may be shared. You can change your answer at any time: open the account menu, then Account settings.</p>
+    <p>What is shared: numbers only, once a day. How many runs started, finished and failed, how long they took, the tokens and cost, the names of built-in flows, steps and models, the install id, the Foundry version and the day.</p>
+    <p>What is never shared: your code, tasks, step output, the text of a change, names of people, e-mail addresses, repository names, branch names or paths.</p>
+    <p>Only the runs of accounts that said yes count. Service accounts are never asked and never count.</p>
+    <p>An admin can switch sharing off for the whole install in Settings, under Metrics sharing. Then nobody is asked, nothing is sent, and the answers given are kept for when it is switched on again.</p>
+    <h2 id="preview">See what would be shared</h2>
+    <p>On the computer that runs the Foundry, the command <code>scf metrics preview</code> prints the report of one day exactly as it would be shared. It sends nothing.</p>
+  </main>
+</body>
+</html>
