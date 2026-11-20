@@ -102,6 +102,7 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
+  scf metrics preview [--day YYYY-MM-DD]         Print the numbers-only shared metrics report of a day (default yesterday); nothing is sent
   scf components [kind]                          Print the version, SHA-256 and governance of each flow, policy pack, tool profile, model route set and context selector
   scf components record [kind]                   Give new hashes of tool profiles, model routes and context selectors a version
   scf promote <kind> <id> [--live]               Check that the newest safety reports allow promoting a component (read-only; exit 1 when blocked)
@@ -294,6 +295,7 @@ async function main(argv: string[]): Promise<number> {
       json: { type: "boolean" },
       simple: { type: "boolean" },
       need: { type: "string", multiple: true },
+      day: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -686,6 +688,16 @@ async function main(argv: string[]): Promise<number> {
     case "monitor": {
       const { monitorCommand } = await import("./monitor/cli.js");
       return monitorCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "metrics": {
+      const { metricsCommand } = await import("./metrics-share/cli.js");
+      return metricsCommand(
+        positionals.slice(1),
+        { ...(values.day !== undefined ? { day: values.day } : {}), runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")) },
+        (line) => void process.stdout.write(line + "\n"),
+        (line) => void process.stderr.write(line + "\n"),
+      );
     }
 
     case "promote": {

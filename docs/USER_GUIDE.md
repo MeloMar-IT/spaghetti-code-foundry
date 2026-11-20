@@ -8623,6 +8623,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf run <flow> --task "…" [--var k=v] [--repo dir\|owner/name] [--ref ref]` | Run a flow. `--repo owner/name` is for flows that clone the repository themselves (`release-build`); `--ref` sets the variable `ref` |
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
+| `scf metrics preview [--day YYYY-MM-DD]` | Print the numbers-only shared metrics report of one UTC day (default yesterday) as JSON. It covers only the runs of accounts that are not service accounts. Nothing is sent; a note on stderr says so |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf autonomy status [--json]` | Print the autonomy level of each repository and flow and its promotion gate, check by check; read-only; needs a running, signed-in server (admin) ([Promotion gate](#promotion-gate)) |
