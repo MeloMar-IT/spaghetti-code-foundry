@@ -152,12 +152,13 @@ function approvalSteps(run: RunSummary): Set<string> {
   return new Set(steps.flatMap((s) => (s && typeof s === "object" && (s as { type?: unknown }).type === "approval" && typeof (s as { id?: unknown }).id === "string" ? [(s as { id: string }).id] : [])));
 }
 
-function approvalMeasures(run: RunSummary, events: readonly EvidenceEvent[]): NonNullable<RunMeasures["approvals"]> {
+/** The wait of every decided approval of the run, in order (ms), and how many were cancelled while waiting. */
+function approvalWaits(run: RunSummary, events: readonly EvidenceEvent[]): { waits: number[]; cancelled: number } {
   const started = new Map<string, string>();
   // The engine writes the approval's `step.started` only when it consumes the decision, so the real wait begins
   // where the run stopped at that step (`run.stopped` with `at`). Without such a stop, `step.started` is the start.
   const waitingSince = new Map<string, string>();
-  const a = { decided: 0, totalMs: 0, maxMs: 0, cancelled: 0 };
+  const a = { waits: [] as number[], cancelled: 0 };
   const waits = approvalSteps(run);
   events.forEach((e, i) => {
     if (e.type === "step.started" && e.step.type === "approval") started.set(keyOf(e.step), e.time);
@@ -167,11 +168,7 @@ function approvalMeasures(run: RunSummary, events: readonly EvidenceEvent[]): No
       const t = ms(waitingSince.get(decidedStep.id) ?? started.get(keyOf(decidedStep)), e.time);
       waitingSince.delete(decidedStep.id);
       started.delete(keyOf(decidedStep));
-      if (t !== undefined) {
-        a.decided++;
-        a.totalMs += t;
-        a.maxMs = Math.max(a.maxMs, t);
-      }
+      if (t !== undefined) a.waits.push(t);
     }
     // Stopped at an approval step and then cancelled, with no resume in between.
     if (e.type === "run.stopped" && e.at && waits.has(e.at)) {
@@ -180,6 +177,20 @@ function approvalMeasures(run: RunSummary, events: readonly EvidenceEvent[]): No
     }
   });
   return a;
+}
+
+function approvalMeasures(run: RunSummary, events: readonly EvidenceEvent[]): NonNullable<RunMeasures["approvals"]> {
+  const { waits, cancelled } = approvalWaits(run, events);
+  return { decided: waits.length, totalMs: waits.reduce((x, y) => x + y, 0), maxMs: Math.max(0, ...waits), cancelled };
+}
+
+/** The wait (ms) of each decided approval of a run, one per decision, in order. Empty when there is none. Never throws. */
+export function approvalWaitsMs(run: RunSummary, events: readonly EvidenceEvent[]): number[] {
+  try {
+    return approvalWaits(run, events.filter((e) => e && typeof e === "object")).waits;
+  } catch {
+    return [];
+  }
 }
 
 /**

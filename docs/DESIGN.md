@@ -2114,6 +2114,29 @@ The audit lines of a save come from the diff of the parsed configs before and af
 
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
 
+### Shared metrics (#893)
+
+`src/metrics-share/` builds the daily report that a later part of #886 may share. Today only
+`scf metrics preview` uses it, and nothing is sent.
+
+- **Pure builder.** `shareReportFrom` (`build.ts`) turns the inputs into a report and reads no files.
+  `buildShareReport(day, accountIds, deps)` (`sources.ts`) reads the runs, the outcome measures
+  (`src/outcomes.ts`, `issueToPrTimes`), the `issue.split` usage events and the watcher sources
+  (`config.yaml` and `repo-watchers.json`, a `config.yaml` id wins). Each run is reduced on its own to a few
+  facts; the trimmed `run.json` copy holds no task, step output, paths or answers.
+- **Schema.** `report.ts` has a zod schema with `.strict()` on every object and a `version`. It has no free
+  text. Flow, step and model names are kept only from fixed lists (built-in flows and steps, known models);
+  anything else is `custom`, and a step with no model is `default`. A test checks the lists against
+  `flows/*.yaml`, the price table and the watcher sources.
+- **Owner rule.** Only runs owned by the given accounts count. A run without an owner, a refinement run and a
+  local test never count. Runs started count by start time; splits and question stops by their own time.
+- **Absent versus zero.** A measure with no source is left out of the report. A `0` means the evidence was
+  readable and recorded none.
+- **Evidence limits.** Evidence files are read with a size limit and never through a link. An oversized,
+  linked or unreadable file adds nothing.
+- **Install id.** Placeholder (32 zeros, `NO_INSTALL`) until #889 adds the stored random 128-bit id in the
+  data folder (mode 0600).
+
 ---
 
 ## 14. The server and its restarts
