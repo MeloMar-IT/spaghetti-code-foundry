@@ -7,9 +7,9 @@ import type { RepoAccess } from "../src/auth/repos.js";
 import { ConfigSchema } from "../src/config.js";
 import { RunPolicy } from "../src/engine/policy-hooks.js";
 import {
-  REF_FETCH_FAILED, REF_NO_ACCESS, REF_NO_SANDBOX, REF_PRIVATE, checkedReferences, clearVisibilityCache, githubVisibility, prepareReferences, referencePrompt, removeReferences, targetVisibility, type ReferenceDeps,
+  REF_FETCH_FAILED, REF_NO_ACCESS, REF_NO_SANDBOX, REF_PRIVATE, checkedReferences, clearVisibilityCache, githubVisibility, newestBatch, prepareReferences, referenceHold, referencePrompt, removeReferences, targetVisibility, type ReferenceDeps,
 } from "../src/engine/reference-repos.js";
-import type { RunSummary } from "../src/engine/state.js";
+import type { ReferenceHold, RunSummary } from "../src/engine/state.js";
 import { parsePolicyPack } from "../src/policy/parse.js";
 
 const root = process.getuid?.() === 0;
@@ -63,9 +63,9 @@ const deps = (over: ReferenceDeps = {}): ReferenceDeps => ({
   now: () => new Date("2026-11-15T10:00:00.000Z"),
   ...over,
 });
-const prepare = async (s: RunSummary, d: ReferenceDeps = deps(), policy?: Pick<RunPolicy, "at">, sandboxed = true) => {
+const prepare = async (s: RunSummary, d: ReferenceDeps = deps(), policy?: Pick<RunPolicy, "at">, hold: ReferenceHold | "none" = "sandbox") => {
   const lines: string[] = [];
-  await prepareReferences(s, config, { log: (l) => void lines.push(l), policy, sandboxed }, d);
+  await prepareReferences(s, config, { log: (l) => void lines.push(l), policy, hold: hold === "none" ? undefined : hold }, d);
   return lines;
 };
 const fails = (cmd: string, args: string[], cwd: string) => spawnSync(cmd, args, { cwd, stdio: "pipe" }).status !== 0;
@@ -76,8 +76,8 @@ describe("prepareReferences", { timeout: 30_000 }, () => {
     const lines = await prepare(s);
     const dir = join(runDir, "reference", "acme-lib");
     expect(readFileSync(join(dir, "ROUTES.md"), "utf8")).toBe("GET /v1/items\n");
-    expect(s.references).toEqual([{ repo: "Acme/Lib", at: "2026-11-15T10:00:00.000Z", ok: true, commit: head, folder: "reference/acme-lib" }]);
-    expect(lines).toEqual([`· reference Acme/Lib: commit ${head.slice(0, 12)} (read only, reference/acme-lib in the run folder)`]);
+    expect(s.references).toEqual([{ repo: "Acme/Lib", at: "2026-11-15T10:00:00.000Z", ok: true, commit: head, folder: "reference/acme-lib", held: "sandbox" }]);
+    expect(lines).toEqual([`· reference Acme/Lib: commit ${head.slice(0, 12)} (read only, reference/acme-lib in the run folder; held: sandbox)`]);
     expect(git(dir, "remote").trim()).toBe("");
     if (root) return; // root ignores file modes
     expect(() => writeFileSync(join(dir, "ROUTES.md"), "changed")).toThrow();
@@ -88,10 +88,30 @@ describe("prepareReferences", { timeout: 30_000 }, () => {
     expect(git(dir, "rev-parse", "HEAD").trim()).toBe(head);
   });
 
+  it("holds a copy by file modes in an admin's run without the sandbox, and says so", async () => {
+    const s = summary({ repos: ["acme/lib"] });
+    const lines = await prepare(s, deps(), undefined, "file modes");
+    expect(s.references![0]).toMatchObject({ ok: true, commit: head, held: "file modes" });
+    expect(lines[0]).toMatch(/; held: file modes\)$/);
+    if (!root) expect(() => writeFileSync(join(runDir, "reference", "acme-lib", "ROUTES.md"), "x")).toThrow();
+  });
+
+  it("referenceHold: the sandbox, or file modes for an admin only; a failed lookup counts as a user", () => {
+    expect(referenceHold("on", "u1", (o) => o)).toBe("sandbox");
+    expect(referenceHold("off", "a1", () => undefined)).toBe("file modes");
+    expect(referenceHold("off", "u1", (o) => o)).toBeUndefined();
+  });
+
+  it("newestBatch: only the newest preparation, with valid names", () => {
+    const rec = (repo: string, at: string) => ({ repo, at, ok: false });
+    expect(newestBatch({ references: [rec("a/b", "1"), rec("a/c", "2"), rec("bad", "2")] }).map((r) => r.repo)).toEqual(["a/c"]);
+    expect(newestBatch({})).toEqual([]);
+  });
+
   it("makes no copy in a run without the OS sandbox: each reference is skipped with that reason, and no folder is made", async () => {
     let cloned = 0;
     const s = summary({ repos: ["acme/lib", "acme/api"] });
-    const lines = await prepare(s, deps({ clone: async () => (cloned++, { ok: false, reason: "checkout-failed", detail: "x" }) }), undefined, false);
+    const lines = await prepare(s, deps({ clone: async () => (cloned++, { ok: false, reason: "checkout-failed", detail: "x" }) }), undefined, "none");
     expect(cloned).toBe(0);
     expect(existsSync(join(runDir, "reference"))).toBe(false);
     expect(s.references!.map((r) => [r.repo, r.ok, r.reason])).toEqual([

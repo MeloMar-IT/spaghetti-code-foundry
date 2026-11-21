@@ -47,7 +47,7 @@ import { endCheckRound, recordPlanChecks } from "./plan-checks.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
-import { checkedReferences, prepareReferences, removeReferences } from "./reference-repos.js";
+import { checkedReferences, prepareReferences, referenceHold, removeReferences } from "./reference-repos.js";
 import type { Actor } from "../evidence/identity.js";
 import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
 import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
@@ -591,7 +591,7 @@ async function drive(
   }
   // the read-only copies of the reference repositories (#878), made again at every start and resume
   if (summary.referenceRepos) {
-    await prepareReferences(summary, config, { log, policy, signal: opts.signal, sandboxed: sandbox === "on" });
+    await prepareReferences(summary, config, { log, policy, signal: opts.signal, hold: referenceHold(sandbox === "on" ? "on" : "off", summary.owner) });
     save();
   }
   sweepRunning(opts.runsDir);
