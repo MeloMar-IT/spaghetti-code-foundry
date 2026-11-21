@@ -284,3 +284,116 @@ describe("baseline-tests purge", () => {
     expect(existsSync(join(work, "TEST-x.xml"))).toBe(false);
   });
 });
+
+describe("baseline-tests red: ## Build to fix", () => {
+  const BUILD_STATE = { version: 1, named: [], failing: [], passed: [], build: true };
+  const GOING_ON = "BASELINE: going on — this issue fixes the build";
+
+  it("goes on with no reports", () => {
+    body("## Build to fix\nIt does not compile.");
+    const r = red();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(GOING_ON);
+    expect(state()).toEqual(BUILD_STATE);
+    expect(readFileSync(join(runDir, "baseline-note.md"), "utf8")).toMatch(/### Tests before the change[\s\S]*fixes the build/);
+    expect(readFileSync(join(runDir, "baseline-verdict.txt"), "utf8")).toContain(GOING_ON);
+  });
+
+  it("goes on with failures that no test case names", () => {
+    writeFileSync(join(work, "TEST-u.xml"), '<testsuite failures="1"><testcase><failure/></testcase></testsuite>');
+    body("## Build to fix\n");
+    expect(red().status).toBe(0);
+    expect(state()).toEqual(BUILD_STATE);
+  });
+
+  it("goes on when named and unnamed failures are mixed (the build exception comes first)", () => {
+    writeFileSync(join(work, "TEST-m.xml"), '<testsuite failures="2"><testcase classname="a.B" name="c"><failure/></testcase></testsuite>');
+    body("## Build to fix\n");
+    expect(red().status).toBe(0);
+    expect(state()).toEqual(BUILD_STATE);
+  });
+
+  it("goes on when the reports name no failing test", () => {
+    report(BASE.map((c) => ({ ...c, fail: false })));
+    body("## Build to fix\n");
+    expect(red().status).toBe(0);
+    expect(state()).toEqual(BUILD_STATE);
+  });
+
+  it("accepts other levels, cases, a colon and CRLF, and rejects other text", () => {
+    body("### BUILD TO FIX:\r\n");
+    expect(red().status).toBe(0);
+    rmSync(join(runDir, "baseline-red.json"));
+    body("Please fix the build to fix it");
+    const a = red();
+    expect(a.status).toBe(1);
+    expect(a.stdout).toContain("JUnit XML reporter");
+    body("## Build to fix later");
+    expect(red().status).toBe(1);
+    expect(existsSync(join(runDir, "baseline-red.json"))).toBe(false);
+  });
+
+  it("still stops for named failing tests that the issue does not list", () => {
+    report(BASE);
+    body("## Build to fix\n");
+    const r = red();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("the issue names no failing tests to fix");
+    expect(existsSync(join(runDir, "baseline-red.json"))).toBe(false);
+  });
+
+  it("keeps the usual state when the failing tests are listed too", () => {
+    report(BASE);
+    body("## Build to fix\n\n## Failing tests to fix\na.B.c\n");
+    expect(red().status).toBe(0);
+    const s = state();
+    expect(s.named).toEqual(["a.B.c"]);
+    expect(s.build).toBeUndefined();
+  });
+
+  it("without the heading and no reports leaves no state", () => {
+    body("Nothing here");
+    expect(red().status).toBe(1);
+    expect(existsSync(join(runDir, "baseline-red.json"))).toBe(false);
+  });
+});
+
+describe("baseline-tests verify: build fix", () => {
+  beforeEach(() => {
+    body("## Build to fix\n");
+    expect(red().status).toBe(0);
+  });
+
+  it("passes with green fresh reports", () => {
+    report(BASE.map((c) => ({ ...c, fail: false })));
+    const r = verify();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("FIXED TESTS: ok — this issue fixes the build");
+    expect(readFileSync(join(runDir, "baseline-note.md"), "utf8")).toContain("After the change the build and the tests pass");
+  });
+
+  it("passes with no reports at all", () => {
+    expect(verify().status).toBe(0);
+  });
+
+  it("fails when a fresh report shows a failing test", () => {
+    report([{ cls: "a.B", name: "c", fail: true }]);
+    const r = verify();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/tests that fail now:\n {2}- a\.B\.c/);
+  });
+
+  it("fails with failures that no test case names", () => {
+    writeFileSync(join(work, "TEST-u.xml"), '<testsuite failures="1"><testcase><failure/></testcase></testsuite>');
+    const r = verify();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("no test case names");
+  });
+
+  it("leaves an old state without build on its old path", () => {
+    writeFileSync(join(runDir, "baseline-red.json"), JSON.stringify({ version: 1, named: ["a.B.c"], failing: ["a.B.c"], passed: [] }));
+    const r = verify();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("not yet — no JUnit XML reports");
+  });
+});
