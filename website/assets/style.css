@@ -183,3 +183,27 @@ td:first-child { min-width: 9em; }
 /* diagrams (mermaid, drawn in the browser) */
 .diagram { margin: 1.4em 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow-x: auto; text-align: center; }
 .diagram svg { max-width: none; height: auto; }
+
+/* Metrics page */
+.metrics-switch { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.metrics-switch button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+.metrics-switch button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.metrics-state { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.period-note, .section-note { color: var(--muted); font-size: 14px; margin: 4px 0 12px; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 0 0 16px; }
+.metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.metric dt { font-weight: 600; }
+.metric dd { margin: 0; }
+.metric .value { font-size: 24px; font-weight: 700; margin: 4px 0; }
+.metric .value small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+.metric .def { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.metric .excl { display: block; margin-top: 4px; }
+figure.chart { margin: 0 0 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+figure.chart figcaption { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+figure.chart svg { width: 100%; height: auto; display: block; }
+figure.chart .bar { fill: var(--accent); }
+figure.chart .axis { stroke: var(--border); stroke-width: 1; }
+figure.chart .label, figure.chart .value-label { fill: var(--muted); font: 12px var(--font); }
+.chart-table summary { cursor: pointer; font-size: 14px; margin-top: 8px; }
+.chart-table table { border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+.chart-table th, .chart-table td { border-bottom: 1px solid var(--border); padding: 4px 10px; text-align: left; }
