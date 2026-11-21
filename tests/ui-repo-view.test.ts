@@ -67,6 +67,7 @@ beforeEach(() => {
     if (init.method === "GET" && url.endsWith("/preview")) return previewAnswer === "fail" ? reply({ error: "down" }, 500) : reply(previewAnswer);
     if (init.method === "GET" && url.startsWith("/api/outcomes")) return reply({ values: { flows: [] }, definitions: [], measures: [] });
     if (init.method === "GET" && url.endsWith("/ready")) return reply({ items: [{ id: "a", text: "first" }], isDefault: true });
+    if (init.method === "GET" && url.startsWith("/api/flows")) return reply([]);
     if (init.method === "GET") {
       const f = repoGets.shift();
       const g = gates.reposGet;
