@@ -728,6 +728,56 @@ scf run release-build --repo owner/repo             # the default branch (main)
 scf run release-build --repo owner/repo --ref v2.4.0
 ```
 
+### Review a whole repository
+
+`repo-review` reviews a whole repository and files what it confirms as stories the Foundry can build. You write no issues yourself.
+
+```bash
+scf run repo-review --repo owner/name
+scf run repo-review --repo owner/name --var ref=release/2.x --var focus="the login code" --var max_stories=5
+```
+
+What it does, in order (each step shows on the run page):
+
+1. **Clone and check.** It clones the repository into `repo/` and runs the build and the tests. `build_cmd` and `test_cmd` are `auto` by default, which finds the commands from the project files. Failing tests are named from the JUnit reports. The branch is `ref`, else `develop_branch`, else `develop`, else the default branch. The clone has no remote, so the checks cannot push.
+2. **List open issues.** The open issues are read so that a finding already covered by one is not filed again.
+3. **Review.** A read-only agent (it can read and search files, nothing else) answers with findings. It looks for authorization gaps, injection, XSS, CSRF, SSRF, secrets, insecure defaults, data loss, correctness, error handling, missing tests on critical paths and CI that does not build or test. It reports no style nits. `focus` narrows the review.
+4. **Verify.** A second agent session checks each finding end to end. It drops what it cannot confirm and groups the rest into stories. A finding is also dropped when a `file:line` it names does not exist in the clone.
+5. **Plan.** The Foundry orders the stories by severity, caps them at `max_stories` and skips duplicates: a story covered by an open issue, a story with the same title, or a story already filed by this run.
+6. **File.** The missing labels are created first. Each story is one issue with the `labels` (default `Factory_go`) and `bug` or `enhancement`.
+
+**Settings.** Set them with `--var` or in the start form.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ref` | (see above) | The branch to review. A branch that does not exist fails the run. |
+| `develop_branch` | empty | The branch that feature branches are merged into. |
+| `build_cmd`, `test_cmd` | `auto` | The commands for the checks. Empty `build_cmd` means no build. |
+| `focus` | empty | What the review looks at most. Empty means the whole repository. |
+| `max_stories` | 10 | The most stories one review files, from 1 to 50. The most serious come first. |
+| `labels` | `Factory_go` | Labels every story gets, separated by commas. |
+| `summary_issue` | no | Also file the summary as one issue (without the build label). |
+| `verify_timeout_min` | 180 | The time limit of the checks, in minutes (1 to 720). |
+
+**Red base.** When the build or the tests fail, story 1 is **Make it build and test**. It lists the failing tests under `## Failing tests to fix`, or uses `## Build to fix` when no test can be named. Every other story says `### Depends on` with story 1, so the Foundry builds the fix first. The same heading rules apply as in [Stories that fix failing tests](#stories-that-fix-failing-tests).
+
+**Story format.** Each story has a story line, then:
+
+- `## Problem` — what is wrong and why it matters.
+- `## Where it applies` — the code paths.
+- `## Code` — each `file:line` reference, checked against the clone.
+- `## Fix` — what to change.
+- `## Acceptance criteria` — a checklist.
+- `## Only the owner can provide` — only when the fix needs something only you have (a secret, an account, a decision). It says to ask it as an `owner_action`.
+
+Text from the agents is redacted before it is filed: a token-like string is removed from the issue and from the summary. Agent text cannot add headings, `Depends on` lines or mentions to a story.
+
+**Summary.** The summary (the stories filed, the stories skipped with the issue that covers them, and the findings dropped with a reason) is shown on the run page. With `summary_issue=yes` it is also filed as one issue.
+
+**Scheduled runs.** A run that a schedule watcher starts (the `chore_watcher` variable is set) stops at **approve_stories** before anything is filed. The run page shows the list of stories. Approve to file them, or reject to file nothing. A manual start files directly.
+
+**What it never writes.** The review writes only issues and labels. It does not push, open pull requests or change the repository.
+
 ---
 
 ## 3. Follow, approve and resume runs
