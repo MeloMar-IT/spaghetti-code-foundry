@@ -112,9 +112,32 @@ describe("sharingAccounts", () => {
 
 describe("metrics_sharing.allowed", () => {
   it("defaults to true and keeps an old config valid", () => {
-    expect(ConfigSchema.parse({}).metrics_sharing).toEqual({ allowed: true });
+    expect(ConfigSchema.parse({}).metrics_sharing).toEqual({ allowed: true, endpoint: "https://spaghetti-code-foundry.com/api/metrics", timeout_ms: 10000 });
     expect(ConfigSchema.parse({ metrics_sharing: { allowed: false } }).metrics_sharing.allowed).toBe(false);
     expect(ConfigSchema.safeParse({ metrics_sharing: { allowed: "no" } }).success).toBe(false);
     expect(ConfigSchema.safeParse({ metrics_sharing: { other: 1 } }).success).toBe(false);
+  });
+});
+
+describe("metrics_sharing.endpoint and timeout_ms (#889)", () => {
+  const ok = (v: Record<string, unknown>) => ConfigSchema.safeParse({ metrics_sharing: v }).success;
+  it("accepts https, and plain http only for localhost and 127.0.0.1", () => {
+    expect(ok({ endpoint: "https://example.com/api/metrics" })).toBe(true);
+    expect(ok({ endpoint: "http://localhost:1/x" })).toBe(true);
+    expect(ok({ endpoint: "http://127.0.0.1:1/x" })).toBe(true);
+  });
+  it("refuses other addresses", () => {
+    for (const endpoint of ["http://example.com/x", "http://[::1]/x", "http://127.0.0.2/x", "https://u:p@h/x", "https://u@h/x", "https://h/x?a", "https://h/x#a", "ftp://h", "https://h/ x", "not a url", `https://h/${"a".repeat(2050)}`]) {
+      expect(ok({ endpoint }), endpoint).toBe(false);
+    }
+    const r = ConfigSchema.safeParse({ metrics_sharing: { endpoint: "http://example.com/x" } });
+    expect(r.success ? "" : r.error.issues[0]!.message).toMatch(/plain http is allowed only for localhost or 127\.0\.0\.1/);
+  });
+  it("keeps timeout_ms between 1000 and 60000", () => {
+    expect(ok({ timeout_ms: 1000 })).toBe(true);
+    expect(ok({ timeout_ms: 60000 })).toBe(true);
+    expect(ok({ timeout_ms: 999 })).toBe(false);
+    expect(ok({ timeout_ms: 60001 })).toBe(false);
+    expect(ok({ timeout_ms: 1500.5 })).toBe(false);
   });
 });

@@ -2099,6 +2099,8 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `notifications.json` | What was already notified |
 | `feed.json` | The change feed (#868, `version: 1`): the last `seq`, the `floor` below which a cursor gets `reset`, the snapshot of the fingerprints of runs, repositories, change requests and Your-turn items (kind, id, owner, workspace; no detail), and the kept changes. Written with a temporary file and a rename, mode 0600 (`src/server/feed.ts`) |
 | `notices.json` | The notices for programs (#871, `version: 1`): the last `seq`, the `floor` below which a cursor gets `reset`, and the notices of the last 7 days (kind, title, text, item key, run id, link, and `ref`, a sha256 of the source so one thing is never stored twice). Title, text and link are redacted when stored. Written with a temporary file and a rename, mode 0600 (`src/notices.ts`, `src/server/notices.ts`) |
+| `metrics-share.json` | The metrics push (#889, `version: 1`): the random install id, the `endpoint` it was posted to, `activeSince`, `posted`, the day entries (accepted time, tries, next try; newest 7 days), the deletes still to send, and the last answer of the receiver. Written with a temporary file and a rename, mode 0600; a broken file is never overwritten (`src/metrics-share/state.ts`) |
+| `metrics-share.lock` | The lock of the push, held by the server's tick and by `scf metrics send`. Never waited for; a lock not renewed for longer than the timeout plus 60 s is taken over (`withShareLock`) |
 | `help.json` | The Ask Foundry conversations of every account (mode 0600) |
 | `help-stats.json` | The Ask Foundry quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
@@ -2126,8 +2128,8 @@ the only readers: sharing off or an unreadable `config.yaml` means no account co
 
 ### Shared metrics (#893)
 
-`src/metrics-share/` builds the daily report that a later part of #886 may share. Today only
-`scf metrics preview` uses it, and nothing is sent.
+`src/metrics-share/` builds the daily report. The server pushes it (see the push below) and
+`scf metrics preview` prints it; nothing else sends it.
 
 - **Pure builder.** `shareReportFrom` (`build.ts`) turns the inputs into a report and reads no files.
   `buildShareReport(day, accountIds, deps)` (`sources.ts`) reads the runs, the outcome measures
@@ -2144,8 +2146,44 @@ the only readers: sharing off or an unreadable `config.yaml` means no account co
   readable and recorded none.
 - **Evidence limits.** Evidence files are read with a size limit and never through a link. An oversized,
   linked or unreadable file adds nothing.
-- **Install id.** Placeholder (32 zeros, `NO_INSTALL`) until #889 adds the stored random 128-bit id in the
-  data folder (mode 0600).
+- **Install id.** Placeholder (32 zeros, `NO_INSTALL`) while the install has no stored id; the preview uses the
+  stored one (`peekInstall`) once the push has one.
+
+### Push to the receiver (#889)
+
+The server sends the report; nothing connects to the install. Three modules, and one network call.
+
+- **The one call.** `push.ts` uses `node:http`/`node:https` with `agent: false` (no connection reuse). `fetch`
+  is not used because it adds headers of its own. The headers are `User-Agent: spaghetti-code-foundry/<version>`,
+  `Content-Type` (POST only), `Content-Length` and `Connection: close`; no cookie, no redirect. A redirect is
+  an answer, not followed. Of the answer only the status and `retry_after` (an integer from 1 to 86400 in a JSON
+  body of at most 4 KB) are read; a 2xx is final on its status, and the body is not read. The exchange has one
+  timeout, can be aborted, and never rejects. `isShareEndpoint` (`config.ts`) is checked before every request.
+- **The state.** `metrics-share.json`, see section 13. Each step that matters is saved before the next one:
+  a stop, a new install id and an endpoint change go to disk before any DELETE or POST of that id. A state that
+  cannot be saved is kept in memory as `pending` and nothing more is sent until it is saved.
+- **Pure decisions.** `reconcile` (`pusher.ts`) turns the state, whether sharing is active and the endpoint into
+  the next state, with no I/O apart from new ids. `dueDays` lists the days from today − 7 to yesterday that
+  are not accepted, due, and from the start of sharing (or with a stored try). `pruneDays` drops entries and
+  deletes older than 7 days. `retryWaitMs` gives 15 min doubling to 24 h, and a longer `retry_after` wins.
+  `pushOne` builds the report, checks consent again right before the send, sends, and records the answer.
+- **The tick.** `metricsPusher` runs once a minute (`start`, timer unref'd; `FACTORY_NO_METRICS_PUSH=1` turns it
+  off, and `tests/setup.ts` sets it). A tick reads the settings and `users.json`; if either cannot be read the
+  tick ends, so an unreadable file is never a yes or a no. It takes the lock, sends the deletes that are due, then
+  the days. A tick that is still running is not started again. One failure per run of failures is logged with
+  the fixed words in `METRICS_PUSH_WORDS`; the state of the failure is only in memory, so a restart logs once more.
+- **Deletes.** A stop after a POST adds `{ install, endpoint, since, tries, nextAt }` to `deletes` (at most 100;
+  a full list defers the stop, `deferred`) and then gives a new install id. The delete goes to the endpoint that
+  got the POSTs, not to the one in the settings now. A delete that is not accepted is retried on the same
+  schedule as a day, and dropped after 7 days.
+- **Lock.** `withShareLock` creates `metrics-share.lock` with `wx` (mode 0600) and holds it while it works; the
+  holder renews its time every 10 s, so a long send is never taken over. A lock older than the stale time is
+  removed and taken over; a lock whose token changed is left alone. Nothing waits for it: a busy lock is a
+  skipped tick, or `SEND_BUSY` for the command.
+- **The command.** `scf metrics send` (`cli.ts`) runs the same `reconcile` and `pushOne` under the same lock, and
+  reads the settings and the accounts again before the send. It refuses today, a day over 7 days old, a day
+  already accepted and a run with nobody sharing, before anything is sent. It does not start a server. It sends only
+  the one day it was given and no DELETE: a stop it records is sent by the server's next tick.
 
 ---
 

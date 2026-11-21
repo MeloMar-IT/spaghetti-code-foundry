@@ -91,7 +91,7 @@ one (twice). The new password follows the same rules (12 to 200 characters, not 
 Your session stays; every other session of your account is signed out. A wrong current password
 counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
 
-**Share the metrics of your runs.** Each person account is asked once, at the top of Today, whether the metrics of its runs may be shared: numbers only, once a day, never code, tasks, step output, names, e-mail addresses or repository names. The question offers **Share** and **Don't share**, links to a preview and to the privacy page, and goes away after either choice; it is not asked again. Change your answer at any time in **Account settings** (account menu, before **Sign out**): the switch "Share the metrics of my runs" shows the date of the last change. Service accounts are never asked. An admin can switch sharing off for the whole install (Settings, **Metrics sharing**); then nobody is asked, the question and the switch are hidden, nothing is sent, and your answer is kept for when it is on again. An admin cannot change your answer, and each change is written to the audit log.
+**Share the metrics of your runs.** Each person account is asked once, at the top of Today, whether the metrics of its runs may be shared: numbers only, once a day, never code, tasks, step output, names, e-mail addresses or repository names. The question offers **Share** and **Don't share**, links to a preview and to the privacy page, and goes away after either choice; it is not asked again. Change your answer at any time in **Account settings** (account menu, before **Sign out**): the switch "Share the metrics of my runs" shows the date of the last change. Service accounts are never asked. An admin can switch sharing off for the whole install (Settings, **Metrics sharing**); then nobody is asked, the question and the switch are hidden, nothing is sent, and your answer is kept for when it is on again. An admin cannot change your answer, and each change is written to the audit log. Once a day the numbers go to spaghetti-code-foundry.com; see [Shared metrics](#shared-metrics) in chapter 8.
 
 **Set-password link.** A new account may get a link instead of a password. Open it in the
 browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
@@ -4971,7 +4971,7 @@ To change a setting, open **Administration** in the sidebar, then **Settings** u
 
 **Restart when no change is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no change is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start until the active runs are done, then the server starts again by itself. The watchers keep checking during the wait (a watcher that was removed or changed stops, and none starts); only a move of the data folder stops them all. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
 
-**Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Metrics sharing** is a card of its own: `metrics_sharing.allowed` (default on). Off, nobody is asked whether the metrics of their runs may be shared, nothing is counted or sent, and the answers already given are kept for when it is on again. The card's help says the same. A save that changes it is written to the audit log first; if the log cannot be written, the save fails and `config.yaml` is unchanged. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
+**Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Metrics sharing** is a card of its own: `metrics_sharing.allowed` (default on). Off, nobody is asked whether the metrics of their runs may be shared, nothing is counted or sent, and the answers already given are kept for when it is on again. The card's help says the same. The address and the timeout of the receiver (`metrics_sharing.endpoint`, `metrics_sharing.timeout_ms`) have no control on this page; they are read from `config.yaml`. A save that changes it is written to the audit log first; if the log cannot be written, the save fails and `config.yaml` is unchanged. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
 **Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the lists of accounts that may not ask Ask Foundry or may ask in the pilot stage (`help.disabled_accounts`, `help.pilot_accounts`), the list of texts Ask Foundry keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
 
@@ -8593,6 +8593,35 @@ Before a new version of a skill replaces the pinned one, keep this evidence with
 4. The same suite run on each agent that is configured (Claude, Codex, a local model). Say which were run and which were not.
 5. The report file or the eval run IDs, linked in the pull request that changes the pin.
 
+### Shared metrics
+
+When at least one account has said yes (see **Share the metrics of your runs** in chapter 1) and an admin
+allows sharing, the install sends the numbers of its runs to spaghetti-code-foundry.com by itself. You do not
+connect to the install; the install pushes.
+
+- **What is sent.** The report of one UTC day, as `scf metrics preview` prints it: numbers only, for the
+  accounts that said yes. Nothing else leaves the install. The report carries a random install id, a
+  128-bit value kept in `metrics-share.json` in the data folder (mode 0600). It is not your name or an address.
+- **When.** Once a minute the server looks for days to send. A day is sent after it has ended (UTC), with one
+  request. The first day sent is the day sharing started, once that day has ended. A day the receiver accepted
+  is never sent again.
+- **Failures.** A day that is not accepted is tried again after 15 minutes, then after 30, 1 hour and so on,
+  up to 24 hours between tries (a longer `retry_after` from the receiver is kept). It is tried for up to 7
+  days; after that it is dropped. A failed push never fails or slows a run. It writes one line to the log,
+  `metrics-share: the daily report or a delete could not be sent; it is tried again later`, with no values.
+  `scf metrics preview` shows the last answer of the receiver (`last answer of the receiver: …`).
+- **Stopping.** When the last account that shares says no, or an admin switches sharing off, the install
+  asks the receiver to delete what it sent (one `DELETE` for its install id) and then takes a new install id.
+  A later yes starts fresh. The stop is saved before the request, so a restart does not lose it.
+- **Where it goes.** `metrics_sharing.endpoint` (default `https://spaghetti-code-foundry.com/api/metrics`) and
+  `metrics_sharing.timeout_ms` (default 10000, from 1000 to 60000) are settings in `config.yaml`. The Settings
+  page has no control for them. The endpoint must be `https`; plain `http` is accepted only for `localhost` and
+  `127.0.0.1`, for tests. The push never follows a redirect and sends no cookie.
+- **Send one day now.** `scf metrics send [--day YYYY-MM-DD]` (admins) sends one ended day at once, for testing.
+  It records the answer like the server does. It refuses today or a later day, a day more than 7 days old, a day
+  the receiver already accepted, and any run while nobody shares. It cannot run while the server is sending; try
+  again in a minute.
+
 ### Spending limits per issue and per month
 
 Two limits stop money from running out on one issue or in one month. Both are off until you set them
@@ -8637,6 +8666,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf metrics preview [--day YYYY-MM-DD]` | Print the numbers-only shared metrics report of one UTC day (default yesterday) as JSON. It covers only the runs of accounts that are not service accounts. Nothing is sent; a note on stderr says so |
+| `scf metrics send [--day YYYY-MM-DD]` | Send the shared metrics report of one ended UTC day (default yesterday) to the receiver now (admins; for testing). Refused when nobody shares, for today or a later day, a day over 7 days old, or a day already accepted ([Shared metrics](#shared-metrics)) |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf autonomy status [--json]` | Print the autonomy level of each repository and flow and its promotion gate, check by check; read-only; needs a running, signed-in server (admin) ([Promotion gate](#promotion-gate)) |

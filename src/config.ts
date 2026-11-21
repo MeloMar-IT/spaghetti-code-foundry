@@ -345,6 +345,18 @@ function isOtlpEndpoint(s: string): boolean {
   return u.protocol === "https:" || LOOPBACK.test(u.hostname);
 }
 
+/** Where the shared metrics report goes (#889). */
+export const SHARE_ENDPOINT = "https://spaghetti-code-foundry.com/api/metrics";
+/** The address of the metrics receiver: https only (plain http only for localhost or 127.0.0.1), no user, password, ? or #, no whitespace or control characters. */
+export function isShareEndpoint(s: string): boolean {
+  if (typeof s !== "string" || s.length > 2048 || /[\s\p{Cc}]/u.test(s) || s.includes("?") || s.includes("#")) return false;
+  if (!URL.canParse(s)) return false;
+  const u = new URL(s);
+  if (u.username !== "" || u.password !== "" || u.hostname === "") return false;
+  if (u.protocol === "https:") return true;
+  return u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1");
+}
+
 export const OtlpSchema = z
   .object({
     /** Send the telemetry events to an OpenTelemetry collector (OTLP/HTTP, JSON logs). */
@@ -921,7 +933,20 @@ export const ConfigSchema = z
     /** Lifecycle telemetry: one value-free event per line in <data folder>/telemetry/events-YYYY-MM-DD.jsonl (the UTC day). */
     telemetry: TelemetrySchema.prefault({}),
     /** Shared metrics (#887): whether each person account is asked once to share the numbers-only metrics of its runs. Off, nobody is asked or counted; the answers stay. */
-    metrics_sharing: z.object({ allowed: z.boolean().default(true) }).strict().prefault({}),
+    metrics_sharing: z
+      .object({
+        allowed: z.boolean().default(true),
+        /** The receiver the daily report is pushed to (#889); set in config.yaml only. */
+        endpoint: z
+          .string()
+          .max(2048)
+          .refine(isShareEndpoint, "must be an https address without user, password, ? or #; plain http is allowed only for localhost or 127.0.0.1")
+          .default(SHARE_ENDPOINT),
+        /** How long one push may take, in ms. */
+        timeout_ms: z.number().int().min(1000).max(60_000).default(10_000),
+      })
+      .strict()
+      .prefault({}),
     /** What a run is given as context: the limits and the privacy of its sources (read from #696 part 2 on). */
     context: ContextSettingsSchema.prefault({}),
     /** Prices (USD per million tokens) by model name, for the usage events and the cost of Codex steps. They win over the built-in table. */

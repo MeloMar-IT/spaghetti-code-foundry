@@ -43,7 +43,7 @@ export interface ShareSplit { id: string; runId: string; time: string; parts: nu
 export interface ShareInput {
   day: string;
   accountIds: readonly string[];
-  /** The install id; until #889, NO_INSTALL. */
+  /** The random install id of metrics-share.json (#889); NO_INSTALL while there is none (the preview). */
   install?: string;
   foundryVersion: string;
   /** All run briefs of the install (the owner rule is applied here). */
