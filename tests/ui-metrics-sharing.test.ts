@@ -81,6 +81,21 @@ describe("the Today item", () => {
     stop();
   });
 
+  it("opens the What is shared dialog from its link (#888)", async () => {
+    const a = fakeApi();
+    a.metricsSharePreview = vi.fn(() => new Promise(() => {}));
+    const slot = new FakeElement("div");
+    const stop = ms.mountSharingAsk(slot, { a });
+    await flush();
+    const link = card(slot)!.all("a").find((x) => x.textContent === "What is shared")!;
+    let prevented = false;
+    link.fire("click", { preventDefault: () => (prevented = true) });
+    expect(prevented).toBe(true);
+    expect(a.metricsSharePreview).toHaveBeenCalledTimes(1);
+    expect(modalRoot().all("h2").map((x) => x.textContent)).toEqual(["What is shared"]);
+    stop();
+  });
+
   it.each([
     ["yes", state({ answer: "yes", changed: "2026-11-01T00:00:00.000Z" })],
     ["no", state({ answer: "no", changed: "2026-11-01T00:00:00.000Z" })],
@@ -270,6 +285,20 @@ describe("Account settings", () => {
     void ms.accountSettingsDialog(fakeApi());
     await flush();
     expect(modalRoot().textContent).toContain("You have not answered yet.");
+  });
+
+  it("its What is shared link closes it and opens the What is shared dialog (#888)", async () => {
+    const a = fakeApi();
+    a.metricsSharePreview = vi.fn(() => new Promise(() => {}));
+    const settings = ms.accountSettingsDialog(a);
+    await flush();
+    const link = modalRoot().all("a").find((x) => x.textContent === "What is shared")!;
+    expect(link.attrs.href).toBe("/privacy.html#preview");
+    link.click();
+    await flush();
+    await settings;
+    expect(a.metricsSharePreview).toHaveBeenCalledTimes(1);
+    expect(modalRoot().all("h2").map((x) => x.textContent)).toEqual(["What is shared"]);
   });
 
   it("shows yes after Share on Today, and Today follows an answer given in the dialog", async () => {

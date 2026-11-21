@@ -42,6 +42,7 @@ export const API_ONLY: Record<string, string> = {
   "PUT me/view": "chooses that view; done with the switch in the top bar",
   "GET account/metrics-sharing": "the own answer to sharing the metrics of one's runs (#887); asked on Today and changed in Account settings of the web interface",
   "PUT account/metrics-sharing": "sets that answer; done on Today or in Account settings",
+  "GET account/metrics-sharing/preview": "what the shared metrics would send and sent last (#888); shown in the What is shared dialog; `scf metrics preview` prints the next report on the machine itself",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask Foundry drawer: it opens a page, runs a read-only check, or previews an action Ask Foundry proposed (#568); the command line has none of these",
   "POST help/conversations/:id/actions/confirm": "the confirmation of an action Ask Foundry proposed; done in the Ask Foundry drawer (#568), not from the command line",
   "POST help/conversations/:id/actions/cancel": "the dropped token of an action Ask Foundry proposed; done in the Ask Foundry drawer (#568), not from the command line",

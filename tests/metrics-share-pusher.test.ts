@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  METRICS_PUSH_WORDS, RETRY_BASE_MS, RETRY_MAX_MS, dueDays, metricsPusher, pruneDays, retryWaitMs, type PusherDeps, type SharingConfig,
+  METRICS_PUSH_WORDS, RETRY_BASE_MS, RETRY_MAX_MS, dueDays, metricsPusher, nextShareDay, pruneDays, pushOne, retryWaitMs,
+  type PusherDeps, type SendContext, type SharingConfig,
 } from "../src/metrics-share/pusher.js";
+import { shareReportFrom } from "../src/metrics-share/build.js";
 import type { ShareReport } from "../src/metrics-share/report.js";
-import { MAX_DELETES, saveShareState, type ShareState } from "../src/metrics-share/state.js";
+import { MAX_DELETES, loadSentReport, saveShareState, type SentRecord, type ShareState } from "../src/metrics-share/state.js";
 import { fakeReceiver, type FakeReceiver } from "./fixtures/fake-receiver.js";
 
 const A = "3f1c3c8e-8a5e-4c43-9f43-0a0e2f6b9b51";
@@ -42,6 +44,7 @@ function pusher(o: Partial<PusherDeps> = {}) {
     now: () => now,
     file,
     lockFile,
+    sentFile: join(dir, "metrics-share-last.json"),
     ...o,
   });
 }
@@ -400,5 +403,94 @@ describe("the rules", () => {
     expect(pruneDays(s, n)).toBe(true);
     expect(Object.keys(s.days)).toEqual(["2026-11-13", "2026-11-14", "2026-11-15"]);
     expect(pruneDays(s, n)).toBe(false);
+  });
+
+  it("nextShareDay is the first due day, else today so far", () => {
+    const n = new Date("2026-11-20T05:00:00.000Z");
+    const base: ShareState = { version: 1, install: OLD, posted: true, deletes: [], days: {} };
+    expect(nextShareDay(undefined, n)).toEqual({ day: "2026-11-20", sofar: true });
+    expect(nextShareDay({ ...base, activeSince: "2026-11-20" }, n)).toEqual({ day: "2026-11-20", sofar: true });
+    expect(nextShareDay({ ...base, activeSince: "2026-11-19" }, n)).toEqual({ day: "2026-11-19", sofar: false });
+    const waiting = { ...base, activeSince: "2026-11-18", days: { "2026-11-18": { tries: 1, nextAt: "2026-11-20T06:00:00.000Z" } } };
+    expect(nextShareDay(waiting, n)).toEqual({ day: "2026-11-19", sofar: false });
+    const done = { ...base, activeSince: "2026-11-19", days: { "2026-11-19": { accepted: "x", tries: 1 } } };
+    expect(nextShareDay(done, n)).toEqual({ day: "2026-11-20", sofar: true });
+    expect(nextShareDay({ ...base, activeSince: "2026-11-01", days: { "2026-11-12": { tries: 1 } } }, n).day).toBe("2026-11-13");
+  });
+
+  it("nextShareDay picks the day whose retry comes first when none is due, not today", () => {
+    const n = new Date("2026-11-20T05:00:00.000Z");
+    const base: ShareState = { version: 1, install: OLD, posted: true, deletes: [], days: {} };
+    // yesterday fails and is retried at 06:00: that is the next report, not today's partial one
+    const one = { ...base, activeSince: "2026-11-19", days: { "2026-11-19": { tries: 1, nextAt: "2026-11-20T06:00:00.000Z" } } };
+    expect(nextShareDay(one, n)).toEqual({ day: "2026-11-19", sofar: false });
+    // two waiting days: the earlier retry wins
+    const two = {
+      ...base, activeSince: "2026-11-18",
+      days: { "2026-11-18": { tries: 2, nextAt: "2026-11-20T09:00:00.000Z" }, "2026-11-19": { tries: 1, nextAt: "2026-11-20T06:00:00.000Z" } },
+    };
+    expect(nextShareDay(two, n)).toEqual({ day: "2026-11-19", sofar: false });
+    // an accepted day is not waiting
+    const acc = { ...base, activeSince: "2026-11-19", days: { "2026-11-19": { accepted: "x", tries: 1, nextAt: "2026-11-20T06:00:00.000Z" } } };
+    expect(nextShareDay(acc, n)).toEqual({ day: "2026-11-20", sofar: true });
+  });
+});
+
+describe("the copy of the sent report (#888)", () => {
+  const valid = (day: string, install: string): ShareReport =>
+    ({ ...shareReportFrom({ day, accountIds: [A], foundryVersion: "0.4.0", briefs: [], runs: [], watcherSources: new Map() }), install });
+  const state = (): ShareState => ({ version: 1, install: OLD, activeSince: "2026-11-19", posted: true, endpoint: r.endpoint, days: {}, deletes: [] });
+  const ctx = (o: Partial<SendContext> = {}): SendContext => ({
+    target: { endpoint: r.endpoint, timeoutMs: 5000, version: "0.4.0" }, build: async (d, i) => valid(d, i), stillActive: () => true, save: () => true, now: () => now, ...o,
+  });
+
+  it("pushOne gives keepSent the built report and the answer: accepted, refused and unreachable", async () => {
+    const kept: SentRecord[] = [];
+    const keepSent = (rec: SentRecord) => (kept.push(rec), true);
+    await pushOne("2026-11-19", state(), ctx({ keepSent }));
+    r.answer = () => ({ status: 503 });
+    await pushOne("2026-11-18", state(), ctx({ keepSent }));
+    await pushOne("2026-11-17", state(), ctx({ keepSent, send: async () => ({ result: "unreachable" }) }));
+    expect(kept.map(({ day, result, status }) => ({ day, result, status }))).toEqual([
+      { day: "2026-11-19", result: "accepted", status: 200 },
+      { day: "2026-11-18", result: "refused", status: 503 },
+      { day: "2026-11-17", result: "unreachable", status: undefined },
+    ]);
+    expect(kept[0]!.report).toEqual(JSON.parse(r.got[0]!.body));
+    expect(kept[0]!.at).toBe(now.toISOString());
+  });
+
+  it("pushOne does not call keepSent when the report cannot be built or the day is skipped", async () => {
+    let calls = 0;
+    const keepSent = () => (calls++, true);
+    const one = await pushOne("2026-11-19", state(), ctx({ keepSent, build: async () => { throw new Error("boom"); } }));
+    expect(one.kind).toBe("failed");
+    const s = state();
+    s.days["2026-11-19"] = { accepted: "x", tries: 1 };
+    expect((await pushOne("2026-11-19", s, ctx({ keepSent }))).kind).toBe("skipped");
+    expect(calls).toBe(0);
+  });
+
+  it("a keepSent that throws or returns false changes neither the result nor the saved state", async () => {
+    const saved: ShareState[] = [];
+    const save = (s: ShareState) => (saved.push(structuredClone(s)), true);
+    const a = await pushOne("2026-11-19", state(), ctx({ save, keepSent: () => { throw new Error("disk"); } }));
+    const b = await pushOne("2026-11-19", state(), ctx({ save, keepSent: () => false }));
+    expect(a).toEqual(b);
+    expect(a.kind).toBe("accepted");
+    expect(saved[0]).toEqual(saved[1]);
+  });
+
+  it("a tick of the pusher writes sentFile; a later copy that cannot be saved leaves no stale one", async () => {
+    const sentFile = join(dir, "metrics-share-last.json");
+    put({ activeSince: "2026-11-19" });
+    await pusher({ sentFile, build: async (d, _a, i) => valid(d, i) }).tick();
+    const kept = loadSentReport(sentFile);
+    expect(kept.sent).toMatchObject({ day: "2026-11-19", result: "accepted", status: 200 });
+    expect(kept.sent!.report).toEqual(JSON.parse(r.got[0]!.body));
+    at("2026-11-21T00:01:00.000Z");
+    await pusher({ sentFile, build: async (d, _a, i) => ({ day: d, install: i }) as unknown as ShareReport }).tick();
+    expect(posts().map((x) => x.day)).toEqual(["2026-11-19", "2026-11-20"]);
+    expect(existsSync(sentFile)).toBe(false);
   });
 });

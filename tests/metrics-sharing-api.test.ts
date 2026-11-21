@@ -134,8 +134,65 @@ describe("/api/account/metrics-sharing", () => {
 
   it("is never in the scope of a service account, and a service gets 403", async () => {
     expect(() => createServiceAccount({ name: "Bad", scope: ["GET account/metrics-sharing"] })).toThrow();
+    expect(() => createServiceAccount({ name: "Bad", scope: ["GET account/metrics-sharing/preview"] })).toThrow();
     const { token } = createServiceAccount({ name: "Robot", scope: ["GET runs"] });
     const r = await fetch(base + PATH, { headers: { authorization: `Bearer ${token}` } });
     expect(r.status).toBe(403);
+  });
+});
+
+describe("/api/account/metrics-sharing/preview (#888)", () => {
+  const PREVIEW = "/api/account/metrics-sharing/preview";
+  let n = 0;
+  /** A finished run of `owner` today (UTC), in the server's runs folder. */
+  const runOf = (owner: string) => {
+    const runId = `share-run-${++n}`;
+    const runDir = join(home, "runs", runId);
+    const day = new Date().toISOString().slice(0, 10);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      runId, flow: "issue-gitflow", flowDef: { steps: [] }, task: "secret task text", vars: {}, repo: "", status: "succeeded", runDir,
+      startedAt: `${day}T00:00:00.100Z`, finishedAt: `${day}T00:00:00.200Z`, totalCostUsd: 0, history: [], state: { next: null, steps: {}, visits: {} }, owner,
+    }));
+  };
+  const succeeded = (j: Record<string, any>) => j.next.report.changes.runsEnded.succeeded as number;
+
+  it("a user sees only their own runs, an admin the runs of the accounts that said yes", async () => {
+    const bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
+    const cid = await signInAs(base, { name: "Cid", email: "cid@example.com", role: "user" });
+    expect((await call(ann, "PUT", PATH, { answer: "yes" })).status).toBe(200);
+    expect((await call(bob, "PUT", PATH, { answer: "yes" })).status).toBe(200);
+    expect((await call(cid, "PUT", PATH, { answer: "no" })).status).toBe(200);
+    expect((await call(admin, "PUT", PATH, { answer: "no" })).status).toBe(200);
+    runOf(ann.user.id);
+    runOf(ann.user.id);
+    runOf(bob.user.id);
+    runOf(cid.user.id);
+    runOf(admin.user.id);
+
+    const a = await call(ann, "GET", PREVIEW);
+    expect(a.status).toBe(200);
+    expect(a.json).toMatchObject({ scope: "own", allowed: true, answer: "yes", last: null, lastUnreadable: false, next: { sofar: true } });
+    expect(a.json.next.report.accountsSharing).toBe(1);
+    expect(succeeded(a.json)).toBe(2);
+    expect(succeeded((await call(bob, "GET", PREVIEW)).json)).toBe(1);
+    expect(succeeded((await call(cid, "GET", PREVIEW)).json)).toBe(1);
+
+    const all = await call(admin, "GET", PREVIEW);
+    expect(all.json.scope).toBe("install");
+    expect(all.json.next.report.accountsSharing).toBe(2);
+    expect(succeeded(all.json)).toBe(3);
+    expect(all.json.next.report.install).toBe("0".repeat(32));
+    expect(JSON.stringify(all.json)).not.toContain("secret task text");
+  });
+
+  it("refuses an admin's preview of another account, and has no other method", async () => {
+    expect((await call(admin, "POST", "/api/admin/view-as", { userId: ann.user.id })).status).toBe(200);
+    try {
+      expect((await call(admin, "GET", `${PREVIEW}?as=${ann.user.id}`)).status).toBe(403);
+    } finally {
+      await call(admin, "DELETE", "/api/admin/view-as");
+    }
+    expect((await call(ann, "POST", PREVIEW, {})).status).toBe(404);
   });
 });

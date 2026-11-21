@@ -24,6 +24,7 @@ import { Scheduler } from "../queue/scheduler.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
 import { SESSION_RECHECK_MS, authRoutes, meRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
+import { metricsShareRoutes } from "./api-metrics-share.js";
 import { adminRoutes } from "./api-admin.js";
 import { autonomyRoutes } from "./api-autonomy.js";
 import { outcomeRoutes } from "./api-outcomes.js";
@@ -179,7 +180,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, serviceLineRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, metricsShareRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, serviceLineRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 

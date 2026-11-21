@@ -1,7 +1,8 @@
 import type { ShareReport } from "./report.js";
 import { sendDelete, sendReport, type PushResult, type PushTarget } from "./push.js";
 import {
-  MAX_DELETES, loadShareState, newInstallId, saveShareState, shareLockFile, shareStateFile, withShareLock, type LastAnswer, type ShareState,
+  MAX_DELETES, loadShareState, newInstallId, saveSentReport, saveShareState, shareLockFile, shareSentFile, shareStateFile, withShareLock,
+  type LastAnswer, type SentRecord, type ShareState,
 } from "./state.js";
 
 // The server's push of the daily report (#889). Once a minute: while sharing is active (the admin setting is on and at least
@@ -56,6 +57,27 @@ export function dueDays(state: ShareState, now: Date): string[] {
     if (inWindow && !e?.accepted && due(e?.nextAt, now)) out.push(d);
   }
   return out;
+}
+
+/**
+ * The day the next push would send (#888): the first due day, as the pusher picks it. When none is due but a day waits for
+ * a retry, the one whose retry comes first (that is the day the pusher sends next). Only when no day is pending at all,
+ * today, with `sofar` (its report is not final yet).
+ */
+export function nextShareDay(state: ShareState | undefined, now: Date): { day: string; sofar: boolean } {
+  const today = dayOf(now);
+  if (!state?.activeSince) return { day: today, sofar: true };
+  const first = dueDays(state, now)[0];
+  if (first) return { day: first, sofar: false };
+  let waiting: { day: string; at: number } | undefined;
+  for (let d = addDays(today, -MAX_AGE_DAYS); d < today; d = addDays(d, 1)) {
+    const e = state.days[d];
+    const inWindow = d >= state.activeSince || e !== undefined;
+    if (!inWindow || e?.accepted || !e?.nextAt) continue;
+    const at = Date.parse(e.nextAt);
+    if (!waiting || at < waiting.at) waiting = { day: d, at };
+  }
+  return waiting ? { day: waiting.day, sofar: false } : { day: today, sofar: true };
 }
 
 /** Drops the day entries and the deletes older than 7 days. True when something was dropped. */
@@ -120,6 +142,8 @@ export interface SendContext {
   signal?: AbortSignal;
   /** For tests. */
   send?: (t: PushTarget, report: ShareReport, signal?: AbortSignal) => Promise<PushResult>;
+  /** Keeps a copy of a report that was sent and the receiver's answer (#888); true when it was kept. A failure changes nothing else. */
+  keepSent?: (rec: SentRecord) => boolean;
 }
 
 export type OneResult =
@@ -143,6 +167,14 @@ export async function pushOne(day: string, state: ShareState, c: SendContext): P
   if (!c.stillActive() || c.signal?.aborted) return { kind: "skipped", why: "not-active" };
   const r: PushResult = built ? await (c.send ?? sendReport)(c.target, built, c.signal) : { result: "error" };
   const now = c.now();
+  if (built && r.result !== "error" && c.keepSent) {
+    const rec: SentRecord = { version: 1, at: now.toISOString(), day, result: r.result, ...(r.status !== undefined ? { status: r.status } : {}), report: built };
+    try {
+      c.keepSent(rec);
+    } catch {
+      // the copy is only for the view; the send and its state stay as they are
+    }
+  }
   const tries = (state.days[day]?.tries ?? 0) + 1;
   state.last = lastOf(r, "send", now, day);
   state.days[day] = r.result === "accepted"
@@ -163,6 +195,8 @@ export interface PusherDeps {
   now?: () => Date;
   file?: string;
   lockFile?: string;
+  /** The copy of the last sent report; default metrics-share-last.json in the data folder. */
+  sentFile?: string;
   /** For tests: replace the save. */
   save?: (state: ShareState, file: string) => boolean;
 }
@@ -177,6 +211,7 @@ export function metricsPusher(deps: PusherDeps): MetricsPusher {
   const now = deps.now ?? (() => new Date());
   const file = deps.file ?? shareStateFile();
   const lockFile = deps.lockFile ?? shareLockFile();
+  const sentFile = deps.sentFile ?? shareSentFile();
   const save = (s: ShareState) => (deps.save ?? saveShareState)(s, file);
   let inFlight: Promise<void> | undefined;
   let timer: NodeJS.Timeout | undefined;
@@ -273,7 +308,7 @@ export function metricsPusher(deps: PusherDeps): MetricsPusher {
     };
     for (const day of dueDays(state, now())) {
       if (stopped) return;
-      const one = await pushOne(day, state, { target: target(cfg.endpoint), build: (dd, install) => deps.build(dd, accounts, install), stillActive, save: keep, now, signal });
+      const one = await pushOne(day, state, { target: target(cfg.endpoint), build: (dd, install) => deps.build(dd, accounts, install), stillActive, save: keep, now, signal, keepSent: (rec) => saveSentReport(rec, sentFile) });
       if (one.kind === "skipped" || !one.saved) return; // a state that is not saved is pending
       if (one.kind === "accepted") {
         failing = false;
