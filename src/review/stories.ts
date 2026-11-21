@@ -286,11 +286,117 @@ export function withDependsOn(body: string, issue: number): string {
   return at < 0 ? `${body}\n${block}` : `${body.slice(0, at)}${block}\n${body.slice(at)}`;
 }
 
+// ── The dependency check: npm audit of package-lock.json, only high and critical advisories ──
+export interface AuditAdvisory { package: string; severity: "critical" | "high"; title: string; url: string; fix: boolean }
+export type AuditResult = { checked: true; advisories: AuditAdvisory[] } | { checked: false; reason: string };
+export const AUDIT_TIMEOUT_MS = 120_000;
+export const AUDIT_PREVIEW_MAX = 50;
+export const AUDIT_PREVIEW_CHARS = 15_000;
+const AUDIT_DROP_ENV = /^(node_env|npm_config_(omit|audit|offline|userconfig|globalconfig))$/i;
+
+/** The environment of npm audit: the machine's and the repository's settings cannot narrow, go offline or turn the audit off. The two config files must differ, or npm refuses to load them. */
+export function npmAuditEnv(src: Record<string, string | undefined>, userConfig: string, globalConfig: string): Record<string, string> {
+  const e: Record<string, string> = {};
+  for (const [k, v] of Object.entries(src)) if (v !== undefined && !AUDIT_DROP_ENV.test(k)) e[k] = v;
+  e.npm_config_userconfig = userConfig;
+  e.npm_config_globalconfig = globalConfig;
+  return e;
+}
+const NPM_NAME = /^(?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*$/i;
+const ADVISORY_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._~/?=&%#:+-]*$/;
+const urlOf = (u: unknown) => (typeof u === "string" && u.length <= 300 && ADVISORY_URL.test(u) ? u : "");
+
+/** The high and critical advisories of the report of `npm audit --json` (npm 7 and later). Every text is one safe line. */
+export function parseNpmAudit(text: string): AuditResult {
+  let j: unknown;
+  try {
+    j = JSON.parse(String(text ?? "").trim());
+  } catch {
+    return { checked: false, reason: "the output of npm audit is not JSON" };
+  }
+  if (!isObj(j)) return { checked: false, reason: "the output of npm audit is not JSON" };
+  if (isObj(j.error)) return { checked: false, reason: `npm audit failed: ${line(String(j.error.summary ?? j.error.code ?? "unknown error"), 200)}` };
+  if (!isObj(j.vulnerabilities)) return { checked: false, reason: "the npm audit report has an unknown form" };
+  const found = new Map<string, AuditAdvisory>();
+  for (const [entryName, entry] of Object.entries(j.vulnerabilities)) {
+    if (!isObj(entry) || !Array.isArray(entry.via)) continue;
+    const fix = entry.fixAvailable === true || isObj(entry.fixAvailable);
+    for (const via of entry.via) {
+      if (!isObj(via) || (via.severity !== "high" && via.severity !== "critical")) continue;
+      const pkg = typeof via.name === "string" ? via.name : entryName;
+      if (pkg.length > 214 || !NPM_NAME.test(pkg)) continue;
+      const title = line(String(via.title ?? "no title"), 200);
+      const url = urlOf(via.url);
+      const key = `${pkg}\u0000${url || title}`;
+      const old = found.get(key);
+      if (old) old.fix = old.fix || fix;
+      else found.set(key, { package: pkg, severity: via.severity, title, url, fix });
+    }
+  }
+  const advisories = [...found.values()].sort((a, b) => Number(b.severity === "critical") - Number(a.severity === "critical") || a.package.localeCompare(b.package));
+  return { checked: true, advisories };
+}
+
+/** What a run of npm gave: its stdout, or the reason it did not work. */
+export function auditFromRun(r: { stdout?: string | null; error?: { code?: string } | null }): AuditResult {
+  const code = r.error?.code;
+  if (code === "ENOENT") return { checked: false, reason: "npm was not found" };
+  if (code === "ETIMEDOUT") return { checked: false, reason: `npm audit did not finish in ${AUDIT_TIMEOUT_MS / 1000} s` };
+  if (code === "ENOBUFS") return { checked: false, reason: "the npm audit report is too large" };
+  if (r.error) return { checked: false, reason: "npm audit could not run" };
+  return parseNpmAudit(r.stdout ?? "");
+}
+
+/** A saved result (audit.json) read back; anything else means the step did not run. */
+export function auditOf(v: unknown): AuditResult {
+  if (isObj(v) && v.checked === true && Array.isArray(v.advisories)) {
+    const advisories: AuditAdvisory[] = [];
+    for (const a of v.advisories) {
+      if (!isObj(a) || (a.severity !== "high" && a.severity !== "critical") || typeof a.package !== "string" || !NPM_NAME.test(a.package)) continue;
+      advisories.push({ package: a.package, severity: a.severity, title: line(String(a.title ?? ""), 200), url: urlOf(a.url), fix: a.fix === true });
+    }
+    return { checked: true, advisories };
+  }
+  if (isObj(v) && v.checked === false && typeof v.reason === "string") return { checked: false, reason: line(v.reason, 200) };
+  return { checked: false, reason: "the audit step did not run" };
+}
+
+export function auditHeadline(r: AuditResult): string {
+  if (!r.checked) return `Dependencies not checked: ${line(r.reason, 200)}.`;
+  const n = r.advisories.length;
+  return `Dependencies checked with npm audit: ${n} high or critical advisor${n === 1 ? "y" : "ies"}.`;
+}
+
+const advisoryLine = (a: AuditAdvisory) => `- ${a.severity} ${a.package}: ${a.title}${a.url ? ` — ${a.url}` : ""} — ${a.fix ? "fix available" : "no fix available"}`;
+
+/** The complete markdown (audit.md). */
+export function auditText(r: AuditResult): string {
+  return [auditHeadline(r), ...(r.checked ? r.advisories.map(advisoryLine) : [])].join("\n");
+}
+
+/** The headline, then at most AUDIT_PREVIEW_MAX lines within AUDIT_PREVIEW_CHARS (the engine keeps the tail of a step output). */
+export function auditPreview(r: AuditResult): string {
+  const head = auditHeadline(r);
+  if (!r.checked) return head;
+  const out = [head];
+  let size = head.length;
+  let shown = 0;
+  for (const a of r.advisories.slice(0, AUDIT_PREVIEW_MAX)) {
+    const l = advisoryLine(a);
+    if (size + l.length + 1 > AUDIT_PREVIEW_CHARS - 100) break;
+    out.push(l);
+    size += l.length + 1;
+    shown++;
+  }
+  if (shown < r.advisories.length) out.push(`- … and ${r.advisories.length - shown} more in audit.md`);
+  return out.join("\n");
+}
+
 const norm = (t: string) => t.trim().toLowerCase().replace(/\s+/g, " ");
 
 export interface PlanInput {
   repo: string; runId: string; repoRoot: string; review: ReturnType<typeof parseReview>; answer: VerifyAnswer;
-  baseline: Baseline; open: OpenIssue[]; settings: Settings;
+  baseline: Baseline; open: OpenIssue[]; settings: Settings; audit?: AuditResult;
 }
 export function planStories(o: PlanInput): Plan {
   const skipped: Plan["skipped"] = [];
@@ -313,6 +419,7 @@ export function planStories(o: PlanInput): Plan {
     if (buildIssue) skipped.push({ title: b.title, reason: `covered by #${buildIssue}` });
     else first.push(b);
   } else if (o.baseline.state === "unknown") notes.push(`The state of the build is unknown: ${o.baseline.note}. No build story was made.`);
+  if (o.audit) notes.push(auditHeadline(o.audit));
   const kept: VerifiedStory[] = [];
   for (const s of o.answer.stories) {
     s.findings.forEach((id) => placed.add(id));
