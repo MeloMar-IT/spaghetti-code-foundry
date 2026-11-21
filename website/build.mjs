@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Builds the website (spaghetti-code-foundry.com) from docs/ and website/content/ into website/dist/.
-//   node website/build.mjs [--out <folder>]
+//   node website/build.mjs [--out <folder>] [--metrics <metrics.json>]
+// --metrics copies a sample metrics.json into the output, for a local preview of /metrics/ and for tests. Without it
+// no metrics.json is written: the real one is served by the receiver (collector/).
 // No network, no dependencies beyond the repository's own (`yaml`). The same input always gives the same output,
 // except the build date in the sitemap when a file has no git history.
 import { execFileSync } from "node:child_process";
@@ -11,6 +13,7 @@ import { parse as parseYaml } from "yaml";
 import { escapeHtml as e, frontMatter, inline, plainText, render } from "./lib/markdown.mjs";
 import { splitDocument, summary } from "./lib/docs.mjs";
 import { NAV, SITE, page } from "./lib/layout.mjs";
+import { MEASURE_IDS, OUTCOME_IDS, isMetrics } from "./assets/metrics.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -28,7 +31,7 @@ const DOC_URLS = { "USER_GUIDE.md": "/guide/", ...Object.fromEntries(REFERENCE.m
 const HOWTO_GROUPS = ["Get started", "Daily work", "Configure and extend"];
 
 /** Build the site; returns { pages, problems, out }. */
-export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true } = {}) {
+export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true, metrics = undefined } = {}) {
   const problems = [];
   const pages = []; // { url, html, title, description, sections, source, sitemap }
   const imageSizes = new Map();
@@ -300,6 +303,39 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
     });
   }
 
+  // ---------- metrics page: Markdown text, and a script that reads /metrics.json in the browser ----------
+  {
+    const source = "website/content/metrics.md";
+    const { data, body } = frontMatter(readFileSync(join(CONTENT, "metrics.md"), "utf8"), parseYaml);
+    if (!data?.title || !data?.lead || !data?.description || !data?.measures) {
+      problems.push(`${source}: front matter needs title, lead, description and measures`);
+    } else {
+      const outcomes = JSON.parse(readFileSync(join(CONTENT, "outcome-definitions.json"), "utf8"));
+      for (const id of MEASURE_IDS) if (!data.measures[id]?.label || !data.measures[id]?.definition) problems.push(`${source}: measures needs a label and a definition for ${id}`);
+      for (const id of OUTCOME_IDS) if (!outcomes.some((o) => o.id === id && o.definition)) problems.push(`website/content/outcome-definitions.json: no definition for ${id}; run npm run website:definitions`);
+      const { html, toc } = md(body, { source, base: null });
+      const defs = JSON.stringify({ outcomes, measures: data.measures }).replace(/</g, "\\u003c");
+      const app = `<section id="metrics-app" class="metrics-app" aria-live="polite"><p class="metrics-state">Loading the numbers…</p></section>
+<noscript><p class="metrics-state">The numbers need JavaScript. You can read them as <a href="/metrics.json">metrics.json</a>.</p></noscript>`;
+      add({
+        url: "/metrics/",
+        title: data.title,
+        fullTitle: `${data.title} | ${SITE.name}`,
+        h1: data.title,
+        lead: data.lead,
+        description: data.description,
+        body: `${app}\n${html}\n<script type="application/json" id="metric-definitions">${defs}</script>\n<script type="module" src="/assets/metrics.js"></script>`,
+        toc,
+        crumbs: [{ name: "Home", url: "/" }, { name: "Metrics", url: "/metrics/" }],
+        jsonld: [],
+        editPath: source,
+        source,
+        sections: toc,
+        text: plainText(body),
+      });
+    }
+  }
+
   // ---------- home ----------
   {
     const faq = parseYaml(readFileSync(join(CONTENT, "faq.yaml"), "utf8"));
@@ -367,7 +403,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
   for (const p of pages) {
     for (const m of p.html.matchAll(/\shref="(\/[^"]*)"/g)) {
       const [path, hash] = m[1].replace(/&amp;/g, "&").split("#");
-      if (/^\/(assets|images)\//.test(path) || ["/favicon.svg", "/sitemap.xml"].includes(path)) continue;
+      if (/^\/(assets|images)\//.test(path) || ["/favicon.svg", "/sitemap.xml", "/metrics.json"].includes(path)) continue;
       if (!urls.has(path)) problems.push(`${p.url}: link to a page that does not exist: ${m[1]}`);
       else if (hash && !idsOf.get(path).has(hash)) problems.push(`${p.url}: link to a missing anchor: ${m[1]}`);
     }
@@ -384,6 +420,17 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
   cpSync(join(HERE, "assets"), join(out, "assets"), { recursive: true });
   cpSync(join(DOCS, "images"), join(out, "images"), { recursive: true });
   for (const f of ["favicon.svg", "CNAME"]) cpSync(join(HERE, "static", f), join(out, f));
+
+  if (metrics) {
+    let sample = null;
+    try {
+      sample = JSON.parse(readFileSync(metrics, "utf8"));
+    } catch {
+      sample = null;
+    }
+    if (isMetrics(sample)) writeFileSync(join(out, "metrics.json"), JSON.stringify(sample));
+    else problems.push("--metrics: not a metrics.json");
+  }
 
   const lastmod = (source) => {
     if (!gitDates) return null;
@@ -432,7 +479,8 @@ ${listed
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const i = process.argv.indexOf("--out");
-  const { problems } = build({ out: i > 0 ? resolve(process.argv[i + 1]) : undefined });
+  const m = process.argv.indexOf("--metrics");
+  const { problems } = build({ out: i > 0 ? resolve(process.argv[i + 1]) : undefined, metrics: m > 0 ? resolve(process.argv[m + 1]) : undefined });
   process.exit(problems.length ? 1 : 0);
 }
 void NAV;
