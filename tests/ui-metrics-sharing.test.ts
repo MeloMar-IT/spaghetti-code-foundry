@@ -67,7 +67,11 @@ describe("the Today item", () => {
     expect(c.textContent).toContain(ASKED);
     expect(c.textContent).toContain("Never shared");
     const hrefs = c.all("a").map((x) => x.attrs.href);
-    expect(hrefs).toEqual(["/privacy.html#shared-metrics", "/privacy.html#preview"]);
+    expect(hrefs).toEqual(["https://spaghetti-code-foundry.com/privacy/metrics/", "/privacy.html#preview"]);
+    const [privacy, preview] = c.all("a");
+    expect(privacy.attrs.target).toBe("_blank");
+    expect(privacy.attrs.rel).toBe("noopener noreferrer");
+    expect(preview.attrs.target).toBeUndefined();
     expect(button(c, "Share")).toBeDefined();
     expect(button(c, "Don't share")).toBeDefined();
     stop();
@@ -279,6 +283,22 @@ describe("Account settings", () => {
     await flush();
     expect(box.checked).toBe(true);
     expect(root.textContent).toContain("nope");
+  });
+
+  it("its privacy link opens the website page in a new tab", async () => {
+    void ms.accountSettingsDialog(fakeApi());
+    await flush();
+    const link = modalRoot().all("a").find((x) => x.textContent === ms.SHARING.privacy)!;
+    expect(link.attrs.href).toBe("https://spaghetti-code-foundry.com/privacy/metrics/");
+    expect(link.attrs.target).toBe("_blank");
+    expect(link.attrs.rel).toBe("noopener noreferrer");
+  });
+
+  it("the offline privacy page keeps its anchors and links to the website page", () => {
+    const html = readFileSync("ui/privacy.html", "utf8");
+    expect(html).toContain('id="shared-metrics"');
+    expect(html).toContain('id="preview"');
+    expect(html).toContain('href="https://spaghetti-code-foundry.com/privacy/metrics/"');
   });
 
   it("says when there is no answer yet", async () => {

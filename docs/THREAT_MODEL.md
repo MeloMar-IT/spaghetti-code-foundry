@@ -395,6 +395,53 @@ A watcher can give its runs read-only copies of other repositories of its owner 
 - A copy whose removal fails is kept, marked unavailable, and stays denied to Claude's write tools.
 - The privacy rule (a private reference only for a target known to be private, or `reference_private_ok`) is a separate guard and not covered here; see the USER_GUIDE.
 
+## Shared metrics receiver (#890)
+
+The receiver is a separate Node.js process on the public site (`collector/`, see `collector/README.md`). It takes
+the daily reports of #889, keeps them per install and day, serves the public totals and answers the `DELETE` of an
+install. It has no access to the site's files.
+
+**What a report reveals.** A report is numbers only: the #893 schema has no free text, and flow, step and model
+names are kept only when they are built-in ones (otherwise `custom`). A report names no account, repository, path
+or address. Its one identifier is the install id, a random 128-bit value, so the reports of one install can be
+linked from day to day until the install stops sharing. Only whoever runs the receiver can read per-install
+reports (the data folder, mode 0600). The public `GET /metrics.json` gives totals only, and a number from fewer
+than 3 installs is left out, so one install cannot be read from it directly.
+
+**What an attacker with the install id can do.** The id is the key of `DELETE /api/metrics/<install>`: whoever
+holds it can remove that install's stored reports. It does not stop the install's later pushes. The id is also
+the key of a report: a new report for the same install and day replaces the one kept, so the day's numbers can be
+changed. Guessing an id is not practical (128 random bits), and an id is seen only by the install, its data folder
+and a request that carries it. The id is in the URL of the `DELETE`, so the access log of the web server in front
+of the receiver must be off for these paths (`collector/README.md`); the Foundry cannot check that from the code.
+
+**Forged reports.** The receiver cannot tell a real install from a program that sends valid reports for random ids.
+Such reports change the public totals. The limits bound them: the schema, a body of at most 64 KB, a day within the
+last 7 days, 20 requests an hour per install id and 1000 an hour in total. The threshold of 3 installs is the only
+other check, and one party that makes three ids passes it.
+
+**Why the receiver cannot reach an install.** The install only makes outbound HTTPS calls to the configured
+endpoint (`src/metrics-share/push.ts`) and does not listen for metrics. The report holds no address of the
+install, and the receiver stores no IP address and no header other than the content type, so it has no route back
+to the install. The answer of the receiver is read only for its status and an integer `retry_after` (1 to 86400
+seconds). No URL, command or redirect in an answer is followed, and no cookie is kept. So the receiver can only
+move the install's retries, and only until the 7-day limit of the push. Nothing it sends changes a run.
+
+**Protected by.**
+- The schema, size, day window and rate checks above, with fixed refusal reasons that never repeat the body.
+- No IP address, no header other than the content type and no line per request in the receiver's own log; only a
+  failure name is logged.
+- One file per install and day, mode 0600; reports older than 400 days are removed.
+- The receiver runs as its own process, listens on `127.0.0.1` by default, and stops within 10 seconds on a signal.
+
+**Still open.**
+- Forged reports can move the public totals (see above). A signed install id or a proof of a real install would
+  close this, and it would cost the anonymity of the install id.
+- The threshold of 3 installs is a minimum count, not a privacy guarantee: someone who reads the totals over time
+  can see a change that comes from one install when the number of installs is small.
+- The access log of the web server in front of the receiver is a deployment setting that the code cannot check.
+- The endpoint can still be changed through `PUT /api/config` (see "Shared metrics push (#889)" above).
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the
