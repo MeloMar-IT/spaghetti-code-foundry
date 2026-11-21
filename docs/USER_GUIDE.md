@@ -4168,6 +4168,31 @@ line, as the JUnit XML reports print it: `Class.method`.
   `junit*.xml` in the repository), the run stops at `baseline_failed` and says so: turn on a JUnit
   XML reporter in the test command.
 
+**Fix a broken build: `## Build to fix`.** When the build itself is broken, no failing test can be
+named, for example because the code does not compile and no reports are written. Put a heading
+`## Build to fix` in the issue body (same heading rules as `## Failing tests to fix`). The run then
+goes on past the red baseline, whatever the reports show:
+
+- no JUnit XML reports were written;
+- a report has failures that no test case names;
+- the reports name no failing test.
+
+The run log says `BASELINE: going on — this issue fixes the build`, and the report on the issue says
+why the tests were red. After the change, the run passes only when the build and the tests pass: a
+report that shows a failing test, or has unnamed failures, fails the check. A report that names
+failing tests and has no unnamed failures is not covered by this heading: the rules of
+`## Failing tests to fix` apply as before. Without the heading, the run stops at `baseline_failed`
+in the same cases as before.
+
+```
+## Build to fix
+
+The main module does not compile after the last merge. Make the build pass.
+```
+
+Anyone who can put the build label on an issue can add this heading, the same as
+`## Failing tests to fix`. The push gate still needs passing tests.
+
 **What happens when the tests fail before any change** (the tests are run once more first, as before):
 
 - **Every failing test is named:** the run goes on. The run log says `BASELINE: going on`, and the
