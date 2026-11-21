@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, updateEveryMs, type Config } from "../config.js";
+import { metricsPusher, type MetricsPusher } from "../metrics-share/pusher.js";
+import { buildShareReport, defaultShareDeps, foundryVersion, sharingAccounts } from "../metrics-share/sources.js";
 import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.js";
 import { GAP_RUN_LIMIT, GAP_TICK_MS, skillGapSweeper, type SkillGapSweeper } from "./skill-gap-sweep.js";
 import { discoverSkills } from "../skills/registry.js";
@@ -100,6 +102,8 @@ const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("ya
 export interface ServerOptions {
   /** How often the scheduled skill-source check looks whether a check is due, in ms (default 60000). */
   skillUpdateTickMs?: number;
+  /** How often the shared metrics push looks for a day to send, in ms (default 60000; off with FACTORY_NO_METRICS_PUSH=1). */
+  metricsTickMs?: number;
   repo: string;
   runsDir: string;
   /** 0: a free port picked by the system (tests); the result's `port` is the real one. */
@@ -586,6 +590,18 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     notifier = new TurnNotifier(ctx, { baseUrl: localUrl(listen, opts.port), log, record: (n) => notices.record(n) });
     notifier.start();
   }
+  // Shared metrics (#889): the daily report goes to the receiver while sharing is active; a stop sends one delete.
+  let metrics: MetricsPusher | undefined;
+  if (process.env.FACTORY_NO_METRICS_PUSH !== "1") {
+    metrics = metricsPusher({
+      config: () => ctx.config().metrics_sharing,
+      accounts: () => sharingAccounts(true),
+      build: (day, accounts, install) => buildShareReport(day, accounts, { ...defaultShareDeps(opts.runsDir), install }),
+      version: foundryVersion(),
+      log,
+    });
+    metrics.start(opts.metricsTickMs);
+  }
   const clarity = new ClarityRecorder(ctx, { log });
   clarity.start();
   const feed = new FeedRecorder(ctx, { tickMs: opts.feedTickMs, log });
@@ -615,6 +631,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       clearInterval(staleTimer);
       clearInterval(busyTimer);
       skillSweep.stop();
+      metrics?.stop();
       clearTimeout(retryTimer);
       scheduler.close();
       notifier?.stop();

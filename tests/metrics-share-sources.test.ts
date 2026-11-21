@@ -1,11 +1,14 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunBrief, RunSummary } from "../src/engine/state.js";
 import { EVIDENCE_EVENTS_FILE } from "../src/evidence/version.js";
 import { DAY_TEXT, sourceKeyOf } from "../src/metrics-share/build.js";
-import { METRICS_USAGE, PREVIEW_NOTE, metricsCommand, yesterday } from "../src/metrics-share/cli.js";
+import {
+  METRICS_USAGE, PREVIEW_NOTE, SEND_BUSY, SEND_DONE_ALREADY, SEND_NOT_ENDED, SEND_NOT_SHARING, SEND_TOO_OLD, metricsCommand, yesterday,
+} from "../src/metrics-share/cli.js";
+import { fakeReceiver, type FakeReceiver } from "./fixtures/fake-receiver.js";
 import { NO_INSTALL, ShareReportSchema } from "../src/metrics-share/report.js";
 import { buildShareReport, readUsageSplits, reduceRun, watcherSources, type ShareDeps } from "../src/metrics-share/sources.js";
 
@@ -160,9 +163,99 @@ describe("scf metrics preview", () => {
     expect(JSON.parse(out.join("\n")).day).toBe("2026-11-19");
     expect(yesterday(new Date("2026-03-01T00:30:00.000Z"))).toBe("2026-02-28");
     const call = (pos: string[], day?: string) => metricsCommand(pos, { runsDir: dir, deps: deps([]), accounts: () => [], ...(day ? { day } : {}) }, () => {}, () => {});
-    await expect(call(["send"])).rejects.toThrow(METRICS_USAGE);
+    await expect(call(["push"])).rejects.toThrow(METRICS_USAGE);
+    await expect(call(["send", "extra"])).rejects.toThrow(METRICS_USAGE);
     await expect(call([])).rejects.toThrow(METRICS_USAGE);
     await expect(call(["preview", "extra"])).rejects.toThrow(METRICS_USAGE);
     await expect(call(["preview"], "2026-13-01")).rejects.toThrow(DAY_TEXT);
+  });
+});
+
+describe("scf metrics send (#889)", () => {
+  let rcv: FakeReceiver;
+  const NOW = new Date("2026-11-20T08:00:00.000Z");
+  beforeEach(async () => {
+    rcv = await fakeReceiver();
+  });
+  afterEach(() => rcv.close());
+  const stateFile = () => join(dir, "metrics-share.json");
+  const lockFile = () => join(dir, "metrics-share.lock");
+  const cfgNow = () => ({ allowed: allowedNow, endpoint: rcv.endpoint, timeout_ms: 5000 });
+  let allowedNow = true;
+  const send = async (o: { day?: string; accounts?: string[]; allowed?: boolean } = {}) => {
+    allowedNow = o.allowed ?? true;
+    const out: string[] = [];
+    const notes: string[] = [];
+    const code = await metricsCommand(
+      ["send"],
+      { runsDir: dir, now: NOW, deps: deps([]), accounts: () => o.accounts ?? [A], config: cfgNow(), reload: cfgNow, stateFile: stateFile(), lockFile: lockFile(), ...(o.day ? { day: o.day } : {}) },
+      (l) => out.push(l),
+      (l) => notes.push(l),
+    );
+    return { code, out, notes };
+  };
+
+  it("sends one day, marks it accepted and refuses to send it again; preview shows the id and the last answer", async () => {
+    const first = await send();
+    expect(first).toEqual({ code: 0, out: ["accepted (200)"], notes: [] });
+    expect(rcv.got).toHaveLength(1);
+    const body = JSON.parse(rcv.got[0]!.body);
+    ShareReportSchema.parse(body);
+    expect(body.day).toBe("2026-11-19");
+    expect(body.install).toMatch(/^[0-9a-f]{32}$/);
+    expect(body.install).not.toBe(NO_INSTALL);
+    const s = JSON.parse(readFileSync(stateFile(), "utf8"));
+    expect(s.days["2026-11-19"].accepted).toBe(NOW.toISOString());
+    expect(await send()).toEqual({ code: 1, out: [], notes: [SEND_DONE_ALREADY] });
+    expect(rcv.got).toHaveLength(1);
+    const out: string[] = [];
+    const notes: string[] = [];
+    await metricsCommand(["preview"], { runsDir: dir, now: NOW, deps: deps([]), accounts: () => [A], stateFile: stateFile() }, (l) => out.push(l), (l) => notes.push(l));
+    expect(JSON.parse(out.join("\n")).install).toBe(body.install);
+    expect(notes).toEqual([PREVIEW_NOTE, `last answer of the receiver: ${NOW.toISOString()} send 2026-11-19 accepted (200)`]);
+  });
+
+  it("reports an answer that is not accepted", async () => {
+    rcv.answer = () => ({ status: 503 });
+    expect(await send()).toEqual({ code: 1, out: ["not accepted: refused (503)"], notes: [] });
+  });
+
+  it("refuses today, a later day, a day over 7 days old, a bad day and nobody sharing, without a request", async () => {
+    expect((await send({ day: "2026-11-20" })).notes).toEqual([SEND_NOT_ENDED]);
+    expect((await send({ day: "2026-11-25" })).notes).toEqual([SEND_NOT_ENDED]);
+    expect((await send({ day: "2026-11-12" })).notes).toEqual([SEND_TOO_OLD]);
+    expect((await send({ day: "2026-11-13" })).code).toBe(0); // exactly 7 days old
+    await expect(send({ day: "2026-02-30" })).rejects.toThrow(DAY_TEXT);
+    expect(await send({ day: "2026-11-18", accounts: [] })).toEqual({ code: 1, out: [], notes: [SEND_NOT_SHARING] });
+    expect(await send({ day: "2026-11-18", allowed: false })).toEqual({ code: 1, out: [], notes: [SEND_NOT_SHARING] });
+    expect(rcv.got).toHaveLength(1);
+  });
+
+  it("does nothing while the server holds the lock, and refuses a day the server already sent", async () => {
+    writeFileSync(lockFile(), "server");
+    expect(await send()).toEqual({ code: 1, out: [], notes: [SEND_BUSY] });
+    rmSync(lockFile());
+    writeFileSync(stateFile(), JSON.stringify({ version: 1, install: "ab".repeat(16), activeSince: "2026-11-18", posted: true, endpoint: rcv.endpoint, days: { "2026-11-19": { accepted: "2026-11-20T00:01:00.000Z", tries: 1 } }, deletes: [] }));
+    expect(await send()).toEqual({ code: 1, out: [], notes: [SEND_DONE_ALREADY] });
+    expect(rcv.got).toHaveLength(0);
+  });
+
+  it("sends nothing when sharing is switched off while the report is built", async () => {
+    let off = false;
+    const notes: string[] = [];
+    const code = await metricsCommand(
+      ["send"],
+      {
+        runsDir: dir, now: NOW, accounts: () => [A], stateFile: stateFile(), lockFile: lockFile(),
+        deps: { ...deps([]), briefs: () => { off = true; return []; } },
+        config: { allowed: true, endpoint: rcv.endpoint, timeout_ms: 5000 },
+        reload: () => ({ allowed: !off, endpoint: rcv.endpoint, timeout_ms: 5000 }),
+      },
+      () => {},
+      (l) => notes.push(l),
+    );
+    expect(code).toBe(1);
+    expect(notes).toEqual([SEND_NOT_SHARING]);
+    expect(rcv.got).toHaveLength(0);
   });
 });

@@ -48,5 +48,7 @@ export const SETTING_EXCEPTIONS: Record<string, string> = {
   "telemetry.local": "Telemetry is a new local file for operators; a Settings control is a follow-up.",
   "telemetry.otlp.enabled": "The OTLP exporter is for operators with a collector and is set in config.yaml; a Settings control is a follow-up with endpoint authentication.",
   "telemetry.otlp.endpoint": "The OTLP exporter is for operators with a collector and is set in config.yaml; a Settings control is a follow-up with endpoint authentication.",
+  "metrics_sharing.endpoint": "Where the shared metrics go is set in config.yaml only, like the OTLP address: a change sends the reports elsewhere (#889).",
+  "metrics_sharing.timeout_ms": "Where the shared metrics go is set in config.yaml only, like the OTLP address: a change sends the reports elsewhere (#889).",
   "telemetry.otlp.timeout_ms": "The OTLP exporter is for operators with a collector and is set in config.yaml; a Settings control is a follow-up with endpoint authentication.",
 };

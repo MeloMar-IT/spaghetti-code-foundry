@@ -333,6 +333,50 @@ shows the setting. The list is read at start; a change takes effect at the next 
 - A program that ignores the stop signal is killed after 5 s; a program that starts its own detached
   processes outside its process group may outlive the stop.
 
+## Shared metrics push (#889)
+
+The install sends its daily report to a receiver (`metrics_sharing.endpoint`). The report is numbers only
+(the schema of #893 has no free text), so the risk is where it goes and what the receiver can learn from it.
+
+**Protected by.**
+- One network call, the report (`POST`) or one delete (`DELETE <endpoint>/<install>`). It uses `node:http`/`node:https`
+  with no connection reuse, no cookie, no redirect, and only `User-Agent: spaghetti-code-foundry/<version>`
+  and the content headers (`src/metrics-share/push.ts`). The answer is read only for its status and an
+  integer `retry_after` from 1 to 86400 in a body of at most 4 KB; a 2xx body is never read. Nothing from
+  the answer is stored or logged.
+- The address is checked when the config is read and again before each request (`isShareEndpoint`): https
+  only, or plain http to exactly `localhost` or `127.0.0.1`; no user name, password, `?`, `#`, whitespace or
+  control characters; at most 2048 characters.
+- Consent is checked again after the report is built and right before it is sent (`stillActive`), so a
+  yes that is taken back during the build sends nothing. An unreadable `config.yaml` or `users.json` ends the
+  tick without a send and without a stop; it is never read as a no.
+- A stop (last yes taken back, or sharing switched off) and the new install id are saved before the DELETE
+  goes out. A crash in between leaves a delete to send later; a new id is never reused for old data.
+- The install id is 128 random bits, not derived from an account, a machine or a repository. It is stored in
+  `metrics-share.json` (mode 0600). A DELETE uses only an id that matches 32 lower-case hex characters.
+- The DELETE goes to the endpoint the POSTs of that id went to, not to the one now in the settings.
+- Failure output is one fixed line per run of failures, with no values, no endpoint and no answer text.
+  The last answer (status and kind) is kept in the state file and the preview, never the body.
+- One writer: the lock `metrics-share.lock` is held by the tick and by `scf metrics send`. Nothing waits for it.
+  A lock whose time is old is taken over.
+
+**Still open.**
+- **The endpoint can be changed through the API.** `PUT /api/config` refuses `plugins` and `services` with
+  a 400, but it does not refuse `metrics_sharing.endpoint` or `metrics_sharing.timeout_ms`
+  (`src/server/api-admin.ts`). An admin can point the reports to another https address, and whoever can edit
+  `config.yaml` can too. The comment in `src/settings/exceptions.ts` says these keys are "set in config.yaml
+  only"; the code does not enforce that. The fix is to refuse the two keys in `PUT /api/config` the same way
+  as `services`.
+- The install id is the same from day to day until a stop. The receiver can link one install's reports over
+  time. A stop gives a new id. The id is also the key of the DELETE, so it is a secret for the receiver's
+  data; it is in the URL of the DELETE, so the access log in front of the receiver records it unless that log
+  is off (see `collector/README.md`, #890).
+- TLS is trusted through the system's certificate store. There is no pin of the receiver's certificate.
+- With `http://localhost` or `http://127.0.0.1` (for tests), the report goes in clear to whatever listens on
+  that port. Anyone who can edit `config.yaml` can set it; the address is only accepted for those two hosts.
+- Any program that runs as the same user can hold the lock and stop the push for as long as it holds it. This
+  only delays the push; it sends nothing.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the
