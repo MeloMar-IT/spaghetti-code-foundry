@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, modal, mount } from "./dom.js";
+import { whatIsSharedDialog } from "./metrics-shared.js";
 
 // The sharing answer of the signed-in account (#887): one item on Today while it is not answered, and a switch in
 // Account settings. All of them read one store, so a change in one shows in the others without a reload.
@@ -10,7 +11,7 @@ export const SHARING = {
   never: "Never shared: your code, tasks, step output, the text of a change, names, e-mail addresses, repository names or paths.",
   privacy: "How metrics sharing works",
   privacyHref: "/privacy.html#shared-metrics",
-  preview: "See what would be shared",
+  preview: "What is shared",
   previewHref: "/privacy.html#preview",
   share: "Share",
   dontShare: "Don't share",
@@ -111,7 +112,7 @@ export async function setAnswer(a, answer) {
 const errorText = (e) => (e && typeof e.message === "string" && e.message ? e.message : SHARING.failed);
 
 /** The Today item: the question, what is shared and what never is, two links and the two buttons. */
-export function sharingAskCard({ onChoose, previewHref = SHARING.previewHref }) {
+export function sharingAskCard({ onChoose, previewHref = SHARING.previewHref, openPreview }) {
   const note = h("p", { class: "status", role: "status" });
   const choose = async (answer) => {
     share.disabled = true;
@@ -133,7 +134,7 @@ export function sharingAskCard({ onChoose, previewHref = SHARING.previewHref }) 
     h("p", {}, h("strong", {}, SHARING.title)),
     h("p", {}, SHARING.shared),
     h("p", {}, SHARING.never),
-    h("p", { class: "row" }, h("a", { href: SHARING.privacyHref }, SHARING.privacy), h("a", { href: previewHref || SHARING.previewHref }, SHARING.preview)),
+    h("p", { class: "row" }, h("a", { href: SHARING.privacyHref }, SHARING.privacy), h("a", { href: previewHref || SHARING.previewHref, onClick: openPreview ? (e) => { e?.preventDefault?.(); void openPreview(); } : undefined }, SHARING.preview)),
     h("div", { class: "row" }, share, dont),
     note);
 }
@@ -149,7 +150,7 @@ export function mountSharingAsk(slot, { a = api, previewHref } = {}) {
   const draw = (s) => {
     if (!live) return;
     if (s.known && s.allowed && s.answer === "unasked") {
-      card ??= sharingAskCard({ onChoose: (answer) => setAnswer(a, answer), previewHref });
+      card ??= sharingAskCard({ onChoose: (answer) => setAnswer(a, answer), previewHref, openPreview: () => whatIsSharedDialog(a) });
       if (card.parentNode !== slot) mount(slot, card);
     } else {
       card = null;
@@ -193,7 +194,7 @@ const dateText = (iso) => {
 export function accountSettingsDialog(a = api) {
   let off = () => {};
   let busy = false;
-  const done = modal(SHARING.dialog, () => {
+  const done = modal(SHARING.dialog, (close) => {
     const box = h("input", { type: "checkbox", name: "metrics-sharing" });
     const when = h("p", { class: "muted" });
     const note = h("p", { class: "status", role: "status" });
@@ -227,7 +228,9 @@ export function accountSettingsDialog(a = api) {
       h("label", { class: "check" }, box, h("span", {}, SHARING.switchLabel)),
       when,
       h("p", { class: "muted" }, SHARING.shared, " ", SHARING.never),
-      h("p", {}, h("a", { href: SHARING.privacyHref }, SHARING.privacy)),
+      h("p", { class: "row" },
+        h("a", { href: SHARING.privacyHref }, SHARING.privacy),
+        h("a", { href: SHARING.previewHref, onClick: (e) => { e?.preventDefault?.(); close(); void whatIsSharedDialog(a); } }, SHARING.preview)),
       note);
   }, { busy: () => busy });
   return done.finally(() => off());

@@ -38,7 +38,7 @@ export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "li
 
 /** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
 const LIST_PATHS = new Set(["feed", "changes", "queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
-const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "account/metrics-sharing", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
+const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "account/metrics-sharing", "account/metrics-sharing/preview", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
 
 function scopeOfYes(path: string): RuleScope | undefined {
   if (path === "repos/methods") return "none";
@@ -157,6 +157,7 @@ export const RULES: Rule[] = [
   r("PUT", "me/view", "yes", "choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows"),
   r("GET", "account/metrics-sharing", "yes", "your own answer to \"may the metrics of your runs be shared?\": `allowed` (whether an admin allows sharing), `answer` (`unasked`, `yes` or `no`) and `changed` (when it last changed, or null); only your own account, also for an admin; a call with `as=` (a preview of another account) is refused with 403"),
   r("PUT", "account/metrics-sharing", "yes", "set your own sharing answer (`answer`: `yes` or `no`) and write an audit line; the same answer again changes nothing; refused with 409 while an admin does not allow sharing, and with 403 for a call with `as=`; there is no way to set the answer of another account"),
+  r("GET", "account/metrics-sharing/preview", "yes", "what the shared metrics would send and what was sent last: `next` (the day and the report of the next push) and `last` (time, day and the receiver's answer, or null before any send); a user gets a report of their own runs only and no body of the last report, an admin the install's report and the last report; the install id is always zeros; a call with `as=` is refused with 403"),
   r("GET", "credentials", "yes", "your stored credentials"),
   r("POST", "credentials", "yes", "store a credential"),
   r("DELETE", "credentials/:id", "yes", "remove a credential"),

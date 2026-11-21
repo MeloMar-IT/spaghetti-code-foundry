@@ -130,6 +130,11 @@ const ALLOWED: { file: string; text: string; why: string }[] = [
   { file: "ui/user/start.js", text: "issue", why: "the start-point id" },
   { file: "ui/work-model.js", text: "issue", why: "the saved order key" },
   { file: "ui/work-panel.js", text: "work-panel-issue", why: CLS },
+  {
+    file: "ui/metrics-shared.js",
+    text: "Never sent: repositories, branches, issues, titles, files, prompts, step outputs, account names, e-mail addresses and IP addresses. The report has only numbers and the names of built-in flows, steps and models, and the receiver keeps no IP address.",
+    why: "#888 asks the What is shared view to name GitHub issues among what is never sent",
+  },
 ];
 
 describe("the UI says change", () => {

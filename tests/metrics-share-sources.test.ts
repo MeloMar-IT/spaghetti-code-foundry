@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
 import { fakeReceiver, type FakeReceiver } from "./fixtures/fake-receiver.js";
 import { NO_INSTALL, ShareReportSchema } from "../src/metrics-share/report.js";
 import { buildShareReport, readUsageSplits, reduceRun, watcherSources, type ShareDeps } from "../src/metrics-share/sources.js";
+import { loadSentReport } from "../src/metrics-share/state.js";
 
 const A = "3f1c3c8e-8a5e-4c43-9f43-0a0e2f6b9b51";
 let dir: string;
@@ -218,6 +219,24 @@ describe("scf metrics send (#889)", () => {
   it("reports an answer that is not accepted", async () => {
     rcv.answer = () => ({ status: 503 });
     expect(await send()).toEqual({ code: 1, out: ["not accepted: refused (503)"], notes: [] });
+  });
+
+  it("keeps a copy of the sent report and the receiver's answer in sentFile (#888)", async () => {
+    const sentFile = join(dir, "metrics-share-last.json");
+    const out: string[] = [];
+    allowedNow = true;
+    const code = await metricsCommand(
+      ["send"],
+      { runsDir: dir, now: NOW, deps: deps([]), accounts: () => [A], config: cfgNow(), reload: cfgNow, stateFile: stateFile(), lockFile: lockFile(), sentFile },
+      (l) => out.push(l),
+      () => {},
+    );
+    expect(code).toBe(0);
+    const kept = loadSentReport(sentFile);
+    expect(kept.broken).toBe(false);
+    expect(kept.sent).toMatchObject({ day: "2026-11-19", at: NOW.toISOString(), result: "accepted", status: 200 });
+    expect(kept.sent!.report).toEqual(JSON.parse(rcv.got[0]!.body));
+    expect(statSync(sentFile).mode & 0o777).toBe(0o600);
   });
 
   it("refuses today, a later day, a day over 7 days old, a bad day and nobody sharing, without a request", async () => {

@@ -91,7 +91,7 @@ one (twice). The new password follows the same rules (12 to 200 characters, not 
 Your session stays; every other session of your account is signed out. A wrong current password
 counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
 
-**Share the metrics of your runs.** Each person account is asked once, at the top of Today, whether the metrics of its runs may be shared: numbers only, once a day, never code, tasks, step output, names, e-mail addresses or repository names. The question offers **Share** and **Don't share**, links to a preview and to the privacy page, and goes away after either choice; it is not asked again. Change your answer at any time in **Account settings** (account menu, before **Sign out**): the switch "Share the metrics of my runs" shows the date of the last change. Service accounts are never asked. An admin can switch sharing off for the whole install (Settings, **Metrics sharing**); then nobody is asked, the question and the switch are hidden, nothing is sent, and your answer is kept for when it is on again. An admin cannot change your answer, and each change is written to the audit log. Once a day the numbers go to spaghetti-code-foundry.com; see [Shared metrics](#shared-metrics) in chapter 8.
+**Share the metrics of your runs.** Each person account is asked once, at the top of Today, whether the metrics of its runs may be shared: numbers only, once a day, never code, tasks, step output, names, e-mail addresses or repository names. The question offers **Share** and **Don't share**, links to **What is shared** (the report the next push would send and the last one sent) and to the privacy page, and goes away after either choice; it is not asked again. Change your answer at any time in **Account settings** (account menu, before **Sign out**): the switch "Share the metrics of my runs" shows the date of the last change. Service accounts are never asked. An admin can switch sharing off for the whole install (Settings, **Metrics sharing**); then nobody is asked, the question and the switch are hidden, nothing is sent, and your answer is kept for when it is on again. An admin cannot change your answer, and each change is written to the audit log. Once a day the numbers go to spaghetti-code-foundry.com; see [Shared metrics](#shared-metrics) in chapter 8.
 
 **Set-password link.** A new account may get a link instead of a password. Open it in the
 browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
@@ -5842,6 +5842,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/me/view` | yes | yes | admin | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
 | `GET /api/account/metrics-sharing` | yes | yes | secret | your own answer to "may the metrics of your runs be shared?": `allowed` (whether an admin allows sharing), `answer` (`unasked`, `yes` or `no`) and `changed` (when it last changed, or null); only your own account, also for an admin; a call with `as=` (a preview of another account) is refused with 403 |
 | `PUT /api/account/metrics-sharing` | yes | yes | secret | set your own sharing answer (`answer`: `yes` or `no`) and write an audit line; the same answer again changes nothing; refused with 409 while an admin does not allow sharing, and with 403 for a call with `as=`; there is no way to set the answer of another account |
+| `GET /api/account/metrics-sharing/preview` | yes | yes | secret | what the shared metrics would send and what was sent last: `next` (the day and the report of the next push) and `last` (time, day and the receiver's answer, or null before any send); a user gets a report of their own runs only and no body of the last report, an admin the install's report and the last report; the install id is always zeros; a call with `as=` is refused with 403 |
 | `GET /api/credentials` | yes | yes | secret | your stored credentials |
 | `POST /api/credentials` | yes | yes | secret | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | secret | remove a credential |
@@ -8617,6 +8618,13 @@ connect to the install; the install pushes.
   `metrics_sharing.timeout_ms` (default 10000, from 1000 to 60000) are settings in `config.yaml`. The Settings
   page has no control for them. The endpoint must be `https`; plain `http` is accepted only for `localhost` and
   `127.0.0.1`, for tests. The push never follows a redirect and sends no cookie.
+- **What is shared.** The dialog **What is shared** (linked from the Today item and from **Account settings**) shows
+  the report the next push would send, as readable groups (changes, speed, splits, rework, quality, cost and models,
+  use), with the raw JSON under a disclosure. It also shows the last report that was sent, with its time, its day
+  and the receiver's answer; before any send it says "No report has been sent yet." Users see the time, day and
+  answer of the last send but not its numbers; an admin sees them in full. The dialog always says what is never
+  sent: repositories, branches, issues, titles, files, prompts, outputs, accounts, e-mail addresses and IP addresses.
+  The install id shows as zeros.
 - **Send one day now.** `scf metrics send [--day YYYY-MM-DD]` (admins) sends one ended day at once, for testing.
   It records the answer like the server does. It refuses today or a later day, a day more than 7 days old, a day
   the receiver already accepted, and any run while nobody shares. It cannot run while the server is sending; try

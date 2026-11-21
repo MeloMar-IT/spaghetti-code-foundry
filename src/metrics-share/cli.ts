@@ -4,7 +4,9 @@ import type { PushResult, PushTarget } from "./push.js";
 import { MAX_AGE_DAYS, ageDays, dayOf, pushOne, reconcile, type SharingConfig } from "./pusher.js";
 import type { ShareReport } from "./report.js";
 import { buildShareReport, defaultShareDeps, sharingAccounts, type ShareDeps } from "./sources.js";
-import { answerText, loadShareState, saveShareState, shareLockFile, shareStateFile, withShareLock, type LastAnswer } from "./state.js";
+import {
+  answerText, loadShareState, saveSentReport, saveShareState, shareLockFile, shareSentFile, shareStateFile, withShareLock, type LastAnswer,
+} from "./state.js";
 
 export const METRICS_USAGE = `usage: scf metrics preview [--day YYYY-MM-DD]   Print the shared metrics report of one UTC day (default yesterday); nothing is sent
        scf metrics send [--day YYYY-MM-DD]      Send the report of one ended UTC day (default yesterday) to the receiver now`;
@@ -34,6 +36,8 @@ export interface MetricsOptions {
   reload?: () => SharingConfig;
   stateFile?: string;
   lockFile?: string;
+  /** The copy of the last sent report (#888); default metrics-share-last.json in the data folder. */
+  sentFile?: string;
   /** For tests: replace the request. */
   send?: (t: PushTarget, report: ShareReport, signal?: AbortSignal) => Promise<PushResult>;
 }
@@ -101,6 +105,7 @@ async function send(day: string, now: Date, stateFile: string, opts: MetricsOpti
         }
       },
       save: (s) => saveShareState(s, stateFile),
+      keepSent: (rec) => saveSentReport(rec, opts.sentFile ?? shareSentFile()),
       now: () => opts.now ?? new Date(),
       ...(opts.send ? { send: opts.send } : {}),
     });

@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statS
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { FACTORY_HOME } from "../flow/load.js";
-import { NO_INSTALL } from "./report.js";
+import { NO_INSTALL, ShareReportSchema } from "./report.js";
 
 // The state of the metrics push (#889) in <data folder>/metrics-share.json: the install id, which days were accepted, the
 // deletes still to send and the last answer of the receiver. A missing file is empty; a broken one is never overwritten.
@@ -14,6 +14,9 @@ export const SHARE_LOCK_FILE = "metrics-share.lock";
 const home = (): string => process.env.FACTORY_HOME ?? FACTORY_HOME;
 export const shareStateFile = (): string => join(home(), SHARE_STATE_FILE);
 export const shareLockFile = (): string => join(home(), SHARE_LOCK_FILE);
+/** A copy of the last report that was sent and the receiver's answer (#888), for the What is shared view. */
+export const SHARE_SENT_FILE = "metrics-share-last.json";
+export const shareSentFile = (): string => join(home(), SHARE_SENT_FILE);
 
 const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const Install = z.string().regex(/^[0-9a-f]{32}$/);
@@ -92,6 +95,56 @@ export function saveShareState(state: ShareState, file = shareStateFile()): bool
   } catch {
     rmSync(tmp, { force: true });
     return false;
+  }
+}
+
+export const SentRecordSchema = z
+  .object({
+    version: z.literal(1),
+    at: Time,
+    day: Day,
+    result: z.enum(["accepted", "refused", "unreachable"]),
+    status: z.number().int().min(100).max(999).optional(),
+    report: ShareReportSchema,
+  })
+  .strict();
+export type SentRecord = z.infer<typeof SentRecordSchema>;
+
+/**
+ * Saves the copy of the last sent report through a temporary file (mode 0600) and a rename. Never throws.
+ * When it cannot be saved, the older copy is removed (best effort), so an older report is never shown as the last one.
+ */
+export function saveSentReport(rec: SentRecord, file = shareSentFile()): boolean {
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(tmp, JSON.stringify(SentRecordSchema.parse(rec)) + "\n", { mode: 0o600 });
+    renameSync(tmp, file);
+    return true;
+  } catch {
+    try {
+      rmSync(tmp, { force: true });
+      rmSync(file, { force: true });
+    } catch {
+      // nothing more can be done
+    }
+    return false;
+  }
+}
+
+/** Reads the copy of the last sent report. Missing file: none. A file that cannot be read or is not valid: `broken`. */
+export function loadSentReport(file = shareSentFile()): { sent?: SentRecord; broken: boolean } {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (e) {
+    return { broken: (e as NodeJS.ErrnoException).code !== "ENOENT" };
+  }
+  try {
+    const r = SentRecordSchema.safeParse(JSON.parse(text));
+    return r.success ? { sent: r.data, broken: false } : { broken: true };
+  } catch {
+    return { broken: true };
   }
 }
 
