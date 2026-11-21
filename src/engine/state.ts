@@ -103,6 +103,9 @@ export interface RunReferences {
   privateOk?: true;
 }
 
+/** What keeps a reference copy read only: the OS sandbox, or (admin runs without it) file modes checked before each agent step. */
+export type ReferenceHold = "sandbox" | "file modes";
+
 /** One reference at one preparation: its commit and folder (relative to the run folder) when it is there, else why not. */
 export interface ReferenceRecord {
   repo: string;
@@ -110,6 +113,7 @@ export interface ReferenceRecord {
   ok: boolean;
   commit?: string;
   folder?: string;
+  held?: ReferenceHold;
   reason?: string;
 }
 

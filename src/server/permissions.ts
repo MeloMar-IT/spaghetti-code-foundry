@@ -38,7 +38,7 @@ export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "li
 
 /** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
 const LIST_PATHS = new Set(["feed", "changes", "queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
-const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
+const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "account/metrics-sharing", "account/metrics-sharing/preview", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
 
 function scopeOfYes(path: string): RuleScope | undefined {
   if (path === "repos/methods") return "none";
@@ -155,6 +155,9 @@ export const RULES: Rule[] = [
   r("POST", "password", "yes", "change your own password (the other sessions of the account end)"),
   r("GET", "me/view", "yes", "your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set)"),
   r("PUT", "me/view", "yes", "choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows"),
+  r("GET", "account/metrics-sharing", "yes", "your own answer to \"may the metrics of your runs be shared?\": `allowed` (whether an admin allows sharing), `answer` (`unasked`, `yes` or `no`) and `changed` (when it last changed, or null); only your own account, also for an admin; a call with `as=` (a preview of another account) is refused with 403"),
+  r("PUT", "account/metrics-sharing", "yes", "set your own sharing answer (`answer`: `yes` or `no`) and write an audit line; the same answer again changes nothing; refused with 409 while an admin does not allow sharing, and with 403 for a call with `as=`; there is no way to set the answer of another account"),
+  r("GET", "account/metrics-sharing/preview", "yes", "what the shared metrics would send and what was sent last: `next` (the day and the report of the next push) and `last` (time, day and the receiver's answer, or null before any send); a user gets a report of their own runs only and no body of the last report, an admin the install's report and the last report; the install id is always zeros; a call with `as=` is refused with 403"),
   r("GET", "credentials", "yes", "your stored credentials"),
   r("POST", "credentials", "yes", "store a credential"),
   r("DELETE", "credentials/:id", "yes", "remove a credential"),
@@ -182,6 +185,7 @@ export const RULES: Rule[] = [
   r("POST", "skills/lifecycle/allow-run", "no", "let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards"),
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
+  r("POST", "audit/service-line", "no", "for a service account only (a person, also an admin, gets 403): write one line of its own into the audit log (`event`, `result` ok, refused or failed, optional `code` and `detail` of at most 300 characters), with its client label and the person it acts for; the text is the program's claim; at most 120 lines a minute (429 with Retry-After); granted only by its own key"),
   r("GET", "repos", "yes", "your repositories, each with its autonomy level"),
   r("GET", "repos/methods", "yes", "the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App"),
   r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`)"),
@@ -287,10 +291,11 @@ export const ruleKey = (rule: Rule) => `${rule.method} ${rule.path}`;
 /**
  * Routes a service account (#866) can never be given: the `secret` data class (#869, see dataClassOf). As path prefixes (a path matches when it is the prefix or goes on with `/`):
  * credentials, accounts (also service accounts and view-as), settings (the test command and release recipe are settings, so
- * `repos/:id/publish-remote`, which saves repository settings, is here too), autonomy, self-update, plugins and the audit export.
+ * `repos/:id/publish-remote`, which saves repository settings, is here too), autonomy, self-update, plugins, the audit export
+ * and the own-account routes (`account`: the sharing answer of a person, #887; a service account has none).
  */
 export const NEVER_GRANTED: readonly string[] = [
-  "credentials", "admin/credentials", "users", "service-accounts", "admin/view-as", "password",
+  "credentials", "admin/credentials", "users", "service-accounts", "admin/view-as", "password", "account",
   "config", "settings", "restart", "onboarding/agents", "admin/repos/:id/settings", "repos/:id/publish-remote",
   "autonomy", "self-update", "plugins", "audit/export",
 ];

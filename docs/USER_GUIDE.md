@@ -91,6 +91,8 @@ one (twice). The new password follows the same rules (12 to 200 characters, not 
 Your session stays; every other session of your account is signed out. A wrong current password
 counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
 
+**Share the metrics of your runs.** Each person account is asked once, at the top of Today, whether the metrics of its runs may be shared: numbers only, once a day, never code, tasks, step output, names, e-mail addresses or repository names. The question offers **Share** and **Don't share**, links to **What is shared** (the report the next push would send and the last one sent) and to the privacy page, and goes away after either choice; it is not asked again. Change your answer at any time in **Account settings** (account menu, before **Sign out**): the switch "Share the metrics of my runs" shows the date of the last change. Service accounts are never asked. An admin can switch sharing off for the whole install (Settings, **Metrics sharing**); then nobody is asked, the question and the switch are hidden, nothing is sent, and your answer is kept for when it is on again. An admin cannot change your answer, and each change is written to the audit log. Once a day the numbers go to spaghetti-code-foundry.com; see [Shared metrics](#shared-metrics) in chapter 8.
+
 **Set-password link.** A new account may get a link instead of a password. Open it in the
 browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
 The link works once and for 24 hours. If the page says "this link is not valid any more", ask your
@@ -149,7 +151,7 @@ this browser for your account.
 - **Ask Foundry** — opens a panel where you ask how the Foundry works in your own words. It reads and explains; nothing changes unless you review and confirm an action. The button is there only when an admin has switched Ask Foundry on. See [Ask Foundry](#14-ask-foundry).
 - **+ New change** — the one primary button. It opens the **Start work** page, where you describe a change in your own words (see **+ New change** below).
 - The health chip (Admin view only) — press it to open or close the full health line. It opens by itself when something is wrong with the Foundry itself.
-- Your **account menu**: your name, **Appearance**, **Change password**, **Sign out**, the **View** box, the switch **Pause the Foundry while I work** (Off, 1 h or 2 h; admins only) and a link to the **Accessibility** statement. While the pause is on, a **Paused** flag shows in the top bar.
+- Your **account menu**: your name, **Appearance**, **Change password**, **Account settings** (the metrics sharing switch, while sharing is allowed), **Sign out**, the **View** box, the switch **Pause the Foundry while I work** (Off, 1 h or 2 h; admins only) and a link to the **Accessibility** statement. While the pause is on, a **Paused** flag shows in the top bar.
 
 ![The Ask Foundry panel, opened with Ask Foundry](images/ask.png)
 
@@ -757,6 +759,7 @@ The Simple view keeps the same five places but has its own Today and no list of 
 - **Building now:** the five-phase strip (**Understand**, **Plan**, **Build**, **Check**, **Deliver**) and one sentence on what is happening now.
 - **Finished recently:** plain titles, with **Show all** for the rest.
 - **Your turn (Admin view):** below Today, the admin page lists the same items as [Your turn](#your-turn), with their buttons. A change is shown once: when Your turn has it, the Today cards leave it out.
+- **Share the metrics of your runs:** the first item on Today in every view (Simple, Advanced and Admin) while you have not answered. It is removed once you choose **Share** or **Don't share**. See **Share the metrics of your runs** in the sign-in and account part of chapter 1, and **Account settings** in the account menu.
 - **Since you last looked, Problems and Metrics (Admin view):** below Your turn. **Problems** lists the problems of the Foundry that Your turn does not already show. **Metrics** is closed until you open it; **All metrics** goes to the Dashboard (**Administration → Dashboard**).
 - **Empty:** with nothing yet, Today says "Nothing here yet. Start work to begin." and offers **Start work** and **My repositories**. **+ New change** in the top bar does the same as **Start work**.
 - **Users** see only their own work: no cost, model, health or other accounts.
@@ -3404,22 +3407,23 @@ A run sees only its own checkout. When an issue depends on routes, file formats 
 - **Set it.** In the form, the group **Reference repositories** (every source except the monitor) takes `reference_repos`: a list of `owner/name`, at most 10. The option `reference_private_ok` (default off) allows a private reference (see below). In `config.yaml` the same two keys are written under the watcher; through the API they are `reference_repos` and `reference_private_ok` in the watcher's body.
 - **Which repositories.** Only repositories already added to the Foundry, that the watcher's owner can see. The watcher's own repository is refused. A refused name is answered with `reference_repos: …` and the reason.
 - **Where.** Before a run's steps start, and again before each resume, each reference is cloned read-only, shallow, from the newest commit of its default branch, to `<run folder>/reference/<owner>-<name>` (lower case, for example `reference/acme-lib`). The copy sits next to the checkout, so it is never part of the pull request.
-- **The commit is in the history.** The run's `run.json` has a `references` list (the newest 50 preparations, each with the repository, the time, the commit and the folder, or the reason it was skipped), and the run log has the same lines.
+- **The commit is in the history.** The run's `run.json` has a `references` list (the newest 50 preparations, each with the repository, the time, the commit, the folder and `held` — `sandbox` or `file modes`, what keeps the copy read only — or the reason it was skipped), and the run log has the same lines.
 - **What the agents are told.** Each agent step starts with a block that lists the copies with their commits and says they are for reading only. A fact the agent finds there is not a question for the owner: it must not be asked as an `owner_action`.
-- **Read only.** The copy has no remote, so it cannot be pushed. Its files are read-only and its folders cannot be entered for writing (`.git` included). Claude's Edit and Write tools are denied there, and on macOS the sandbox refuses writes and `chmod` there. Nothing the run does can change the copy, commit it, or put it in the pull request.
+- **Read only.** The copy has no remote, so it cannot be pushed. Its files are read-only and its folders cannot be entered for writing (`.git` included). Claude's Edit and Write tools are denied there, and on macOS the sandbox refuses writes and `chmod` there. In a sandboxed run nothing the run does can change the copy. In an admin's run without the sandbox a shell step can change it, and the check below removes it. Nothing the run does can commit the copy or put it in the pull request.
+- **Checked before each agent step.** Before each agent step, every copy of the run is checked against its commit: its `HEAD` must be that commit, `git status` must be clean (ignored files included) and the file modes must be unchanged. A copy that changed is removed, the step's reference block leaves it out, and the run log says `! reference <owner>/<name>: removed — it was changed during the run`. The run goes on. The check does not look at `.git/config` or the refs, so a shell step in an admin's run can still add a remote to a copy before the check removes it.
 - **Removed.** The copies are deleted when the run ends, also when it waits or stops. If a crash leaves one behind, `scf clean` unlocks and removes it.
 - **Skipped, not failed.** A reference that cannot be used does not fail the run. The run log says `! reference <owner>/<name>: skipped — <reason>` and the run goes on. Reasons:
   - it could not be fetched;
   - the run's owner cannot use it;
   - a policy refuses access to it;
   - the privacy rule below refuses it;
-  - the run has no OS sandbox (see below).
+  - a user's run has no OS sandbox (see below).
 - **Privacy.** What a reference teaches the agent can end up in issue comments, the pull request or commits, so a reference is used only when it is safe for the target:
   - a public reference is always used;
   - a private one (or one whose visibility cannot be told) is used only when the target repository is known to be private, or `reference_private_ok` is on.
 
   A 404 from GitHub does not count as proof that a repository is private. The privacy check runs again at every start and resume.
-- **Needs the OS sandbox.** A run without an OS sandbox (for example an admin's default-workspace run) skips every reference. Without the sandbox, a shell step could make the copy writable again.
+- **Who gets a copy.** A run with the OS sandbox gets copies. An admin's run without the OS sandbox (for example one in the default workspace) gets them too: file modes hold them, and they are checked before each agent step. A user's run without the OS sandbox (`sandbox.user_runs: off`) skips every reference, because a shell step could make the copy writable again.
 - **Off by default.** Without `reference_repos`, nothing changes: no copy, no block in the prompts, and no `references` in `run.json`.
 
 ### The Watchers page (admins)
@@ -4968,7 +4972,7 @@ To change a setting, open **Administration** in the sidebar, then **Settings** u
 
 **Restart when no change is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no change is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start until the active runs are done, then the server starts again by itself. The watchers keep checking during the wait (a watcher that was removed or changed stops, and none starts); only a move of the data folder stops them all. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
 
-**Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
+**Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Metrics sharing** is a card of its own: `metrics_sharing.allowed` (default on). Off, nobody is asked whether the metrics of their runs may be shared, nothing is counted or sent, and the answers already given are kept for when it is on again. The card's help says the same. The address and the timeout of the receiver (`metrics_sharing.endpoint`, `metrics_sharing.timeout_ms`) have no control on this page; they are read from `config.yaml`. A save that changes it is written to the audit log first; if the log cannot be written, the save fails and `config.yaml` is unchanged. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
 **Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the lists of accounts that may not ask Ask Foundry or may ask in the pilot stage (`help.disabled_accounts`, `help.pilot_accounts`), the list of texts Ask Foundry keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
 
@@ -5144,6 +5148,12 @@ If the person is blocked, removed, or cannot sign in under the current sign-in m
 
 A program may send the optional header `X-SCF-Client: <label>` to say which of its devices or clients made the request, such as `X-SCF-Client: kiosk-2`. The label is written at the end of the line as `client <label>`. It is a label the program chooses, not proof of which device sent the request. Control characters are removed, surrounding spaces are trimmed, and a label longer than 64 characters is cut to 64; a label is never refused. A request without the header writes no `client` part. The label shows as the Client field of an entry on the Audit page and in `GET /api/audit`, and the Client filter and the `client` filter of `GET /api/audit` and `GET /api/audit/export` find lines by it.
 
+**Lines a program writes itself.** A service account can write its own line for what it decided, including a request it refused or a thing it handled without calling the Foundry, so that everything it decides is in one place. It sends `POST /api/audit/service-line` with `{ "event": "<name>", "result": "ok" | "refused" | "failed", "code": "<code>", "detail": "<text>" }`; `code` and `detail` are optional. `event` and `code` are lower-case words of letters, digits, `_`, `-` and `.`, at most 64 characters; `detail` is printable text of at most 300 characters. Any other key, or a bad value, answers 400. The route is for service accounts only: a person gets 403, also an admin. Its key must be in the account's scope (a `class:` entry does not grant it). A successful call answers `201 { "written": true }` and writes one line with the action `service-line`, the account as the actor, the event as the target, and the detail with the result, the code, the text, the person (`acts for <id>`) and the client label (`client <label>`). The audit file holds only `ok` and `failed`, so `refused` and `failed` are both stored as `failed`; the program's own word comes first in the detail. The line is written even when a repository is closed with `services: none`, because it names no repository.
+
+The text is the program's claim, not something the Foundry checked. The Foundry checks only the shape, the length and that the text holds no service token. Read such a line as what the program reported.
+
+A service account may write at most 120 lines a minute. Above that the call answers 429 with `Retry-After`, and the Foundry writes one `service-line-dropped` line a minute, not one per refused call. The count is kept in memory, so a restart starts it again. A busy audit log answers 503 with `Retry-After: 1`; any other storage problem answers 500. Each call still gets its usual `service-request` line. `GET /api/audit` and the Audit page show both actions, and the `action`, `user` and `client` filters find them.
+
 **Rotate** gives the account a new token; the old one stops at once. **Revoke** ends the token until you rotate again. A token expires 30 days after its last use, and then it is refused until it is rotated. Cookie sign-in for people is not changed.
 
 ![The Users page under Administration, People and access](images/users.png)
@@ -5274,6 +5284,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
+| `settings-change` | An account changes its metrics sharing answer | `metrics-sharing` | `<old> -> <new>` (`unasked`, `yes` or `no`); the same answer again writes nothing |
 | `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no change is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
 | `help-action` | An approved action of Ask Foundry ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
 | `help-ask` | A question to Ask Foundry was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
@@ -5830,6 +5841,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/password` | yes | yes | secret | change your own password (the other sessions of the account end) |
 | `GET /api/me/view` | yes | yes | admin | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set) |
 | `PUT /api/me/view` | yes | yes | admin | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
+| `GET /api/account/metrics-sharing` | yes | yes | secret | your own answer to "may the metrics of your runs be shared?": `allowed` (whether an admin allows sharing), `answer` (`unasked`, `yes` or `no`) and `changed` (when it last changed, or null); only your own account, also for an admin; a call with `as=` (a preview of another account) is refused with 403 |
+| `PUT /api/account/metrics-sharing` | yes | yes | secret | set your own sharing answer (`answer`: `yes` or `no`) and write an audit line; the same answer again changes nothing; refused with 409 while an admin does not allow sharing, and with 403 for a call with `as=`; there is no way to set the answer of another account |
+| `GET /api/account/metrics-sharing/preview` | yes | yes | secret | what the shared metrics would send and what was sent last: `next` (the day and the report of the next push) and `last` (time, day and the receiver's answer, or null before any send); a user gets a report of their own runs only and no body of the last report, an admin the install's report and the last report; the install id is always zeros; a call with `as=` is refused with 403 |
 | `GET /api/credentials` | yes | yes | secret | your stored credentials |
 | `POST /api/credentials` | yes | yes | secret | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | secret | remove a credential |
@@ -5857,6 +5871,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/skills/lifecycle/allow-run` | yes | no | admin | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards |
 | `GET /api/audit` | yes | no | log | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | secret | download the audit log as CSV, with the same filters |
+| `POST /api/audit/service-line` | yes | no | admin | for a service account only (a person, also an admin, gets 403): write one line of its own into the audit log (`event`, `result` ok, refused or failed, optional `code` and `detail` of at most 300 characters), with its client label and the person it acts for; the text is the program's claim; at most 120 lines a minute (429 with Retry-After); granted only by its own key |
 | `GET /api/repos` | yes | yes | summary | your repositories, each with its autonomy level |
 | `GET /api/repos/methods` | yes | yes | admin | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
 | `POST /api/repos` | yes | yes | admin | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
@@ -8580,6 +8595,42 @@ Before a new version of a skill replaces the pinned one, keep this evidence with
 4. The same suite run on each agent that is configured (Claude, Codex, a local model). Say which were run and which were not.
 5. The report file or the eval run IDs, linked in the pull request that changes the pin.
 
+### Shared metrics
+
+When at least one account has said yes (see **Share the metrics of your runs** in chapter 1) and an admin
+allows sharing, the install sends the numbers of its runs to spaghetti-code-foundry.com by itself. You do not
+connect to the install; the install pushes.
+
+- **What is sent.** The report of one UTC day, as `scf metrics preview` prints it: numbers only, for the
+  accounts that said yes. Nothing else leaves the install. The report carries a random install id, a
+  128-bit value kept in `metrics-share.json` in the data folder (mode 0600). It is not your name or an address.
+- **When.** Once a minute the server looks for days to send. A day is sent after it has ended (UTC), with one
+  request. The first day sent is the day sharing started, once that day has ended. A day the receiver accepted
+  is never sent again.
+- **Failures.** A day that is not accepted is tried again after 15 minutes, then after 30, 1 hour and so on,
+  up to 24 hours between tries (a longer `retry_after` from the receiver is kept). It is tried for up to 7
+  days; after that it is dropped. A failed push never fails or slows a run. It writes one line to the log,
+  `metrics-share: the daily report or a delete could not be sent; it is tried again later`, with no values.
+  `scf metrics preview` shows the last answer of the receiver (`last answer of the receiver: …`).
+- **Stopping.** When the last account that shares says no, or an admin switches sharing off, the install
+  asks the receiver to delete what it sent (one `DELETE` for its install id) and then takes a new install id.
+  A later yes starts fresh. The stop is saved before the request, so a restart does not lose it.
+- **Where it goes.** `metrics_sharing.endpoint` (default `https://spaghetti-code-foundry.com/api/metrics`) and
+  `metrics_sharing.timeout_ms` (default 10000, from 1000 to 60000) are settings in `config.yaml`. The Settings
+  page has no control for them. The endpoint must be `https`; plain `http` is accepted only for `localhost` and
+  `127.0.0.1`, for tests. The push never follows a redirect and sends no cookie.
+- **What is shared.** The dialog **What is shared** (linked from the Today item and from **Account settings**) shows
+  the report the next push would send, as readable groups (changes, speed, splits, rework, quality, cost and models,
+  use), with the raw JSON under a disclosure. It also shows the last report that was sent, with its time, its day
+  and the receiver's answer; before any send it says "No report has been sent yet." Users see the time, day and
+  answer of the last send but not its numbers; an admin sees them in full. The dialog always says what is never
+  sent: repositories, branches, issues, titles, files, prompts, outputs, accounts, e-mail addresses and IP addresses.
+  The install id shows as zeros.
+- **Send one day now.** `scf metrics send [--day YYYY-MM-DD]` (admins) sends one ended day at once, for testing.
+  It records the answer like the server does. It refuses today or a later day, a day more than 7 days old, a day
+  the receiver already accepted, and any run while nobody shares. It cannot run while the server is sending; try
+  again in a minute.
+
 ### Spending limits per issue and per month
 
 Two limits stop money from running out on one issue or in one month. Both are off until you set them
@@ -8623,6 +8674,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf run <flow> --task "…" [--var k=v] [--repo dir\|owner/name] [--ref ref]` | Run a flow. `--repo owner/name` is for flows that clone the repository themselves (`release-build`); `--ref` sets the variable `ref` |
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
+| `scf metrics preview [--day YYYY-MM-DD]` | Print the numbers-only shared metrics report of one UTC day (default yesterday) as JSON. It covers only the runs of accounts that are not service accounts. Nothing is sent; a note on stderr says so |
+| `scf metrics send [--day YYYY-MM-DD]` | Send the shared metrics report of one ended UTC day (default yesterday) to the receiver now (admins; for testing). Refused when nobody shares, for today or a later day, a day over 7 days old, or a day already accepted ([Shared metrics](#shared-metrics)) |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf autonomy status [--json]` | Print the autonomy level of each repository and flow and its promotion gate, check by check; read-only; needs a running, signed-in server (admin) ([Promotion gate](#promotion-gate)) |

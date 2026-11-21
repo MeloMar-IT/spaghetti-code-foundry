@@ -33,6 +33,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/flow-page.js` | Overwrite flow | Save under the name of another flow | none | Overwrite | `confirmDialog` |
 | `ui/flow-page.js` | Delete flow | Delete in the More menu of the flow editor | none | Delete | `confirmDialog` |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
+| `ui/metrics-sharing.js` | Account settings | Account settings button in the header | switch "Share the metrics of my runs" | (saved when switched) | `modal` |
+| `ui/metrics-shared.js` | What is shared | What is shared link on the Today item and in Account settings | none | (read only) | `modal` |
 | `ui/health.js` | Cancel this run | Cancel run on a problem of the health line | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
 | `ui/kit/overlays.js` | Dialog and drawer of the kit | Callers of `dialog()` and `drawer()` (none in a page yet) | whatever `build(close)` returns | set by the caller | kit layer |
 | `ui/work-panel.js` | Story panel | A card on the board, on a narrow screen (a side panel, not a dialog, on a wide one) | none | Back, Close | own dialog |

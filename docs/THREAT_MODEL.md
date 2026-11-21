@@ -65,7 +65,7 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - The real `claude` and `codex` were not run in the tests, only the fake agents. Before release, check by hand on a Mac that the real `claude` (with `CLAUDE_CODE_OAUTH_TOKEN`) and `codex` (with an API key) finish a step inside the profile. Result: not recorded yet.
 - The network is open: a step can send what it may read to any host.
 - Profiles do not nest: `sandbox-exec` started inside a sandboxed step fails.
-- With the setting off, and for admin runs, nothing is held.
+- With the setting off, and for admin runs, nothing is held. The one exception is the read-only copies of reference repositories, held by file modes and checked before each agent step (see "Reference repositories").
 
 ## Credential leakage (to agents, logs, other users)
 
@@ -289,6 +289,9 @@ password. This is a deliberate second way in, so it is a standing credential.
 - A route whose admin check sits in its handler and not in the role table was found only for `GET help/usage` and `GET/PUT runs/:id/issue-limit`, which now use `adminOrGranted()`. The other such routes were not reviewed.
 - Tokens are not renewed by the server on their own: a program that is not used for 30 days must be given a new token by an admin.
 - With `actsFor`, the token sees everything the person can see, within the scope: a scope with `class:summary` reads every run and repository of that person. Link a service account only to a person whose work the program may read and answer.
+- A service account's own audit lines (#884, `POST /api/audit/service-line`, `src/server/api-service-line.ts`) hold text the program chose. The Foundry checks only its shape: the words of `event` and `code`, the length and printability of `detail`, and that no token is in it. The text is the program's claim, not something the Foundry verified. The Audit page and `GET /api/audit` do not mark these lines apart from others; the action `service-line` and the account name show where a line came from. A program can write a false line; the line names the account, its person and its client label, so it can be traced, but not proven right. The text is JSON-quoted in the line, so it cannot pose as the `acts for` or `client` parts. Only a service account whose scope lists the route by its own key may write these lines; a person gets 403 and `class:` does not grant it. The route is `admin` data, not a read.
+- Flooding: an account may write at most 120 lines a minute (429 with `Retry-After` above that). One `service-line-dropped` line a minute records the overflow, so the log cannot be filled by the program, and the count is kept in memory, so a restart resets it. The limit bounds only the program's own lines; each call still gets its `service-request` line.
+- The line is written even under `services: none`, since it names no repository. This does not let the account read a closed repository.
 
 ## Managed services (#867)
 
@@ -329,6 +332,68 @@ shows the setting. The list is read at start; a change takes effect at the next 
   removed from the log.
 - A program that ignores the stop signal is killed after 5 s; a program that starts its own detached
   processes outside its process group may outlive the stop.
+
+## Shared metrics push (#889)
+
+The install sends its daily report to a receiver (`metrics_sharing.endpoint`). The report is numbers only
+(the schema of #893 has no free text), so the risk is where it goes and what the receiver can learn from it.
+
+**Protected by.**
+- One network call, the report (`POST`) or one delete (`DELETE <endpoint>/<install>`). It uses `node:http`/`node:https`
+  with no connection reuse, no cookie, no redirect, and only `User-Agent: spaghetti-code-foundry/<version>`
+  and the content headers (`src/metrics-share/push.ts`). The answer is read only for its status and an
+  integer `retry_after` from 1 to 86400 in a body of at most 4 KB; a 2xx body is never read. Nothing from
+  the answer is stored or logged.
+- The address is checked when the config is read and again before each request (`isShareEndpoint`): https
+  only, or plain http to exactly `localhost` or `127.0.0.1`; no user name, password, `?`, `#`, whitespace or
+  control characters; at most 2048 characters.
+- Consent is checked again after the report is built and right before it is sent (`stillActive`), so a
+  yes that is taken back during the build sends nothing. An unreadable `config.yaml` or `users.json` ends the
+  tick without a send and without a stop; it is never read as a no.
+- A stop (last yes taken back, or sharing switched off) and the new install id are saved before the DELETE
+  goes out. A crash in between leaves a delete to send later; a new id is never reused for old data.
+- The install id is 128 random bits, not derived from an account, a machine or a repository. It is stored in
+  `metrics-share.json` (mode 0600). A DELETE uses only an id that matches 32 lower-case hex characters.
+- The DELETE goes to the endpoint the POSTs of that id went to, not to the one now in the settings.
+- Failure output is one fixed line per run of failures, with no values, no endpoint and no answer text.
+  The last answer (status and kind) is kept in the state file and the preview, never the body.
+- One writer: the lock `metrics-share.lock` is held by the tick and by `scf metrics send`. Nothing waits for it.
+  A lock whose time is old is taken over.
+
+**Still open.**
+- **The endpoint can be changed through the API.** `PUT /api/config` refuses `plugins` and `services` with
+  a 400, but it does not refuse `metrics_sharing.endpoint` or `metrics_sharing.timeout_ms`
+  (`src/server/api-admin.ts`). An admin can point the reports to another https address, and whoever can edit
+  `config.yaml` can too. The comment in `src/settings/exceptions.ts` says these keys are "set in config.yaml
+  only"; the code does not enforce that. The fix is to refuse the two keys in `PUT /api/config` the same way
+  as `services`.
+- The install id is the same from day to day until a stop. The receiver can link one install's reports over
+  time. A stop gives a new id. The id is also the key of the DELETE, so it is a secret for the receiver's
+  data; it is in the URL of the DELETE, so the access log in front of the receiver records it unless that log
+  is off (see `collector/README.md`, #890).
+- TLS is trusted through the system's certificate store. There is no pin of the receiver's certificate.
+- With `http://localhost` or `http://127.0.0.1` (for tests), the report goes in clear to whatever listens on
+  that port. Anyone who can edit `config.yaml` can set it; the address is only accepted for those two hosts.
+- Any program that runs as the same user can hold the lock and stop the push for as long as it holds it. This
+  only delays the push; it sends nothing.
+
+## Reference repositories (#878, #894)
+
+A watcher can give its runs read-only copies of other repositories of its owner (`src/engine/reference-repos.ts`, `src/engine/reference-check.ts`). The agents read the copies; nothing may change them or put them in the pull request.
+
+**Protected by.**
+- A copy sits in the run folder next to the checkout, so it is never part of the pull request. It has no remote, its files are 0444 and its folders 0555 (`.git` too), and Claude's Edit and Write are denied there.
+- In a sandboxed run the OS sandbox also refuses writes and `chmod` there. In an admin's run without the sandbox, file modes are the only hold, since a shell step can `chmod`. Before each agent step every copy is checked against its commit: `HEAD`, a clean `git status` (ignored files included, `core.fileMode` off) and the modes. A copy that changed is removed, and the step's reference block leaves it out. The run goes on.
+- The check runs before each agent step, and each copy is checked once per step even when several steps start together.
+- A user's run without the OS sandbox gets no copy at all (`sandbox.user_runs: off`).
+- Each copy records what held it (`held: sandbox` or `held: file modes`) in the run log and in `run.json`.
+
+**Limits.**
+- Between two agent steps, a shell step of an admin's run can read and change a copy. The change is seen, and the copy removed, only when the next agent step starts.
+- The agent's own shell tool is not held by the file modes. A change it makes can be read by the same agent step, and it is removed before the next agent step.
+- The check compares `HEAD`, the working tree and the modes. It does not look at `.git/config` or the refs. A shell step of an admin's run can add a remote to a copy, and nothing in the check sees it.
+- A copy whose removal fails is kept, marked unavailable, and stays denied to Claude's write tools.
+- The privacy rule (a private reference only for a target known to be private, or `reference_private_ok`) is a separate guard and not covered here; see the USER_GUIDE.
 
 ## Open findings
 

@@ -15,8 +15,8 @@ import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
 /**
- * A watcher's reference repositories (#878), from the watcher's job to the run and its copies. Only a sandboxed run
- * (a user's run on a machine with the OS sandbox) gets copies; an admin's run gets none, and says why.
+ * A watcher's reference repositories (#878, #894), from the watcher's job to the run and its copies. A sandboxed run
+ * and an admin's run without the sandbox (held by file modes) get copies; a user's run without the sandbox gets none.
  */
 
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
@@ -33,8 +33,16 @@ beforeEach(async () => {
   process.env.SCF_CONNECT_REMOTE = join(gh.tmp, "remote.git");
   admin = await createUser({ name: "Admin", email: "admin@example.com", password: TEST_PASSWORD, role: "admin" });
   user = await createUser({ name: "User", email: "user@example.com", password: TEST_PASSWORD, role: "user" });
-  addRepo(user.id, { url: "acme/lib", method: "github-token", token: TOKEN });
+  own(admin.id); // a repository belongs to one account: the user's tests take it over with `own(user.id)` in a fresh home
 });
+// one account owns acme/lib; a test that needs it for the user starts from a clean home
+const own = (id: string) => addRepo(id, { url: "acme/lib", method: "github-token", token: TOKEN });
+const ownByUser = async () => {
+  process.env.FACTORY_HOME = join(gh.tmp, "home-user");
+  mkdirSync(process.env.FACTORY_HOME, { recursive: true });
+  user = await createUser({ name: "User", email: "user@example.com", password: TEST_PASSWORD, role: "user" });
+  own(user.id);
+};
 afterEach(() => {
   if (savedRemote === undefined) delete process.env.SCF_CONNECT_REMOTE;
   else process.env.SCF_CONNECT_REMOTE = savedRemote;
@@ -44,6 +52,7 @@ afterEach(() => {
 const runs = () => join(gh.tmp, "runs");
 const config = ConfigSchema.parse({ protected_branches: [] });
 const REF = '"$FACTORY_WORKDIR/../reference/acme-lib"';
+const read = `cat ${REF}/README.md`;
 const look = [
   `cat ${REF}/README.md`,
   `(echo x > ${REF}/README.md) 2>/dev/null && echo WROTE || echo NOWRITE`,
@@ -51,9 +60,9 @@ const look = [
   `(chmod u+w ${REF}/README.md && echo x > ${REF}/README.md) 2>/dev/null && echo CHMODDED || echo NOCHMOD`,
   `git -C ${REF} -c user.email=t@t -c user.name=t commit --allow-empty -qm x 2>/dev/null && echo COMMITTED || echo NOCOMMIT`,
 ].join("; ");
-const flowOf = (extra = "") =>
+const flowOf = (extra = "", script = look) =>
   parseFlow(
-    `name: refs\nworkspace: empty\nvars: { github_repo: acme/app }\nsteps:\n${extra}  - id: look\n    type: shell\n    run: ${JSON.stringify(look)}\n  - id: agent\n    type: claude\n    prompt: SHOWPROMPT\n`,
+    `name: refs\nworkspace: empty\nvars: { github_repo: acme/app }\nsteps:\n${extra}  - id: look\n    type: shell\n    run: ${JSON.stringify(script)}\n  - id: agent\n    type: claude\n    prompt: SHOWPROMPT\n`,
     "refs.yaml",
   );
 const out = (s: { history: { id: string; output: string }[] }, id: string) => s.history.filter((h) => h.id === id).at(-1)?.output ?? "";
@@ -62,20 +71,37 @@ const go = (flow: ReturnType<typeof flowOf>, references?: unknown, owner = admin
   runFlow(flow, { task: "t", repo: gh.tmp, runsDir: runs(), claudeBin, config: cfg, owner, vars: { github_repo: "acme/app" }, ...(references ? { references } : {}) });
 
 describe("a run with reference repositories", { timeout: 60_000 }, () => {
-  it("an admin's run (no OS sandbox) makes no copy, records why, and the run goes on", async () => {
-    const s = await go(flowOf(), { repos: ["acme/lib", "acme/gone"], privateOk: true });
+  it("an admin's run without the OS sandbox holds the copy by file modes, and removes it at the end", async () => {
+    const s = await go(flowOf("", read), { repos: ["acme/lib", "acme/gone"], privateOk: true });
     expect(s.status).toBe("succeeded");
     const saved = loadRun(runs(), s.runId)!;
-    expect(saved.referenceRepos).toEqual({ repos: ["acme/lib", "acme/gone"], privateOk: true });
-    expect(saved.references!.map((r) => [r.repo, r.ok, r.reason])).toEqual([
-      ["acme/lib", false, REF_NO_SANDBOX],
-      ["acme/gone", false, REF_NO_SANDBOX],
-    ]);
-    expect(existsSync(join(s.runDir, "reference"))).toBe(false);
-    expect(out(s, "look").trim().split("\n")[0]).not.toBe("hi");
+    const copy = saved.references!.find((r) => r.repo === "acme/lib")!;
+    expect(copy).toMatchObject({ ok: true, held: "file modes", folder: "reference/acme-lib" });
+    expect(saved.references!.find((r) => r.repo === "acme/gone")!.ok).toBe(false);
     const prompt = out(s, "agent");
-    expect(prompt).toContain("Not available in this run: acme/lib, acme/gone.");
+    expect(prompt).toContain(`- acme/lib: ${join(s.runDir, "reference", "acme-lib")} (commit ${copy.commit!.slice(0, 12)})`);
+    expect(prompt).toContain("Not available in this run: acme/gone.");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; held: file modes)");
+    expect(existsSync(join(s.runDir, "reference"))).toBe(false);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("a copy changed by a shell step is removed before the next agent step, and the run goes on", async () => {
+    const s = await go(flowOf("", `chmod u+w ${REF}/README.md; echo CHMODDED`), { repos: ["acme/lib"], privateOk: true });
+    expect(s.status).toBe("succeeded");
+    expect(out(s, "look")).toContain("CHMODDED");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("! reference acme/lib: removed — it was changed during the run");
+    const prompt = out(s, "agent");
+    expect(prompt).toContain("Not available in this run: acme/lib.");
     expect(prompt).not.toContain("- acme/lib:");
+    expect(loadRun(runs(), s.runId)!.references!.at(-1)).toMatchObject({ ok: false, reason: "it was changed during the run" });
+  });
+
+  it("a user's run without the OS sandbox makes no copy and records why", async () => {
+    await ownByUser();
+    const s = await go(flowOf("", "echo hi"), { repos: ["acme/lib"], privateOk: true }, user.id);
+    expect(s.status).toBe("succeeded");
+    expect(loadRun(runs(), s.runId)!.references!.map((r) => [r.ok, r.reason])).toEqual([[false, REF_NO_SANDBOX]]);
+    expect(existsSync(join(s.runDir, "reference"))).toBe(false);
     expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toMatch(/! reference acme\/lib: skipped — this run has no OS sandbox/);
   });
 
@@ -95,6 +121,7 @@ describe("a run with reference repositories", { timeout: 60_000 }, () => {
   });
 
   const sandboxedCase = async () => {
+    await ownByUser();
     const s = await go(flowOf(), { repos: ["acme/lib", "acme/gone"], privateOk: true }, user.id, sandboxed);
     expect([s.status, s.reason]).toEqual(["succeeded", undefined]);
     const lines = out(s, "look").trim().split("\n");
@@ -102,7 +129,7 @@ describe("a run with reference repositories", { timeout: 60_000 }, () => {
     expect(lines.slice(1)).toEqual(["NOWRITE", "NOCREATE", "NOCHMOD", "NOCOMMIT"]);
     const saved = loadRun(runs(), s.runId)!;
     const copy = saved.references!.find((r) => r.repo === "acme/lib")!;
-    expect(copy).toMatchObject({ ok: true, folder: "reference/acme-lib" });
+    expect(copy).toMatchObject({ ok: true, folder: "reference/acme-lib", held: "sandbox" });
     expect(saved.references!.find((r) => r.repo === "acme/gone")!.ok).toBe(false);
     const prompt = out(s, "agent");
     expect(prompt).toContain(`- acme/lib: ${join(s.runDir, "reference", "acme-lib")} (commit ${copy.commit!.slice(0, 12)})`);
@@ -111,14 +138,14 @@ describe("a run with reference repositories", { timeout: 60_000 }, () => {
   };
 
   it("waits without copies, and resumes without copies in an admin's run; the references are kept in run.json", async () => {
-    const s = await go(flowOf("  - id: ok\n    type: approval\n    message: go on?\n"), { repos: ["acme/lib"], privateOk: true });
+    const s = await go(flowOf("  - id: ok\n    type: approval\n    message: go on?\n", read), { repos: ["acme/lib"], privateOk: true });
     expect(s.status).toBe("waiting");
     expect(existsSync(join(s.runDir, "reference"))).toBe(false);
     const r = await resumeRun({ runsDir: runs(), runId: s.runId, claudeBin, config, decision: { approved: true, by: "admin" } });
     expect(r.status).toBe("succeeded");
     const saved = loadRun(runs(), s.runId)!;
     expect(saved.referenceRepos).toEqual({ repos: ["acme/lib"], privateOk: true });
-    expect(saved.references!.map((x) => x.reason)).toEqual([REF_NO_SANDBOX, REF_NO_SANDBOX]);
+    expect(saved.references!.map((x) => [x.ok, x.held])).toEqual([[true, "file modes"], [true, "file modes"]]);
     expect(existsSync(join(s.runDir, "reference"))).toBe(false);
   });
 
@@ -147,10 +174,10 @@ describe("a run with reference repositories", { timeout: 60_000 }, () => {
     expect("references" in plain.queuedJob(plain.queue().pending[0]!.runId)!.job).toBe(false);
     // the scheduler passes the job's list to the run
     const live = new Scheduler({ runsDir: runs(), config: () => config, claudeBin });
-    const runId = live.submit({ kind: "run", flow: flowOf(), task: "t", repo: gh.tmp, vars: { github_repo: "acme/app" }, references: { repos: ["acme/lib"], privateOk: true } }, { source: "test", owner: admin.id });
+    const runId = live.submit({ kind: "run", flow: flowOf("", read), task: "t", repo: gh.tmp, vars: { github_repo: "acme/app" }, references: { repos: ["acme/lib"], privateOk: true } }, { source: "test", owner: admin.id });
     const done = await live.wait(runId);
     expect(done?.status).toBe("succeeded");
     expect(loadRun(runs(), runId)!.referenceRepos).toEqual({ repos: ["acme/lib"], privateOk: true });
-    expect(loadRun(runs(), runId)!.references!.map((r) => r.reason)).toEqual([REF_NO_SANDBOX]);
+    expect(loadRun(runs(), runId)!.references!.map((r) => r.ok)).toEqual([true]);
   });
 });

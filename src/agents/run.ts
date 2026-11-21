@@ -27,6 +27,7 @@ import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
 import { stepContextIndex } from "../engine/context-index.js";
 import { referencePrompt } from "../engine/reference-repos.js";
+import { checkReferences } from "../engine/reference-check.js";
 import { boundAgentPrompt, boundEnv, classifyBound, stepTypesOf, UntrustedRefusal, type BoundPrompt, type OutputLabel } from "../engine/untrusted.js";
 import { GuardError } from "../help/guard.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
@@ -601,6 +602,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   }
   if (withIndex.log) engine.log(`    ${withIndex.log}`);
   // the reference repositories of the run (#878): a block at the top of the prompt, and their folders read-only
+  if (engine.summary.references?.length && (await checkReferences(engine.summary, (l) => engine.log(`    ${l}`), { signal: engine.signal }))) engine.save();
   const refs = referencePrompt(engine.summary);
   const readOnlyDirs = refs?.dirs.length ? [...(withIndex.readOnlyDirs ?? []), ...refs.dirs] : withIndex.readOnlyDirs;
   try {

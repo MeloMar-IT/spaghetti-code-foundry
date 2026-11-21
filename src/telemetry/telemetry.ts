@@ -204,11 +204,39 @@ export async function closeTelemetry(ms = 3000): Promise<void> {
   }
 }
 
-/** Sends the queue within the time limit and then exits. Runs once per process: later calls share the first. */
-export function exitAfterTelemetry(code: number, o?: { exit?: (code: number) => void; ms?: number }): Promise<void> {
+type FlushStream = NodeJS.WritableStream & { writableLength?: number; writableEnded?: boolean; destroyed?: boolean };
+
+/** Resolves once what was written to the stream has been handed to the OS; at once when nothing is buffered or the stream is closed or broken. Never rejects. */
+export function flushed(s: FlushStream): Promise<void> {
+  if (s.destroyed || s.writableEnded || !s.writable || !s.writableLength) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      // A failed write calls its callback before it emits "error": keep the listener until the error event has passed.
+      setImmediate(() => {
+        s.removeListener("error", finish);
+        s.removeListener("close", finish);
+        resolve();
+      });
+    };
+    s.on("error", finish);
+    s.on("close", finish);
+    try {
+      s.write("", finish);
+    } catch {
+      finish();
+    }
+  });
+}
+
+/** Sends the queue within the time limit, waits for stdout and stderr to hand their output to the OS, and then exits. Runs once per process: later calls share the first. */
+export function exitAfterTelemetry(code: number, o?: { exit?: (code: number) => void; ms?: number; streams?: NodeJS.WritableStream[] }): Promise<void> {
   return (exiting ??= (async () => {
     process.exitCode = code;
     await closeTelemetry(o?.ms);
+    await Promise.all((o?.streams ?? [process.stdout, process.stderr]).map(flushed));
     (o?.exit ?? process.exit)(code);
   })());
 }

@@ -89,6 +89,11 @@ export const api = {
   changePassword: (current, password) => req("POST", "/api/password", { current, password }),
   myView: () => req("GET", "/api/me/view", undefined, false, false, undefined, AbortSignal.timeout(VIEW_TIMEOUT_MS)),
   setView: (view) => req("PUT", "/api/me/view", { view }, false, false, undefined, AbortSignal.timeout(VIEW_TIMEOUT_MS)),
+  // the caller's own sharing answer (#887); never in a preview of another account (the server refuses it, and that 403 would end the view)
+  metricsSharing: () => (viewAs ? Promise.reject(Object.assign(new Error(PREVIEW_TEXT), { preview: true })) : req("GET", "/api/account/metrics-sharing", undefined, false, false, undefined, AbortSignal.timeout(VIEW_TIMEOUT_MS))),
+  // what the shared metrics would send and sent last (#888); like metricsSharing, never in a preview of another account
+  metricsSharePreview: () => (viewAs ? Promise.reject(Object.assign(new Error(PREVIEW_TEXT), { preview: true })) : req("GET", "/api/account/metrics-sharing/preview")),
+  setMetricsSharing: (answer) => req("PUT", "/api/account/metrics-sharing", { answer }, false, false, undefined, AbortSignal.timeout(VIEW_TIMEOUT_MS)),
   signOut: () => req("DELETE", "/api/session", undefined, false, true),
   startViewAs: (userId) => req("POST", "/api/admin/view-as", { userId }, false, true),
   stopViewAs: () => req("DELETE", "/api/admin/view-as", undefined, false, true),

@@ -136,6 +136,55 @@ export const endOfRun = (r: RunSummary): number => ((TERMINAL_RUN_STATUSES as re
 
 type Facts = ReadonlyMap<string, OutcomeFacts>;
 
+/** The time (ms) from the first queueing or start of each issue's runs to the end of its first delivery in the window. */
+function timesToDelivery(byKey: ReadonlyMap<string, RunSummary[]>, deliveredInWin: readonly [string, RunSummary][], fx: (r: RunSummary) => OutcomeFacts | undefined): number[] {
+  const times: number[] = [];
+  for (const [key, d] of deliveredInWin) {
+    if (!key.includes("#issue:")) continue;
+    let start = Infinity;
+    for (const r of byKey.get(key) ?? []) {
+      if (!(Date.parse(r.startedAt) <= endOfRun(d))) continue;
+      const s = Date.parse(fx(r)?.queuedAt ?? r.startedAt);
+      const own = Number.isFinite(s) ? s : Date.parse(r.startedAt);
+      if (Number.isFinite(own)) start = Math.min(start, own);
+    }
+    if (Number.isFinite(start)) times.push(Math.max(0, endOfRun(d) - start));
+  }
+  return times;
+}
+
+/** The first delivering run of every work item, over all runs, by work key. */
+function firstDeliveries(runs: readonly RunSummary[], fx: (r: RunSummary) => OutcomeFacts | undefined): { byKey: Map<string, RunSummary[]>; first: Map<string, RunSummary> } {
+  const byKey = new Map<string, RunSummary[]>();
+  for (const r of runs) byKey.set(workKey(r), [...(byKey.get(workKey(r)) ?? []), r]);
+  const hasEv = (r: RunSummary): boolean => !!fx(r)?.evidence.stream && !!fx(r)?.evidence.read;
+  const first = new Map<string, RunSummary>();
+  for (const [key, list] of byKey) {
+    let d: RunSummary | undefined;
+    for (const r of list) if (Number.isFinite(endOfRun(r)) && hasEv(r) && fx(r)!.delivered && (!d || endOfRun(r) < endOfRun(d))) d = r;
+    if (d) first.set(key, d);
+  }
+  return { byKey, first };
+}
+
+/**
+ * The issue to pull request times (ms) of the issues first delivered in [from, to): the values `issue_to_pr_time` takes
+ * the median of. Refinement runs are left out. Never throws (an empty list on an error).
+ */
+export function issueToPrTimes(runsIn: readonly RunSummary[], facts: Facts, window: Pick<OutcomeWindow, "from" | "to">): number[] {
+  try {
+    const f = window.from.getTime();
+    const t = window.to.getTime();
+    if (!Number.isFinite(f) || !Number.isFinite(t) || f >= t) return [];
+    const runs = (Array.isArray(runsIn) ? runsIn : []).filter((r): r is RunSummary => !!r && typeof r === "object" && !isRefinementRun(r.source));
+    const fx = (r: RunSummary): OutcomeFacts | undefined => facts?.get?.(r.runId);
+    const { byKey, first } = firstDeliveries(runs, fx);
+    return timesToDelivery(byKey, [...first].filter(([, d]) => endOfRun(d) >= f && endOfRun(d) < t), fx);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The ten measures over the window [from, to). Never throws: on an error or a bad window every measure is null.
  * Runs count by when they ended; work items by the end of their first delivery.
@@ -166,14 +215,7 @@ function compute(runsIn: readonly RunSummary[], facts: Facts, window: OutcomeWin
   const noEv = inWin.filter((r) => !hasEv(r)).length;
 
   // the first delivering run of every work item, over all runs
-  const byKey = new Map<string, RunSummary[]>();
-  for (const r of runs) byKey.set(workKey(r), [...(byKey.get(workKey(r)) ?? []), r]);
-  const firstDelivery = new Map<string, RunSummary>();
-  for (const [key, list] of byKey) {
-    let d: RunSummary | undefined;
-    for (const r of list) if (ended(r) && hasEv(r) && fx(r)!.delivered && (!d || end(r) < end(d))) d = r;
-    if (d) firstDelivery.set(key, d);
-  }
+  const { byKey, first: firstDelivery } = firstDeliveries(runs, fx);
   const deliveredInWin = [...firstDelivery].filter(([, d]) => end(d) >= f && end(d) < t);
 
   const m = new Map<OutcomeId, OutcomeValue>();
@@ -183,18 +225,7 @@ function compute(runsIn: readonly RunSummary[], facts: Facts, window: OutcomeWin
 
   // issue_to_pr_time
   {
-    const times: number[] = [];
-    for (const [key, d] of deliveredInWin) {
-      if (!key.includes("#issue:")) continue;
-      let start = Infinity;
-      for (const r of byKey.get(key) ?? []) {
-        if (!(Date.parse(r.startedAt) <= end(d))) continue;
-        const s = Date.parse(fx(r)?.queuedAt ?? r.startedAt);
-        const own = Number.isFinite(s) ? s : Date.parse(r.startedAt);
-        if (Number.isFinite(own)) start = Math.min(start, own);
-      }
-      if (Number.isFinite(start)) times.push(Math.max(0, end(d) - start));
-    }
+    const times = timesToDelivery(byKey, deliveredInWin, fx);
     set("issue_to_pr_time", median(times), { longestMs: times.length ? Math.max(...times) : null }, times.length,
       inWin.filter((r) => !hasEv(r) || !workKey(r).includes("#issue:")).length);
   }

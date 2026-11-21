@@ -3,6 +3,7 @@ import { clarityCard } from "./dashboard.js";
 import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
+import { mountSharingAsk } from "./metrics-sharing.js";
 import { nextParts } from "./next.js";
 import { droppedRuns, greeting, todayModel, todayView } from "./today.js";
 import { renderYourTurn } from "./turn.js";
@@ -49,7 +50,9 @@ export async function renderAdminHome(main, { a = api, since = null } = {}) {
     retry: () => poll.refresh(),
     focus: "home-today",
   });
-  const box = h("div", { class: "home" }, todayBox, states.alert, needsBox, since, problemsBox, states.note, metricsBox);
+  // the sharing question (#887), above everything else; mounted below, disposed in the cleanup
+  const askBox = h("div", { class: "today-ask-slot" });
+  const box = h("div", { class: "home" }, askBox, todayBox, states.alert, needsBox, since, problemsBox, states.note, metricsBox);
 
   /** Your turn without what #838 dropped. */
   const keep = (item) => !dropped.has(item.next?.runId);
@@ -140,6 +143,7 @@ export async function renderAdminHome(main, { a = api, since = null } = {}) {
   });
 
   mount(main, box);
+  const stopAsk = mountSharingAsk(askBox, { a });
   // Each feed stands alone: Your turn failing leaves Today, and the other way round.
   let stopTurn = () => {};
   const turnDone = renderYourTurn(needsBox, {
@@ -180,6 +184,7 @@ export async function renderAdminHome(main, { a = api, since = null } = {}) {
   await Promise.all([turnDone, poll.ready]);
   return () => {
     gone = true;
+    stopAsk();
     stopTurn();
     poll.stop();
   };

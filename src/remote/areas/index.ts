@@ -12,7 +12,8 @@ export const ALL: Cmd[] = [...SYSTEM, ...WORK, ...SETUP, ...PEOPLE, ...REFINE, .
 /** Calls of the server that have no command, each with the reason. A test fails when a call is in neither list. */
 export const API_ONLY: Record<string, string> = {
   "GET your-turn/mine": "the items the Simple view's cards act on (#826); the cards come in the next parts of #607, and an admin reads the whole list with `scf turn list`",
-  "GET feed": "the change feed (#868): a long-poll for programs that ask what changed since a `seq`; `scf api GET 'feed?since=<seq>&wait=30'` makes the call, there is no command for it",
+  "POST audit/service-line": "a service account's own audit line (#884): only a program with a service token calls it, a person (also on the command line) gets 403",
+  "GET feed":"the change feed (#868): a long-poll for programs that ask what changed since a `seq`; `scf api GET 'feed?since=<seq>&wait=30'` makes the call, there is no command for it",
   "GET notices": "the notices the Mac shows, for programs (#871): a long-poll like the change feed; `scf api GET 'notices?since=<seq>&wait=30'` makes the call, there is no command for it",
   "POST runs/:id/checks/add": "adds a check of the person's own to a change that waits (#862); the change page and the Simple card call it, the command line has no command for it",
   "POST runs/:id/checks": "marks a check of the plan as Works or Not quite (#861); the change page and the Simple card call it, the command line has no command for it",
@@ -39,6 +40,9 @@ export const API_ONLY: Record<string, string> = {
   "PUT admin/repos/:id/workspace": "puts a repository in a workspace (#816); only the API for now, a command is a follow-up with the other parts of #784",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",
+  "GET account/metrics-sharing": "the own answer to sharing the metrics of one's runs (#887); asked on Today and changed in Account settings of the web interface",
+  "PUT account/metrics-sharing": "sets that answer; done on Today or in Account settings",
+  "GET account/metrics-sharing/preview": "what the shared metrics would send and sent last (#888); shown in the What is shared dialog; `scf metrics preview` prints the next report on the machine itself",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask Foundry drawer: it opens a page, runs a read-only check, or previews an action Ask Foundry proposed (#568); the command line has none of these",
   "POST help/conversations/:id/actions/confirm": "the confirmation of an action Ask Foundry proposed; done in the Ask Foundry drawer (#568), not from the command line",
   "POST help/conversations/:id/actions/cancel": "the dropped token of an action Ask Foundry proposed; done in the Ask Foundry drawer (#568), not from the command line",

@@ -15,7 +15,7 @@ import { WORKSPACE_ID_RE } from "../workspaces/list.js";
 import { ViewSchema, viewsFor, type View } from "./views.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 
-export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits" | "provider-account" | "service-account" | "name-taken";
+export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits" | "provider-account" | "service-account" | "name-taken" | "bad-answer";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class UserError extends Error {
@@ -149,6 +149,8 @@ const UserSchema = z
     token: z.object({ id: z.string().regex(/^[0-9a-f]{64}$/), created: z.iso.datetime(), used: z.iso.datetime().optional(), revoked: z.iso.datetime().optional() }).strict().optional(),
     /** Only a service: the id of the person whose work it sees and answers (#876). Written only when set. */
     actsFor: z.uuid().optional(),
+    /** Only a person: the answer to "may the metrics of my runs be shared?" (#887). Missing means not asked yet. */
+    metricsSharing: z.object({ answer: z.enum(["yes", "no"]), changed: z.iso.datetime() }).strict().optional(),
   })
   .strict();
 
@@ -159,7 +161,7 @@ const UserSchema = z
 export function accountProblem(u: z.infer<typeof UserSchema>): string | undefined {
   if (u.kind === "service") {
     if (u.role !== "user") return "service with a role";
-    if (u.passwordHash !== undefined || u.passwordLink || u.source !== undefined || u.workspace !== undefined || u.breakGlass || u.view !== undefined) return "service with person fields";
+    if (u.passwordHash !== undefined || u.passwordLink || u.source !== undefined || u.workspace !== undefined || u.breakGlass || u.view !== undefined || u.metricsSharing !== undefined) return "service with person fields";
     if (u.scope === undefined) return "service without scope";
     if (u.email !== `${u.id}@${SERVICE_EMAIL_DOMAIN}`) return "service with a wrong e-mail";
     return undefined;
@@ -329,6 +331,36 @@ export function setView(id: string, view: View): User {
     noService(u);
     if (!viewsFor(u.role).includes(view)) throw new UserError("bad-role", "this view is not open to your role");
     return u.view === view ? undefined : { next: { ...u, view } };
+  });
+}
+
+// ---- shared metrics (#887) -------------------------------------------------------------------------
+
+export type SharingAnswer = "unasked" | "yes" | "no";
+/** The audit target of a change of a sharing answer. */
+export const SHARING_TARGET = "metrics-sharing";
+/** The sharing answer of an account; a service account is never asked. */
+export const sharingAnswer = (u: User): SharingAnswer => (u.kind === "service" ? "unasked" : (u.metricsSharing?.answer ?? "unasked"));
+
+/**
+ * Stores the account's own sharing answer. The same answer again writes nothing. A change opens the audit log first
+ * (a log that cannot be written stops it) and adds one `settings-change` line by the account itself.
+ */
+export function setMetricsSharing(id: string, answer: "yes" | "no", now = new Date()): User {
+  if (answer !== "yes" && answer !== "no") throw new UserError("bad-answer", 'the answer must be "yes" or "no"');
+  return withAuthLock(() => {
+    const file = read();
+    const i = file.users.findIndex((u) => u.id === id);
+    if (i < 0) throw new UserError("not-found", "no such account");
+    const u = file.users[i]!;
+    noService(u);
+    const old = sharingAnswer(u);
+    if (old === answer) return u;
+    const next: User = { ...u, metricsSharing: { answer, changed: now.toISOString() } };
+    return audited(id, { action: "settings-change", result: "ok", target: SHARING_TARGET, detail: `${old} -> ${answer}` }, () => {
+      writeJsonFile(usersPath(), { ...file, users: file.users.map((o, j) => (j === i ? next : o)) });
+      return next;
+    });
   });
 }
 

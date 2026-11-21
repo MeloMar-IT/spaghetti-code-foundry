@@ -1,5 +1,6 @@
 import { api, setCsrf } from "./api.js";
 import { h, modal, mount, showError, toast } from "./dom.js";
+import { mountAccountSettings } from "./metrics-sharing.js";
 import { appearanceButton, initPrefs } from "./prefs.js";
 import { splitHash } from "./ia.js";
 import { displayOf, displayPath, mountBusySwitch, mountViewSwitch, viewOf } from "./view-mode.js";
@@ -307,7 +308,7 @@ export function otherDisplay(user, display, hash, viewAs) {
  * An account whose view belongs on the other display is sent there and this never resolves, so no page is drawn here.
  * `signIn`, `go` and `hash` are arguments so tests can run this without a browser.
  */
-export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash, viewAs = "" } = {}) {
+export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash, viewAs = "", a = api } = {}) {
   const user = await signIn();
   const to = otherDisplay(user, display, hash(), viewAs);
   if (to) {
@@ -315,7 +316,11 @@ export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to)
     return new Promise(() => {});
   }
   document.body.classList.remove("signed-out");
-  if (!(viewAs && isAdmin(user))) mountViewSwitch(user);
+  if (!(viewAs && isAdmin(user))) {
+    mountViewSwitch(user);
+    // Account settings (#887): only for the own account, never in a preview of another one
+    mountAccountSettings(document.getElementById("user"), { a });
+  }
   if (isAdmin(user) && !viewAs) mountBusySwitch(user);
   return user;
 }

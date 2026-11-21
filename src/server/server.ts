@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, updateEveryMs, type Config } from "../config.js";
+import { metricsPusher, type MetricsPusher } from "../metrics-share/pusher.js";
+import { buildShareReport, defaultShareDeps, foundryVersion, sharingAccounts } from "../metrics-share/sources.js";
 import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.js";
 import { GAP_RUN_LIMIT, GAP_TICK_MS, skillGapSweeper, type SkillGapSweeper } from "./skill-gap-sweep.js";
 import { discoverSkills } from "../skills/registry.js";
@@ -22,6 +24,7 @@ import { Scheduler } from "../queue/scheduler.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
 import { SESSION_RECHECK_MS, authRoutes, meRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
+import { metricsShareRoutes } from "./api-metrics-share.js";
 import { adminRoutes } from "./api-admin.js";
 import { autonomyRoutes } from "./api-autonomy.js";
 import { outcomeRoutes } from "./api-outcomes.js";
@@ -75,6 +78,7 @@ import { HELP_SWEEP_MS, helpRoutes, helpSweeper, helpTurnsOf } from "./api-help.
 import { previewsOf } from "./api-preview.js";
 import { refinementPublishRoutes } from "./api-refinement-publish.js";
 import { auditRoutes } from "./api-audit.js";
+import { serviceLineRoutes } from "./api-service-line.js";
 import { promotionRoutes } from "./api-promotions.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
@@ -99,6 +103,8 @@ const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("ya
 export interface ServerOptions {
   /** How often the scheduled skill-source check looks whether a check is due, in ms (default 60000). */
   skillUpdateTickMs?: number;
+  /** How often the shared metrics push looks for a day to send, in ms (default 60000; off with FACTORY_NO_METRICS_PUSH=1). */
+  metricsTickMs?: number;
   repo: string;
   runsDir: string;
   /** 0: a free port picked by the system (tests); the result's `port` is the real one. */
@@ -174,7 +180,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, metricsShareRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, safePointRoutes, restoreRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, serviceAccountRoutes, auditRoutes, serviceLineRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, feedRoutes, noticesRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 
@@ -585,6 +591,18 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     notifier = new TurnNotifier(ctx, { baseUrl: localUrl(listen, opts.port), log, record: (n) => notices.record(n) });
     notifier.start();
   }
+  // Shared metrics (#889): the daily report goes to the receiver while sharing is active; a stop sends one delete.
+  let metrics: MetricsPusher | undefined;
+  if (process.env.FACTORY_NO_METRICS_PUSH !== "1") {
+    metrics = metricsPusher({
+      config: () => ctx.config().metrics_sharing,
+      accounts: () => sharingAccounts(true),
+      build: (day, accounts, install) => buildShareReport(day, accounts, { ...defaultShareDeps(opts.runsDir), install }),
+      version: foundryVersion(),
+      log,
+    });
+    metrics.start(opts.metricsTickMs);
+  }
   const clarity = new ClarityRecorder(ctx, { log });
   clarity.start();
   const feed = new FeedRecorder(ctx, { tickMs: opts.feedTickMs, log });
@@ -614,6 +632,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       clearInterval(staleTimer);
       clearInterval(busyTimer);
       skillSweep.stop();
+      metrics?.stop();
       clearTimeout(retryTimer);
       scheduler.close();
       notifier?.stop();

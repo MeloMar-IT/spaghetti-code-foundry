@@ -36,7 +36,7 @@ export const CLASS_KEYS: Readonly<Record<GrantableClass, readonly string[]>> = {
     "POST repos/:id/preview", "DELETE repos/:id/preview", "DELETE repos/:id", "DELETE repos/:owner/:name",
     "GET admin/repos", "GET admin/repos/:id/budget", "PUT admin/repos/:id/budget", "PUT admin/repos/:id/workspace", "PUT admin/repos/:id/ready",
     "POST admin/repos/:id/transfer", "GET admin/repos/:id/watchers", "POST admin/repos/:id/watchers", "PUT admin/repos/:id/watchers/:wid", "DELETE admin/repos/:id/watchers/:wid",
-    "GET admin/components", "GET help/usage",
+    "GET admin/components", "GET help/usage", "POST audit/service-line",
   ],
 };
 
@@ -51,4 +51,5 @@ export const REPO_FREE: ReadonlySet<string> = new Set([
   "GET governor", "GET busy", "POST busy", "DELETE busy", "GET providers", "POST providers/test", "POST onboarding/sign-in", "POST onboarding/test-call",
   "GET starters", "POST starters/:id/project", "GET setup-check", "GET flows/:name", "PUT flows/:name", "DELETE flows/:name",
   "GET blocks", "PUT blocks/:id", "DELETE blocks/:id", "POST validate", "GET promotions", "POST promotions", "GET skills/lifecycle", "GET admin/components", "GET help/usage",
+  "POST audit/service-line",
 ]);
