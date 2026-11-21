@@ -81,9 +81,22 @@ describe("website build", () => {
     expect(problems).toEqual([]);
   });
 
+  it("still builds the features page from its content file", () => {
+    const page = pages.find((p) => p.url === "/features/")!;
+    expect(page.html).toContain("<h1>Features</h1>");
+    expect(page.html).toContain("Home");
+  });
+
+  it("builds the privacy page with the facts and no mailto link", () => {
+    const page = pages.find((p) => p.url === "/privacy/metrics/")!;
+    expect(page.html.match(/<h1>/g)?.length).toBe(1);
+    for (const fact of ["400 days", "metrics-share.json", "fewer than 3", "35 days", "DELETE", "7 days"]) expect(page.html, fact).toContain(fact);
+    expect(page.html).not.toContain("mailto:");
+  });
+
   it("has the home page, the how-to section, every guide chapter and the reference pages", () => {
     const urls = pages.map((p) => p.url);
-    for (const u of ["/", "/features/", "/how-to/", "/how-to/install/", "/guide/", "/guide/1-start/", "/guide/14-ask-foundry/", "/flow-format/", "/design/", "/security/", "/lessons-learned/", "/404.html"]) expect(urls).toContain(u);
+    for (const u of ["/", "/features/", "/privacy/metrics/", "/metrics/", "/how-to/", "/how-to/install/", "/guide/", "/guide/1-start/", "/guide/14-ask-foundry/", "/flow-format/", "/design/", "/security/", "/lessons-learned/", "/404.html"]) expect(urls).toContain(u);
     expect(urls.filter((u) => u.startsWith("/how-to/") && u !== "/how-to/").length).toBeGreaterThanOrEqual(20);
     const guide = readFileSync(join(process.cwd(), "docs/USER_GUIDE.md"), "utf8");
     const chapters = [...guide.matchAll(/^## (\d+\..*)$/gm)].map((m) => `/guide/${githubSlug(m[1])}/`);

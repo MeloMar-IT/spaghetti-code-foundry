@@ -1,0 +1,74 @@
+[
+  {
+    "id": "issue_to_pr_time",
+    "label": "Issue to pull request",
+    "unit": "ms",
+    "countOf": "work items",
+    "definition": "The median time from the first queueing or start of a GitHub issue's runs to the end of the first run that delivered it. A run delivers when it succeeded and a push policy decision did not deny it.",
+    "exclusions": "Runs without readable evidence (older runs, or a file that is missing, too large or a link). Runs without an issue. Issues delivered before the window. Refinement runs."
+  },
+  {
+    "id": "first_pass_test_success",
+    "label": "First-pass test success",
+    "unit": "share",
+    "countOf": "runs",
+    "definition": "The share of runs whose first test run (not a baseline run before the work) passed.",
+    "exclusions": "Runs without readable evidence (older runs, or a file that is missing, too large or a link). Runs with no test result, such as plan-only flows. Refinement runs."
+  },
+  {
+    "id": "merge_rate",
+    "label": "Merge rate (pushed work)",
+    "unit": "share",
+    "countOf": "work items",
+    "definition": "The share of work items, in flows that push, that a run delivered. A run delivers when it succeeded and a push policy decision did not deny it.",
+    "exclusions": "Runs without readable evidence (older runs, or a file that is missing, too large or a link). Flows that never push in the window. Runs that work on no issue, pull request or CI run. Refinement runs."
+  },
+  {
+    "id": "rework",
+    "label": "Rework after delivery",
+    "unit": "count",
+    "countOf": "work items",
+    "definition": "The number of work items delivered in the window that a later run worked on again before the end of the window.",
+    "exclusions": "Runs without readable evidence (older runs, or a file that is missing, too large or a link). Later runs without readable evidence. Items delivered outside the window. Refinement runs."
+  },
+  {
+    "id": "policy_blocks",
+    "label": "Policy blocks",
+    "unit": "count",
+    "countOf": "runs",
+    "definition": "The number of runs that a policy stopped at least once. The details also give the denials that observed packs would have made.",
+    "exclusions": "Runs without readable evidence (older runs, or a file that is missing, too large or a link). Refinement runs."
+  },
+  {
+    "id": "evidence_completeness",
+    "label": "Evidence completeness",
+    "unit": "share",
+    "countOf": "runs",
+    "definition": "The share of runs with an evidence file that also have the final manifest and are not marked incomplete.",
+    "exclusions": "Runs without an evidence file. Refinement runs."
+  },
+  {
+    "id": "resume_count",
+    "label": "Resumes",
+    "unit": "count",
+    "countOf": "runs",
+    "definition": "The number of times the runs of the window were resumed. The details give the share of runs resumed at least once.",
+    "exclusions": "Refinement runs."
+  },
+  {
+    "id": "approval_latency",
+    "label": "Approval latency",
+    "unit": "ms",
+    "countOf": "runs",
+    "definition": "The mean time from the moment a run waited for an approval to the decision.",
+    "exclusions": "Runs without readable evidence (older runs, or a file that is missing, too large or a link). Runs with no approval are not counted. Refinement runs."
+  },
+  {
+    "id": "cost_per_successful_run",
+    "label": "Cost per successful run",
+    "unit": "usd",
+    "countOf": "runs",
+    "definition": "The cost of all runs of the window, failed ones included, divided by the number of runs that succeeded.",
+    "exclusions": "Refinement runs. No value when no run succeeded."
+  }
+]

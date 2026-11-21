@@ -7,6 +7,8 @@
 //   baseline-tests verify <marker-file> <run-dir>   after the change: exit 0 = named tests pass, nothing else broke
 //   baseline-tests known-red <run-dir>              before the tests: stop at once when the base branch is already known to be red
 //   baseline-tests purge  <run-dir>                 before that test run: remove old reports (a runner that skips work must write new ones)
+// Exception: an issue with a "## Build to fix" heading goes on when no failing test can be named (no reports,
+// failures without a name, or no failing test in the reports); it then only has to leave the build and tests green.
 // Files in <run-dir>: issue-body.md (read), baseline-red.json, baseline-note.md, baseline-verdict.txt, baseline-stop.json (written).
 // Env: FACTORY_BASE_BRANCH, FACTORY_BASE_SHA, FACTORY_BASE_CLEAN=yes (set by the flow), FACTORY_RED_BASE (set by the server).
 // The report walk is the same as tools/test-summary (names are Class.method); keep the two the same, except that
@@ -36,7 +38,23 @@ export function namedTests(body) {
   return names;
 }
 
-export const covers = (entry, test) => test === entry || test.startsWith(`${entry}.`);
+// True when the issue has a "Build to fix" heading: the run may go on although no failing test can be named.
+export function buildFix(body) {
+  const lines = String(body ?? "").replace(/\r\n?/g, "\n").split("\n");
+  return lines.some((l) => /^#{1,6}\s*build to fix\s*:?\s*$/i.test(l.trim()));
+}
+
+// The base is red in a way no test name can describe, and the issue fixes the build. Reasons are fixed strings.
+function goOnBuild(runDir, reason, say) {
+  writeFileSync(join(runDir, "baseline-red.json"), JSON.stringify({ version: 1, named: [], failing: [], passed: [], build: true }));
+  writeFileSync(
+    join(runDir, "baseline-note.md"),
+    ["### Tests before the change", "", `The tests failed before any change, and ${reason}. The run went on because this issue fixes the build (\`## Build to fix\`).`, ""].join("\n"),
+  );
+  say("BASELINE: going on — this issue fixes the build", reason);
+}
+
+export const covers =(entry, test) => test === entry || test.startsWith(`${entry}.`);
 
 const unxml = (s) =>
   s.replace(/&(lt|gt|quot|apos|amp);/g, (_, e) => ({ lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" })[e]);
@@ -217,12 +235,21 @@ function main(argv) {
     const body = readBody(runDir);
     const names = namedTests(body.text);
     code = 1;
+    const build = buildFix(body.text);
+    const goOn = (reason) => {
+      code = 0;
+      goOnBuild(runDir, reason, say);
+    };
     if (!r.files) {
-      say("BASELINE: stopped — the failing tests could not be named: the test command wrote no JUnit XML reports (TEST-*.xml or junit*.xml). Turn on a JUnit XML reporter so a story can fix failing tests.");
+      if (build) goOn("the test command wrote no JUnit XML reports");
+      else say("BASELINE: stopped — the failing tests could not be named: the test command wrote no JUnit XML reports (TEST-*.xml or junit*.xml). Turn on a JUnit XML reporter so a story can fix failing tests.");
     } else if (r.unidentified) {
-      say("BASELINE: stopped — the failing tests could not be named: a JUnit XML report has failures that no test case names");
+      // The build-fix exception comes first: with unnamed failures the reports cannot be trusted anyway.
+      if (build) goOn("a JUnit XML report has failures that no test case names");
+      else say("BASELINE: stopped — the failing tests could not be named: a JUnit XML report has failures that no test case names");
     } else if (!r.failing.length) {
-      say("BASELINE: stopped — the tests failed, but the reports name no failing test (a build or setup error?)");
+      if (build) goOn("the reports name no failing test");
+      else say("BASELINE: stopped — the tests failed, but the reports name no failing test (a build or setup error?)");
     } else {
       if (!body.read) say("the issue text could not be read");
       const unexpected = r.failing.filter((t) => !names.some((n) => covers(n, t)));
@@ -264,7 +291,22 @@ function main(argv) {
       return 0;
     }
     const r = readReports(rest[0]);
-    if (!r.files) {
+    if (state.build === true) {
+      if (r.unidentified) {
+        say("FIXED TESTS: not yet — a JUnit XML report has failures that no test case names, so the tests cannot be checked");
+        code = 1;
+      } else if (r.failing.length) {
+        say("FIXED TESTS: not yet", "tests that fail now:", ...list(r.failing));
+        code = 1;
+      } else {
+        say(
+          r.files
+            ? "FIXED TESTS: ok — this issue fixes the build, and no test fails"
+            : "FIXED TESTS: ok — this issue fixes the build; no JUnit XML reports were written, so the test result decides",
+        );
+        appendFileSync(join(runDir, "baseline-note.md"), "\nAfter the change the build and the tests pass.\n");
+      }
+    } else if (!r.files) {
       say("FIXED TESTS: not yet — no JUnit XML reports were written, so the named tests cannot be checked");
       code = 1;
     } else if (r.unidentified) {
