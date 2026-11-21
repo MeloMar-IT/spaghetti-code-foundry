@@ -1728,7 +1728,8 @@ the evidence and nothing depends on it.
 - **Shutdown.** `closeTelemetry(ms = 3000)` closes the local file, asks the exporter to send what is queued and
   waits at most `ms`. It waits for every exporter that is closing, also when called twice, and an event that
   arrives while it waits is sent if time is left. After the limit the queue is dropped and counted, and a request
-  in flight is aborted. `exitAfterTelemetry(code)` runs it once per process and then exits with the code; the CLI
+  in flight is aborted. `exitAfterTelemetry(code)` runs it once per process, then waits until stdout and stderr have handed
+  their buffered output to the OS (`flushed(stream)`; a closed or broken stream does not wait), and then exits with the code. Without that wait a large `--json` answer on a pipe was cut off at 128 KB; the CLI
   uses it in the `main` handlers, the `watch` interrupts and the `serve` signal handlers (after the updater stops),
   and `server.close()` calls `closeTelemetry()` before the HTTP server closes.
 - **Not yet.** Endpoint authentication and a Settings control (see `settings/exceptions.ts`). The synchronous

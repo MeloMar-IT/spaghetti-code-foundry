@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { resetRedactCache } from "../src/credentials/redact.js";
@@ -9,7 +10,7 @@ import { addCredential } from "../src/credentials/store.js";
 import type { TelemetryEvent } from "../src/telemetry/envelope.js";
 import { telemetryDir, telemetryFile } from "../src/telemetry/local.js";
 import { OTLP_BATCH, OTLP_INTERVAL_MS, OTLP_QUEUE_MAX, OTLP_WORDS, otlpLogsRequest, otlpTraceId, type OtlpFetch } from "../src/telemetry/otlp.js";
-import { closeTelemetry, configureTelemetry, emitTelemetry, exitAfterTelemetry, resetTelemetry, telemetryEnabled, telemetryStats } from "../src/telemetry/telemetry.js";
+import { closeTelemetry, configureTelemetry, emitTelemetry, exitAfterTelemetry, flushed, resetTelemetry, telemetryEnabled, telemetryStats } from "../src/telemetry/telemetry.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 
 const STORED = ["tok", "Zq7wLm3xPv9sKd2f"].join("-");
@@ -397,6 +398,55 @@ describe("shutdown", () => {
     await a;
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(143);
+  });
+
+  describe("waits for the output streams", () => {
+    it("does not exit while a write is pending", async () => {
+      let open!: () => void;
+      const gate = new Promise<void>((r) => (open = r));
+      const w = new Writable({ write(_c, _e, cb) { void gate.then(() => cb()); } });
+      w.write(Buffer.alloc(200_000));
+      const exit = vi.fn();
+      const p = exitAfterTelemetry(2, { exit, streams: [w] });
+      await new Promise((r) => setImmediate(r));
+      expect(exit).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(2);
+      open();
+      await p;
+      expect(exit).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(2);
+    });
+
+    it("does not wait when nothing is buffered", async () => {
+      const w = new Writable({ write(_c, _e, cb) { cb(); } });
+      const exit = vi.fn();
+      await exitAfterTelemetry(0, { exit, streams: [w] });
+      expect(exit).toHaveBeenCalledWith(0);
+    });
+
+    it("does not wait for a destroyed stream", async () => {
+      const w = new Writable({ write() { /* never calls back */ } });
+      w.write("x");
+      w.destroy();
+      const exit = vi.fn();
+      await exitAfterTelemetry(1, { exit, streams: [w] });
+      expect(exit).toHaveBeenCalledWith(1);
+    });
+
+    it("survives a write that fails later, without a listener of the test", async () => {
+      const w = new Writable({ write(_c, _e, cb) { setTimeout(() => cb(new Error("EPIPE")), 5); } });
+      w.write("x");
+      await expect(flushed(w)).resolves.toBeUndefined();
+      expect(w.listenerCount("error")).toBe(0);
+    });
+
+    it("removes its listeners when done", async () => {
+      const w = new Writable({ write(_c, _e, cb) { setTimeout(cb, 1); } });
+      w.write("x");
+      const before = [w.listenerCount("error"), w.listenerCount("close")];
+      await flushed(w);
+      expect([w.listenerCount("error"), w.listenerCount("close")]).toEqual(before);
+    });
   });
 });
 
