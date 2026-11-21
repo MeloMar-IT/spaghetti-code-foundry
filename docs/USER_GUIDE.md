@@ -732,6 +732,14 @@ scf run release-build --repo owner/repo --ref v2.4.0
 
 `repo-review` reviews a whole repository and files what it confirms as stories the Foundry can build. You write no issues yourself.
 
+**Review this repository button.** On a repository's page (`#/repos/:id`), the Overview card has a **Review this repository** button next to **Definition of Ready**. It starts the review of that repository and opens the run page. Who sees it:
+
+- An admin always sees it, when the `repo-review` flow is available.
+- A user sees it when an admin has published the `repo-review` flow.
+- It is not shown on a read-only view, or for a repository that is not on GitHub (a local project).
+
+The button is disabled while the start is in progress. If the start fails (for example with 403), the page shows an alert and opens no run.
+
 ```bash
 scf run repo-review --repo owner/name
 scf run repo-review --repo owner/name --var ref=release/2.x --var focus="the login code" --var max_stories=5
