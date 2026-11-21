@@ -3407,22 +3407,23 @@ A run sees only its own checkout. When an issue depends on routes, file formats 
 - **Set it.** In the form, the group **Reference repositories** (every source except the monitor) takes `reference_repos`: a list of `owner/name`, at most 10. The option `reference_private_ok` (default off) allows a private reference (see below). In `config.yaml` the same two keys are written under the watcher; through the API they are `reference_repos` and `reference_private_ok` in the watcher's body.
 - **Which repositories.** Only repositories already added to the Foundry, that the watcher's owner can see. The watcher's own repository is refused. A refused name is answered with `reference_repos: …` and the reason.
 - **Where.** Before a run's steps start, and again before each resume, each reference is cloned read-only, shallow, from the newest commit of its default branch, to `<run folder>/reference/<owner>-<name>` (lower case, for example `reference/acme-lib`). The copy sits next to the checkout, so it is never part of the pull request.
-- **The commit is in the history.** The run's `run.json` has a `references` list (the newest 50 preparations, each with the repository, the time, the commit and the folder, or the reason it was skipped), and the run log has the same lines.
+- **The commit is in the history.** The run's `run.json` has a `references` list (the newest 50 preparations, each with the repository, the time, the commit, the folder and `held` — `sandbox` or `file modes`, what keeps the copy read only — or the reason it was skipped), and the run log has the same lines.
 - **What the agents are told.** Each agent step starts with a block that lists the copies with their commits and says they are for reading only. A fact the agent finds there is not a question for the owner: it must not be asked as an `owner_action`.
-- **Read only.** The copy has no remote, so it cannot be pushed. Its files are read-only and its folders cannot be entered for writing (`.git` included). Claude's Edit and Write tools are denied there, and on macOS the sandbox refuses writes and `chmod` there. Nothing the run does can change the copy, commit it, or put it in the pull request.
+- **Read only.** The copy has no remote, so it cannot be pushed. Its files are read-only and its folders cannot be entered for writing (`.git` included). Claude's Edit and Write tools are denied there, and on macOS the sandbox refuses writes and `chmod` there. In a sandboxed run nothing the run does can change the copy. In an admin's run without the sandbox a shell step can change it, and the check below removes it. Nothing the run does can commit the copy or put it in the pull request.
+- **Checked before each agent step.** Before each agent step, every copy of the run is checked against its commit: its `HEAD` must be that commit, `git status` must be clean (ignored files included) and the file modes must be unchanged. A copy that changed is removed, the step's reference block leaves it out, and the run log says `! reference <owner>/<name>: removed — it was changed during the run`. The run goes on. The check does not look at `.git/config` or the refs, so a shell step in an admin's run can still add a remote to a copy before the check removes it.
 - **Removed.** The copies are deleted when the run ends, also when it waits or stops. If a crash leaves one behind, `scf clean` unlocks and removes it.
 - **Skipped, not failed.** A reference that cannot be used does not fail the run. The run log says `! reference <owner>/<name>: skipped — <reason>` and the run goes on. Reasons:
   - it could not be fetched;
   - the run's owner cannot use it;
   - a policy refuses access to it;
   - the privacy rule below refuses it;
-  - the run has no OS sandbox (see below).
+  - a user's run has no OS sandbox (see below).
 - **Privacy.** What a reference teaches the agent can end up in issue comments, the pull request or commits, so a reference is used only when it is safe for the target:
   - a public reference is always used;
   - a private one (or one whose visibility cannot be told) is used only when the target repository is known to be private, or `reference_private_ok` is on.
 
   A 404 from GitHub does not count as proof that a repository is private. The privacy check runs again at every start and resume.
-- **Needs the OS sandbox.** A run without an OS sandbox (for example an admin's default-workspace run) skips every reference. Without the sandbox, a shell step could make the copy writable again.
+- **Who gets a copy.** A run with the OS sandbox gets copies. An admin's run without the OS sandbox (for example one in the default workspace) gets them too: file modes hold them, and they are checked before each agent step. A user's run without the OS sandbox (`sandbox.user_runs: off`) skips every reference, because a shell step could make the copy writable again.
 - **Off by default.** Without `reference_repos`, nothing changes: no copy, no block in the prompts, and no `references` in `run.json`.
 
 ### The Watchers page (admins)

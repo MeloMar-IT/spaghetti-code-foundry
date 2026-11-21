@@ -8,7 +8,8 @@ import { CHECKOUT_TIMEOUT_MS, gitIn, shallowClone, type PreviewSource, type Shal
 import { RULE_SAFE_PATH } from "./context-index.js";
 import type { RunPolicy } from "./policy-hooks.js";
 import { appTokenAccess, type AppTokenResult } from "./repo-access.js";
-import { REFERENCE_DIR, type ReferenceRecord, type RunReferences, type RunSummary } from "./state.js";
+import { userAccount } from "./isolation.js";
+import { REFERENCE_DIR, type ReferenceHold, type ReferenceRecord, type RunReferences, type RunSummary } from "./state.js";
 
 /**
  * Reference repositories (#878): read-only, shallow copies of other repositories of the run's owner, made at
@@ -19,7 +20,7 @@ import { REFERENCE_DIR, type ReferenceRecord, type RunReferences, type RunSummar
 export { REFERENCE_DIR };
 export const MAX_REFERENCES = 10;
 const MAX_RECORDS = 50;
-const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+export const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const LOOKUP_TIMEOUT_MS = 10_000;
 const CACHE_MS = 10 * 60_000;
 /** The App token of a clone: the same as APP_PERMISSIONS.clone of the repository broker. */
@@ -230,8 +231,25 @@ export interface PrepareContext {
   log: (line: string) => void;
   policy?: Pick<RunPolicy, "at">;
   signal?: AbortSignal;
-  /** True when the run's steps run in the OS sandbox. Without it no copy is made: file modes alone do not stop a shell step's chmod. */
-  sandboxed: boolean;
+  /** What holds the copies read only (see referenceHold). Undefined: no copy is made, file modes alone do not stop a user's shell step. */
+  hold: ReferenceHold | undefined;
+}
+
+/**
+ * How a run's copies are held: by the OS sandbox, or, in an admin's run without it, by file modes that are checked before
+ * each agent step (#894). A user's run without the sandbox gets none. A failed account lookup counts as a user.
+ */
+export function referenceHold(sandbox: "on" | "off", owner: string | undefined, isUser: (o: string | undefined) => string | undefined = userAccount): ReferenceHold | undefined {
+  if (sandbox === "on") return "sandbox";
+  return isUser(owner) === undefined ? "file modes" : undefined;
+}
+
+/** The records of the newest preparation (the last `at`) with a valid repository name. */
+export function newestBatch(summary: Pick<RunSummary, "references">): ReferenceRecord[] {
+  const all = Array.isArray(summary.references) ? summary.references : [];
+  const last = all.at(-1);
+  if (!last) return [];
+  return all.filter((r) => r.at === last.at && typeof r.repo === "string" && validGithubName(r.repo));
 }
 
 /**
@@ -255,7 +273,7 @@ export async function prepareReferences(summary: RunSummary, config: Pick<Config
     say(`! reference ${repo}: skipped — ${reason}`);
   };
   const base = referencesDir(summary.runDir);
-  if (!ctx.sandboxed) {
+  if (!ctx.hold) {
     removeReferences(summary.runDir);
     for (const repo of refs.repos) skip(repo, REF_NO_SANDBOX);
     summary.references = [...(Array.isArray(summary.references) ? summary.references : []), ...records].slice(-MAX_RECORDS);
@@ -323,8 +341,8 @@ export async function prepareReferences(summary: RunSummary, config: Pick<Config
         skip(repo, REF_FETCH_FAILED);
         continue;
       }
-      records.push({ repo, at, ok: true, commit, folder: `${REFERENCE_DIR}/${folder}` });
-      say(`· reference ${repo}: commit ${commit.slice(0, 12)} (read only, ${REFERENCE_DIR}/${folder} in the run folder)`);
+      records.push({ repo, at, ok: true, commit, folder: `${REFERENCE_DIR}/${folder}`, held: ctx.hold });
+      say(`· reference ${repo}: commit ${commit.slice(0, 12)} (read only, ${REFERENCE_DIR}/${folder} in the run folder; held: ${ctx.hold})`);
     } catch {
       skip(repo, REF_FETCH_FAILED);
     }
@@ -339,12 +357,19 @@ export async function prepareReferences(summary: RunSummary, config: Pick<Config
   summary.references = [...(Array.isArray(summary.references) ? summary.references : []), ...records].slice(-MAX_RECORDS);
 }
 
-function removeCopy(dir: string): void {
+/** Removes one copy. True when the folder is gone. Never throws. */
+export function removeCopy(dir: string): boolean {
   unlockTree(dir);
   try {
     rmSync(dir, { recursive: true, force: true });
   } catch {
     // removed with the whole folder at the end of the run
+  }
+  try {
+    lstatSync(dir);
+    return false;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT";
   }
 }
 
@@ -363,10 +388,7 @@ const isDirectory = (p: string): boolean => {
  * commit) and the ones that are not. `dirs` are given to the agent as read-only folders. Undefined without records.
  */
 export function referencePrompt(summary: Pick<RunSummary, "runDir" | "references">, deps: { isDir?: (p: string) => boolean; real?: (p: string) => string } = {}): { text: string; dirs: string[] } | undefined {
-  const all = Array.isArray(summary.references) ? summary.references : [];
-  const last = all.at(-1);
-  if (!last) return undefined;
-  const batch = all.filter((r) => r.at === last.at && typeof r.repo === "string" && validGithubName(r.repo));
+  const batch = newestBatch(summary);
   if (!batch.length) return undefined;
   const isDir = deps.isDir ?? isDirectory;
   const there: string[] = [];
@@ -377,6 +399,8 @@ export function referencePrompt(summary: Pick<RunSummary, "runDir" | "references
     const path = join(summary.runDir, REFERENCE_DIR, folder);
     if (!r.ok || r.folder !== `${REFERENCE_DIR}/${folder}` || !r.commit || !COMMIT.test(r.commit) || !RULE_SAFE_PATH.test(path) || !isDir(path)) {
       missing.push(r.repo);
+      // a changed copy that could not be removed stays, and stays denied to write tools
+      if (!r.ok && r.reason !== undefined && r.folder === `${REFERENCE_DIR}/${folder}` && RULE_SAFE_PATH.test(path) && isDir(path)) dirs.push(path);
       continue;
     }
     there.push(`- ${r.repo}: ${path} (commit ${r.commit.slice(0, 12)})`);

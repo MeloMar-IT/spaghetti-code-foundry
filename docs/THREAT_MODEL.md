@@ -65,7 +65,7 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - The real `claude` and `codex` were not run in the tests, only the fake agents. Before release, check by hand on a Mac that the real `claude` (with `CLAUDE_CODE_OAUTH_TOKEN`) and `codex` (with an API key) finish a step inside the profile. Result: not recorded yet.
 - The network is open: a step can send what it may read to any host.
 - Profiles do not nest: `sandbox-exec` started inside a sandboxed step fails.
-- With the setting off, and for admin runs, nothing is held.
+- With the setting off, and for admin runs, nothing is held. The one exception is the read-only copies of reference repositories, held by file modes and checked before each agent step (see "Reference repositories").
 
 ## Credential leakage (to agents, logs, other users)
 
@@ -376,6 +376,24 @@ The install sends its daily report to a receiver (`metrics_sharing.endpoint`). T
   that port. Anyone who can edit `config.yaml` can set it; the address is only accepted for those two hosts.
 - Any program that runs as the same user can hold the lock and stop the push for as long as it holds it. This
   only delays the push; it sends nothing.
+
+## Reference repositories (#878, #894)
+
+A watcher can give its runs read-only copies of other repositories of its owner (`src/engine/reference-repos.ts`, `src/engine/reference-check.ts`). The agents read the copies; nothing may change them or put them in the pull request.
+
+**Protected by.**
+- A copy sits in the run folder next to the checkout, so it is never part of the pull request. It has no remote, its files are 0444 and its folders 0555 (`.git` too), and Claude's Edit and Write are denied there.
+- In a sandboxed run the OS sandbox also refuses writes and `chmod` there. In an admin's run without the sandbox, file modes are the only hold, since a shell step can `chmod`. Before each agent step every copy is checked against its commit: `HEAD`, a clean `git status` (ignored files included, `core.fileMode` off) and the modes. A copy that changed is removed, and the step's reference block leaves it out. The run goes on.
+- The check runs before each agent step, and each copy is checked once per step even when several steps start together.
+- A user's run without the OS sandbox gets no copy at all (`sandbox.user_runs: off`).
+- Each copy records what held it (`held: sandbox` or `held: file modes`) in the run log and in `run.json`.
+
+**Limits.**
+- Between two agent steps, a shell step of an admin's run can read and change a copy. The change is seen, and the copy removed, only when the next agent step starts.
+- The agent's own shell tool is not held by the file modes. A change it makes can be read by the same agent step, and it is removed before the next agent step.
+- The check compares `HEAD`, the working tree and the modes. It does not look at `.git/config` or the refs. A shell step of an admin's run can add a remote to a copy, and nothing in the check sees it.
+- A copy whose removal fails is kept, marked unavailable, and stays denied to Claude's write tools.
+- The privacy rule (a private reference only for a target known to be private, or `reference_private_ok`) is a separate guard and not covered here; see the USER_GUIDE.
 
 ## Open findings
 
