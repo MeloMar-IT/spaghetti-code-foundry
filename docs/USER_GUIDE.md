@@ -740,11 +740,12 @@ scf run repo-review --repo owner/name --var ref=release/2.x --var focus="the log
 What it does, in order (each step shows on the run page):
 
 1. **Clone and check.** It clones the repository into `repo/` and runs the build and the tests. `build_cmd` and `test_cmd` are `auto` by default, which finds the commands from the project files. Failing tests are named from the JUnit reports. The branch is `ref`, else `develop_branch`, else `develop`, else the default branch. The clone has no remote, so the checks cannot push.
-2. **List open issues.** The open issues are read so that a finding already covered by one is not filed again.
-3. **Review.** A read-only agent (it can read and search files, nothing else) answers with findings. It looks for authorization gaps, injection, XSS, CSRF, SSRF, secrets, insecure defaults, data loss, correctness, error handling, missing tests on critical paths and CI that does not build or test. It reports no style nits. `focus` narrows the review.
-4. **Verify.** A second agent session checks each finding end to end. It drops what it cannot confirm and groups the rest into stories. A finding is also dropped when a `file:line` it names does not exist in the clone.
-5. **Plan.** The Foundry orders the stories by severity, caps them at `max_stories` and skips duplicates: a story covered by an open issue, a story with the same title, or a story already filed by this run.
-6. **File.** The missing labels are created first. Each story is one issue with the `labels` (default `Factory_go`) and `bug` or `enhancement`.
+2. **Check dependencies.** When the repository has a `package-lock.json`, `npm audit --package-lock-only` finds the dependencies with a known high or critical vulnerability. **What is sent outside:** only the names and versions of the packages in `package-lock.json`, to the npm registry (`registry.npmjs.org`). No source code and no other file leaves the machine. The check waits up to 120 seconds. It never fails the run: when there is no lock file or the audit fails, the summary says "Dependencies not checked" and why. The advisories are written to `audit.md` in the run.
+3. **List open issues.** The open issues are read so that a finding already covered by one is not filed again.
+4. **Review.** A read-only agent (it can read and search files, nothing else) answers with findings. It looks for authorization gaps, injection, XSS, CSRF, SSRF, secrets, insecure defaults, data loss, correctness, error handling, missing tests on critical paths, CI that does not build or test, and dependencies with a known high or critical CVE from step 2. It reports no style nits. `focus` narrows the review.
+5. **Verify.** A second agent session checks each finding end to end. It drops what it cannot confirm and groups the rest into stories. A finding is also dropped when a `file:line` it names does not exist in the clone. A dependency finding is confirmed when `audit.md` lists the advisory for that package.
+6. **Plan.** The Foundry orders the stories by severity, caps them at `max_stories` and skips duplicates: a story covered by an open issue, a story with the same title, or a story already filed by this run.
+7. **File.** The missing labels are created first. Each story is one issue with the `labels` (default `Factory_go`) and `bug` or `enhancement`.
 
 **Settings.** Set them with `--var` or in the start form.
 

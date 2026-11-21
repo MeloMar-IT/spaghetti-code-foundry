@@ -2,15 +2,17 @@
 // The steps of the repo-review flow that are code, not agents. The logic is dist/review/stories.js (build first).
 // Usage:
 //   repo-review baseline <marker-file> <run-dir> <ok yes|no> <timed ""|tests|build>   in repo/: names the failing tests from the JUnit reports
-//   repo-review check <run-dir>      the form of the review and the verify answers (exit 1 with the problems)
+//   repo-review audit <run-dir>      in the workspace: npm audit of repo/package-lock.json; writes audit.md and audit.json; never fails
+//   repo-review check <run-dir>     the form of the review and the verify answers (exit 1 with the problems)
 //   repo-review plan <run-dir>       checks the refs, drops duplicates, orders and caps; prints the summary (and APPROVAL: yes for a scheduled run)
 //   repo-review file <run-dir>       creates the labels and the stories (only issues and labels are written); safe to run again
 // repo-access: remote for file
-// Files in <run-dir>: repo-review-baseline.json, review.json, verified.json, open-issues.json, plan.json, filed.json.
+// Files in <run-dir>: audit.json, repo-review-baseline.json, review.json, verified.json, open-issues.json, plan.json, filed.json.
 // Env: FACTORY_VAR_* (max_stories, labels, summary_issue, chore_watcher, github_repo), FACTORY_RUN_ID, FACTORY_OUT_* and FACTORY_RAN_* of the steps,
-//      RR_TEST_CMD and RR_BUILD_CMD (the commands the checks ran).
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+//      RR_TEST_CMD and RR_BUILD_CMD (the commands the checks ran),
+//      FACTORY_NPM_BIN (the npm that audit runs; default npm).
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 process.env.FACTORY_GH_BIN ||= "gh";
@@ -94,13 +96,57 @@ function check() {
   console.log(`verify answer ok: ${answer.stories.length} stories, ${answer.dropped.length} dropped, ${review.findings.length} findings`);
 }
 
+const NPM_ARGS = [
+  "audit", "--package-lock-only", "--json", "--include=prod", "--include=dev", "--include=optional", "--include=peer",
+  "--registry=https://registry.npmjs.org/", "--no-update-notifier", "--offline=false",
+];
+
+// Never fails: a check that cannot run is reported in the summary.
+function audit() {
+  const dir = runDirOf(args[0]);
+  const lock = join("repo", "package-lock.json");
+  let st = null;
+  try {
+    st = lstatSync(lock);
+  } catch {
+    st = null;
+  }
+  let result;
+  if (!st) result = { checked: false, reason: "the repository has no package-lock.json" };
+  else if (!st.isFile()) result = { checked: false, reason: "package-lock.json is not a plain file" };
+  else {
+    // Two empty, distinct config files: npm refuses one file loaded as both user and global config.
+    const user = join(dir, "npm-user.npmrc");
+    const global = join(dir, "npm-global.npmrc");
+    writeFileSync(user, "");
+    writeFileSync(global, "");
+    const r = spawnSync(env.FACTORY_NPM_BIN || "npm", NPM_ARGS, {
+      cwd: "repo", env: S.npmAuditEnv(env, user, global), encoding: "utf8", timeout: S.AUDIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    });
+    result = S.auditFromRun({ stdout: r.stdout, error: r.error });
+  }
+  saveJson(dir, "audit.json", result);
+  writeFileSync("audit.md.tmp", `${S.auditText(result)}\n`);
+  renameSync("audit.md.tmp", "audit.md");
+  console.log(S.auditPreview(result));
+}
+
 function plan() {
   const dir = runDirOf(args[0]);
+  let auditResult;
+  if (existsSync(join(dir, "audit.json"))) {
+    try {
+      auditResult = S.auditOf(JSON.parse(readFileSync(join(dir, "audit.json"), "utf8")));
+    } catch {
+      auditResult = undefined;
+    }
+  }
   const issues = readJson(dir, "open-issues.json");
   const open = (Array.isArray(issues) ? issues : []).filter((i) => Number.isSafeInteger(i?.number) && typeof i?.title === "string").map((i) => ({ number: i.number, title: i.title }));
   const p = S.planStories({
     repo: env.FACTORY_VAR_GITHUB_REPO ?? "", runId, repoRoot: "repo", review: readJson(dir, "review.json"), answer: readJson(dir, "verified.json"),
     baseline: readJson(dir, "repo-review-baseline.json"), open, settings,
+    audit: auditResult ?? S.auditOf(undefined),
   });
   saveJson(dir, "plan.json", p);
   console.log(S.summaryText(p, {}));
@@ -170,7 +216,8 @@ async function file() {
 
 if (cmd === "validate") console.log("settings ok");
 else if (cmd === "baseline") await baseline();
+else if (cmd === "audit") audit();
 else if (cmd === "check") check();
 else if (cmd === "plan") plan();
 else if (cmd === "file") await file();
-else fail("usage: repo-review baseline|check|plan|file <run-dir>");
+else fail("usage: repo-review baseline|audit|check|plan|file <run-dir>");

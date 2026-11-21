@@ -1,17 +1,23 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 
-const STEPS = ["clone", "checks", "list_issues", "review", "verify", "check_verify", "plan_stories", "file_stories"];
+const STEPS = ["clone", "checks", "audit", "list_issues", "review", "verify", "check_verify", "plan_stories", "file_stories"];
 const TOKEN = `ghp_${"a1B2".repeat(9)}`;
 
 let gh: ReturnType<typeof fakeGithub>;
 beforeEach(() => {
   gh = fakeGithub();
+  // A fake npm: logs where it ran, its arguments and three settings, prints $FAKE_NPM_AUDIT, exits with $FAKE_NPM_EXIT (default 1: findings).
+  const npm = join(gh.tmp, "fake-npm");
+  writeFileSync(npm, '#!/bin/sh\n{ pwd; echo "$@"; echo "NODE_ENV=$NODE_ENV omit=$npm_config_omit audit=$npm_config_audit offline=$npm_config_offline"; } >> "$FAKE_NPM_LOG"\nprintf \'%s\' "$FAKE_NPM_AUDIT"\nexit "${FAKE_NPM_EXIT:-1}"\n');
+  chmodSync(npm, 0o755);
+  process.env.FACTORY_NPM_BIN = npm;
+  process.env.FAKE_NPM_LOG = join(gh.tmp, "npm.log");
 });
 afterEach(() => gh.restore());
 
@@ -58,6 +64,9 @@ describe("repo-review flow", { timeout: 60_000 }, () => {
     expect(s.status).toBe("succeeded");
     expect(ids(s)).toEqual(STEPS);
     expect(out(s, "checks")).toContain("BASE: green");
+    expect(out(s, "audit")).toContain("Dependencies not checked: the repository has no package-lock.json.");
+    expect(out(s, "file_stories")).toContain("Dependencies not checked: the repository has no package-lock.json");
+    expect(existsSync(process.env.FAKE_NPM_LOG!)).toBe(false);
     const made = gh.createdBodies();
     expect(made).toHaveLength(1);
     expect(made[0]!.labels).toEqual(["Factory_go", "bug"]);
@@ -140,7 +149,7 @@ describe("repo-review flow", { timeout: 60_000 }, () => {
     answer([finding("F1"), finding("F2")], [story("First", ["F1"]), story("Second", ["F2"])]);
     const s = await run({ chore_watcher: "w1" });
     expect(s.status).toBe("waiting");
-    expect(ids(s)).toEqual(STEPS.slice(0, 7));
+    expect(ids(s)).toEqual(STEPS.slice(0, 8));
     expect(s.reason).toMatch(/scheduled review of acme\/app/);
     expect(gh.createdBodies()).toEqual([]);
     // Someone files "First" while the run waits.
@@ -157,6 +166,78 @@ describe("repo-review flow", { timeout: 60_000 }, () => {
     expect(existsSync(join(r.runDir, "filed.json"))).toBe(true);
   });
 
+  const report = (n: number, title = "Prototype pollution") => JSON.stringify({
+    vulnerabilities: Object.fromEntries(Array.from({ length: n }, (_, i) => {
+      const name = n === 1 ? "lodash" : `pkg${String(i).padStart(2, "0")}`;
+      return [name, { name, severity: "critical", fixAvailable: true, via: [{ name, severity: "critical", title, url: `https://github.com/advisories/GHSA-${i}` }] }];
+    })),
+  });
+
+  it("lists high and critical advisories to the review, and runs npm in repo/", async () => {
+    addFile("package-lock.json", "{}\n");
+    process.env.FAKE_NPM_AUDIT = report(1);
+    process.env.FAKE_REPO_REVIEW_CAPTURE = join(gh.tmp, "prompt.txt");
+    const s = await run();
+    expect(s.status).toBe("succeeded");
+    expect(out(s, "audit")).toContain("- critical lodash: Prototype pollution — https://github.com/advisories/GHSA-0 — fix available");
+    expect(readFileSync(process.env.FAKE_REPO_REVIEW_CAPTURE, "utf8")).toContain("- critical lodash:");
+    const log = readFileSync(process.env.FAKE_NPM_LOG!, "utf8").split("\n");
+    expect(log[0]).toMatch(/\/repo$/);
+    expect(log[1]).toBe("audit --package-lock-only --json --include=prod --include=dev --include=optional --include=peer --registry=https://registry.npmjs.org/ --no-update-notifier --offline=false");
+    expect(out(s, "file_stories")).toContain("Dependencies checked with npm audit: 1 high or critical advisory.");
+  });
+
+  it("audits every dependency type whatever the environment says", async () => {
+    addFile("package-lock.json", "{}\n");
+    process.env.FAKE_NPM_AUDIT = report(1);
+    process.env.NODE_ENV = "production";
+    process.env.npm_config_omit = "dev";
+    process.env.npm_config_audit = "false";
+    process.env.npm_config_offline = "true";
+    const s = await run();
+    expect(s.status).toBe("succeeded");
+    expect(readFileSync(process.env.FAKE_NPM_LOG!, "utf8")).toContain("NODE_ENV= omit= audit= offline=\n");
+  });
+
+  it("an offline repository still gets the check, not an empty report counted as zero", async () => {
+    addFile("package-lock.json", "{}\n");
+    addFile(".npmrc", "offline=true\n");
+    process.env.FAKE_NPM_AUDIT = report(1);
+    const s = await run();
+    expect(s.status).toBe("succeeded");
+    expect(readFileSync(process.env.FAKE_NPM_LOG!, "utf8")).toContain("--offline=false");
+    expect(out(s, "file_stories")).toContain("Dependencies checked with npm audit: 1 high or critical advisory.");
+  });
+
+  it("keeps the full list in audit.md and a bounded list in the prompt", async () => {
+    addFile("package-lock.json", "{}\n");
+    process.env.FAKE_NPM_AUDIT = report(60, "t".repeat(190));
+    process.env.FAKE_REPO_REVIEW_CAPTURE = join(gh.tmp, "prompt.txt");
+    const s = await run();
+    expect(s.status).toBe("succeeded");
+    const prompt = readFileSync(process.env.FAKE_REPO_REVIEW_CAPTURE, "utf8");
+    expect(prompt).toContain("Dependencies checked with npm audit: 60 high or critical advisories.");
+    expect(prompt).toContain("- critical pkg00:");
+    expect(prompt).toContain("more in audit.md");
+    expect(readFileSync(join(s.workdir!, "audit.md"), "utf8").trim().split("\n")).toHaveLength(61);
+  });
+
+  it("does not fail the run when npm audit gives no JSON", async () => {
+    addFile("package-lock.json", "{}\n");
+    process.env.FAKE_NPM_AUDIT = "not json";
+    const s = await run();
+    expect(s.status).toBe("succeeded");
+    expect(out(s, "file_stories")).toContain("Dependencies not checked: the output of npm audit is not JSON.");
+  });
+
+  it("does not fail the run when npm is missing", async () => {
+    addFile("package-lock.json", "{}\n");
+    process.env.FACTORY_NPM_BIN = join(gh.tmp, "no-such-npm");
+    const s = await run();
+    expect(s.status).toBe("succeeded");
+    expect(out(s, "file_stories")).toContain("Dependencies not checked: npm was not found.");
+  });
+
   it("nothing is filed when the approval is rejected", async () => {
     answer([finding("F1")], [story("First", ["F1"])]);
     const s = await run({ chore_watcher: "w1" });
@@ -171,7 +252,7 @@ describe("repo-review flow", { timeout: 60_000 }, () => {
     process.env.FAKE_REPO_VERIFY_FIX = JSON.stringify({ stories: [story("Fixed form", ["F1"])], dropped: [] });
     const s = await run();
     expect(s.status).toBe("succeeded");
-    expect(ids(s)).toEqual(["clone", "checks", "list_issues", "review", "verify", "check_verify", "fix_verify", "check_verify", "plan_stories", "file_stories"]);
+    expect(ids(s)).toEqual(["clone", "checks", "audit", "list_issues", "review", "verify", "check_verify", "fix_verify", "check_verify", "plan_stories", "file_stories"]);
     expect(gh.createdBodies().map((m) => m.title)).toEqual(["Fixed form"]);
   });
 

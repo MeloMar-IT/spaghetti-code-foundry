@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dependencyText } from "../src/queue/deps.js";
+import { npmAuditEnv } from "../src/review/stories.js";
 import {
-  BUILD_TITLE, checkRef, checkVerify, decideBaseline, extractJson, marker, namedEntries, parseReview, parseSettings, planStories, redactTokens,
+  AUDIT_PREVIEW_CHARS, BUILD_TITLE, auditFromRun, auditHeadline, auditOf, auditPreview, auditText, checkRef, checkVerify, decideBaseline, extractJson, marker, namedEntries, parseNpmAudit, parseReview, parseSettings, planStories, redactTokens,
   storyBody, summaryText, withDependsOn,
-  type Baseline, type Finding, type OpenIssue, type PlanInput, type VerifiedStory,
+  type AuditResult, type Baseline, type Finding, type OpenIssue, type PlanInput, type VerifiedStory,
 } from "../src/review/stories.js";
 
 let tmp: string;
@@ -270,5 +271,147 @@ describe("story bodies", () => {
     expect(dependencyText(body)).toContain("#12");
     expect(dependencyText(body)).not.toMatch(/#[5678]\b/);
     expect(body.indexOf("### Depends on")).toBeLessThan(body.indexOf("<!-- claude-factory run="));
+  });
+});
+
+describe("the npm audit", () => {
+  const vuln = (via: unknown[], fixAvailable: unknown = true) => ({ name: "x", severity: "high", via, fixAvailable });
+  const adv = (name: string, severity: string, o: Record<string, unknown> = {}) => ({ name, severity, title: `Bad ${name}`, url: `https://github.com/advisories/GHSA-${name}`, ...o });
+  const report = (vulnerabilities: Record<string, unknown>) => JSON.stringify({ vulnerabilities });
+  const parsed = (vulnerabilities: Record<string, unknown>) => {
+    const r = parseNpmAudit(report(vulnerabilities));
+    if (!r.checked) throw new Error(r.reason);
+    return r.advisories;
+  };
+
+  it("keeps high and critical advisories, critical first, with the fix flag", () => {
+    const a = parsed({
+      minimist: vuln([adv("minimist", "high")], false), lodash: vuln([adv("lodash", "critical")], true),
+      mod: vuln([adv("mod", "moderate")]), low: vuln([adv("low", "low")]),
+    });
+    expect(a.map((x) => [x.package, x.severity, x.fix])).toEqual([["lodash", "critical", true], ["minimist", "high", false]]);
+    expect(a[0]!.url).toBe("https://github.com/advisories/GHSA-lodash");
+  });
+
+  it("adds nothing for a via string, and lists one advisory once", () => {
+    expect(parsed({ a: vuln(["lodash"]) })).toEqual([]);
+    const a = parsed({ lodash: vuln([adv("lodash", "high")], false), app: vuln([adv("lodash", "high")], true) });
+    expect(a).toHaveLength(1);
+    expect(a[0]!.fix).toBe(true);
+  });
+
+  it("reads fixAvailable: an object is true; missing or a string is false", () => {
+    const fix = (f: unknown) => parsed({ p: { severity: "high", via: [adv("p", "high")], ...(f === undefined ? {} : { fixAvailable: f }) } })[0]!.fix;
+    expect([fix({ name: "p", version: "2.0.0" }), fix(undefined), fix("yes"), fix(false), fix(null)]).toEqual([true, false, false, false, false]);
+  });
+
+  it("says why it could not read the report", () => {
+    for (const t of ["npm ERR! oops", "", "[1]", "null"]) expect(parseNpmAudit(t), t).toEqual({ checked: false, reason: "the output of npm audit is not JSON" });
+    expect(parseNpmAudit(JSON.stringify({ error: { code: "ENOTFOUND", summary: "getaddrinfo ENOTFOUND registry.npmjs.org" } }))).toEqual({
+      checked: false, reason: "npm audit failed: getaddrinfo ENOTFOUND registry.npmjs.org",
+    });
+    expect(parseNpmAudit('{"advisories":{}}')).toEqual({ checked: false, reason: "the npm audit report has an unknown form" });
+    const none = parseNpmAudit('{"vulnerabilities":{}}');
+    expect(none).toEqual({ checked: true, advisories: [] });
+    expect(auditHeadline(none)).toBe("Dependencies checked with npm audit: 0 high or critical advisories.");
+  });
+
+  it("makes every text one safe line and drops bad urls and names", () => {
+    const a = parsed({
+      p: vuln([adv("p", "high", { title: `line1\n<!-- x --> @octocat ${TOKEN}`, url: "javascript:alert(1)" })]),
+      q: vuln([adv("q", "high", { url: "http://example.com/x" })]),
+      bad: vuln([adv("a`b", "high")]),
+    });
+    expect(a.map((x) => x.package)).toEqual(["p", "q"]);
+    expect(a.map((x) => x.url)).toEqual(["", ""]);
+    expect(a[0]!.title).not.toMatch(/\n|ghp_/);
+    expect(auditText({ checked: true, advisories: a })).not.toContain(TOKEN);
+  });
+
+  it("keeps all advisories in the text, and bounds the preview", () => {
+    const many: Record<string, unknown> = {};
+    for (let i = 0; i < 60; i++) {
+      const n = `pkg${String(i).padStart(2, "0")}`;
+      many[n] = vuln([adv(n, "critical", { title: "t".repeat(190) })]);
+    }
+    const r = parseNpmAudit(report(many));
+    expect(auditText(r).split("\n")).toHaveLength(61);
+    const preview = auditPreview(r).split("\n");
+    expect(preview).toHaveLength(52);
+    expect(preview[0]).toMatch(/^Dependencies checked/);
+    expect(preview[51]).toBe("- … and 10 more in audit.md");
+    const long: AuditResult = {
+      checked: true,
+      advisories: Array.from({ length: 50 }, (_, i) => ({ package: `p${i}`, severity: "critical" as const, title: "t".repeat(200), url: `https://github.com/advisories/${"a".repeat(260)}`, fix: false })),
+    };
+    const p = auditPreview(long);
+    expect(p.length).toBeLessThanOrEqual(AUDIT_PREVIEW_CHARS);
+    expect(p).toContain("more in audit.md");
+  });
+
+  it("maps a failed run of npm to a reason", () => {
+    expect(auditFromRun({ error: { code: "ENOENT" } })).toEqual({ checked: false, reason: "npm was not found" });
+    expect(auditFromRun({ error: { code: "ETIMEDOUT" } })).toEqual({ checked: false, reason: "npm audit did not finish in 120 s" });
+    expect(auditFromRun({ error: { code: "ENOBUFS" } })).toEqual({ checked: false, reason: "the npm audit report is too large" });
+    expect(auditFromRun({ error: {} })).toEqual({ checked: false, reason: "npm audit could not run" });
+    expect(auditFromRun({ stdout: report({ p: vuln([adv("p", "high")]) }) })).toMatchObject({ checked: true });
+  });
+
+  it("reads a saved result back, and says when the step did not run", () => {
+    expect(auditOf(undefined)).toEqual({ checked: false, reason: "the audit step did not run" });
+    expect(auditOf({ x: 1 })).toEqual({ checked: false, reason: "the audit step did not run" });
+    const r = parseNpmAudit(report({ p: vuln([adv("p", "high")]) }));
+    expect(auditOf(JSON.parse(JSON.stringify(r)))).toEqual(r);
+    const n: AuditResult = { checked: false, reason: "npm was not found" };
+    expect(auditOf(n)).toEqual(n);
+  });
+
+  it("adds the headline to the summary only when an audit is given", () => {
+    expect(plan({}).notes).toEqual([]);
+    const base = { repo: "acme/app", runId: "r1", repoRoot: tmp, review: { findings: [], invalid: [] }, answer: { stories: [], dropped: [] }, baseline: green, open: [], settings: settings() };
+    const withAudit = planStories({ ...base, audit: { checked: false, reason: "npm was not found" } });
+    expect(summaryText(withAudit, {})).toContain("Dependencies not checked: npm was not found.");
+  });
+});
+
+describe("the npm audit environment, with the real npm config loading", () => {
+  // No network: `npm config get` only reads the configuration files and the environment.
+  const npmGet = (key: string, env: Record<string, string>, extra: string[] = []) =>
+    spawnSync("npm", ["config", "get", key, ...extra], { cwd: tmp, env, encoding: "utf8", timeout: 60_000 });
+
+  it("loads with distinct empty user and global config files", () => {
+    writeFileSync(join(tmp, "package.json"), "{}\n");
+    const user = join(tmp, "npm-user.npmrc");
+    const global = join(tmp, "npm-global.npmrc");
+    writeFileSync(user, "");
+    writeFileSync(global, "");
+    const r = npmGet("registry", npmAuditEnv(process.env as Record<string, string>, user, global));
+    expect(r.stderr).not.toMatch(/double-loading/);
+    expect(r.status).toBe(0);
+  });
+
+  it("the same file as user and global config is what npm refuses", () => {
+    writeFileSync(join(tmp, "package.json"), "{}\n");
+    const same = join(tmp, "npm.npmrc");
+    writeFileSync(same, "");
+    const r = npmGet("registry", npmAuditEnv(process.env as Record<string, string>, same, same));
+    expect(`${r.stdout}${r.stderr}`).toMatch(/double-loading/);
+  });
+
+  it("the repository's offline setting and the environment's are overridden by --offline=false", () => {
+    writeFileSync(join(tmp, "package.json"), "{}\n");
+    writeFileSync(join(tmp, ".npmrc"), "offline=true\n");
+    const user = join(tmp, "npm-user.npmrc");
+    const global = join(tmp, "npm-global.npmrc");
+    writeFileSync(user, "");
+    writeFileSync(global, "");
+    const env = npmAuditEnv({ ...(process.env as Record<string, string>), npm_config_offline: "true" }, user, global);
+    expect(npmGet("offline", env).stdout.trim()).toBe("true");
+    expect(npmGet("offline", env, ["--offline=false"]).stdout.trim()).toBe("false");
+  });
+
+  it("drops the settings that could narrow the audit, and keeps the rest", () => {
+    const e = npmAuditEnv({ NODE_ENV: "production", npm_config_omit: "dev", npm_config_audit: "false", npm_config_offline: "true", npm_config_userconfig: "/x", KEEP: "1", EMPTY: undefined }, "u", "g");
+    expect(e).toEqual({ KEEP: "1", npm_config_userconfig: "u", npm_config_globalconfig: "g" });
   });
 });

@@ -215,7 +215,8 @@ if (prompt.includes("You are Ask Foundry, the help assistant")) {
   const b = process.env.FAKE_BRIEF;
   canned = b === "ECHO" ? `${brief}\nargs=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` : b ?? brief;
 } else if (prompt.startsWith("Repository review: find the problems")) {
-  // The review of repo-review. FAKE_REPO_REVIEW replaces the answer (default: no findings).
+  // The review of repo-review. FAKE_REPO_REVIEW replaces the answer (default: no findings). FAKE_REPO_REVIEW_CAPTURE (a file path) gets the prompt.
+  if (process.env.FAKE_REPO_REVIEW_CAPTURE) writeFileSync(process.env.FAKE_REPO_REVIEW_CAPTURE, prompt);
   canned = process.env.FAKE_REPO_REVIEW ?? '{"findings":[]}';
 } else if (prompt.startsWith("Repository review: verify the findings")) {
   // The verify turn of repo-review. FAKE_REPO_VERIFY replaces the answer (default: nothing placed, nothing dropped).

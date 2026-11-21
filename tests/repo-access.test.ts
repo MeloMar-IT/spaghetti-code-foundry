@@ -70,7 +70,7 @@ describe("the scan catches", () => {
     expect(scan([{ id: "a", type: "shell", run: 'node "$FACTORY_TOOLS/repo-review" file "{{run.dir}}"' }])).toEqual([
       { where: "f/a", problem: "calls gh or the remote without repo_access" },
     ]);
-    for (const sub of ["baseline", "check", "plan"]) {
+    for (const sub of ["baseline", "audit", "check", "plan"]) {
       expect(scan([{ id: "a", type: "shell", run: `node "$FACTORY_TOOLS/repo-review" ${sub} x` }]), sub).toEqual([]);
     }
   });
