@@ -10,7 +10,7 @@ export const SHARING = {
   shared: "Shared: numbers only, once a day — how many runs started, finished and failed, how long they took, the tokens and cost, the built-in flow, step and model names, and the Foundry version.",
   never: "Never shared: your code, tasks, step output, the text of a change, names, e-mail addresses, repository names or paths.",
   privacy: "How metrics sharing works",
-  privacyHref: "/privacy.html#shared-metrics",
+  privacyHref: "https://spaghetti-code-foundry.com/privacy/metrics/",
   preview: "What is shared",
   previewHref: "/privacy.html#preview",
   share: "Share",
@@ -134,7 +134,7 @@ export function sharingAskCard({ onChoose, previewHref = SHARING.previewHref, op
     h("p", {}, h("strong", {}, SHARING.title)),
     h("p", {}, SHARING.shared),
     h("p", {}, SHARING.never),
-    h("p", { class: "row" }, h("a", { href: SHARING.privacyHref }, SHARING.privacy), h("a", { href: previewHref || SHARING.previewHref, onClick: openPreview ? (e) => { e?.preventDefault?.(); void openPreview(); } : undefined }, SHARING.preview)),
+    h("p", { class: "row" }, h("a", { href: SHARING.privacyHref, target: "_blank", rel: "noopener noreferrer" }, SHARING.privacy), h("a", { href: previewHref || SHARING.previewHref, onClick: openPreview ? (e) => { e?.preventDefault?.(); void openPreview(); } : undefined }, SHARING.preview)),
     h("div", { class: "row" }, share, dont),
     note);
 }
@@ -229,7 +229,7 @@ export function accountSettingsDialog(a = api) {
       when,
       h("p", { class: "muted" }, SHARING.shared, " ", SHARING.never),
       h("p", { class: "row" },
-        h("a", { href: SHARING.privacyHref }, SHARING.privacy),
+        h("a", { href: SHARING.privacyHref, target: "_blank", rel: "noopener noreferrer" }, SHARING.privacy),
         h("a", { href: SHARING.previewHref, onClick: (e) => { e?.preventDefault?.(); close(); void whatIsSharedDialog(a); } }, SHARING.preview)),
       note);
   }, { busy: () => busy });

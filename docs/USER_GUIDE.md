@@ -10299,3 +10299,75 @@ holds a question, an answer, a title or a page context.
 
 Links in a reply go only to pages your role has. The text of an issue, a log or a repository is
 read as data: an instruction written there is not followed.
+
+## 15. Sharing metrics
+
+This chapter says what sharing the metrics of your runs means, in one place. The same facts in short form are on
+the [privacy page for shared metrics](/privacy/metrics/). Nothing is shared until someone says yes, and an admin can
+switch the whole feature off.
+
+### Who is asked
+
+Each person account is asked once, at the top of Today, whether the metrics of its runs may be shared. The question
+goes away after **Share** or **Don't share**, and it is not asked again. Service accounts are never asked and never
+count. An admin cannot answer for you.
+
+### What is shared, and what never is
+
+Once a day the install sends one numbers-only report for the runs of the accounts that said yes. The report covers:
+
+- runs and their outcomes: how many started, finished and failed, and how long they took;
+- tokens and cost;
+- splits and rework;
+- quality outcomes: first-pass tests, merge rate and evidence;
+- policy blocks, denials and questions answered automatically;
+- watcher sources and flow use, with the names of built-in flows, steps and models;
+- the number of repositories, as a count only;
+- the Foundry version, the day and a random install id.
+
+Never shared: your code, tasks, step output, the text of a change, names, e-mail addresses, repository and branch
+names, file paths and IP addresses. The report has no free-text field, so these cannot be sent by accident.
+
+### See it first
+
+- In the web interface, **What is shared** (on Today, and in **Account settings**) shows the report the next push
+  would send and the last one that was sent. An admin sees the report of the whole install; you see the report of
+  your own runs. Opening it sends nothing.
+- On the computer that runs the Foundry, `scf metrics preview [--day YYYY-MM-DD]` prints the report of one UTC day
+  exactly as it would be shared. It sends nothing.
+
+### How to change your answer
+
+Open the account menu, then **Account settings**, and use the switch **Share the metrics of my runs**. The switch
+shows the date of the last change. Saying no stops your runs from counting in future reports. Each change is written
+to the audit log.
+
+### The admin switch
+
+An admin can switch sharing off for the whole install in **Settings**, under **Metrics sharing**. While it is off,
+nobody is asked, the question and the switch are hidden, nothing is counted or sent, and the answers given are kept
+for when it is switched on again. The details of the push are in [Shared metrics](#shared-metrics) in chapter 8.
+
+### The daily push
+
+The install sends the report itself, once a day, after the UTC day has ended. You do not connect to the install.
+A day the receiver accepts is never sent again. A failed send is tried again later, for up to 7 days, and a failure
+never fails or slows a run.
+
+### How the data is removed
+
+- **Switching sharing off** (the last yes taken back, or the admin switch) sends a delete for the install id by
+  itself. The install then takes a new id, so a later yes starts fresh.
+- **Someone who still has the data folder** can send the same delete by hand:
+  `DELETE https://spaghetti-code-foundry.com/api/metrics/<install id>`. The install id is in `metrics-share.json` in
+  the data folder. A manual delete does not stop later pushes, so switch sharing off as well.
+- **Otherwise the data expires.** Reports carry no name and no IP address, and they are removed after 400 days.
+
+There is no contact address for removal requests. Reports carry no name and no IP address, so without the install
+id nobody can tell which reports are yours.
+
+### The public totals and the threshold of 3 installs
+
+The receiver publishes totals at `https://spaghetti-code-foundry.com/metrics.json`: per day for the last 35 days,
+and per week. A number that fewer than 3 installs give is left out, so no single install can be read from the totals.
+The totals are worked out once an hour from the reports the receiver holds.

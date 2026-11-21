@@ -269,12 +269,21 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
     text: howtos.map((h) => `${h.title} ${h.description}`).join(" "),
   });
 
-  // ---------- features ----------
-  {
-    const { data, body } = frontMatter(readFileSync(join(CONTENT, "features.md"), "utf8"), parseYaml);
-    const { html, toc } = md(body, { source: "website/content/features.md", base: null });
+  // ---------- content pages (Markdown with front matter) ----------
+  const CONTENT_PAGES = [
+    { file: "features.md", url: "/features/", crumb: "Features" },
+    { file: "privacy-metrics.md", url: "/privacy/metrics/", crumb: "Privacy: shared metrics" },
+  ];
+  for (const { file, url, crumb } of CONTENT_PAGES) {
+    const source = `website/content/${file}`;
+    const { data, body } = frontMatter(readFileSync(join(CONTENT, file), "utf8"), parseYaml);
+    if (!data?.title || !data?.lead || !data?.description) {
+      problems.push(`${source}: front matter needs title, lead and description`);
+      continue;
+    }
+    const { html, toc } = md(body, { source, base: null });
     add({
-      url: "/features/",
+      url,
       title: data.title,
       fullTitle: `${data.title} | ${SITE.name}`,
       h1: data.title,
@@ -282,10 +291,10 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
       description: data.description,
       body: html,
       toc,
-      crumbs: [{ name: "Home", url: "/" }, { name: "Features", url: "/features/" }],
+      crumbs: [{ name: "Home", url: "/" }, { name: crumb, url }],
       jsonld: [],
-      editPath: "website/content/features.md",
-      source: "website/content/features.md",
+      editPath: source,
+      source,
       sections: toc,
       text: plainText(body),
     });
