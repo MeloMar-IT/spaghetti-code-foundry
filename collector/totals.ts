@@ -2,9 +2,10 @@ import { DURATION_EDGES_MS, PARTS_EDGES, type ShareReport } from "../src/metrics
 
 // The public totals of the receiver (#890): pure, plain reports in, metrics.json out. One generic walk sums every
 // section of the reports, so a new optional field of a later report version is totalled without new code.
-// A number is published only when at least MIN_INSTALLS installs gave it; a sum that would overflow is left out.
+// A number is published once at least MIN_INSTALLS installs gave it (1: every shared number is shown, also of a
+// single install; the owner chose this on 2026-11-22); a sum that would overflow is left out.
 
-export const MIN_INSTALLS = 3;
+export const MIN_INSTALLS = 1;
 export const DAYS_SHOWN = 35;
 const SHARING_DAYS = 7;
 const DAY_MS = 86_400_000;

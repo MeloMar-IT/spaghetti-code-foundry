@@ -29,4 +29,4 @@
 12-ideas-refinement: "Ideas: turn an idea or an issue into ready changes with an AI architect that reads your code, asks questions, suggests drafts and checks readiness."
 13-self-repair-for-admins: "Self-repair for admins: how the monitor finds problems in the Foundry, turns them into bug changes and hotfixes, and the guard rails around it."
 14-ask-foundry: "Ask Foundry, the help assistant in the app: what it knows, what a reply holds, how sure it is, what it does not do, and how admins switch it on."
-15-sharing-metrics: "Sharing metrics: who is asked, what is shared and never, the preview, the admin switch, the daily push, removal of data and the 3-install threshold."
+15-sharing-metrics: "Sharing metrics: who is asked, what is shared and never, the preview, the admin switch, the daily push, removal of data and the public totals."
