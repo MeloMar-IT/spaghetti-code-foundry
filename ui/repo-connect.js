@@ -4,6 +4,9 @@ import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
 import { METHODS, appAvailable, connectionLines, installLink, isLocalPath, isSshUrl, keyBlock, methodLabel, methodOf, methodsFor, plainError, repoBody, repoProblemAt } from "./repos.js";
 
 export const TOKEN_STORED = "A token is stored. It is never shown again.";
+/** The starting autonomy levels of a new repository, lowest first (the same as AUTONOMY_LEVELS on the server), and the default. */
+export const START_LEVELS = ["observe", "plan-only", "guarded-write", "delivery-handoff"];
+export const START_DEFAULT = "guarded-write";
 export const NONE_REASON = "The server's own access is not tested here. Use Test connection on the repository page.";
 
 // Which control a server sentence is about (src/auth/repo-url.ts, src/server/api-repos.ts). The URL entry covers address errors and a duplicate, not quota ("at most N repositories").
@@ -108,7 +111,13 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
   const select = h("select", { name: "method" }, methods.map((m) => h("option", { value: m.id }, m.label)));
   select.value = methods.some((m) => m.id === repo?.method) ? repo.method : methods[0].id;
   const area = h("div", { class: "stack" });
-  const err = h("p", { class: "status bad flush", role: "alert" });
+  // only an admin may choose the starting autonomy level, and only when a repository is added
+  let levelSelect = null;
+  if (admin && !repo) {
+    levelSelect = h("select", { name: "autonomy" }, START_LEVELS.map((l) => h("option", { value: l }, l)));
+    levelSelect.value = START_DEFAULT;
+  }
+  const err =h("p", { class: "status bad flush", role: "alert" });
   const addrLine = h("p", { class: "mono" });
   const methodHeading = h("h3", {});
   const detailsHeading = h("h3", {});
@@ -198,7 +207,10 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       methodHeading,
       h("label", { class: "field" }, h("span", {}, "Authentication"), select),
       options && !appAvailable(options) ? h("small", {}, "GitHub App is not available: the administrator has not set up the app (Settings → GitHub App).") : null,
-      detailsHeading, area, err,
+      detailsHeading, area,
+      adding && levelSelect ? h("label", { class: "field" }, h("span", {}, "Starting autonomy level"), levelSelect) : null,
+      adding && levelSelect ? h("small", {}, "How much the Foundry may do on its own here. Only an admin can start above guarded-write.") : null,
+      err,
       row(adding ? h("button", { onClick: () => addressView() }, "Back") : null,
         h("button", { class: "primary", onClick: submit }, adding ? "Add repository" : "Continue")));
     fail(message);
@@ -232,6 +244,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
     const problem = repoProblemAt({ ...input, needUrl: withUrl, needSecret });
     if (problem.text) return void fail(problem.text, problem.field);
     const request = repoBody({ ...input, withUrl });
+    if (adding && levelSelect && levelSelect.value !== START_DEFAULT) request.autonomy = levelSelect.value;
     fail("");
     if (adding) return run(() => save(request));
     const same = !unsure && method === current.method && Object.entries(request).every(([k, x]) => k === "method" || (k !== "token" && x === current[k]));

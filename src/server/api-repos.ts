@@ -20,8 +20,9 @@ import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
-import { connectLevel, levelIn, readAutonomy } from "../governance/autonomy-store.js";
-import type { AutonomyLevel } from "../governance/autonomy.js";
+import { AutonomyError, connectLevel, levelIn, readAutonomy } from "../governance/autonomy-store.js";
+import { AutonomyLevelSchema, type AutonomyLevel } from "../governance/autonomy.js";
+import { AutonomyRefused, checkReason, initialLevelNeedsAdmin, setInitialLevelLocked } from "../governance/autonomy-change.js";
 import { type DescribeVars, RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher,updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
 import { readFileSync } from "node:fs";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
@@ -100,6 +101,44 @@ function removeAndTell(ctx: ApiContext, by: string, remove: () => ReturnType<typ
 
 /** A value of the body: missing or null is "not given"; anything else goes to the store, which checks it. */
 const given = (body: Record<string, unknown>, key: string): unknown => (body[key] === null ? undefined : body[key]);
+
+/**
+ * The starting level of POST /api/repos: undefined when `autonomy` is not given (the repository then starts at the default
+ * level). Answers 400 for a bad level or reason and 403 for a non-admin who asks for a level above the default.
+ * The messages never quote the input.
+ */
+function startLevelOf(user: User, body: Record<string, unknown>): { level: AutonomyLevel; reason?: string } | undefined {
+  const raw = given(body, "autonomy");
+  const reasonRaw = given(body, "autonomyReason");
+  if (raw === undefined) {
+    if (reasonRaw !== undefined) throw new HttpError(400, "autonomyReason needs autonomy");
+    return undefined;
+  }
+  const parsed = AutonomyLevelSchema.safeParse(raw);
+  if (!parsed.success) throw new HttpError(400, "the level is not valid");
+  let reason: string | undefined;
+  if (reasonRaw !== undefined) {
+    try {
+      reason = checkReason(reasonRaw);
+    } catch (e) {
+      if (e instanceof AutonomyError) throw new HttpError(400, e.message);
+      throw e;
+    }
+  }
+  if (user.role !== "admin" && initialLevelNeedsAdmin(parsed.data)) throw new HttpError(403, "only an admin can start a repository at delivery-handoff");
+  return { level: parsed.data, reason };
+}
+
+/** `addRepo`'s `beforeSave` for a chosen starting level: sets it and writes its audit line, under the lock. */
+const startLevel = (start: { level: AutonomyLevel; reason?: string }, by: string) => (id: string): void => {
+  try {
+    setInitialLevelLocked({ id, level: start.level, reason: start.reason, by });
+  } catch (e) {
+    if (e instanceof AutonomyError) throw new HttpError(400, e.message);
+    if (e instanceof AutonomyRefused) throw new HttpError(e.status, e.message);
+    throw e;
+  }
+};
 
 /** After a wipe: an old key that is still in the Keychain is reported, like the credentials API does. */
 function oldKeys(ctx: ApiContext, left: number, done: string): void {
@@ -513,6 +552,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
     checkRepoMethod(user, body.method);
+    const start = startLevelOf(user, body);
     const input = { url: given(body, "url") ?? given(body, "name"), method: given(body, "method"), username: given(body, "username"), token: given(body, "token") };
     let installationId: string | undefined;
     let authorize: (() => void) | undefined;
@@ -525,7 +565,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       guardedRepos(ctx, () => checkNewRepo(user.id, input));
       installationId = await lookupInstallation(ctx, app, github);
     }
-    const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId, authorize, beforeSave: connectLevel }));
+    const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId, authorize, beforeSave: start ? startLevel(start, user.id) : connectLevel }));
     auditAction(ctx.diagLog, user.id, "repo-add", repo.id, repo.url);
     const out = shown(repo);
     return send(res, 201, out, publicKeys([out])), true;

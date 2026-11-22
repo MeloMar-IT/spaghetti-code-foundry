@@ -90,7 +90,7 @@ describe("website build", () => {
   it("builds the privacy page with the facts and no mailto link", () => {
     const page = pages.find((p) => p.url === "/privacy/metrics/")!;
     expect(page.html.match(/<h1>/g)?.length).toBe(1);
-    for (const fact of ["400 days", "metrics-share.json", "fewer than 3", "35 days", "DELETE", "7 days"]) expect(page.html, fact).toContain(fact);
+    for (const fact of ["400 days", "metrics-share.json", "only one install", "35 days", "DELETE", "7 days"]) expect(page.html, fact).toContain(fact);
     expect(page.html).not.toContain("mailto:");
   });
 

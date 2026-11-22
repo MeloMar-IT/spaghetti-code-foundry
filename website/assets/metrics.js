@@ -22,7 +22,7 @@ export const OUTCOME_IDS = [
 
 const DAY_MS = 86_400_000;
 const FETCH_TIMEOUT_MS = 10_000;
-const NO_NUMBERS = "No numbers are shared yet. They appear here once at least 3 installs share their metrics.";
+const NO_NUMBERS = "No numbers are shared yet. They appear here once an install shares its metrics.";
 const FAILED = "The numbers cannot be loaded right now. Please try again later.";
 
 // ---------- small helpers ----------

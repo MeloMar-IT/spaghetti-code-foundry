@@ -69,4 +69,5 @@ There is no contact address for removal. There are two ways to remove data:
 ## What is public
 
 The receiver publishes totals at `https://spaghetti-code-foundry.com/metrics.json`: per day for the last 35 days, and
-per week. A number that fewer than 3 installs give is left out, so no single install can be read from the totals.
+per week. Every shared number is shown, also when only one install gave it, so while few installs share, a total
+can be the numbers of a single install.

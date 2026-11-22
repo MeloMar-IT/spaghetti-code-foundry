@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { withAuthLock } from "../src/auth/store.js";
 import { hashPassword, type User } from "../src/auth/users.js";
 import { AUTONOMY_LEVELS, type AutonomyLevel } from "../src/governance/autonomy.js";
-import { accountableOwner, activeAdmins, approvalVerdict, approversOf, checkReason, demoteLevel } from "../src/governance/autonomy-change.js";
+import { AutonomyRefused, INITIAL_LEVEL_REASON, accountableOwner, activeAdmins, approvalVerdict, approversOf, checkReason, demoteLevel, initialLevelNeedsAdmin, setInitialLevelLocked } from "../src/governance/autonomy-change.js";
 import { AutonomyError, readAutonomy, setLevel } from "../src/governance/autonomy-store.js";
 import type { PromotionGate } from "../src/governance/gate.js";
 import { approveAutonomy, demoteAutonomy, promoteAutonomy, type GateOf } from "../src/server/api-autonomy.js";
@@ -445,5 +446,79 @@ describe("audit", () => {
     expect(e.message).not.toContain(home);
     expect(readFileSync(join(home, "autonomy.json"), "utf8")).toBe(before);
     expect(logs.join("\n")).not.toContain(home);
+  });
+});
+
+describe("setInitialLevelLocked", () => {
+  const set = (o: { level: AutonomyLevel; by: string; reason?: string; id?: string }) => withAuthLock(() => setInitialLevelLocked({ id: o.id ?? randomUUID(), level: o.level, by: o.by, reason: o.reason }));
+  const lines = () => audit().filter((e) => e.action === "autonomy-set-initial");
+  const file = () => readFileSync(join(home, "autonomy.json"), "utf8");
+
+  it("only delivery-handoff needs an admin", () => {
+    expect(AUTONOMY_LEVELS.filter(initialLevelNeedsAdmin)).toEqual(["delivery-handoff"]);
+  });
+
+  it("stores the level of an active admin with one ok line that holds the level and the reason", () => {
+    const id = randomUUID();
+    const entry = set({ id, level: "delivery-handoff", by: A.id, reason: "  trusted repo  " });
+    expect(entry).toMatchObject({ level: "delivery-handoff", by: A.id, reason: "trusted repo" });
+    expect(readAutonomy().repos[id]).toMatchObject({ level: "delivery-handoff", by: A.id });
+    expect(lines()).toEqual([expect.objectContaining({ result: "ok", by: A.id, target: `repos:${id}`, detail: "delivery-handoff reason: trusted repo" })]);
+  });
+
+  it("uses the fixed reason when none is given", () => {
+    const id = randomUUID();
+    set({ id, level: "observe", by: A.id });
+    expect(readAutonomy().repos[id]?.reason).toBe(INITIAL_LEVEL_REASON);
+    expect(lines()[0]?.detail).toBe(`observe reason: ${INITIAL_LEVEL_REASON}`);
+  });
+
+  it("lets a user-role account choose a level up to guarded-write", () => {
+    const U = mk("Una", "user", "2026-01-04T00:00:00.000Z");
+    saveUsers([A, B, C, U]);
+    const id = randomUUID();
+    set({ id, level: "plan-only", by: U.id });
+    expect(readAutonomy().repos[id]).toMatchObject({ level: "plan-only", by: U.id });
+    expect(lines()).toHaveLength(1);
+  });
+
+  it("refuses delivery-handoff for a user-role account and for a blocked admin, with a failed line and no change", () => {
+    const U = mk("Una", "user", "2026-01-04T00:00:00.000Z");
+    const X = mk("Xi", "admin", "2026-01-05T00:00:00.000Z", { status: "blocked" });
+    saveUsers([A, B, C, U, X]);
+    const before = file();
+    for (const who of [U, X]) {
+      const id = randomUUID();
+      let e: unknown;
+      try {
+        set({ id, level: "delivery-handoff", by: who.id, reason: "private words" });
+      } catch (x) {
+        e = x;
+      }
+      expect(e).toBeInstanceOf(AutonomyRefused);
+      expect((e as AutonomyRefused).status).toBe(403);
+      expect((e as Error).message).not.toContain("private");
+      expect(lines().at(-1)).toMatchObject({ result: "failed", by: who.id, target: `repos:${id}`, detail: "delivery-handoff refused: not-admin" });
+    }
+    expect(lines()).toHaveLength(2);
+    expect(file()).toBe(before);
+  });
+
+  it("refuses a bad reason, id or level without a line", () => {
+    const before = file();
+    expect(() => set({ level: "observe", by: A.id, reason: "a\nb" })).toThrow(AutonomyError);
+    expect(() => set({ level: "observe", by: A.id, reason: "x".repeat(201) })).toThrow(AutonomyError);
+    expect(() => set({ level: "observe", by: A.id, reason: "ghp_" + "a".repeat(36) })).toThrow(AutonomyError);
+    expect(() => set({ id: "not-an-id", level: "observe", by: A.id })).toThrow(AutonomyError);
+    expect(() => set({ level: "top" as AutonomyLevel, by: A.id })).toThrow(AutonomyError);
+    expect(lines()).toEqual([]);
+    expect(file()).toBe(before);
+  });
+
+  it("must run inside the lock", () => {
+    const before = file();
+    expect(() => setInitialLevelLocked({ id: randomUUID(), level: "observe", by: A.id })).toThrow(/inside withAuthLock/);
+    expect(lines()).toEqual([]);
+    expect(file()).toBe(before);
   });
 });

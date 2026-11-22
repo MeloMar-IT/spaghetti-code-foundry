@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AUTONOMY_LEVELS } from "../src/governance/autonomy.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -217,6 +218,54 @@ describe("the steps", () => {
     const options = { ...ALL, methods: [...ALL.methods, "local"] };
     expect(repos.methodsFor(true, options).map((m: any) => m.id)).toContain("local");
     expect(repos.methodsFor(false, options).map((m: any) => m.id)).not.toContain("local");
+  });
+
+  it("offers an admin the starting autonomy level on the sign-in step, and sends it only when it is changed", async () => {
+    void open();
+    expect(field("autonomy")).toBeUndefined(); // not on the address step
+    type("url", "https://git.example.com/a/b");
+    press("Next");
+    expect(field("autonomy")!.value).toBe("guarded-write");
+    type("token", TOKEN);
+    press("Add repository");
+    await flush();
+    expect(saves()[0]!.body).not.toHaveProperty("autonomy");
+  });
+
+  it("sends the chosen starting level, and keeps it when the user goes back and forward", async () => {
+    void open();
+    type("url", "https://git.example.com/a/b");
+    press("Next");
+    type("autonomy", "delivery-handoff");
+    press("Back");
+    press("Next");
+    expect(field("autonomy")!.value).toBe("delivery-handoff");
+    type("token", TOKEN);
+    press("Add repository");
+    await flush();
+    expect(saves()[0]!.body).toMatchObject({ autonomy: "delivery-handoff" });
+  });
+
+  it("shows no starting level to a non-admin, or in Change authentication", async () => {
+    void open({ admin: false });
+    type("url", "https://git.example.com/a/b");
+    press("Next");
+    expect(field("autonomy")).toBeUndefined();
+    type("token", TOKEN);
+    press("Add repository");
+    await flush();
+    expect(saves()[0]!.body).not.toHaveProperty("autonomy");
+  });
+
+  it("has no starting level in Change authentication", () => {
+    void change(httpsRec());
+    expect(field("method")).toBeDefined();
+    expect(field("autonomy")).toBeUndefined();
+  });
+
+  it("offers the levels of the server, lowest first", () => {
+    expect(rc.START_LEVELS).toEqual([...AUTONOMY_LEVELS]);
+    expect(rc.START_LEVELS).toContain(rc.START_DEFAULT);
   });
 
   it("Local after an https address asks for the folder, and a path with a token method asks for an HTTPS address", async () => {
