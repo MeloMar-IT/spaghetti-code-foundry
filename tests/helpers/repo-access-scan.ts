@@ -21,6 +21,9 @@ const COMMAND_RE = new RegExp(
   ].join("|"),
 );
 
+/** Tools that talk to the remote only in some subcommands (their header says so: "repo-access: remote for <subcommand>"). */
+const PARTLY_REMOTE: Record<string, string[]> = { "repo-review": ["file"] };
+
 /** Names of the files in tools/ that call gh or the remote, sorted. */
 export function remoteTools(root = "."): string[] {
   const names: string[] = [];
@@ -41,7 +44,12 @@ export function remoteTools(root = "."): string[] {
 /** Does the command call gh, the remote with git, or one of `tools`? */
 export function usesRepo(run: string, tools: readonly string[]): boolean {
   if (GH_RE.test(run) || GIT_REMOTE_RE.test(run)) return true;
-  for (const m of run.matchAll(/(?:FACTORY|SCF)_TOOLS\}?\/([\w-]+)/g)) if (tools.includes(m[1]!)) return true;
+  for (const m of run.matchAll(/(?:FACTORY|SCF)_TOOLS\}?"?\/([\w-]+)"?(?:[ \t]+([\w-]+))?/g)) {
+    if (!tools.includes(m[1]!)) continue;
+    // A tool with a "repo-access: remote for <subcommand>" header is remote only for that subcommand.
+    const only = PARTLY_REMOTE[m[1]!];
+    if (!only || (m[2] !== undefined && only.includes(m[2]))) return true;
+  }
   return false;
 }
 

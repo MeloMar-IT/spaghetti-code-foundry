@@ -50,12 +50,27 @@ function nextAction(ctx) {
   return testButton(ctx, `next-${repo.id}`);
 }
 
+export const REVIEW_FLOW = "repo-review";
+
+/** The "Review this repository" button: shown once `api.flows()` lists the review flow; a failed call leaves it out. */
+function reviewPart(ctx) {
+  const el = h("span", {});
+  Promise.resolve().then(() => api.flows()).then((list) => {
+    if (!Array.isArray(list) || !list.some((f) => f?.name === REVIEW_FLOW)) return;
+    const btn = h("button", { "data-action": "review", onClick: ctx.act.review }, "Review this repository");
+    btn.disabled = ctx.busy();
+    mount(el, btn);
+  }, () => {});
+  return { el };
+}
+
 function overview(ctx) {
   const { repo, att, readOnly, runs } = ctx;
   const webUrl = repoWebUrl(repo.url);
   const name = repoName(repo);
   const count = h("span", { "data-runs": repo.id });
   fillRuns(count, runs, repo);
+  const gh = readOnly ? "" : githubOf(repo.url);
   const added = repo.added ? new Date(repo.added) : null;
   const items = [
     { label: "Name", value: webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, name) : name },
@@ -73,7 +88,9 @@ function overview(ctx) {
   ].filter(Boolean);
   return [
     statusSummary({ label: "Overview", items }),
-    readOnly ? null : h("div", { class: "row" }, h("button", { "data-action": "ready", onClick: ctx.act.ready }, "Definition of Ready")),
+    readOnly ? null : h("div", { class: "row" },
+      h("button", { "data-action": "ready", onClick: ctx.act.ready }, "Definition of Ready"),
+      gh ? ctx.part(`review:${gh}`, () => reviewPart(ctx)).el : null),
   ];
 }
 
@@ -194,7 +211,7 @@ const OWN = { load: async (id) => ({ repo: (await api.repos()).find((r) => r.id 
  * `source.load(id)` resolves { repo, foreign?, extra?, back? } (`foreign`: another account's repository, so only what an
  * admin may do there is offered; `back`: { label, href }); the source may also have `foreign(repo)`, `back(repo)` and `keep` (record keys that the answer of the
  * authentication call, which lacks them, must not drop). Sections get `ctx.viewerAdmin` (the viewer's own role, unlike `ctx.admin`)
- * and `ctx.part(key, make)` (the same object for a key on every redraw). `attention` says what needs attention. Returns a cleanup.
+ * `ctx.part(key, make)` (the same object for a key on every redraw) and `ctx.busy()` (an action runs). `attention` says what needs attention. Returns a cleanup.
  */
 export async function renderRepo(main, { id, admin = false, readOnly = false, onName, nav = (hash) => { location.hash = hash; }, sections = SECTIONS, source = OWN, attention = repoAttention } = {}) {
   const mine = ++generation;
@@ -272,6 +289,19 @@ export async function renderRepo(main, { id, admin = false, readOnly = false, on
       return reload();
     })),
     remove: once("remove", (e) => doRemove(e.currentTarget, false)),
+    review: once("review", async () => {
+      const github_repo = githubOf(state.repo?.url);
+      if (!github_repo) return;
+      state.notice = null;
+      try {
+        const res = await api.startRun({ flow: REVIEW_FLOW, vars: { github_repo } });
+        if (typeof res?.runId !== "string" || !res.runId) throw new Error("The server did not return a run.");
+        if (live()) nav(`#/runs/${encodeURIComponent(res.runId)}`);
+      } catch (e) {
+        state.notice = { text: explainError(e, { what: "Could not start the review." }).what };
+        if (live()) draw();
+      }
+    }),
   };
   const doRemove = (btn, again) => remove(btn, state.repo, ({ removed, error, retry }) => {
     if (removed) return live() ? nav("#/repos") : undefined;
@@ -288,7 +318,7 @@ export async function renderRepo(main, { id, admin = false, readOnly = false, on
     const asAdmin = foreign ? repo.account?.role === "admin" : admin;
     const att = attention(repo, { admin: asAdmin, options: state.options });
     const setRepo = (row) => { if (row?.id === state.repo?.id) state.repo = row; };
-    const ctx = { repo, admin: asAdmin, readOnly, options: state.options, runs: state.runs, testError: state.testError, att, act, foreign, extra: state.extra, reload, once, setRepo, viewerAdmin: admin, part };
+    const ctx = { repo, admin: asAdmin, readOnly, options: state.options, runs: state.runs, testError: state.testError, att, act, foreign, extra: state.extra, reload, once, setRepo, viewerAdmin: admin, part, busy: () => !!state.pending };
     mount(main,
       pageHeader({ title: repoName(repo), back: state.back ?? source.back?.(repo) ?? BACK, meta: [pill(att)] }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,

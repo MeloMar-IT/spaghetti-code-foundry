@@ -8,6 +8,8 @@
 // A help turn of Ask Foundry ("You are Ask Foundry, the help assistant") has a canned JSON answer: FAKE_HELP replaces it, FAKE_HELP=ECHO reports args, folder and token state.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The coding turn can hang: FAKE_HANG_IMPLEMENT leaves half-done.txt in the folder and waits to be killed. The forced split (prompt "This issue has to be split.") has a canned answer, FAKE_FORCED_SPLIT; FAKE_FORCED_SPLIT_CAPTURE (a file path) gets its CLI arguments and prompt.
+// repo-review: FAKE_REPO_REVIEW is the answer of a prompt that starts "Repository review: find the problems", FAKE_REPO_VERIFY of one that starts
+// "Repository review: verify the findings", FAKE_REPO_VERIFY_FIX of "Repository review: fix the verify answer" (default: FAKE_REPO_VERIFY).
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
 // answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
@@ -212,6 +214,16 @@ if (prompt.includes("You are Ask Foundry, the help assistant")) {
   ].join("\n");
   const b = process.env.FAKE_BRIEF;
   canned = b === "ECHO" ? `${brief}\nargs=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` : b ?? brief;
+} else if (prompt.startsWith("Repository review: find the problems")) {
+  // The review of repo-review. FAKE_REPO_REVIEW replaces the answer (default: no findings). FAKE_REPO_REVIEW_CAPTURE (a file path) gets the prompt.
+  if (process.env.FAKE_REPO_REVIEW_CAPTURE) writeFileSync(process.env.FAKE_REPO_REVIEW_CAPTURE, prompt);
+  canned = process.env.FAKE_REPO_REVIEW ?? '{"findings":[]}';
+} else if (prompt.startsWith("Repository review: verify the findings")) {
+  // The verify turn of repo-review. FAKE_REPO_VERIFY replaces the answer (default: nothing placed, nothing dropped).
+  canned = process.env.FAKE_REPO_VERIFY ?? '{"stories":[],"dropped":[]}';
+} else if (prompt.startsWith("Repository review: fix the verify answer")) {
+  // The retry after a wrong verify answer. FAKE_REPO_VERIFY_FIX replaces the answer (default: FAKE_REPO_VERIFY).
+  canned = process.env.FAKE_REPO_VERIFY_FIX ?? process.env.FAKE_REPO_VERIFY ?? '{"stories":[],"dropped":[]}';
 } else if (prompt.includes("This is a question round of a refinement session.")) {
   // The architect's question round (refine-round). FAKE_ROUND replaces the answer; FAKE_ROUND=ECHO adds the CLI arguments, the working folder and the prompt.
   const found = `The README is ${existsSync("repo/README.md") ? "found" : "missing"} (README.md).`;

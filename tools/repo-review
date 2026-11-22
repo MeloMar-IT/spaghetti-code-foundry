@@ -1,0 +1,223 @@
+#!/usr/bin/env node
+// The steps of the repo-review flow that are code, not agents. The logic is dist/review/stories.js (build first).
+// Usage:
+//   repo-review baseline <marker-file> <run-dir> <ok yes|no> <timed ""|tests|build>   in repo/: names the failing tests from the JUnit reports
+//   repo-review audit <run-dir>      in the workspace: npm audit of repo/package-lock.json; writes audit.md and audit.json; never fails
+//   repo-review check <run-dir>     the form of the review and the verify answers (exit 1 with the problems)
+//   repo-review plan <run-dir>       checks the refs, drops duplicates, orders and caps; prints the summary (and APPROVAL: yes for a scheduled run)
+//   repo-review file <run-dir>       creates the labels and the stories (only issues and labels are written); safe to run again
+// repo-access: remote for file
+// Files in <run-dir>: audit.json, repo-review-baseline.json, review.json, verified.json, open-issues.json, plan.json, filed.json.
+// Env: FACTORY_VAR_* (max_stories, labels, summary_issue, chore_watcher, github_repo), FACTORY_RUN_ID, FACTORY_OUT_* and FACTORY_RAN_* of the steps,
+//      RR_TEST_CMD and RR_BUILD_CMD (the commands the checks ran),
+//      FACTORY_NPM_BIN (the npm that audit runs; default npm).
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+process.env.FACTORY_GH_BIN ||= "gh";
+const env = process.env;
+const [cmd, ...args] = process.argv.slice(2);
+
+function fail(msg) {
+  process.stderr.write(`repo-review: ${msg}\n`);
+  process.exit(1);
+}
+
+let S;
+try {
+  S = await import(new URL("../dist/review/stories.js", import.meta.url).href);
+} catch (e) {
+  fail(`could not load the review logic: ${String(e?.message || e).split("\n")[0]}`);
+}
+let settings;
+try {
+  settings = S.parseSettings(env);
+} catch (e) {
+  fail(e.message);
+}
+const runId = env.FACTORY_RUN_ID ?? "";
+if (!/^[A-Za-z0-9._-]+$/.test(runId)) fail("FACTORY_RUN_ID is not set");
+
+const readJson = (dir, name) => {
+  try {
+    return JSON.parse(readFileSync(join(dir, name), "utf8"));
+  } catch {
+    return fail(`${name} is missing or not valid; an earlier step did not finish`);
+  }
+};
+// Written next to the target and renamed, so a stop never leaves half a file.
+function saveJson(dir, name, value) {
+  const file = join(dir, name);
+  writeFileSync(`${file}.tmp`, JSON.stringify(value));
+  renameSync(`${file}.tmp`, file);
+}
+const runDirOf = (a) => (a && a.length > 0 ? a : fail("the run folder is missing"));
+const CONFIG_FILES = ["package.json", "pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "Cargo.toml", "Makefile", "pyproject.toml", "setup.py", "Gemfile", "composer.json"];
+
+async function baseline() {
+  const [marker, dirArg, ok, timed] = args;
+  const dir = runDirOf(dirArg);
+  const { readReports } = await import(new URL("./baseline-tests", import.meta.url).href);
+  const reports = readReports(marker && existsSync(marker) ? marker : "", ".");
+  const branch = /^branch:\s*(\S+)/m.exec(env.FACTORY_OUT_CLONE ?? "")?.[1] ?? "";
+  let commit = "";
+  try {
+    commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 30_000 }).trim();
+  } catch {
+    commit = "";
+  }
+  const configRefs = CONFIG_FILES.filter((f) => existsSync(f) && statSync(f).isFile() && statSync(f).size > 0).map((f) => `${f}:1`);
+  const b = S.decideBaseline({
+    ok: ok === "yes", timed: timed ?? "", failing: reports.failing, unidentified: reports.unidentified, configRefs,
+    testCmd: env.RR_TEST_CMD ?? "", buildCmd: env.RR_BUILD_CMD ?? "", branch, commit,
+  });
+  saveJson(dir, "repo-review-baseline.json", b);
+  console.log(`BASE: ${b.state}${b.note ? ` — ${b.note}` : ""}`);
+  for (const n of b.failing.slice(0, 20)) console.log(`| ${n.replace(/[\u0000-\u001f\u007f`]/g, "").slice(0, 200)}`);
+}
+
+function check() {
+  const dir = runDirOf(args[0]);
+  const fixed = Number(env.FACTORY_RAN_FIX_VERIFY ?? 0) > Number(env.FACTORY_RAN_VERIFY ?? 0);
+  let review;
+  try {
+    review = S.parseReview(env.FACTORY_OUT_REVIEW ?? "");
+  } catch (e) {
+    fail(`the review answer cannot be read: ${e.message}`);
+  }
+  saveJson(dir, "review.json", review);
+  const { answer, problems } = S.checkVerify((fixed ? env.FACTORY_OUT_FIX_VERIFY : env.FACTORY_OUT_VERIFY) ?? "", new Set(review.findings.map((f) => f.id)));
+  if (!answer) {
+    console.log(["The verify answer has these problems:", ...problems.map((p) => `- ${String(p).slice(0, 300)}`)].join("\n"));
+    process.exit(1);
+  }
+  saveJson(dir, "verified.json", answer);
+  console.log(`verify answer ok: ${answer.stories.length} stories, ${answer.dropped.length} dropped, ${review.findings.length} findings`);
+}
+
+const NPM_ARGS = [
+  "audit", "--package-lock-only", "--json", "--include=prod", "--include=dev", "--include=optional", "--include=peer",
+  "--registry=https://registry.npmjs.org/", "--no-update-notifier", "--offline=false",
+];
+
+// Never fails: a check that cannot run is reported in the summary.
+function audit() {
+  const dir = runDirOf(args[0]);
+  const lock = join("repo", "package-lock.json");
+  let st = null;
+  try {
+    st = lstatSync(lock);
+  } catch {
+    st = null;
+  }
+  let result;
+  if (!st) result = { checked: false, reason: "the repository has no package-lock.json" };
+  else if (!st.isFile()) result = { checked: false, reason: "package-lock.json is not a plain file" };
+  else {
+    // Two empty, distinct config files: npm refuses one file loaded as both user and global config.
+    const user = join(dir, "npm-user.npmrc");
+    const global = join(dir, "npm-global.npmrc");
+    writeFileSync(user, "");
+    writeFileSync(global, "");
+    const r = spawnSync(env.FACTORY_NPM_BIN || "npm", NPM_ARGS, {
+      cwd: "repo", env: S.npmAuditEnv(env, user, global), encoding: "utf8", timeout: S.AUDIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    });
+    result = S.auditFromRun({ stdout: r.stdout, error: r.error });
+  }
+  saveJson(dir, "audit.json", result);
+  writeFileSync("audit.md.tmp", `${S.auditText(result)}\n`);
+  renameSync("audit.md.tmp", "audit.md");
+  console.log(S.auditPreview(result));
+}
+
+function plan() {
+  const dir = runDirOf(args[0]);
+  let auditResult;
+  if (existsSync(join(dir, "audit.json"))) {
+    try {
+      auditResult = S.auditOf(JSON.parse(readFileSync(join(dir, "audit.json"), "utf8")));
+    } catch {
+      auditResult = undefined;
+    }
+  }
+  const issues = readJson(dir, "open-issues.json");
+  const open = (Array.isArray(issues) ? issues : []).filter((i) => Number.isSafeInteger(i?.number) && typeof i?.title === "string").map((i) => ({ number: i.number, title: i.title }));
+  const p = S.planStories({
+    repo: env.FACTORY_VAR_GITHUB_REPO ?? "", runId, repoRoot: "repo", review: readJson(dir, "review.json"), answer: readJson(dir, "verified.json"),
+    baseline: readJson(dir, "repo-review-baseline.json"), open, settings,
+    audit: auditResult ?? S.auditOf(undefined),
+  });
+  saveJson(dir, "plan.json", p);
+  console.log(S.summaryText(p, {}));
+  // A scheduled run waits for approval before anything is filed: stories, or the summary issue.
+  if (settings.scheduled && (p.stories.length > 0 || settings.summaryIssue)) console.log("APPROVAL: yes");
+}
+
+const COLORS = { bug: "d73a4a", enhancement: "a2eeef" };
+const norm = (t) => t.trim().toLowerCase().replace(/\s+/g, " ");
+
+async function file() {
+  const dir = runDirOf(args[0]);
+  const p = readJson(dir, "plan.json");
+  let storeForTool;
+  try {
+    ({ storeForTool } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  } catch (e) {
+    fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+  }
+  const store = storeForTool(env.FACTORY_VAR_GITHUB_REPO ?? "");
+  const filed = existsSync(join(dir, "filed.json")) ? readJson(dir, "filed.json") : {};
+  const keys = [...p.stories.map((s) => s.key), ...(p.summaryIssue ? ["summary"] : [])];
+  // A fresh look just before creating: what this run made before a stop (by its marker), and what others made meanwhile (by title).
+  const { issues, cut } = await store.listOpen({ pages: 10 });
+  if (cut) p.notes.push("The list of open issues is longer than the Foundry reads: the check for duplicates and for earlier work of this run was partial.");
+  for (const i of issues) for (const k of keys) if (!filed[k] && String(i.body ?? "").includes(S.marker(runId, k))) filed[k] = { number: i.number, url: i.html_url };
+  if (Object.keys(filed).length > 0) saveJson(dir, "filed.json", filed);
+  const open = new Map(issues.map((i) => [norm(i.title), i.number]));
+  const todo = p.stories.filter((s) => !filed[s.key]);
+  const labels = new Set(todo.flatMap((s) => s.labels));
+  for (const name of labels) {
+    try {
+      await store.createLabelIfMissing(name, COLORS[name] ?? "0e8a16", "Made by the Foundry repo-review flow");
+    } catch {
+      fail(`could not create the label ${name}`);
+    }
+  }
+  let build = p.buildIssue;
+  const make = async (key, title, body, labelList) => {
+    try {
+      const made = await store.create({ title, body, labels: labelList });
+      filed[key] = { number: made.number, url: made.html_url };
+      saveJson(dir, "filed.json", filed);
+    } catch {
+      fail(`could not create story ${key}`);
+    }
+  };
+  for (const s of p.stories) {
+    const isBuild = s.key === "1" && !s.dependsOnBuild && p.baseline.state === "red";
+    if (!filed[s.key]) {
+      const same = open.get(norm(s.title));
+      if (same) {
+        p.skipped.push({ title: s.title, reason: `covered by #${same}` });
+        if (isBuild) build = same;
+        continue;
+      }
+      const body = s.dependsOnBuild && build ? S.withDependsOn(s.body, build) : s.body;
+      await make(s.key, s.title, body, s.labels);
+    }
+    if (isBuild) build = filed[s.key].number;
+  }
+  const rest = { ...filed };
+  const text = S.summaryText(p, rest);
+  if (p.summaryIssue && !filed.summary) await make("summary", `Repository review of ${p.repo} (${new Date().toISOString().slice(0, 10)})`, `${text}\n\n${S.marker(runId, "summary")}`, []);
+  console.log(S.summaryText(p, filed));
+}
+
+if (cmd === "validate") console.log("settings ok");
+else if (cmd === "baseline") await baseline();
+else if (cmd === "audit") audit();
+else if (cmd === "check") check();
+else if (cmd === "plan") plan();
+else if (cmd === "file") await file();
+else fail("usage: repo-review baseline|audit|check|plan|file <run-dir>");

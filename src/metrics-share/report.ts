@@ -24,17 +24,17 @@ export const PARTS_EDGES = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 /** The flows the Foundry ships (the `name` of each flows/*.yaml). */
 export const SHIPPED_FLOWS = [
-  "daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-build", "release-daily", "skill-write",
+  "daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-build", "release-daily", "repo-review", "skill-write",
 ] as const;
 
 /** The step ids of the shipped flows. */
 export const SHIPPED_STEPS = [
-  "address_review_1", "address_review_2", "after_review", "approve_plan", "approve_split", "ask", "ask_for_info", "baseline_failed", "baseline_main", "baseline_tests",
-  "brief", "build", "changes", "check", "check_brief", "check_round", "claim_areas", "clone", "close_parts", "commit", "commit_back_fix", "commit_develop_fix",
-  "create_split", "daily_branch", "docs", "feature_branch", "fetch_main", "final_ask", "final_close", "final_files", "final_guard", "final_merge", "final_rejected",
-  "final_report", "find_branch", "finish_back", "finish_merge", "fix_back", "fix_develop", "fix_fixed_tests", "fix_guard", "fix_tests", "fix_tests_1", "fix_tests_2",
+  "address_review_1", "address_review_2", "after_review", "approve_plan", "approve_split", "approve_stories", "ask", "ask_for_info", "baseline_failed", "baseline_main", "baseline_tests",
+  "audit", "brief", "build", "changes", "check", "check_brief", "check_round", "check_verify", "checks", "claim_areas", "clone", "close_parts", "commit", "commit_back_fix", "commit_develop_fix",
+  "create_split", "daily_branch", "docs", "feature_branch", "fetch_main", "file_stories", "final_ask", "final_close", "final_files", "final_guard", "final_merge", "final_rejected",
+  "final_report", "find_branch", "finish_back", "finish_merge", "fix_back", "fix_develop", "fix_fixed_tests", "fix_guard", "fix_tests", "fix_tests_1", "fix_tests_2", "fix_verify",
   "fixed_tests", "force_split", "guard", "handoff", "hotfix_branch", "hotfix_done", "implement", "list_issues", "lock", "make_final", "measure", "merge_back",
-  "merge_develop", "merge_main", "pick", "plan", "plan_check", "plan_review", "post", "post_plan", "pretest_merge", "pretest_tests", "publish", "pull_ticket", "push",
+  "merge_develop", "merge_main", "pick", "plan", "plan_check", "plan_review", "plan_stories", "post", "post_plan", "pretest_merge", "pretest_tests", "publish", "pull_ticket", "push",
   "push_back", "push_develop", "push_feature", "push_main", "read_issue", "read_issues", "red_back", "red_develop", "red_main", "release_pr", "report", "resolve",
   "resolve_back", "resolve_conflicts", "review", "review_1", "review_2", "review_gate", "revise_gate", "revise_plan", "risk_gate", "round", "run_tests", "run_tests_1",
   "run_tests_2", "screen", "send_back", "size_gate", "split_gate", "test_back", "test_develop", "test_main", "upload", "verify", "wait_for_area", "wait_for_merge",

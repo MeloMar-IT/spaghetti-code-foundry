@@ -174,7 +174,8 @@ describe("the admin view", () => {
     all = [r];
     await view.renderRepo(main(), { id: r.id, nav: () => {} });
     expect(ids()).toEqual(["overview", "connection", "outcomes", "preview", "safe-points", "danger"]);
-    expect(gets.filter((u) => u.startsWith("/api/admin/") || u.startsWith("/api/watchers") || u.startsWith("/api/flows"))).toEqual([]);
+    // (/api/flows is allowed: the user view asks it for the "Review this repository" button)
+    expect(gets.filter((u) => u.startsWith("/api/admin/") || u.startsWith("/api/watchers"))).toEqual([]);
   });
 
   it("shows NO_REPO for an unknown id", async () => {
