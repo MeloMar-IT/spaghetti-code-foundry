@@ -19,7 +19,7 @@ asked and never count.
 Numbers only, once a day, after the UTC day has ended. A report covers:
 
 - runs and their outcomes: how many started, finished and failed, and how long they took;
-- tokens and cost;
+- tokens (no money);
 - splits and rework;
 - quality outcomes: first-pass tests, merge rate and evidence;
 - policy blocks, denials and questions answered automatically;

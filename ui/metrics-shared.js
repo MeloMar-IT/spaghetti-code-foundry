@@ -34,7 +34,6 @@ export const SHARED = {
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const count = (v) => (num(v) === undefined ? SHARED.notKnown : String(v));
-const usd = (v) => (num(v) === undefined ? SHARED.notKnown : `$${v.toFixed(2)}`);
 const histN = (h) => (isObj(h) && Array.isArray(h.counts) ? h.counts.reduce((a, b) => a + (num(b) ?? 0), 0) : undefined);
 
 /** A time histogram: "3, on average 12 min"; "none" when empty. */
@@ -55,8 +54,7 @@ const ofText = (o, a, b) => (isObj(o) ? `${count(o[a])} of ${count(o[b])}` : SHA
 
 function tokensText(t) {
   if (!isObj(t)) return SHARED.notKnown;
-  const base = `${count(t.tokensIn)} in, ${count(t.tokensOut)} out`;
-  return num(t.costUsd) === undefined ? base : `${base}, ${usd(t.costUsd)}`;
+  return `${count(t.tokensIn)} in, ${count(t.tokensOut)} out`;
 }
 
 /** One row per key of a map, or one "none" row. */
@@ -112,8 +110,7 @@ export function reportGroups(report) {
       ["Stopped with questions", count(q.stoppedWithQuestions)],
       ["Questions answered automatically", count(q.questionsAnsweredAutomatically)],
     ] },
-    { title: "Cost and models", rows: [
-      ["Cost", usd(co.costUsd)],
+    { title: "Tokens and models", rows: [
       ["Model fallbacks", count(co.modelFallbacks)],
       ...mapRows("Model", co.byModel, tokensText),
       ...mapRows("Step", co.byStep, tokensText),

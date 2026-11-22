@@ -65,8 +65,6 @@ export function dayWindow(day: string): { from: Date; to: Date } {
 
 const stamp = (t: unknown): number => (typeof t === "string" ? Date.parse(t) : NaN);
 const whole = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined);
-const usd = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
-const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
 const QUESTION_ROUNDS_ANSWERED = "went_on";
 
 /** The source of a run: the watcher's source, `manual` when no watcher started it, `unknown` for a watcher that is gone. */
@@ -136,23 +134,19 @@ export function shareReportFrom(input: ShareInput): ShareReport {
   }
   for (const ms of issueToPrTimes(runs.map((r) => r.run), facts, window)) addTo(issueToPullRequest, ms, DURATION_EDGES_MS);
 
-  // cost, step time, retries and repeated steps: from the step records of the runs that ended
-  const byModel: Partial<Record<string, { tokensIn: number; tokensOut: number; costUsd?: number }>> = {};
-  const byStep: Partial<Record<string, { tokensIn: number; tokensOut: number; costUsd?: number }>> = {};
+  // tokens, step time, retries and repeated steps: from the step records of the runs that ended. No money is shared:
+  // only token counts.
+  const byModel: Partial<Record<string, { tokensIn: number; tokensOut: number }>> = {};
+  const byStep: Partial<Record<string, { tokensIn: number; tokensOut: number }>> = {};
   const repeatedSteps: Partial<Record<string, number>> = {};
   const retries: (number | undefined)[] = [];
-  // `withEarlier`: the paid earlier tries of a step (retries and fallbacks) count for the step, not for the final model:
-  // the record does not say which model they ran on.
-  const addTokens = (o: typeof byStep, k: string, rec: RunSummary["history"][number], withEarlier: boolean) => {
+  const addTokens = (o: typeof byStep, k: string, rec: RunSummary["history"][number]) => {
     const tin = whole(rec.tokens?.input);
     const tout = whole(rec.tokens?.output);
-    const earlier = withEarlier ? usd(rec.earlierCostUsd) ?? 0 : 0;
-    const cost = usd(rec.costUsd) === undefined && earlier === 0 ? undefined : (usd(rec.costUsd) ?? 0) + earlier;
-    if (tin === undefined && tout === undefined && cost === undefined) return;
+    if (tin === undefined && tout === undefined) return;
     const e = (o[k] ??= { tokensIn: 0, tokensOut: 0 });
     e.tokensIn += tin ?? 0;
     e.tokensOut += tout ?? 0;
-    if (cost !== undefined) e.costUsd = round6((e.costUsd ?? 0) + cost);
   };
   for (const r of ended) {
     for (const rec of Array.isArray(r.run.history) ? r.run.history : []) {
@@ -162,9 +156,9 @@ export function shareReportFrom(input: ShareInput): ShareReport {
       addTo(h, whole(rec.durationMs), DURATION_EDGES_MS);
       if ((whole(rec.visit) ?? 1) > 1 && !rec.parent) bump(repeatedSteps, key);
       if (rec.retried && typeof rec.retried === "object") retries.push((whole(rec.retried.blips) ?? 0) + (whole(rec.retried.models) ?? 0));
-      addTokens(byStep, key, rec, true);
+      addTokens(byStep, key, rec);
       const model = modelKeyOf(rec.agent);
-      if (model) addTokens(byModel, model, rec, false);
+      if (model) addTokens(byModel, model, rec);
     }
   }
   for (const [k, h] of Object.entries(stepTime)) if (h && !h.counts.some((n) => n > 0)) delete stepTime[k];
@@ -220,8 +214,6 @@ export function shareReportFrom(input: ShareInput): ShareReport {
   put(quality, "denials", sumOf(ended.flatMap((r) => r.measures.steps.map((s) => s.denials))));
 
   const cost: ShareReport["cost"] = { byModel, byStep };
-  const total = sumOf(ended.map((r) => usd(r.measures.costUsd)));
-  put(cost, "costUsd", total === undefined ? undefined : round6(total));
   put(cost, "modelFallbacks", ev(sumOf(withEvidence.map((r) => r.evidence?.fallbacks)) ?? 0));
 
   // use: the runs started on the day

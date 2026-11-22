@@ -105,7 +105,7 @@ describe("website: rendering the numbers", () => {
   it("shows the seven sections with a definition for each number and a table for each chart", () => {
     const html = M.renderMetrics(sample(), defs, "30d");
     const titles = [...html.matchAll(/<h2[^>]*>(.*?)<\/h2>/g)].map((m) => m[1]);
-    expect(titles).toEqual(["Changes", "Speed", "Splits", "Rework", "Quality", "Cost and models", "Use"]);
+    expect(titles).toEqual(["Changes", "Speed", "Splits", "Rework", "Quality", "Tokens and models", "Use"]);
     for (const o of defs.outcomes.filter((d: { id: string }) => M.OUTCOME_IDS.includes(d.id))) expect(html).toContain(M.esc(o.definition));
     for (const id of M.MEASURE_IDS) if (id !== "installsPerWeek") expect(html).toContain(`Definition of ${id}.`);
     const [f, s, t] = figures(html);
@@ -124,7 +124,7 @@ describe("website: rendering the numbers", () => {
     expect(p.totals.quality.firstPassTests.share).toBe(0.5);
     const html = M.renderMetrics(m, defs, "30d");
     expect(html).toContain("50%");
-    expect(html).toContain("$0.75"); // cost 22.5 / 30 succeeded
+    expect(html).not.toContain("$");
   });
 
   it("uses whole weeks for 90 days and all time, and leaves out the week that starts before the window", () => {
@@ -179,15 +179,15 @@ describe("website: rendering the numbers", () => {
     expect(bad((m) => delete m.days[0].speed)).toBe(true);
   });
 
-  it("draws cost bars in dollars only, and lists the names without a cost in a sentence", () => {
+  it("draws token bars only and never shows money, also when a cost is in the data", () => {
     const m = sample() as any;
     m.days[0].cost.byModel["unpriced-model"] = { tokensIn: 200_000, tokensOut: 0 };
     const html = M.renderMetrics(m, defs, "30d");
-    const chart = html.match(/<figure[^>]*><figcaption>Label costByModel.*?<\/figure>/s)![0];
-    expect(chart).toContain("$");
-    expect(chart).not.toContain("200,000 tokens<");
-    expect(chart).not.toContain("unpriced-model");
-    expect(html).toContain("No cost is known for unpriced-model; only the tokens are counted.");
+    const chart = html.match(/<figure[^>]*><figcaption>Label tokensByModel.*?<\/figure>/s)![0];
+    expect(chart).toContain("unpriced-model");
+    expect(chart).toContain("200,000 (200,000 in, 0 out)");
+    expect(html).not.toContain("$");
+    expect(html).not.toContain("cost is known");
   });
 
   it("escapes every name from the data", () => {

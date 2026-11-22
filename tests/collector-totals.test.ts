@@ -60,7 +60,7 @@ describe("collector totals (#890)", () => {
     expect(d.quality.evidence).toEqual({ complete: 3, counted: 9, share: 0.3333 });
   });
 
-  it("rounds cost and keeps keys that only some installs give", () => {
+  it("leaves out money and keeps keys that only some installs give", () => {
     const d = dayOf(three((i) => ({
       cost: {
         byModel: { opus: { tokensIn: 1, tokensOut: 2, costUsd: 0.1 }, ...(i < 2 ? { haiku: { tokensIn: 1, tokensOut: 1 } } : {}) },
@@ -69,8 +69,8 @@ describe("collector totals (#890)", () => {
       },
       splits: i < 2 ? { issuesSplit: 1 } : {},
     })))!;
-    expect(d.cost.costUsd).toBe(0.3);
-    expect(d.cost.byModel).toEqual({ haiku: { tokensIn: 2, tokensOut: 2 }, opus: { tokensIn: 3, tokensOut: 6, costUsd: 0.3 } });
+    expect(d.cost.costUsd).toBeUndefined();
+    expect(d.cost.byModel).toEqual({ haiku: { tokensIn: 2, tokensOut: 2 }, opus: { tokensIn: 3, tokensOut: 6 } });
     expect(d.splits).toEqual({ issuesSplit: 2 });
   });
 
@@ -96,9 +96,6 @@ describe("collector totals (#890)", () => {
     expect(d.cost).toEqual({});
     expect(d.speed.runDuration).toBeUndefined();
     expect(d.rework.resumes).toBe(3);
-    // a large but finite sum is kept, and rounding it does not overflow
-    const big = computeTotals(three(() => ({ cost: { byModel: {}, byStep: {}, costUsd: 1e307 } })), NOW).days[0]!;
-    expect(big.cost.costUsd).toBe(3e307);
   });
 
   it("groups weeks from Monday", () => {

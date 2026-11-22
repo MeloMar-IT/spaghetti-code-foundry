@@ -407,7 +407,7 @@ or address. Its one identifier is the install id, a random 128-bit value, so the
 linked from day to day until the install stops sharing. Only whoever runs the receiver can read per-install
 reports (the data folder, mode 0600). The public `GET /metrics.json` gives totals only, but every number is shown, also one that a
 single install gives (`minInstalls` is 1, the owner's choice), so while few installs share, one install's numbers
-can be read from it. They are still only counts, durations and costs, with no account, repository, path or address.
+can be read from it. They are still only counts, durations and tokens, with no account, repository, path or address.
 
 **What an attacker with the install id can do.** The id is the key of `DELETE /api/metrics/<install>`: whoever
 holds it can remove that install's stored reports. It does not stop the install's later pushes. The id is also
