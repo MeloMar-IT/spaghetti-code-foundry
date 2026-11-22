@@ -57,7 +57,7 @@ export function medianOf(counts: readonly number[], edges: readonly number[], di
 }
 
 // the walk
-type Leaf = { kind: "num"; usd: boolean; sum: number; installs: Set<string>; bad: boolean };
+type Leaf = { kind: "num"; sum: number; installs: Set<string>; bad: boolean };
 type Hist = { kind: "hist"; counts: number[]; sum: number; installs: Set<string>; bad: boolean };
 type Obj = { kind: "obj"; children: Map<string, Node> };
 type Node = Leaf | Hist | Obj;
@@ -69,14 +69,15 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeo
 
 function mergeInto(node: Obj, value: Record<string, unknown>, install: string): void {
   for (const [k, v] of Object.entries(value)) {
+    if (k === "costUsd") continue; // no money in the public totals, only tokens; older installs may still send it
     const have = node.children.get(k);
     if (typeof v === "number") {
-      const leaf = have ?? { kind: "num", usd: k === "costUsd", sum: 0, installs: new Set<string>(), bad: false };
+      const leaf = have ?? { kind: "num", sum: 0, installs: new Set<string>(), bad: false };
       if (leaf.kind !== "num") continue;
       node.children.set(k, leaf);
       leaf.installs.add(install);
       leaf.sum += v;
-      if (leaf.usd ? !Number.isFinite(leaf.sum) : !Number.isSafeInteger(leaf.sum)) leaf.bad = true;
+      if (!Number.isSafeInteger(leaf.sum)) leaf.bad = true;
     } else if (isHistogram(v)) {
       const h = have ?? { kind: "hist", counts: v.counts.map(() => 0), sum: 0, installs: new Set<string>(), bad: false };
       if (h.kind !== "hist") continue;
@@ -107,7 +108,7 @@ const round = (n: number, places: number): number => {
 function emit(node: Node, path: readonly string[]): unknown {
   if (node.kind === "num") {
     if (node.bad || node.installs.size < MIN_INSTALLS) return undefined;
-    return node.usd ? round(node.sum, 6) : node.sum;
+    return node.sum;
   }
   if (node.kind === "hist") {
     if (node.bad || node.installs.size < MIN_INSTALLS) return undefined;

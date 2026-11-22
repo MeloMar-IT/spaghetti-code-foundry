@@ -8704,7 +8704,7 @@ connect to the install; the install pushes.
   page has no control for them. The endpoint must be `https`; plain `http` is accepted only for `localhost` and
   `127.0.0.1`, for tests. The push never follows a redirect and sends no cookie.
 - **What is shared.** The dialog **What is shared** (linked from the Today item and from **Account settings**) shows
-  the report the next push would send, as readable groups (changes, speed, splits, rework, quality, cost and models,
+  the report the next push would send, as readable groups (changes, speed, splits, rework, quality, tokens and models,
   use), with the raw JSON under a disclosure. It also shows the last report that was sent, with its time, its day
   and the receiver's answer; before any send it says "No report has been sent yet." Users see the time, day and
   answer of the last send but not its numbers; an admin sees them in full. The dialog always says what is never
@@ -10402,7 +10402,7 @@ count. An admin cannot answer for you.
 Once a day the install sends one numbers-only report for the runs of the accounts that said yes. The report covers:
 
 - runs and their outcomes: how many started, finished and failed, and how long they took;
-- tokens and cost;
+- tokens (no money: the dollar amounts stay on your machine);
 - splits and rework;
 - quality outcomes: first-pass tests, merge rate and evidence;
 - policy blocks, denials and questions answered automatically;
@@ -10457,4 +10457,5 @@ The receiver publishes totals at `https://spaghetti-code-foundry.com/metrics.jso
 and per week. Every shared number is shown, also when only one install gave it (`minInstalls` is 1), so while few
 installs share, a total can be the numbers of a single install. A report still names no account, repository, path
 or address.
-The totals are worked out once an hour from the reports the receiver holds.
+The totals are worked out once an hour from the reports the receiver holds. They show tokens, never money: a cost that
+an older install still sends is left out.

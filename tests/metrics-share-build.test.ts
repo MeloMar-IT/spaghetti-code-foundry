@@ -218,7 +218,7 @@ describe("quality", () => {
 });
 
 describe("cost", () => {
-  it("adds up tokens and cost per model and per step, the run cost and the fallbacks", () => {
+  it("adds up tokens per model and per step and the fallbacks, and sends no money", () => {
     const r1 = run({
       totalCostUsd: 1.5,
       history: [
@@ -229,17 +229,18 @@ describe("cost", () => {
       ],
     });
     const r = report([{ run: r1, events: [ev(r1.runId, "step.routed", at(1), { step: step("implement"), model: { agent: "claude", provider: "anthropic", model: "opus" }, fallbackFrom: { agent: "claude", provider: "anthropic", model: "fable" } })] }]);
-    expect(r.cost.byModel).toEqual({ opus: { tokensIn: 100, tokensOut: 10, costUsd: 1 }, default: { tokensIn: 50, tokensOut: 5, costUsd: 0.25 }, [CUSTOM]: { tokensIn: 20, tokensOut: 2 } });
-    expect(r.cost.byStep).toEqual({ implement: { tokensIn: 100, tokensOut: 10, costUsd: 1 }, review_1: { tokensIn: 50, tokensOut: 5, costUsd: 0.25 }, fix_tests: { tokensIn: 20, tokensOut: 2 } });
-    expect(r.cost.costUsd).toBe(1.5);
+    expect(r.cost.byModel).toEqual({ opus: { tokensIn: 100, tokensOut: 10 }, default: { tokensIn: 50, tokensOut: 5 }, [CUSTOM]: { tokensIn: 20, tokensOut: 2 } });
+    expect(r.cost.byStep).toEqual({ implement: { tokensIn: 100, tokensOut: 10 }, review_1: { tokensIn: 50, tokensOut: 5 }, fix_tests: { tokensIn: 20, tokensOut: 2 } });
+    expect(r.cost.costUsd).toBeUndefined();
+    expect(JSON.stringify(r)).not.toContain("costUsd");
     expect(r.cost.modelFallbacks).toBe(1);
   });
 
-  it("counts the paid earlier tries of a step in its step total, not in the final model's total", () => {
+  it("sends no money for a step whose record has only a cost", () => {
     const r1 = run({ history: [rec("implement", { agent: "claude:anthropic:opus", costUsd: 1, earlierCostUsd: 2 })] });
     const r = report([{ run: r1 }]);
-    expect(r.cost.byStep.implement?.costUsd).toBe(3);
-    expect(r.cost.byModel.opus?.costUsd).toBe(1);
+    expect(r.cost.byStep).toEqual({});
+    expect(r.cost.byModel).toEqual({});
   });
 });
 
@@ -330,7 +331,7 @@ describe("absent versus zero", () => {
     const r = report([{ run: r1, events: [ev(r1.runId, "run.started", at(1))] }]);
     expect(optional(r)).toEqual({
       workItemsDelivered: 0, pullRequestsDelivered: 0, dailyReleases: 0, reworkedAfterDelivery: 0, resumes: 0, stepRetries: 0, firstPassTests: { passed: 0, counted: 0 },
-      mergeRate: { delivered: 0, counted: 0 }, policyBlocks: 0, denials: 0, costUsd: 0, modelFallbacks: 0,
+      mergeRate: { delivered: 0, counted: 0 }, policyBlocks: 0, denials: 0, modelFallbacks: 0,
     });
   });
 });

@@ -11,13 +11,13 @@ export const PERIODS = [
 /** The ids of the numbers whose definition is in the `measures` of website/content/metrics.md. */
 export const MEASURE_IDS = [
   "runsStarted", "runsEnded", "workItemsDelivered", "pullRequestsDelivered", "runDuration", "stepTime", "issuesSplit", "partsPerSplit",
-  "stepRetries", "repeatedSteps", "stoppedWithQuestions", "questionsAnsweredAutomatically", "costTotal", "costByModel", "costByStep",
+  "stepRetries", "repeatedSteps", "stoppedWithQuestions", "questionsAnsweredAutomatically", "tokensTotal", "tokensByModel", "tokensByStep",
   "modelFallbacks", "sharing", "installsPerWeek", "bySource", "byFlow",
 ];
 /** The outcome measures shown, with their definition from OUTCOME_DEFINITIONS (website/content/outcome-definitions.json). */
 export const OUTCOME_IDS = [
   "issue_to_pr_time", "approval_latency", "first_pass_test_success", "merge_rate", "evidence_completeness", "rework", "resume_count",
-  "policy_blocks", "cost_per_successful_run",
+  "policy_blocks",
 ];
 
 const DAY_MS = 86_400_000;
@@ -45,9 +45,6 @@ export function countText(n) {
 }
 export function shareText(x) {
   return x === undefined ? "–" : `${Math.round(x * 1000) / 10}%`;
-}
-export function usdText(x) {
-  return x === undefined ? "–" : `$${x < 10 ? x.toFixed(2) : Math.round(x).toLocaleString("en-US")}`;
 }
 export function durationText(ms) {
   if (ms === undefined) return "–";
@@ -248,23 +245,19 @@ export function renderMetrics(metrics, definitions, periodId = "30d") {
   const ended = c.runsEnded ?? {};
   const ratio = (k, id) => stat(olabel(id), esc(shareText(ql[k]?.share)) + (ql[k]?.counted !== undefined ? `<small> of ${countText(ql[k].counted)}</small>` : ""), odef(id), oexcl(id));
   const outcomeCount = (v, id) => stat(olabel(id), esc(countText(v)), odef(id), oexcl(id));
-  const perCost = num(co.costUsd) !== undefined && num(ended.succeeded) > 0 ? co.costUsd / ended.succeeded : undefined;
   const names = (obj, valueOf, fmt = countText) => Object.entries(obj ?? {}).map(([label, v]) => ({ label, value: valueOf(v), text: fmt(valueOf(v)) }));
   const stepMedians = Object.entries(sp.stepTime ?? {}).flatMap(([label, h]) => {
     const m = isHist(h) ? quantile(h.counts, edges.durationMs, 0.5, false) : undefined;
     const p90 = isHist(h) ? quantile(h.counts, edges.durationMs, 0.9, false) : undefined;
     return m ? [{ label, value: m.value, text: `${q(m, durationText)} (90th percentile ${q(p90, durationText)})` }] : [];
   });
-  const tokens = (v) => `${countText((v.tokensIn ?? 0) + (v.tokensOut ?? 0))} tokens${num(v.costUsd) !== undefined ? `, ${usdText(v.costUsd)}` : ""}`;
-  // Bars are dollars only. A name without a cost gets no bar; it is listed in a sentence instead, so no chart mixes units.
-  const cost = (obj, title) => {
-    const known = Object.entries(obj ?? {}).filter(([, v]) => num(v?.costUsd) !== undefined);
-    const unknown = Object.keys(obj ?? {}).filter((k) => num(obj[k]?.costUsd) === undefined);
-    const rows = known.map(([label, v]) => ({ label, value: v.costUsd, text: `${usdText(v.costUsd)} (${tokens(v)})` }));
-    const chart = barList(title, rows);
-    const note = unknown.length ? `<p class="section-note">No cost is known for ${esc(unknown.join(", "))}; only the tokens are counted.</p>` : "";
-    return chart + note;
-  };
+  // Only tokens are shown, never money. A bar is the tokens in plus out of one name.
+  const tokenSum = (v) => (isObj(v) ? (num(v.tokensIn) ?? 0) + (num(v.tokensOut) ?? 0) : 0);
+  const tokenRows = (obj) => Object.entries(obj ?? {}).filter(([, v]) => isObj(v)).map(([label, v]) => ({
+    label, value: tokenSum(v), text: `${countText(tokenSum(v))} (${countText(num(v.tokensIn) ?? 0)} in, ${countText(num(v.tokensOut) ?? 0)} out)`,
+  }));
+  const byModelRows = tokenRows(co.byModel);
+  const tokensTotal = byModelRows.length ? byModelRows.reduce((a, r) => a + r.value, 0) : undefined;
   const instWeeks = p.installWeeks.map((w) => ({ label: w.week, value: w.installs, text: countText(w.installs) }));
   const sh = metrics.sharing;
   const sections = [
@@ -303,13 +296,12 @@ export function renderMetrics(metrics, definitions, periodId = "30d") {
       stat(mlabel("stoppedWithQuestions", "Questions for a person"), esc(countText(ql.stoppedWithQuestions)), mdef("stoppedWithQuestions")),
       stat(mlabel("questionsAnsweredAutomatically", "Questions answered automatically"), esc(countText(ql.questionsAnsweredAutomatically)), mdef("questionsAnsweredAutomatically")),
     ], []),
-    section("cost", "Cost and models", "Estimated cost from the token counts and a price table.", [
-      stat(mlabel("costTotal", "Estimated cost"), esc(usdText(num(co.costUsd))), mdef("costTotal")),
-      stat(olabel("cost_per_successful_run"), esc(usdText(perCost)), odef("cost_per_successful_run"), oexcl("cost_per_successful_run")),
+    section("cost", "Tokens and models", "The tokens the models read and wrote.", [
+      stat(mlabel("tokensTotal", "Tokens"), esc(countText(tokensTotal)), mdef("tokensTotal")),
       stat(mlabel("modelFallbacks", "Model fallbacks"), esc(countText(co.modelFallbacks)), mdef("modelFallbacks")),
     ], [
-      cost(co.byModel, `${mlabel("costByModel", "Cost per model")}: ${mdef("costByModel")}`),
-      cost(co.byStep, `${mlabel("costByStep", "Cost per built-in step")}: ${mdef("costByStep")}`),
+      barList(`${mlabel("tokensByModel", "Tokens per model")}: ${mdef("tokensByModel")}`, byModelRows),
+      barList(`${mlabel("tokensByStep", "Tokens per built-in step")}: ${mdef("tokensByStep")}`, tokenRows(co.byStep)),
     ]),
     section("use", "Use", "Who uses the Foundry and how.", [
       stat(mlabel("sharing", "Installs and accounts that share"), sh ? `${esc(countText(sh.installs))}<small> installs · ${esc(countText(sh.accounts))} accounts, since ${esc(sh.since)}</small>` : "–", mdef("sharing")),

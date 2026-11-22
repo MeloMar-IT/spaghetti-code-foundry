@@ -1,7 +1,7 @@
 ---
 title: "Metrics"
 lead: "How the Foundry does in real use, in numbers from installs that choose to share them."
-description: "Live numbers from Spaghetti Code Foundry installs that share metrics: speed, rework, quality, cost and use, with the definition of every number."
+description: "Live numbers from Spaghetti Code Foundry installs that share metrics: speed, rework, quality, tokens and use, with the definition of every number."
 measures:
   runsStarted:
     label: "Runs started"
@@ -39,15 +39,15 @@ measures:
   questionsAnsweredAutomatically:
     label: "Questions answered automatically"
     definition: "The number of questions that the Foundry answered itself, without a person."
-  costTotal:
-    label: "Estimated cost"
-    definition: "The cost of all runs, estimated from the token counts and a price table. It is not a bill."
-  costByModel:
-    label: "Cost per model"
-    definition: "Tokens and estimated cost for each model. A model that is not known is counted as custom."
-  costByStep:
-    label: "Cost per built-in step"
-    definition: "Tokens and estimated cost for each step of the built-in flows."
+  tokensTotal:
+    label: "Tokens"
+    definition: "All tokens the models read and wrote in the runs that ended. No money is shown, only tokens."
+  tokensByModel:
+    label: "Tokens per model"
+    definition: "Tokens in and out for each model. A model that is not known is counted as custom."
+  tokensByStep:
+    label: "Tokens per built-in step"
+    definition: "Tokens in and out for each step of the built-in flows."
   modelFallbacks:
     label: "Model fallbacks"
     definition: "The number of times a step moved to another model because the first one was at its limit."
