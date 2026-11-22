@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { stepAfterPaths } from "./step-facts.js";
+import { gitflowRefusal, upgradeGitflowSteps } from "./gitflow-upgrade.js";
 import { listAllRepos } from "../auth/repos.js";
 import { decideTechnicalFor, skillLibraryFor, type RepoSettings } from "../auth/repo-settings.js";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
@@ -366,6 +367,11 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   if (!summary.workdir || !existsSync(summary.workdir)) throw new Error("the run's workspace no longer exists");
   // an empty-workspace run that has a checkout but no recorded base cannot get one later: the base would move forward
   if (summary.pathsTracked && summary.flowDef.workspace === "empty" && !summary.pathsBaseSha && existsSync(join(summary.workdir, ".git"))) summary.pathsBaseLost = true;
+  // A shipped gitflow run saved before push_develop checked the tested commit gets the current steps (saved with the run below);
+  // any other copy of the flow that pushes develop unchecked is refused.
+  upgradeGitflowSteps(summary.flowDef);
+  const refusal = gitflowRefusal(summary.flowDef);
+  if (refusal) throw new Error(refusal);
   const from = opts.from ?? summary.state.next;
   if (!from) throw new Error("nothing to resume");
   if (!summary.flowDef.steps.some((s) => s.id === from)) throw new Error(`unknown step "${from}"`);

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Writes to the owner's own folder of a local project (a repository connected as "Local (no GitHub)").
 // Usage (run it with node, in the run's workspace):
-//   local-branch update <branch>            bring the workspace's branch into the owner's folder (never a push into a checked-out branch)
+//   local-branch update <branch> [--sha <c>]        bring the workspace's branch into the owner's folder (never a push into a checked-out branch);
+//                                                    with --sha, refused unless the workspace's branch is commit <c>, which is the commit brought over
 //   local-branch release <branch> <tag>     the final step of the daily release: bring the protected branch and the tag into the owner's folder
-//   local-branch push <branch> [--tag <t>]  plain `git push` of the branch (and the tag) from the owner's folder to its remote
+//   local-branch push <branch> [--sha <c>] [--tag <t>]  plain push of the branch (or commit <c>, when given) to the owner's remote (and the tag)
 // update and release: exit 0 prints `UPDATED: <branch> <short>` and `SYNCED: yes|no` (release also `TAG: <tag>`); exit 3 prints `MOVED: …`
 //   (the owner's branch moved); exit 4 prints `PAUSED: <reason>` (uncommitted work in the way); exit 1 writes `local-branch: <reason>` to stderr
 //   (release: `TAG_FAILED: <reason>` on stdout when the tag could not be placed).
@@ -15,18 +16,25 @@ function fail(msg) {
   process.stderr.write(`local-branch: ${msg}\n`);
   process.exit(1);
 }
-const usage = "usage: local-branch update <branch> | release <branch> <tag> | push <branch> [--tag <tag>]";
+const usage = "usage: local-branch update <branch> [--sha <commit>] | release <branch> <tag> | push <branch> [--sha <commit>] [--tag <tag>]";
 const [sub, branch, ...rest] = process.argv.slice(2);
 if (!["update", "release", "push"].includes(sub) || !branch) fail(usage);
 let tag;
-if (sub === "update" && rest.length) fail(usage);
+let sha;
 if (sub === "release") {
   if (rest.length !== 1) fail(usage);
   tag = rest[0];
-}
-if (sub === "push") {
-  if (rest.length === 2 && rest[0] === "--tag") tag = rest[1];
-  else if (rest.length) fail(usage);
+} else {
+  // --sha: the tested commit. Required for push (the owner's branch may have moved since the test). For update it pins the
+  // workspace's branch; without it the branch is only created or brought over (no test comes before that).
+  for (let i = 0; i < rest.length; i += 2) {
+    const v = rest[i + 1];
+    if (v === undefined) fail(usage);
+    if (rest[i] === "--sha" && sha === undefined) sha = v;
+    else if (rest[i] === "--tag" && sub === "push" && tag === undefined) tag = v;
+    else fail(usage);
+  }
+  if (sha !== undefined && !/^[0-9a-f]{40}$/.test(sha)) fail("--sha must be the full commit id that was tested");
 }
 const dir = process.env.FACTORY_LOCAL_REPO_DIR ?? "";
 if (!dir) fail("the folder of this local project is not known to the Foundry");
@@ -51,6 +59,7 @@ if (sub === "update" || sub === "release") {
     runId: process.env.FACTORY_RUN_ID ?? "",
     protectedPatterns: (process.env.FACTORY_PROTECTED_BRANCHES ?? "").split(/\s+/).filter(Boolean),
     allowProtected: release,
+    expectSha: sha,
   });
   if (r.kind === "updated") {
     console.log(`UPDATED: ${r.branch} ${r.sha.slice(0, 7)}`);
@@ -71,7 +80,7 @@ if (sub === "update" || sub === "release") {
     process.exit(4);
   } else fail(r.reason);
 } else {
-  const r = lib.pushOwnerBranch({ ownerDir: dir, branch, tags: tag ? [tag] : [] });
+  const r = lib.pushOwnerBranch({ ownerDir: dir, branch, tags: tag ? [tag] : [], sha });
   if (r.kind === "pushed") console.log(`REMOTE: pushed ${branch}${tag ? ` and ${tag}` : ""} to ${r.remote}`);
   else if (r.kind === "none") {
     console.log("REMOTE: none");

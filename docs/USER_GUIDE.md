@@ -4301,6 +4301,14 @@ baseline commit that passed or was named). The check passes only when:
 
 If it does not pass, the run stops at the test step, and the log lists what is not yet right.
 
+**Resume after a fix made by hand.** If a run stopped at `red_develop` and you commit a fix on the feature branch, resume the run at `merge_develop`, not at `test_develop`:
+
+```bash
+scf resume <run-id> --from merge_develop
+```
+
+`merge_develop` merges the feature branch with the newest `develop` again, and `test_develop` tests that merge. `push_develop` then pushes only the commit that `test_develop` passed, so an untested merge never reaches `develop`. If you resume at `test_develop` or `push_develop` while `HEAD` is not on `develop`, or while the feature branch has a commit that the tested merge lacks, the run stops before any test runs or any push. The log then says `nothing is tested or pushed` and names `merge_develop` as the step to resume. Changes in the workspace are kept. A run saved before this change picks up the new steps when it is resumed.
+
 **Not covered.** A test that fails by chance is still run only once more, not fixed by this rule. The
 baseline on `main` for a release is not changed. You cannot switch the baseline check off for a
 repository with this.
