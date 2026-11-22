@@ -1907,6 +1907,8 @@ write("issue-plan", {
     description: "Merge the feature branch into develop (one merge at a time); conflicts go to an agent",
     run: [
       LOCAL_YES,
+      '# A new merge is never pushed on the strength of an earlier test.',
+      'rm -f "{{run.dir}}/develop-tested"',
       '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec 28000 >/dev/null || { echo "develop stayed locked for 8 hours — another run holds the merge turn and does not finish; look at that run"; exit 1; }',
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(git rev-parse --abbrev-ref HEAD); [ "$f" = "$dev" ] && f=$(cat "{{run.dir}}/feature-branch")',
       'echo "$f" > "{{run.dir}}/feature-branch"',
@@ -2012,6 +2014,8 @@ write("issue-plan", {
     ].join("\n"),
     on_success: "merge_develop",
   };
+  // One message for test_develop and push_develop when the workspace is not on the merge that was (or must be) tested.
+  const UNTESTED = 'Resume this run at merge_develop (scf resume $FACTORY_RUN_ID --from merge_develop): it merges the feature branch with the newest develop again and tests that merge. Changes in the workspace are kept; commit a fix on the feature branch first.';
   const testDevelop = {
     id: "test_develop",
     type: "shell",
@@ -2020,9 +2024,27 @@ write("issue-plan", {
     // This run holds the merge turn of the repository: its tests start at once, without waiting for a test
     // slot behind other stories (everything that wants to merge waits for this run).
     // With a red baseline that went on, the result of this very run is compared (a cached pass has no reports).
-    run: 'export FACTORY_VAR_TEST_SLOTS=0\n[ -f "{{run.dir}}/baseline-red.json" ] && export FACTORY_VAR_REUSE_TEST_RESULTS=no\n' +
-      swap(withPurge(testsRunReuse), '\nexit "$code"', "\n" + verifyCheck + '\nexit "$code"'),
+    run: [
+      'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null); rm -f "{{run.dir}}/develop-tested"',
+      '# Only the merge on develop is tested: push_develop pushes exactly the commit that passed here.',
+      'untested() { echo "$1 — nothing is tested or pushed."; echo "' + UNTESTED + '"; echo "NOT_ON_DEVELOP"; exit 0; }',
+      'on=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)',
+      '[ "$on" = "$dev" ] || untested "the workspace is on ${on:-no branch}, not on $dev"',
+      'tip=""; [ -n "$f" ] && tip=$(git rev-parse -q --verify "refs/heads/$f")',
+      '[ -z "$tip" ] || git merge-base --is-ancestor "$tip" HEAD || untested "$f has commits that are not in $dev"',
+      '[ -z "$(git status --porcelain --untracked-files=no)" ] || untested "$dev has changes that are not committed (they are kept, but the tests would not test a commit)"',
+      'tested=$(git rev-parse HEAD)',
+      'export FACTORY_VAR_TEST_SLOTS=0',
+      '[ -f "{{run.dir}}/baseline-red.json" ] && export FACTORY_VAR_REUSE_TEST_RESULTS=no',
+      swap(withPurge(testsRunReuse), '\nexit "$code"', "\n" + verifyCheck +
+        '\n# Recorded only when the tests passed on exactly this commit: HEAD did not move and no tracked file changed meanwhile.' +
+        '\nif [ "$code" -eq 0 ] && [ "$(git rev-parse HEAD)" = "$tested" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then printf \'%s\\n\' "$tested" > "{{run.dir}}/develop-tested"; fi' +
+        '\nexit "$code"'),
+    ].join("\n"),
     max_visits: 10,
+    // The guard above cannot use on_failure: that is red_develop, which would treat it as a red test. Routes are read
+    // on success only, so the guard prints NOT_ON_DEVELOP, exits 0, and this route fails the run.
+    routes: [{ if: "^NOT_ON_DEVELOP\\s*$", goto: "fail" }],
     on_success: "push_develop",
     on_failure: "red_develop",
   };
@@ -2159,14 +2181,25 @@ write("issue-plan", {
     description: "Push develop; if it moved meanwhile, merge again",
     run: [
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"',
+      '# Only the commit that test_develop passed is pushed (it is recorded in develop-tested); anything else is refused.',
+      'f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null); tested=$(cat "{{run.dir}}/develop-tested" 2>/dev/null)',
+      'refuse() { echo "$1 — nothing was pushed to $dev."; echo "' + UNTESTED + '"; exit 1; }',
+      'on=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)',
+      '[ "$on" = "$dev" ] || refuse "the workspace is on ${on:-no branch}, not on $dev"',
+      '[ -n "$tested" ] || refuse "$dev was not tested in this run (or the tests failed)"',
+      '[ "$tested" = "$(git rev-parse HEAD)" ] || refuse "$dev is not the commit that test_develop tested"',
+      '[ -z "$(git status --porcelain --untracked-files=no)" ] || refuse "$dev has changes that are not committed, so it is not the tested commit (they are kept)"',
+      'tip=""; [ -n "$f" ] && tip=$(git rev-parse -q --verify "refs/heads/$f")',
+      '[ -z "$tip" ] || git merge-base --is-ancestor "$tip" "$tested" || refuse "$f has commits that are not in $dev"',
       LOCAL_YES,
       '# A local project: develop moves in the owner\'s folder (never by a push into a checked-out branch); see tools/local-branch.',
       'if [ "$loc" = yes ]; then',
-      '  out=$(node "$FACTORY_TOOLS/local-branch" update "$dev" 2>&1); code=$?; printf \'%s\\n\' "$out"',
+      '  [ "$(git rev-parse -q --verify "refs/heads/$dev")" = "$tested" ] || refuse "$dev moved after it was tested"',
+      '  out=$(node "$FACTORY_TOOLS/local-branch" update "$dev" --sha "$tested" 2>&1); code=$?; printf \'%s\\n\' "$out"',
       '  case "$code" in',
-      '    0) "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null; echo "COMMIT: $(git rev-parse HEAD)"; rm -f "{{run.dir}}/remote-push"',
+      '    0) "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null; echo "COMMIT: $tested"; rm -f "{{run.dir}}/remote-push"',
       '       # "Also push to the remote": plain git push of develop from the owner\'s folder; a failure is reported, the merge stays.',
-      '       if [ "$FACTORY_LOCAL_PUSH" = yes ]; then node "$FACTORY_TOOLS/local-branch" push "$dev" 2>&1 | head -1 > "{{run.dir}}/remote-push"; cat "{{run.dir}}/remote-push"; fi',
+      '       if [ "$FACTORY_LOCAL_PUSH" = yes ]; then node "$FACTORY_TOOLS/local-branch" push "$dev" --sha "$tested" 2>&1 | head -1 > "{{run.dir}}/remote-push"; cat "{{run.dir}}/remote-push"; fi',
       '       exit 0 ;;',
       '    3) echo "$dev in your folder moved meanwhile — merging again"; echo "MOVED"; exit 0 ;;',
       '    4) echo "LOCAL_BUSY"; exit 0 ;;',
@@ -2176,18 +2209,18 @@ write("issue-plan", {
       '# A problem on the side of GitHub (a server error, a dropped connection) passes: try again, twice, before failing.',
       'tries=0; pushed=no',
       'while :; do',
-      '  if out=$(git push origin "$dev" 2>&1); then pushed=yes; break; fi',
+      '  # The tested commit itself is pushed, never the branch name: develop may move in the workspace meanwhile.',
+      '  if out=$(git push origin "$tested:refs/heads/$dev" 2>&1); then pushed=yes; break; fi',
       '  tries=$((tries + 1))',
       '  if [ "$tries" -le 2 ] && printf \'%s\\n\' "$out" | grep -qiE "Internal Server Error|HTTP 5[0-9][0-9]|RPC failed|timed out|unexpected disconnect|early EOF|Could not resolve host"; then',
       '    printf \'%s\\n\' "$out"; echo "GitHub had a problem — trying the push again in ${FACTORY_PUSH_RETRY_SEC:-30} seconds (try $((tries + 1)) of 3)"; sleep "${FACTORY_PUSH_RETRY_SEC:-30}"',
       '  else break; fi',
       'done',
       'if [ "$pushed" = yes ]; then',
-      '  echo "PUSHED: $dev $(git rev-parse --short HEAD)"; "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null',
-      '  echo "COMMIT: $(git rev-parse HEAD)"',
+      '  echo "PUSHED: $dev $(git rev-parse --short "$tested")"; "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null',
+      '  echo "COMMIT: $tested"',
       '  # Gitflow: the merged feature branch is no longer needed (its commits are in develop).',
-      '  f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null)',
-      '  if [ "$FACTORY_VAR_DELETE_MERGED_BRANCHES" != no ] && [ -n "$f" ] && git merge-base --is-ancestor "$f" HEAD 2>/dev/null; then',
+      '  if [ "$FACTORY_VAR_DELETE_MERGED_BRANCHES" != no ] && [ -n "$f" ] && git merge-base --is-ancestor "$f" "$tested" 2>/dev/null; then',
       '    git push -q origin --delete "$f" 2>/dev/null && echo "deleted the merged branch $f"',
       '  fi',
       '  exit 0',

@@ -112,4 +112,27 @@ describe("gitflow: a red merge gives up develop", () => {
     expect(gh.remoteGit("branch", "--list", "feature/*")).toContain("feature/6-add-a-feature");
     expect(locks()).not.toContain("@develop");
   });
+
+  it("a resume at test_develop after a fix committed by hand on the feature branch tests and pushes nothing", async () => {
+    process.env.FAKE_FIX_NOOP = "1";
+    issues(6);
+    await watcher().tick();
+    await scheduler.idle();
+    const run = runOf("6")!;
+    expect(run.status).toBe("failed");
+    const git = (...a: string[]) => spawnSync("git", a, { cwd: run.workdir, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    expect(git("rev-parse", "--abbrev-ref", "HEAD").stdout.trim()).toBe("feature/6-add-a-feature");
+    writeFileSync(join(run.workdir!, "feature.txt"), "fixed\n", { flag: "a" });
+    git("commit", "-qam", "fix by hand");
+    const develop = gh.remoteGit("rev-parse", "develop");
+    scheduler.submit({ kind: "resume", runId: run.runId, from: "test_develop" }, { source: "ui" });
+    await scheduler.idle();
+    const after = runOf("6")!;
+    expect(after.status).toBe("failed");
+    expect(after.history.filter((h) => h.id === "test_develop").at(-1)!.output).toContain("merge_develop");
+    expect(after.history.some((h) => h.id === "push_develop")).toBe(false);
+    expect(gh.remoteGit("rev-parse", "develop")).toBe(develop);
+    expect(gh.remoteGit("log", "--format=%s", "develop")).not.toContain("Merge #6");
+    expect(locks()).not.toContain("@develop");
+  });
 });

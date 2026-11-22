@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -215,6 +215,44 @@ describe("updateOwnerBranch", () => {
     expect(git(owner, "rev-parse", "main")).toBe(main);
     expect(readFileSync(join(owner, "wip.txt"), "utf8")).toBe("wip\n");
     expect(existsSync(join(owner, "feature.txt"))).toBe(false);
+  });
+});
+
+describe("the tested commit is what gets published", () => {
+  // A git that moves the workspace's branch once, when the update starts its push: the moment between the check and the publication.
+  const movingGit = (): string => {
+    const file = join(root, "git-moving.sh");
+    writeFileSync(file, `#!/bin/sh\nif [ "$1" = push ] && [ ! -f "${root}/moved" ]; then touch "${root}/moved"; git commit -q --allow-empty -m late; fi\nexec git "$@"\n`);
+    chmodSync(file, 0o755);
+    return file;
+  };
+
+  it("refuses when the workspace's branch is not the tested commit, and moves nothing", () => {
+    const before = git(owner, "rev-parse", "develop");
+    const r = update({ expectSha: before });
+    expect(r.kind).toBe("refused");
+    expect(git(owner, "rev-parse", "develop")).toBe(before);
+  });
+
+  it("brings over the tested commit even when the workspace's branch moves before the push", () => {
+    const tested = wsHead();
+    const r = update({ expectSha: tested, git: movingGit() });
+    expect(r).toEqual({ kind: "updated", branch: "develop", sha: tested, synced: false });
+    expect(git(owner, "rev-parse", "develop")).toBe(tested);
+    expect(wsHead()).not.toBe(tested);
+  });
+
+  it("pushes the tested commit, not the owner's branch as it is at the push", () => {
+    const bare = join(root, "bare.git");
+    git(root, "init", "-q", "--bare", bare);
+    git(owner, "remote", "add", "origin", bare);
+    const tested = git(owner, "rev-parse", "develop");
+    git(owner, "checkout", "-q", "develop");
+    write(owner, "later.txt", "later\n");
+    git(owner, "add", "-A");
+    git(owner, "commit", "-q", "-m", "moved after the test");
+    expect(pushOwnerBranch({ ownerDir: owner, branch: "develop", sha: tested })).toEqual({ kind: "pushed", remote: "origin" });
+    expect(git(bare, "rev-parse", "develop")).toBe(tested);
   });
 });
 

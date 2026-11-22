@@ -25,6 +25,8 @@ export interface LocalUpdateOptions {
   timeoutMs?: number;
   /** Lets a protected branch move. Only the final step of the daily release sets it, after grantedBranch() agreed. */
   allowProtected?: boolean;
+  /** The commit that was tested. The workspace's branch must still be this commit; that commit is what is published. */
+  expectSha?: string;
 }
 
 export type RemotePush = { kind: "pushed"; remote: string } | { kind: "none" } | { kind: "failed"; remote: string; reason: string };
@@ -146,6 +148,8 @@ export function updateOwnerBranch(o: LocalUpdateOptions): LocalUpdate {
 
   const nw = ws(["rev-parse", "-q", "--verify", `refs/heads/${b}`]).out.trim();
   if (!SHA.test(nw)) return refuse(`the workspace has no branch ${b}`);
+  // Pinned: the commit read here is the tested one, and every later step uses that commit id, not the branch name.
+  if (o.expectSha !== undefined && nw !== o.expectSha) return refuse(`${b} in the workspace is not the commit that was tested`);
   const exp = ws(["rev-parse", "-q", "--verify", `refs/remotes/origin/${b}`]);
   const expected = exp.ok && SHA.test(exp.out.trim()) ? exp.out.trim() : ZERO;
 
@@ -244,14 +248,17 @@ export function ownerPushTarget(ownerDir: string, branch: string, git = "git"): 
 }
 
 /** A plain `git push` of `branch` from the owner's folder. Inherits the step's environment (the Foundry's pre-push hook). */
-export function pushOwnerBranch(o: { ownerDir: string; branch: string; tags?: string[]; git?: string; timeoutMs?: number }): RemotePush {
+export function pushOwnerBranch(o: { ownerDir: string; branch: string; tags?: string[]; sha?: string; git?: string; timeoutMs?: number }): RemotePush {
   const git = o.git ?? "git";
   if (!validBranchName(o.branch)) return { kind: "failed", remote: "", reason: "not a valid branch name" };
   const tags = o.tags ?? [];
   if (tags.some((t) => !TAG_NAME.test(t))) return { kind: "failed", remote: "", reason: "not a valid tag name" };
+  if (o.sha !== undefined && !SHA.test(o.sha)) return { kind: "failed", remote: "", reason: "not a commit id" };
   const remote = ownerRemote(o.ownerDir, o.branch, git);
   if (!remote) return { kind: "none" };
-  const specs = [`refs/heads/${o.branch}:refs/heads/${o.branch}`, ...tags.map((t) => `refs/tags/${t}:refs/tags/${t}`)];
+  // The commit that was tested is pushed, not whatever the owner's branch name points to now (it may have moved meanwhile).
+  const source = o.sha ?? `refs/heads/${o.branch}`;
+  const specs = [`${source}:refs/heads/${o.branch}`, ...tags.map((t) => `refs/tags/${t}:refs/tags/${t}`)];
   const r = run(git, o.ownerDir, ["push", "-q", remote, ...specs], { ms: o.timeoutMs ?? 120_000 });
   if (r.ok) return { kind: "pushed", remote };
   return { kind: "failed", remote, reason: scrubCredentials(r.err) || "git push failed" };
