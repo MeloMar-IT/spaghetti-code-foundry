@@ -40,7 +40,7 @@ describe("the autonomy level of a run", { timeout: 60_000 }, () => {
   const flow = () => parseFlow(`name: au\nworkspace: inplace\nsteps:\n  - id: a\n    type: shell\n    run: "echo A"\n  - id: b\n    type: shell\n    run: "echo B"\n`);
   const config = () => ConfigSchema.parse({ protected_branches: [], promotion: { enforce: "off" } });
 
-  it("records the lower level once, and a resume does not record it again", async () => {
+  it("records the level at the start; a resume with a changed level records it again, one with no change does not", async () => {
     const other = randomUUID(); // another account than the run's
     const id = addRepo(other, "https://github.com/acme/app", { ownerOk: () => true }).id;
     setLevel("repos", id, "guarded-write", "system:connect");
@@ -56,9 +56,23 @@ describe("the autonomy level of a run", { timeout: 60_000 }, () => {
     expect(all.filter((e) => e.type === "run.autonomy")).toHaveLength(1);
     expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
 
+    // no change: nothing new is written
+    await resumeRun({ runsDir, runId: s.runId, from: "b", claudeBin, config: config() });
+    expect(loadRun(runsDir, s.runId)!.autonomy).toEqual({ level: "plan-only", repository: "guarded-write", flow: "plan-only" });
+    expect(events(s).filter((e) => e.type === "run.autonomy")).toHaveLength(1);
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("resumed, was");
+    expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
+
+    // lowered: the resume uses the new level and records it
     setLevel("flows", "au", "observe", other);
     await resumeRun({ runsDir, runId: s.runId, from: "b", claudeBin, config: config() });
-    expect(loadRun(runsDir, s.runId)!.autonomy?.level).toBe("plan-only");
-    expect(events(s).filter((e) => e.type === "run.autonomy")).toHaveLength(1);
+    expect(loadRun(runsDir, s.runId)!.autonomy).toEqual({ level: "observe", repository: "guarded-write", flow: "observe" });
+    const autonomyEvents = events(s).filter((e) => e.type === "run.autonomy");
+    expect(autonomyEvents).toHaveLength(2);
+    expect(autonomyEvents[1]).toMatchObject({ level: "observe", resumed: true });
+    const types = events(s).map((e) => e.type);
+    expect(types.lastIndexOf("run.autonomy")).toBeGreaterThan(types.lastIndexOf("run.resumed"));
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was plan-only");
+    expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
   });
 });

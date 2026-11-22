@@ -1935,6 +1935,9 @@ can be found.
   Version 10 adds the event `run.autonomy` (see "Autonomy levels"). Versions 1 to 9 are read as before. A
   delivery validator that only knows version 9 refuses version 10 lines, so the validator is 1.3.0 from this
   change on: update the pin first.
+  Version 11 adds `resumed: true` to the event `run.autonomy`, written when a resumed run has another level than
+  before (see "Autonomy levels"). Versions 1 to 10 are read as before. A delivery validator that only knows
+  version 10 refuses version 11 lines, so the validator is 1.4.0 from this change on: update the pin first.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -2580,7 +2583,7 @@ check-runs API of the commit.
 delivery-contract:
   runs-on: ubuntu-latest
   env:
-    VALIDATOR_VERSION: "1.3.0"          # the version you pin
+    VALIDATOR_VERSION: "1.4.0"          # the version you pin
     RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
     GH_TOKEN: ${{ github.token }}
   steps:
@@ -2620,7 +2623,7 @@ folder, which the job gets from the workflow's artifacts or from the pull reques
 **Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
 
 ```sh
-V=1.3.0
+V=1.4.0
 BASE="<download folder of that release>"   # the release's assets, from the release page
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
@@ -2847,7 +2850,9 @@ lowest first, are `observe`, `plan-only`, `guarded-write` and `delivery-handoff`
 | `delivery-handoff` | No extra limit. This is how Foundry worked before autonomy levels. |
 
 A refused step fails with a message such as `autonomy observe does not allow a writing agent step; next step: promote
-the repository or flow`. The run's own failure handling (`on_failure`) then runs, and the refusal is recorded in the
+the repository or flow`. A refused push or pull request also names the command that raises the level, for example
+`: scf autonomy promote repos <id> guarded-write --reason "<why>", then approve it and resume this run`; it is left
+out at the top level or when the repository or flow cannot be named. The run's own failure handling (`on_failure`) then runs, and the refusal is recorded in the
 evidence as a `step.denied` event with the reason `autonomy.denied`. A refused writing agent step starts no agent. A
 refused push is stopped by the pre-push hook, which is installed for runs below `delivery-handoff`, so a step that
 swallows the exit code of `git push` still fails. Pull requests are opened and merged by the story tools
@@ -2863,7 +2868,12 @@ kept in three places:
 
 - `run.json`, as `autonomy` (`level`, `repository` when there is one, and `flow`);
 - the live log, as a line such as `autonomy: plan-only (repository guarded-write, flow plan-only)`;
-- the evidence, as the event `run.autonomy`, written right after `run.created`. A resumed run does not write it again.
+- the evidence, as the event `run.autonomy`, written right after `run.created`.
+
+A stopped run is not stuck at the level it started with. On each resume the level is worked out again from the current
+settings, as at the start, and stored in `run.json`. So after you raise the level, resume the stopped run: it pushes and
+goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>` and the
+evidence gets `run.autonomy` with `resumed: true`. A resume with no change writes no new event.
 
 Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
 routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion

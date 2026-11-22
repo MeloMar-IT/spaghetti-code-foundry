@@ -10,7 +10,7 @@ import {
  * is it checked. Pure: these take the parsed JSON or the text, never a file name.
  */
 
-/** Steps from older event versions. 1 → 2 to 9 → 10 only set the version: each added an event type, a code or an optional field; no field changed. */
+/** Steps from older event versions. 1 → 2 to 10 → 11 only set the version: each added an event type, a code or an optional field; no field changed. */
 export const EVENT_MIGRATIONS: EvidenceMigrations = {
   1: (old) => ({ ...old, version: 2 }),
   2: (old) => ({ ...old, version: 3 }),
@@ -21,6 +21,7 @@ export const EVENT_MIGRATIONS: EvidenceMigrations = {
   7: (old) => ({ ...old, version: 8 }),
   8: (old) => ({ ...old, version: 9 }),
   9: (old) => ({ ...old, version: 10 }),
+  10: (old) => ({ ...old, version: 11 }),
 };
 /** Steps from older manifest versions. */
 export const MANIFEST_MIGRATIONS: EvidenceMigrations = {};

@@ -17,6 +17,7 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, heldWorkspace, isolationEnv, stepIsolation } from "./isolation.js";
 import { proxyEnv, shellHosts, sshProxyOption, startEgress, type Egress } from "./egress.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess, wantsRepoAccess } from "./repo-access.js";
+import { raiseCommand } from "../governance/run-autonomy.js";
 import { AUTONOMY_DENIED, AUTONOMY_POLICY, autonomyOfRun, autonomyRefusal, autonomyRefuses, type AutonomyAction } from "../governance/autonomy.js";
 import { lockRoot } from "./running.js";
 import { ownDir, runSandbox, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, workspaceCacheEnv, workspaceSlotsDir, wrapsStep, type SandboxPaths } from "./os-sandbox.js";
@@ -371,14 +372,16 @@ export function refuseByPolicy(engine: Engine, step: StepIdentity, denied: Polic
 }
 
 /**
- * The autonomy level of the run (fixed at its start, so a resume keeps it) does not allow this action: the step fails with a
+ * The autonomy level of the run (worked out at the start and again on each resume) does not allow this action: the step fails with a
  * fixed sentence and the denial goes into the evidence. Undefined when the action is allowed. Unlike `refuseByPolicy` it does not
  * stop the run: the flow's own `on_failure` path runs.
  */
 export function autonomyStop(engine: Pick<Engine, "summary" | "log" | "evidence">, step: StepIdentity, action: AutonomyAction): StepResult | undefined {
   const level = autonomyOfRun(engine.summary);
   if (!autonomyRefuses(level, action)) return undefined;
-  const reason = autonomyRefusal(level, action);
+  const sentence = autonomyRefusal(level, action);
+  const cmd = action === "push" || action === "pull-request" ? raiseCommand(engine.summary ?? {}) : undefined;
+  const reason = cmd ? `${sentence}: ${cmd}, then approve it and resume this run` : sentence;
   engine.evidence?.stepDenied(step, { kind: "policy", policy: AUTONOMY_POLICY, reasonCode: AUTONOMY_DENIED });
   engine.log(`    ! ${reason}`);
   return { ok: false, output: reason, error: reason };
