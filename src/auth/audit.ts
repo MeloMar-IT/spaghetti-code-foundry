@@ -44,6 +44,7 @@ export const EVENT_ACTIONS = [
   "autonomy-promote-request",
   "autonomy-promote",
   "autonomy-demote",
+  "autonomy-set-initial",
   "component-promote",
   "settings-change",
   "restart-request",

@@ -2855,7 +2855,24 @@ swallows the exit code of `git push` still fails. Pull requests are opened and m
 too.
 
 A repository with no entry, and a flow with no entry, is `delivery-handoff`. A repository connected through the
-API starts at `guarded-write`. A repository of an existing install gets no entry, so it stays at `delivery-handoff`.
+API starts at `guarded-write` unless the request gives `autonomy` (see "Starting level" below). A repository of an
+existing install gets no entry, so it stays at `delivery-handoff`.
+
+**Starting level.** `POST /api/repos` takes an optional `autonomy` and `autonomyReason`. A repository that starts at
+`guarded-write` can never push or open a pull request, so the promotion gate can never pass for it. Choose the level
+when you connect it instead of editing `autonomy.json`:
+
+- An admin may give any of the four levels. A non-admin may give `observe`, `plan-only` or `guarded-write`; asking
+  for `delivery-handoff` gets 403, and nothing is stored.
+- A level that is not valid gets 400, and so does `autonomyReason` without `autonomy`.
+- The reason is checked like the other autonomy reasons: 1 to 200 characters, no control characters, and nothing that
+  looks like a credential. Without one, "chosen when the repository was connected" is used.
+- With a level, `autonomy.json` holds it for the new repository, with `by` set to the admin. One audit line,
+  `autonomy-set-initial`, records the level and the reason.
+- In the terminal, `scf repos add`, `add-token`, `add-https-token`, `add-key` and `add-app` take `--autonomy <level>`
+  and `--autonomy-reason <text>`.
+- In the web interface, the Add repository dialog shows admins a **Starting autonomy level** select on the sign-in
+  step. It is set to `guarded-write`, and the level is sent only when you pick another one.
 
 Each run gets the **lower** of its repository's level and its flow's level. The repository is the connected
 repository with the run's GitHub name (`owner/repo`); a run without one gets only the flow's level. The level is
@@ -5366,6 +5383,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
+| `autonomy-set-initial` (admin) | A repository is connected with a chosen starting autonomy level (`POST /api/repos` with `autonomy`) | `repos:<id>` | the level and the reason |
 | `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `settings-change` | An account changes its metrics sharing answer | `metrics-sharing` | `<old> -> <new>` (`unasked`, `yes` or `no`); the same answer again writes nothing |
@@ -5727,6 +5745,8 @@ one). These calls manage it:
   (ask the administrator), 502 when GitHub cannot be asked.
 - `POST /api/repos {"url": …, "method": …, "username": …, "token": …}` adds one (201; 409 if you or
   another account has it; 400 for a bad URL or method; at most 50). `{"name": "owner/name"}` still works.
+  Optional `autonomy` (`observe`, `plan-only`, `guarded-write` or `delivery-handoff`) and `autonomyReason` set the
+  starting level (see "Starting level" under Autonomy levels); `delivery-handoff` is for admins only (403 otherwise).
 - `PUT /api/repos/<id>/auth` changes the method, user name, token or address. What you do not give
   keeps its value. The old stored token is wiped. 404 for an id that is not yours.
   `{"newKey": true}` makes a new deploy key (only for the method `ssh-deploy-key`; 400 otherwise); the

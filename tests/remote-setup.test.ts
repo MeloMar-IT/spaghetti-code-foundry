@@ -74,6 +74,17 @@ describe("the table", () => {
     expect(callOf("repos", "use-app", ["r1", "--yes"])).toEqual({ method: "PUT", path: "repos/r1/auth", body: { method: "github-app" } });
     expect(callOf("repos", "add-https-token", ["https://git.example.test/a/b", "--username", "ann"])).toEqual({ method: "POST", path: "repos", body: { method: "https-token", url: "https://git.example.test/a/b", username: "ann" } });
     expect(() => callOf("repos", "add-https-token", ["https://git.example.test/a/b"])).toThrow("--username is needed");
+    // the starting autonomy level goes into the body of every add command, and only when it is given (#904)
+    const level = ["--autonomy", "plan-only", "--autonomy-reason", "new repo"];
+    const chosen = { autonomy: "plan-only", autonomyReason: "new repo" };
+    const u = "https://git.example.test/a/b";
+    expect(callOf("repos", "add", [u, ...level]).body).toEqual({ url: u, ...chosen });
+    expect(callOf("repos", "add-token", [u, ...level]).body).toMatchObject({ method: "github-token", url: u, ...chosen });
+    expect(callOf("repos", "add-https-token", [u, "--username", "ann", ...level]).body).toEqual({ method: "https-token", url: u, username: "ann", ...chosen });
+    expect(callOf("repos", "add-key", [u, ...level]).body).toEqual({ method: "ssh-deploy-key", url: u, ...chosen });
+    expect(callOf("repos", "add-app", [u, ...level]).body).toEqual({ method: "github-app", url: u, ...chosen });
+    expect(callOf("repos", "add-key", [u, "--autonomy", "observe"]).body).toEqual({ method: "ssh-deploy-key", url: u, autonomy: "observe" });
+    expect(callOf("repos", "add-key", [u]).body).toEqual({ method: "ssh-deploy-key", url: u });
     expect(callOf("repos", "use-https-token", ["r1"])).toEqual({ method: "PUT", path: "repos/r1/auth", body: { method: "https-token" } });
     expect(callOf("repos", "remove-github", ["acme", "app"])).toEqual({ method: "DELETE", path: "repos/acme/app" });
     expect(callOf("providers", "test", ["claude:sonnet"])).toEqual({ method: "POST", path: "providers/test", body: { spec: "claude:sonnet" } });
