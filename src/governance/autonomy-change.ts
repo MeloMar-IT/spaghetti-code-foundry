@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import { renameSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { appendAuditLocked, MONITOR_ACTOR, prepareAuditLocked, type ActionAuditEvent } from "../auth/audit.js";
-import { StoreError, withAuthLock } from "../auth/store.js";
+import { authLockHeld, StoreError, withAuthLock } from "../auth/store.js";
 import { listUsers, type User } from "../auth/users.js";
 import { breakGlassReasonProblem } from "../engine/policy-break-glass.js";
 import { randomTmp, writeTmp } from "../engine/policy-store.js";
-import { AUTONOMY_LEVELS, isSensitiveLevel, nextLevel, SYSTEM_MONITOR, type AutonomyLevel } from "./autonomy.js";
+import { AUTONOMY_LEVELS, isSensitiveLevel, NEW_REPO_LEVEL, nextLevel, SYSTEM_MONITOR, type AutonomyLevel } from "./autonomy.js";
 import {
   AutonomyError,
   autonomyFile,
@@ -173,7 +173,7 @@ function commitLocked(by: string, next: AutonomyStore, event: ActionAuditEvent):
 }
 
 /** A failed line for a refusal, best effort, inside the lock. */
-const refusedLine = (by: string, action: "autonomy-promote" | "autonomy-promote-request" | "autonomy-demote", ref: ComponentRef, detail: string): void =>
+const refusedLine = (by: string, action: "autonomy-promote" | "autonomy-promote-request" | "autonomy-demote" | "autonomy-set-initial", ref: ComponentRef, detail: string): void =>
   quiet(() => appendAuditLocked(by, { action, result: "failed", target: targetOf(ref), detail }));
 
 /**
@@ -184,6 +184,36 @@ function requireActiveAdminLocked(by: string, ref: ComponentRef, action: "autono
   if (activeAdmins(listUsers()).some((u) => u.id === by)) return;
   refusedLine(by, action, ref, "refused: not-admin");
   throw new AutonomyRefused(403, "only an active admin can change an autonomy level");
+}
+
+/** The reason stored when the person who connects a repository gives none. */
+export const INITIAL_LEVEL_REASON = "chosen when the repository was connected";
+
+/** Whether a starting level is above the default one: only an admin may start a repository there. */
+export const initialLevelNeedsAdmin = (level: AutonomyLevel): boolean => AUTONOMY_LEVELS.indexOf(level) > AUTONOMY_LEVELS.indexOf(NEW_REPO_LEVEL);
+
+/**
+ * Sets the starting level of a repository that is being connected, with one `autonomy-set-initial` audit line, in the same
+ * step. Only inside withAuthLock (it is the `beforeSave` of addRepo). A level above the default needs an active admin, checked
+ * again here. Throws AutonomyError, AutonomyRefused (403) or StoreError.
+ */
+export function setInitialLevelLocked(o: { id: string; level: AutonomyLevel; by: string; reason?: string }): AutonomyEntry {
+  if (!authLockHeld()) throw new Error("setInitialLevelLocked must run inside withAuthLock");
+  const reason = o.reason === undefined ? INITIAL_LEVEL_REASON : checkReason(o.reason);
+  const entry = newEntry("repos", o.id, o.level, o.by, reason);
+  const ref: ComponentRef = { kind: "repos", id: o.id };
+  if (initialLevelNeedsAdmin(o.level) && !activeAdmins(listUsers()).some((u) => u.id === o.by)) {
+    refusedLine(o.by, "autonomy-set-initial", ref, `${o.level} refused: not-admin`);
+    throw new AutonomyRefused(403, "only an active admin can start a repository at this level");
+  }
+  const store = readAutonomy();
+  commitLocked(o.by, { ...store, repos: { ...store.repos, [o.id]: entry } }, {
+    action: "autonomy-set-initial",
+    result: "ok",
+    target: targetOf(ref),
+    detail: `${o.level} reason: ${reason}`,
+  });
+  return entry;
 }
 
 /** Stores a request for the next level. The caller has checked the gate. Throws AutonomyError, AutonomyRefused or StoreError. */

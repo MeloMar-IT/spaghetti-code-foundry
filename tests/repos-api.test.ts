@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { readAutonomy } from "../src/governance/autonomy-store.js";
 import { addRepo } from "../src/auth/repos.js";
 import { localRepoName } from "../src/auth/local-name.js";
 import { tmpdir } from "node:os";
@@ -218,6 +219,87 @@ describe("repositories API", () => {
       expect(all).not.toContain(t);
       expect(all).not.toContain(Buffer.from(t).toString("base64"));
     }
+  });
+});
+
+describe("starting autonomy level (#904)", () => {
+  const initial = (id: string) =>
+    readFileSync(join(tmp, "home", "audit.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { action: string; result: string; target?: string; detail?: string })
+      .filter((e) => e.action === "autonomy-set-initial" && e.target === `repos:${id}`);
+  let n = 0;
+  const url = () => `https://gitlab.com/acme/level-${++n}`;
+  const add = (who: TestSession, extra: Record<string, unknown>) => call(who, "POST", "/api/repos", { url: url(), ...extra });
+  const drop = async (who: TestSession, id: string) => void (await call(who, "DELETE", `/api/repos/${id}`));
+
+  it("lets an admin start at delivery-handoff, with one audit line that holds the level and the reason", async () => {
+    const r = await add(admin, { autonomy: "delivery-handoff", autonomyReason: "audited by hand" });
+    expect(r.status).toBe(201);
+    const id = r.json().id as string;
+    expect(readAutonomy().repos[id]).toMatchObject({ level: "delivery-handoff", by: admin.user.id });
+    const lines = initial(id);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ result: "ok", detail: "delivery-handoff reason: audited by hand" });
+    await drop(admin, id);
+  });
+
+  it("answers 403 to a non-admin who asks for delivery-handoff, and stores nothing", async () => {
+    const before = (await list(ann)).map((x) => x.id);
+    const levels = Object.keys(readAutonomy().repos);
+    const r = await add(ann, { autonomy: "delivery-handoff" });
+    expect(r.status).toBe(403);
+    expect(r.error()).not.toMatch(/method|authentication|may choose/i);
+    expect((await list(ann)).map((x) => x.id)).toEqual(before);
+    expect(Object.keys(readAutonomy().repos)).toEqual(levels);
+  });
+
+  it("lets a non-admin choose each lower level, with the caller as the one who set it", async () => {
+    for (const level of ["observe", "plan-only", "guarded-write"]) {
+      const r = await add(ann, { autonomy: level });
+      expect(r.status).toBe(201);
+      const id = r.json().id as string;
+      expect(readAutonomy().repos[id]).toMatchObject({ level, by: ann.user.id, reason: "chosen when the repository was connected" });
+      const lines = initial(id);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ result: "ok", detail: `${level} reason: chosen when the repository was connected` });
+      await drop(ann, id);
+    }
+  });
+
+  it("starts at guarded-write by the system, with no audit line, when no level is given or the fields are null", async () => {
+    for (const extra of [{}, { autonomy: null }, { autonomy: null, autonomyReason: null }]) {
+      const r = await add(ann, extra);
+      expect(r.status).toBe(201);
+      const id = r.json().id as string;
+      expect(readAutonomy().repos[id]).toMatchObject({ level: "guarded-write", by: "system:connect" });
+      expect(initial(id)).toEqual([]);
+      await drop(ann, id);
+    }
+    const r = await add(ann, { autonomy: "plan-only", autonomyReason: null });
+    expect(r.status).toBe(201);
+    expect(readAutonomy().repos[r.json().id]?.reason).toBe("chosen when the repository was connected");
+    await drop(ann, r.json().id);
+  });
+
+  it("answers 400 for a bad level or reason, and for a reason without a level, and stores nothing", async () => {
+    const before = (await list(ann)).map((x) => x.id);
+    const levels = Object.keys(readAutonomy().repos);
+    const bad = [
+      { autonomy: "top" },
+      { autonomy: 3 },
+      { autonomyReason: "why not" },
+      { autonomy: null, autonomyReason: "why not" },
+      { autonomy: "plan-only", autonomyReason: "two\nlines" },
+      { autonomy: "plan-only", autonomyReason: "x".repeat(201) },
+      { autonomy: "plan-only", autonomyReason: ["ghp", "a".repeat(36)].join("_") },
+      { autonomy: "plan-only", autonomyReason: 5 },
+    ];
+    for (const extra of bad) {
+      const r = await add(ann, extra);
+      expect([JSON.stringify(extra).slice(0, 40), r.status]).toEqual([JSON.stringify(extra).slice(0, 40), 400]);
+      expect(r.text).not.toContain("two\\nlines");
+    }
+    expect((await list(ann)).map((x) => x.id)).toEqual(before);
+    expect(Object.keys(readAutonomy().repos)).toEqual(levels);
   });
 });
 

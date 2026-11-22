@@ -12,7 +12,7 @@ import { banner, emptyState, errorState, explainError, loadingState } from "./st
 
 const TONE_SEMANTIC = { ok: "success", fail: "danger", locked: "warning" };
 const SHARES =new Set(["evidence_completeness", "eval_pass_rate"]);
-const ACTION_TEXT = { "autonomy-promote-request": "Promotion requested", "autonomy-promote": "Promoted", "autonomy-demote": "Demoted" };
+const ACTION_TEXT = { "autonomy-promote-request": "Promotion requested", "autonomy-promote": "Promoted", "autonomy-demote": "Demoted", "autonomy-set-initial": "Starting level set" };
 const REASON_MAX = 200;
 
 /** A check's value or threshold: shares as %, no value as "—", "none" as "None allowed", other text as it is. */
