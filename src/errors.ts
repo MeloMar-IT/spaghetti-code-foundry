@@ -40,6 +40,14 @@ export const isTimedOut = (e?: string): boolean => /^timed out\b/.test(e ?? "");
 
 export const NOT_EXPLAINED ="the error is not one the Foundry can explain";
 
+/** A short GitHub failure: HTTP 499 or 5xx, a timeout, a dropped connection. Never a refusal (401, 403, 404, 422) or a rate limit. */
+export const GITHUB_TEMPORARY_RE = /^(?![\s\S]*(?:HTTP 40[134]\b|HTTP 422\b|API rate limit|secondary rate limit))[\s\S]*?(?:HTTP 499\b|HTTP 5\d\d\b|timeout|ECONNRESET|connection reset by peer|ETIMEDOUT|EAI_AGAIN|stream error|unexpected EOF)/i;
+export const isTemporaryGitHubError = (text: string | undefined): boolean => GITHUB_TEMPORARY_RE.test(text ?? "");
+/** The explanation of every watcher error that says GitHub could not be reached. */
+export const CANT_REACH_GITHUB = "The watcher can't reach GitHub";
+/** Does this watcher error read as "can't reach GitHub"? */
+export const isCantReachGitHub = (text: string | undefined): boolean => explainError(text, "watcher").what === CANT_REACH_GITHUB;
+
 const ROWS: Row[] = [
   { re: /^exit code \S+/, make: (_m, s) => ({ what: stepWhat(s), why: "its command ended with an error", todo: OUTPUT }) },
   { re: /^timed out \(waited (\d+ (?:s|min)) for a test slot, which did not count\)/, make: (m, s) => ({ what: stepWhat(s), why: `it ran longer than its time limit; it waited ${m[1]} for a test slot, which did not count`, todo: "Look at the output of the step to see what took so long" }) },
@@ -60,7 +68,8 @@ const ROWS: Row[] = [
   { re: /^invalid interval\b/, only: "watcher", make: () => ({ what: "The watcher cannot start", why: "its check interval is not a valid time", todo: "Change the check interval of the watcher to a time like 5m" }) },
   { re: /^interval must be\b/, only: "watcher", make: () => ({ what: "The watcher cannot start", why: "its check interval is outside what is allowed", todo: "Change the check interval of the watcher to a time like 5m" }) },
   { re: /the check took longer than/, only: "watcher", make: () => ({ what: "The watcher did not finish its check", why: "it took too long and was given up", todo: "Press Check now on the Watchers page to try again" }) },
-  { re: /^cannot access |could not resolve host|error connecting|dial tcp|timeout|ENOTFOUND|ECONNREFUSED|HTTP 5\d\d/i, only: "watcher", make: () => ({ what: "The watcher can't reach GitHub", why: "GitHub did not answer or did not let it in", todo: "Check the network and `gh auth status`" }) },
+  { re: GITHUB_TEMPORARY_RE, only: "watcher", make: () => ({ what: CANT_REACH_GITHUB, why: "GitHub did not answer or did not let it in", todo: "Nothing — the watcher tries again by itself" }) },
+  { re: /^cannot access |could not resolve host|error connecting|dial tcp|timeout|ENOTFOUND|ECONNREFUSED|HTTP 5\d\d/i, only: "watcher", make: () => ({ what: CANT_REACH_GITHUB, why: "GitHub did not answer or did not let it in", todo: "Check the network and `gh auth status`" }) },
   { re: /API rate limit (?:already )?exceeded|secondary rate limit/i, only: "watcher", make: () => ({ what: "GitHub's request limit is used up", why: "the Foundry asked GitHub too much in the last hour", todo: "Nothing — GitHub lifts the limit within the hour, and the watcher continues by itself" }) },
   { re: /Command failed: gh\b/, only: "watcher", make: () => ({ what: "The watcher cannot reach the repository", why: "a call to GitHub failed", todo: "Check that gh is logged in and the repository is there" }) },
   { re: /^set a token for this repository under My repositories$/, make: (_m, s) => ({ what: stepWhat(s), why: "the repository has no token for runs; set one under My repositories", todo: "Set a token for the repository under My repositories" }) },
@@ -81,8 +90,11 @@ const ROWS: Row[] = [
 export function errorLine(raw: string | undefined): string {
   const lines = (raw ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
   const first = lines[0] ?? "";
-  const text = /Command failed: /.test(first) && lines[1] ? `${first} — ${lines[1]}` : first;
-  return text.slice(0, 300);
+  if (!(/Command failed: /.test(first) && lines[1])) return first.slice(0, 300);
+  // A long command is cut, never the diagnostic after it: "HTTP 499" decides how the error is explained.
+  const diag = lines[1].slice(0, 150);
+  const head = first.length + 3 + diag.length > 300 ? `${first.slice(0, Math.max(0, 300 - 3 - diag.length - 1))}…` : first;
+  return `${head} — ${diag}`.slice(0, 300);
 }
 
 /** A user cannot read the output of a step and has no "Details" row on the run page. */

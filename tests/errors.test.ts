@@ -5,7 +5,7 @@ import {
   APP_BROKEN_RUN, APP_FAILED_RUN, APP_NOT_INSTALLED_RUN, APP_NOT_SET_UP_RUN, APP_RATE_LIMIT_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, APP_UNREACHABLE_RUN,
   DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, NO_COMMIT_IDENTITY, SIGN_IN_NOT_REMOVED,
 } from "../src/engine/guards.js";
-import { errorLine, explainError, isTimedOut, type ErrorAbout } from "../src/errors.js";
+import { errorLine, explainError, isCantReachGitHub, isTemporaryGitHubError, isTimedOut, type ErrorAbout } from "../src/errors.js";
 
 type Row = [string, string, ErrorAbout, string, boolean?];
 const WHY_GENERAL = "the error is not one the Foundry can explain";
@@ -61,6 +61,13 @@ const rows: Row[] = [
   ["Command failed: gh issue list — error connecting to api.github.com", ...CONNECTION],
   ['Command failed: gh issue list — Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host', ...CONNECTION],
   ["Command failed: gh issue list — HTTP 502: Bad Gateway (https://api.github.com/graphql)", ...CONNECTION],
+  ["Command failed: gh api graphql --input - — gh: HTTP 499 (https://api.github.com/graphql)", ...CONNECTION],
+  ["Command failed: gh issue list — read tcp: connection reset by peer ECONNRESET", ...CONNECTION],
+  ["Command failed: gh issue list — read tcp 10.0.0.2:51234->140.82.112.6:443: read: connection reset by peer", ...CONNECTION],
+  ["Command failed: gh issue list — dial tcp: EAI_AGAIN api.github.com", ...CONNECTION],
+  ["Command failed: gh issue list — ETIMEDOUT", ...CONNECTION],
+  ["Command failed: gh issue list — stream error: stream ID 3; INTERNAL_ERROR", ...CONNECTION],
+  ["Command failed: gh issue list — unexpected EOF", ...CONNECTION],
   ["getaddrinfo ENOTFOUND api.github.com", ...CONNECTION],
   ["connect ECONNREFUSED 127.0.0.1:443", ...CONNECTION],
   ["tidying closed issues: Command failed: gh issue list — net/http: TLS handshake timeout", ...CONNECTION],
@@ -76,6 +83,38 @@ const rows: Row[] = [
   ["boom", "The run failed", "run", WHY_GENERAL],
   ["boom", "The watcher has an error", "watcher", WHY_GENERAL],
 ];
+
+describe("temporary GitHub errors", () => {
+  it("HTTP 499 is explained as a connection problem the watcher tries again", () => {
+    const e = explainError("Command failed: gh api graphql — gh: HTTP 499 (https://api.github.com/graphql)", "watcher");
+    expect(e.what).toBe("The watcher can't reach GitHub");
+    expect(e.todo).toMatch(/tries again by itself/);
+  });
+
+  it("the old connection causes keep their to-do", () => {
+    expect(explainError("cannot access acme/app with gh: boom", "watcher").todo).toBe("Check the network and `gh auth status`");
+    expect(explainError("Command failed: gh issue list — error connecting to api.github.com", "watcher").what).toBe("The watcher can't reach GitHub");
+  });
+
+  it("isTemporaryGitHubError", () => {
+    for (const t of ["HTTP 499", "HTTP 502", "net/http: TLS handshake timeout", "ECONNRESET", "EAI_AGAIN", "unexpected EOF", "stream error"]) expect(isTemporaryGitHubError(t), t).toBe(true);
+    for (const t of ["HTTP 401", "HTTP 403", "HTTP 404", "HTTP 422", "HTTP 403: API rate limit exceeded", "secondary rate limit … HTTP 502", "boom", "error connecting", "", undefined]) {
+      expect(isTemporaryGitHubError(t), String(t)).toBe(false);
+    }
+  });
+
+  it("isCantReachGitHub also covers the older causes", () => {
+    expect(isCantReachGitHub("cannot access acme/app with gh: boom")).toBe(true);
+    expect(isCantReachGitHub("Command failed: gh issue list — HTTP 404: Not Found")).toBe(false);
+  });
+
+  it("a long command keeps the diagnostic when the line is shortened", () => {
+    const line = errorLine(`Command failed: gh api graphql ${"-f x=y ".repeat(100)}\ngh: HTTP 499 (https://api.github.com/graphql)`);
+    expect(line.length).toBeLessThanOrEqual(300);
+    expect(line).toMatch(/HTTP 499/);
+    expect(explainError(line, "watcher").what).toBe("The watcher can't reach GitHub");
+  });
+});
 
 describe("explainError", () => {
   it.each(rows)("%s (%s)", (raw, what, about, why, startOver) => {

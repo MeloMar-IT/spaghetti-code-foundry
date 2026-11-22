@@ -169,7 +169,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "watcher-error", realCase: "A watcher cannot reach GitHub", source: "issue #56 (cannot access … with gh)",
-    world: { config: c, runs: [], tracked: [track(c, [], [], { lastError: "cannot access acme/app with gh: HTTP 401", errorSince: ago(0.1) })] }, record: () => watcherErr,
+    world: { config: c, runs: [], tracked: [track(c, [], [], { lastError: "cannot access acme/app with gh: HTTP 401", errorCount: 3, errorSince: ago(0.1) })] }, record: () => watcherErr,
     expect: { who: "Something is wrong", action: "Check the network and `gh auth status`", text: "The watcher for acme/app can't reach GitHub: GitHub did not answer or did not let it in — check the network and `gh auth status`.", yourTurn: true, buttons: [], link: "Watchers page", dismissable: false },
   },
   {
