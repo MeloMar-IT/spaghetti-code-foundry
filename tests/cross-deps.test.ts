@@ -73,9 +73,50 @@ describe("CrossDeps", () => {
     const t = setup({ recs: [rec("acme/lib", "ann", "none")] });
     const s = story("- acme/lib#3");
     t.cross.startCheck([s]);
-    expect(await t.cross.blockers(s, false)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(await t.cross.blockers(s, false)).toEqual([{ repo: "acme/lib", issue: 3, noSignIn: true }]);
     expect(t.warns).toEqual(["#7: acme/lib#3 could not be read: the repository has no sign-in of its own"]);
     expect(t.reads).toEqual([]);
+  });
+
+  it("logs a refusal once across checks, and again after it went away and came back", async () => {
+    const t = setup({ recs: [rec("acme/lib", "ann", "none")] });
+    const s = story("- acme/lib#3");
+    for (let i = 0; i < 3; i++) {
+      t.cross.startCheck([s]);
+      await t.cross.blockers(s, false);
+    }
+    expect(t.warns).toHaveLength(1);
+    t.cross.startCheck([{ number: 7, body: "" }]);
+    await t.cross.blockers({ number: 7, body: "" }, false);
+    t.cross.startCheck([s]); // the check without the line is over: it counts as gone
+    await t.cross.blockers(s, false);
+    expect(t.warns).toHaveLength(2);
+  });
+
+  it("keeps the refusal while a story is only found late in the check (not in startCheck's bodies)", async () => {
+    const t = setup({ recs: [rec("acme/lib", "ann", "none")] });
+    const s = story("- acme/lib#3");
+    for (let i = 0; i < 3; i++) {
+      t.cross.startCheck([]);
+      await t.cross.blockers(s, false);
+    }
+    expect(t.warns).toHaveLength(1);
+  });
+
+  it("reads the issue once the repository has a sign-in, and forgets the refusal", async () => {
+    const recs = [rec("acme/lib", "ann", "none")];
+    const t = setup({ recs });
+    const s = story("- acme/lib#3");
+    t.cross.startCheck([s]);
+    expect(await t.cross.blockers(s, false)).toEqual([{ repo: "acme/lib", issue: 3, noSignIn: true }]);
+    recs[0] = rec("acme/lib", "ann", "github-token");
+    t.cross.startCheck([s]);
+    expect(await t.cross.blockers(s, false)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(t.reads).toEqual(["acme/lib#3"]);
+    recs[0] = rec("acme/lib", "ann", "none");
+    t.cross.startCheck([s]);
+    await t.cross.blockers(s, false);
+    expect(t.warns).toHaveLength(2);
   });
 
   it("a failed read, a 404, no identity or a failing lookup holds and is logged", async () => {

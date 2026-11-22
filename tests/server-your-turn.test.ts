@@ -383,6 +383,40 @@ describe("Your turn and closed issues", () => {
     await n.check(new Date(NOW.getTime() + 60_000));
     expect(sent).toHaveLength(1);
   });
+
+  describe("a dependency hold for an issue the Foundry may not read", () => {
+    const config = ConfigSchema.parse({ watchers: [issuesWatcher], notify: { macos: false, slack_webhook: "http://127.0.0.1:9/hook" } });
+    const dep = (b: Record<string, unknown>) => hold(nextStep("dependency", { repo: "acme/app", issue: 4, title: "T4" }, { watched: true, blockers: [{ issue: 3, repo: "acme/lib", ...b }] as never }));
+    const ctxWith = (h: unknown) => stub({ config, tracked: [tracked(config, 0, [h], [{ issue: 4, title: "T4" }])] });
+    const notifier = (sent: Notice[], ctx: ApiContext) => new TurnNotifier(ctx, { baseUrl: "http://localhost:4777", timeZone: "UTC", send: async (x) => void sent.push(x) });
+    const at = (m: number) => new Date(NOW.getTime() + m * 60_000);
+
+    it("is told once over two checks, and nothing more after it is gone", async () => {
+      const sent: Notice[] = [];
+      const hole = dep({ noSignIn: true });
+      expect(items(ctxWith(hole))).toHaveLength(1);
+      let ctx = ctxWith(hole);
+      const n = notifier(sent, ctx);
+      await n.check(NOW);
+      await n.check(at(1));
+      expect(sent).toHaveLength(1);
+      expect(JSON.stringify(sent[0])).toContain("acme/lib#3");
+      ctx = ctxWith(dep({}));
+      expect(items(ctx)).toHaveLength(0);
+      await notifier(sent, ctx).check(at(2));
+      expect(sent).toHaveLength(1);
+    });
+
+    it("gives a changed reason its own notice and a new stamp", async () => {
+      const all = (ctx: ApiContext) => turnFor(ctx, NOW).all[0]!;
+      const a = all(ctxWith(dep({ notPlanned: true })));
+      const b = all(ctxWith(dep({ noSignIn: true })));
+      const other = all(ctxWith(hold(nextStep("dependency", { repo: "acme/app", issue: 4, title: "T4" }, { watched: true, blockers: [{ issue: 5, repo: "acme/lib", noSignIn: true }] }))));
+      expect(a.key).toBe(b.key);
+      expect(new Set([a.stamp, b.stamp, other.stamp]).size).toBe(3);
+      expect(all(ctxWith(dep({ noSignIn: true }))).stamp).toBe(b.stamp); // unchanged: the same stamp
+    });
+  });
 });
 
 describe("Your turn dismissals", () => {

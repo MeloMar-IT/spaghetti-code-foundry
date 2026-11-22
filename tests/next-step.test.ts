@@ -301,6 +301,27 @@ describe("next-step records, one per kind", () => {
     expect(up.text).toContain("once you've handled acme/lib#3");
   });
 
+  it("puts a story whose other-repository dependency cannot be read (no sign-in) in Your turn", () => {
+    const n = nextStep("dependency", { repo: "acme/app", issue: 4 }, { blockers: [{ issue: 3, repo: "acme/lib", noSignIn: true }] });
+    expect(n.who).toBe("You");
+    expect(n.why).toBe("acme/lib#3 could not be read: acme/lib has no sign-in of its own in the Foundry");
+    expect(n.action).toBe("Give acme/lib a sign-in under My repositories, or take acme/lib#3 out of Depends on of #4 once it is done");
+    expect(n.until).toBeUndefined();
+    expect(n.status).toBe("waiting for you — acme/lib#3 could not be read");
+    expect(needsUser(n)).toBe(true);
+    const up = nextStep("dependency", { issue: 5 }, { blockers: [{ issue: 4, next: n }] });
+    expect(up.who).toBe("Another story");
+    expect(up.text).toContain("once you've handled acme/lib#3");
+    // both kinds together, and two repositories
+    const both = nextStep("dependency", { repo: "acme/app", issue: 4 }, { blockers: [{ issue: 2, repo: "acme/x", notPlanned: true }, { issue: 3, repo: "acme/lib", noSignIn: true }] });
+    expect(both.why).toContain("acme/x#2 was closed as not planned; acme/lib#3 could not be read");
+    expect(both.action).toContain("Reopen acme/x#2");
+    expect(both.action).toContain("give acme/lib a sign-in");
+    const two = nextStep("dependency", { repo: "acme/app", issue: 4 }, { blockers: [{ issue: 2, repo: "acme/x", noSignIn: true }, { issue: 3, repo: "acme/lib", noSignIn: true }] });
+    expect(two.why).toBe("acme/x#2, acme/lib#3 could not be read: acme/x, acme/lib have no sign-in of its own in the Foundry");
+    expect(two.action).toContain("once they are done");
+  });
+
   it("says how to undo a wrong epic match, also as a blocker", () => {
     const n = nextStep("epic", { repo: "acme/app", issue: 7, title: "t" }, { watched: true, issueUrl: ISSUE });
     expect(n.who).toBe("Foundry");
