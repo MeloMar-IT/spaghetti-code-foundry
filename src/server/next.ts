@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { stepLogFile } from "../engine/execute.js";
+import { isCantReachGitHub } from "../errors.js";
 import { buildHistory, runProgress, runTiming, withWaitLeft, type DurationHistory } from "../estimate.js";
 import { answerRoom, isUserBudgetStop, type RunSummary } from "../engine/state.js";
 import { issueRank, issueRecord } from "../issue-record.js";
@@ -240,9 +241,13 @@ export function jobNext(p: PendingJob, forUser = false, budgetUsd?: number): Nex
 
 const watcherError = (repo: string, reason: string): NextStep => nextStep("watcher_error", { repo }, { reason });
 
+/** Failed checks in a row before "can't reach GitHub" shows as a notice. */
+export const WATCHER_NOTICE_CHECKS = 3;
+
 /** A watcher's own record: its error, or (enabled, no error) no finished check for more than 3× its interval. */
 export function watcherProblem(w: WatcherConfig, status: WatcherStatus | undefined, now = Date.now()): NextStep | undefined {
-  if (status?.lastError) return watcherError(w.github_repo, status.lastError);
+  // "Can't reach GitHub" is shown only after WATCHER_NOTICE_CHECKS failed checks in a row (the watcher tries again by itself).
+  if (status?.lastError && !(isCantReachGitHub(status.lastError) && (status.errorCount ?? 1) < WATCHER_NOTICE_CHECKS)) return watcherError(w.github_repo, status.lastError);
   if (!w.enabled || !status) return undefined;
   let every: number;
   try {

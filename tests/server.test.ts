@@ -685,7 +685,7 @@ steps:
     type H = { ok: boolean; summary: string; problems: { kind: string; why: string }[]; repos: { repo: string; lastOk?: string }[] };
     const lastOk = "2026-10-01T08:00:00.000Z";
     const cfg = { id: "a", github_repo: "acme/app", source: "issues", flow: "f", label: "l", every: "5m", max_per_tick: 1, enabled: true, vars: {} };
-    const status = { id: "a", lastActions: [], lastError: "cannot access acme/app with gh: boom", lastOk };
+    const status = { id: "a", lastActions: [], lastError: "cannot access acme/app with gh: boom", errorCount: 3, lastOk };
     const original = { statuses: ctx.watchers.statuses, tracked: ctx.watchers.tracked };
     ctx.restart = { why: "new_version", since: new Date().toISOString() };
     ctx.watchers.statuses = (() => [{ ...cfg, status }]) as never;
@@ -713,7 +713,7 @@ steps:
   it("watchers carry their records", async () => {
     const { nextStep } = await import("../src/next-step.js");
     const { toHold } = await import("../src/queue/watcher.js");
-    const withError = { id: "a", lastActions: [], lastError: "cannot access acme/app with gh: boom", holds: [toHold(nextStep("questions", { repo: "acme/app", issue: 3, title: "three" }, { watched: true, questions: 2 }))] };
+    const withError = { id: "a", lastActions: [], lastError: "cannot access acme/app with gh: boom", errorCount: 3, holds: [toHold(nextStep("questions", { repo: "acme/app", issue: 3, title: "three" }, { watched: true, questions: 2 }))] };
     const clean = { id: "b", lastActions: [] };
     const cfg = { source: "issues", flow: "f", label: "l", every: "5m", max_per_tick: 1, enabled: true, vars: {} };
     const original = ctx.watchers.statuses;

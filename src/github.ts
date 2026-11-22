@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { constants } from "node:os";
 import { promisify } from "node:util";
 import { isLocalRepoName } from "./auth/local-name.js";
+import { ghReadOnly, ghRetryDelays, retryableGhError } from "./gh-retry.js";
 
 const exec = promisify(execFile);
 
@@ -59,8 +60,27 @@ function scrub(e: unknown, token: string): unknown {
   return e;
 }
 
-/** `timeoutMs` kills the process and rejects; without it gh may take as long as it likes. */
+/**
+ * `timeoutMs` kills the process and rejects; without it gh may take as long as it likes.
+ * A read that fails with a temporary error (HTTP 499 or 5xx, a timeout, a dropped connection) is tried up to 2 more times, after
+ * 1 s and 3 s. Calls that change something are never repeated. `timeoutMs` is one budget for all tries and the waits between them.
+ */
 export async function gh(args: string[], env?: NodeJS.ProcessEnv, timeoutMs?: number, input?: string): Promise<string> {
+  const delays = ghReadOnly(args, input) ? ghRetryDelays() : [];
+  const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ghOnce(args, env, deadline === undefined ? undefined : Math.max(1, deadline - Date.now()), input);
+    } catch (e) {
+      const wait = delays[attempt];
+      if (wait === undefined || !retryableGhError(e)) throw e;
+      if (deadline !== undefined && Date.now() + wait >= deadline) throw e; // no time left for another try
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+async function ghOnce(args: string[], env?: NodeJS.ProcessEnv, timeoutMs?: number, input?: string): Promise<string> {
   const session = sessions.getStore();
   const p = exec(process.env.FACTORY_GH_BIN ?? "gh", args, {
     maxBuffer: 20_000_000,

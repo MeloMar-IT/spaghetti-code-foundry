@@ -982,6 +982,9 @@ describe("watcher", () => {
     await w.tick();
     expect(w.status.lastError).toMatch(/Command failed: .*issue list.* — error connecting to api\.github\.com$/);
     expect(w.status.lastError).not.toContain("\n");
+    expect(watcherProblem(w.cfg, w.status)).toBeUndefined(); // shown after 3 failed checks in a row
+    await w.tick();
+    await w.tick();
     const p = watcherProblem(w.cfg, w.status);
     expect(p?.why).toMatch(/^The watcher for acme\/app can't reach GitHub/);
     expect(p?.action).toBe("Check the network and `gh auth status`");
@@ -989,6 +992,60 @@ describe("watcher", () => {
     process.env.FAKE_GH_FAIL_TEXT = "HTTP 404: Not Found";
     await w.tick();
     expect(watcherProblem(w.cfg, w.status)?.why).toBe("The watcher for acme/app cannot reach the repository: a call to GitHub failed");
+  });
+
+  it("a read that fails once with HTTP 499 is retried and the check succeeds", async () => {
+    issues();
+    Object.assign(process.env, { FAKE_GH_FAIL: "issue list", FAKE_GH_FAIL_TEXT: "gh: HTTP 499 (https://api.github.com/graphql)", FAKE_GH_FAIL_TIMES: "1" });
+    const w = watcher();
+    await w.tick();
+    expect(w.status.lastError).toBeUndefined();
+    expect(w.status.errorCount).toBeUndefined();
+    expect(watcherProblem(w.cfg, w.status)).toBeUndefined();
+  });
+
+  it("'can't reach GitHub' shows only after 3 checks in a row, and the next good check clears it", async () => {
+    process.env.FAKE_GH_FAIL = "issue list";
+    process.env.FAKE_GH_FAIL_TEXT = "HTTP 502: Bad Gateway";
+    const w = watcher();
+    for (const n of [1, 2]) {
+      await w.tick();
+      expect(w.status.lastError).toMatch(/HTTP 502/);
+      expect(w.status.errorCount).toBe(n);
+      expect(watcherProblem(w.cfg, w.status)).toBeUndefined();
+    }
+    await w.tick();
+    const p = watcherProblem(w.cfg, w.status);
+    expect(p?.kind).toBe("watcher_error");
+    expect(p?.why).toMatch(/^The watcher for acme\/app can't reach GitHub/);
+    expect(p?.action).toMatch(/tries again by itself/);
+    delete process.env.FAKE_GH_FAIL;
+    issues();
+    await w.tick();
+    expect(watcherProblem(w.cfg, w.status)).toBeUndefined();
+    expect(w.status.errorCount).toBeUndefined();
+  });
+
+  it("a dropped connection without an error code shows the notice only on the third failed check", async () => {
+    process.env.FAKE_GH_FAIL = "issue list";
+    process.env.FAKE_GH_FAIL_TEXT = "read tcp 10.0.0.2:51234->140.82.112.6:443: read: connection reset by peer";
+    const w = watcher();
+    await w.tick();
+    expect(watcherProblem(w.cfg, w.status)).toBeUndefined();
+    await w.tick();
+    expect(watcherProblem(w.cfg, w.status)).toBeUndefined();
+    await w.tick();
+    expect(watcherProblem(w.cfg, w.status)?.kind).toBe("watcher_error");
+  });
+
+  it("watcherProblem holds back a connection error until the third failed check; other errors show at once", () => {
+    const w = watcher();
+    const at = (lastError: string, errorCount?: number) => watcherProblem(w.cfg, { ...w.status, lastError, errorCount })?.kind;
+    expect(at("Command failed: gh api graphql — gh: HTTP 499", 2)).toBeUndefined();
+    expect(at("Command failed: gh api graphql — gh: HTTP 499")).toBeUndefined();
+    expect(at("Command failed: gh api graphql — gh: HTTP 499", 3)).toBe("watcher_error");
+    expect(at("Command failed: gh issue list — error connecting to api.github.com", 1)).toBeUndefined();
+    expect(at("Command failed: gh issue list — HTTP 404: Not Found", 1)).toBe("watcher_error");
   });
 
   it("a failed repo check holds the first output line", async () => {
