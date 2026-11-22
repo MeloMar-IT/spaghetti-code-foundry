@@ -77,8 +77,8 @@ your browser. The website never calls an install.
 
 Some things to know when you read the numbers:
 
-- A number that fewer than 3 installs give is left out, so no single install can be read. A sum over many days can
-  therefore be a little low.
+- Every shared number is shown, also when only one install gave it. While few installs share, a number can come
+  from a single install.
 - Per day there are the last 35 days. Before that there are weeks. **Last 30 days** uses the days. **Last 90 days**
   uses the weeks that start within 90 days, so it can leave out the first days of the period. **All time** is every
   week the receiver still holds; it keeps reports for 400 days.

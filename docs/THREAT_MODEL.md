@@ -405,8 +405,9 @@ install. It has no access to the site's files.
 names are kept only when they are built-in ones (otherwise `custom`). A report names no account, repository, path
 or address. Its one identifier is the install id, a random 128-bit value, so the reports of one install can be
 linked from day to day until the install stops sharing. Only whoever runs the receiver can read per-install
-reports (the data folder, mode 0600). The public `GET /metrics.json` gives totals only, and a number from fewer
-than 3 installs is left out, so one install cannot be read from it directly.
+reports (the data folder, mode 0600). The public `GET /metrics.json` gives totals only, but every number is shown, also one that a
+single install gives (`minInstalls` is 1, the owner's choice), so while few installs share, one install's numbers
+can be read from it. They are still only counts, durations and costs, with no account, repository, path or address.
 
 **What an attacker with the install id can do.** The id is the key of `DELETE /api/metrics/<install>`: whoever
 holds it can remove that install's stored reports. It does not stop the install's later pushes. The id is also
@@ -417,8 +418,8 @@ of the receiver must be off for these paths (`collector/README.md`); the Foundry
 
 **Forged reports.** The receiver cannot tell a real install from a program that sends valid reports for random ids.
 Such reports change the public totals. The limits bound them: the schema, a body of at most 64 KB, a day within the
-last 7 days, 20 requests an hour per install id and 1000 an hour in total. The threshold of 3 installs is the only
-other check, and one party that makes three ids passes it.
+last 7 days, 20 requests an hour per install id and 1000 an hour in total. There is no minimum number of installs, so
+even one forged id changes the totals.
 
 **Why the receiver cannot reach an install.** The install only makes outbound HTTPS calls to the configured
 endpoint (`src/metrics-share/push.ts`) and does not listen for metrics. The report holds no address of the
@@ -437,8 +438,8 @@ move the install's retries, and only until the 7-day limit of the push. Nothing 
 **Still open.**
 - Forged reports can move the public totals (see above). A signed install id or a proof of a real install would
   close this, and it would cost the anonymity of the install id.
-- The threshold of 3 installs is a minimum count, not a privacy guarantee: someone who reads the totals over time
-  can see a change that comes from one install when the number of installs is small.
+- There is no minimum number of installs: a total can be the numbers of a single install, and someone who reads
+  the totals over time can see which changes come from one install while few installs share.
 - The access log of the web server in front of the receiver is a deployment setting that the code cannot check.
 - The endpoint can still be changed through `PUT /api/config` (see "Shared metrics push (#889)" above).
 

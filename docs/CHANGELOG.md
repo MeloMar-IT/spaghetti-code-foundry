@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- The public metrics show every shared number, also one that a single install gives: the minimum of 3 installs is gone (`MIN_INSTALLS` is 1 in `collector/totals.ts`, and `metrics.json` says `minInstalls: 1`). The Metrics page, the privacy page, the guide, the collector README and the threat model say so.
 - The `repo-review` flow checks the dependencies for known high and critical CVEs (#901, part 3 of 4 of #897). A new `audit` step runs `npm audit --package-lock-only --json` in `repo/` when `package-lock.json` exists (120 s timeout, `FACTORY_NPM_BIN` or `npm`). It keeps the high and critical advisories and writes them to `audit.md`; the review prompt includes them, so a CVE can become a story. Only package names and versions are sent, to `registry.npmjs.org`. The step never fails the run: without a lock file, or when the audit fails, the summary says "Dependencies not checked" and why.
   - **Code.** `src/review/stories.ts` (`parseNpmAudit` and the audit helpers), `tools/repo-review` (new `audit` subcommand; `plan` reads `audit.json`), `scripts/build-flows.mjs` and `flows/repo-review.yaml` (new `audit` step, generated), `src/metrics-share/report.ts` (`audit` in the shipped step list).
   - **Tests.** `tests/repo-review.test.ts` (unit: `parseNpmAudit` with high and critical kept, `via` as strings and objects, non-JSON output), `tests/repo-review-flow.test.ts` (flow: "not checked" summary).
