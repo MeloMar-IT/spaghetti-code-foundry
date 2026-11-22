@@ -10471,8 +10471,10 @@ never fails or slows a run.
 There is no contact address for removal requests. Reports carry no name and no IP address, so without the install
 id nobody can tell which reports are yours.
 
-### The public totals and the threshold of 3 installs
+### The public totals
 
 The receiver publishes totals at `https://spaghetti-code-foundry.com/metrics.json`: per day for the last 35 days,
-and per week. A number that fewer than 3 installs give is left out, so no single install can be read from the totals.
+and per week. Every shared number is shown, also when only one install gave it (`minInstalls` is 1), so while few
+installs share, a total can be the numbers of a single install. A report still names no account, repository, path
+or address.
 The totals are worked out once an hour from the reports the receiver holds.

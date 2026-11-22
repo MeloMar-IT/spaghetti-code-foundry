@@ -189,8 +189,8 @@ describe("collector server (#890)", () => {
       expect((await del(ids[0]!)).status).toBe(200);
       g.release();
       await run;
-      if (n === 4) expect(day(c)!.installs).toBe(3);
-      else expect(day(c)).toBeUndefined();
+      // every install left is counted (there is no minimum number of installs)
+      expect(day(c)!.installs).toBe(n - 1);
       expect(logs.info.at(-1)).toBe(`totals: ${n - 1} reports, ${n - 1} installs`);
     });
   }

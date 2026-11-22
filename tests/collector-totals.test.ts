@@ -60,7 +60,7 @@ describe("collector totals (#890)", () => {
     expect(d.quality.evidence).toEqual({ complete: 3, counted: 9, share: 0.3333 });
   });
 
-  it("rounds cost and leaves out keys of fewer than 3 installs", () => {
+  it("rounds cost and keeps keys that only some installs give", () => {
     const d = dayOf(three((i) => ({
       cost: {
         byModel: { opus: { tokensIn: 1, tokensOut: 2, costUsd: 0.1 }, ...(i < 2 ? { haiku: { tokensIn: 1, tokensOut: 1 } } : {}) },
@@ -70,15 +70,16 @@ describe("collector totals (#890)", () => {
       splits: i < 2 ? { issuesSplit: 1 } : {},
     })))!;
     expect(d.cost.costUsd).toBe(0.3);
-    expect(d.cost.byModel).toEqual({ opus: { tokensIn: 3, tokensOut: 6, costUsd: 0.3 } });
-    expect(d.splits).toEqual({});
+    expect(d.cost.byModel).toEqual({ haiku: { tokensIn: 2, tokensOut: 2 }, opus: { tokensIn: 3, tokensOut: 6, costUsd: 0.3 } });
+    expect(d.splits).toEqual({ issuesSplit: 2 });
   });
 
-  it("leaves out a day of 2 installs", () => {
-    const m = computeTotals(three(() => ({})).slice(0, 2), NOW);
-    expect(m.days).toEqual([]);
-    expect(m.weeks).toEqual([]);
-    expect(m.sharing).toBeUndefined();
+  it("shows a day of a single install", () => {
+    const m = computeTotals(three(() => ({})).slice(0, 1), NOW);
+    expect(m.days).toHaveLength(1);
+    expect(m.days[0]!.installs).toBe(1);
+    expect(m.weeks).toHaveLength(1);
+    expect(m.sharing).toMatchObject({ installs: 1 });
   });
 
   it("leaves out sums that would overflow", () => {
@@ -131,7 +132,7 @@ describe("collector totals (#890)", () => {
 
   it("gives empty lists for no reports", () => {
     const m = computeTotals([], NOW);
-    expect(m).toMatchObject({ version: 1, minInstalls: 3, days: [], weeks: [] });
+    expect(m).toMatchObject({ version: 1, minInstalls: 1, days: [], weeks: [] });
     expect(m.sharing).toBeUndefined();
   });
 });
