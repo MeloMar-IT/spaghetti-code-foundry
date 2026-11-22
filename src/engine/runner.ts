@@ -49,7 +49,7 @@ import { copyInputFiles, prepareWorkspace, type RunInputFile } from "./workspace
 import { contextBeforeStep } from "./run-context.js";
 import { checkedReferences, prepareReferences, referenceHold, removeReferences } from "./reference-repos.js";
 import type { Actor } from "../evidence/identity.js";
-import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
+import { logAutonomyProblems, recordRunAutonomy, runAutonomyAtStart, runAutonomyOnResume } from "../governance/run-autonomy.js";
 import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
@@ -378,6 +378,9 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   const decision = opts.decision && summary.waiting ? { ...opts.decision, stepId: summary.waiting.stepId } : undefined;
   // A retry after a time limit begins here. The allowance is counted again now, over all runs of the story: two stopped runs of
   // one issue cannot both use the last retry.
+  // The level is worked out again from the stores as they are now: a raise or a demotion since the stop counts.
+  const autonomy = runAutonomyOnResume(summary);
+  summary.autonomy = autonomy.autonomy;
   const retry = pendingRetry(summary, from, summary.state.next);
   const retryOver = retry && timeLimitsUsed(summary, listRunBriefs(opts.runsDir)) >= retry.of ? retry : undefined;
   if (!retryOver) markRetryStart(summary, from, new Date().toISOString());
@@ -389,6 +392,9 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);
   evidence.resumed(from, opts.actor ?? SYSTEM_ACTOR);
+  const resumeLog = liveLog(summary, opts);
+  if (autonomy.changed) recordRunAutonomy(autonomy, resumeLog, evidence, { resumed: true, was: autonomy.was });
+  else logAutonomyProblems(autonomy.problems, resumeLog);
   summary.state.visits = {}; // fresh loop budget
   if (retryOver) {
     // the last retry went to another run of the story: this one fails as it would without retries
@@ -476,7 +482,7 @@ async function drive(
       ...ownerReposEnv(summary.owner),
       // the run's watcher answers questions itself (auto_defaults): question comments say that nothing is needed
       ...nextStepEnv({ autoDefaults: summary.vars.auto_defaults === "true" }),
-      // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
+      // below delivery-handoff the hook refuses every push; the level is worked out at the start and again on each resume
       // A final release (see finalReleaseState) needs the hook folder in the environment, or its grant is never recognised: observe it.
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes || finalReleaseState(summary.flowDef, summary.vars.github_repo) === "on", autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
       ...selfEnv(),

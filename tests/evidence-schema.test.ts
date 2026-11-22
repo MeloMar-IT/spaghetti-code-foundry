@@ -139,6 +139,14 @@ describe("evidence events", () => {
     expect(EvidenceEventSchema.safeParse({ ...ok, extra: 1 }).success).toBe(false);
   });
 
+  it("reads a version 10 run.autonomy line, accepts resumed: true and refuses anything else", () => {
+    const ok = EVENTS["run.autonomy"] as Record<string, unknown>;
+    expect(parseEvidenceEvent({ ...ok, version: 10 })).toEqual(ok);
+    expect(parseEvidenceEvent({ ...ok, resumed: true })).toMatchObject({ type: "run.autonomy", resumed: true });
+    expect(EvidenceEventSchema.safeParse({ ...ok, resumed: false }).success).toBe(false);
+    expect(EvidenceEventSchema.safeParse({ ...ok, resumed: "yes" }).success).toBe(false);
+  });
+
   it("holds a governance decision to its outcome", () => {
     const ok = EVENTS["governance.decided"] as Record<string, unknown>;
     const comp = { kind: "flow", id: "deploy", status: "ok", refused: false };
@@ -182,7 +190,7 @@ describe("evidence events", () => {
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([10, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([11, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -354,9 +362,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 11 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 12 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 11 is not supported; this Foundry reads versions 1 to 10. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 12 is not supported; this Foundry reads versions 1 to 11. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -389,10 +397,10 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 10 record is current, so the step table is only used for lower versions.
+    // A version 11 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(10);
-    // version 1, 2, 6, 7 and 8 lines of an older Foundry read as version 10 (the real migrations only set the version)
+    expect(typed.version).toBe(11);
+    // version 1, 2, 6, 7 and 8 lines of an older Foundry read as version 11 (the real migrations only set the version)
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 8 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 7 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 6 })).toEqual(EVENTS["run.queued"]);

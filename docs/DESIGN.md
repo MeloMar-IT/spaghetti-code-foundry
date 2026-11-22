@@ -522,7 +522,9 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   version 8 the optional `localTest: true` on `run.created` (a run started with `--local-test`; the
   schema accepts only `true`, and the migration 7 → 8 only sets the version), and from version 10 the
   event `run.autonomy` (the level of the run, the repository's level when there is one, and the flow's;
-  see "Autonomy levels"). `run.autonomy` comes right after `run.created`.
+  see "Autonomy levels"), and from version 11 the optional `resumed: true` on `run.autonomy` (a resume that
+  found another level than the stored one; the migration 10 → 11 only sets the version). `run.autonomy` comes
+  right after `run.created`.
   `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -562,7 +564,9 @@ gets `guarded-write`. `addRepo` writes that entry through its `beforeSave` hook,
 saves `repos.json`; the API passes it in `api-repos.ts`, so `auth/` does not import the store. A repository of an
 existing install (moved from `config.yaml`) gets no entry.
 
-The level is read once per run, when `runFlow` starts, and recorded once: a resume does not read it again. If a
+The level is read when `runFlow` starts, and again on each resume (`runAutonomyOnResume`, which uses the same
+`runAutonomyAtStart`); the new level is stored in `run.json` before `drive` and `autonomyStop` read it. A resume with another
+level writes `run.autonomy` with `resumed: true`. A resume with no change writes nothing new. If a
 store cannot be read at that point, the run counts as `observe` (the fail-closed choice), and the log says so.
 The level is enforced where each action starts, not in the prompt:
 

@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { runFlow, type RunSummary } from "../src/engine/runner.js";
+import { randomUUID } from "node:crypto";
+import { addRepo } from "../src/auth/repos.js";
+import { resumeRun, runFlow, type RunSummary } from "../src/engine/runner.js";
+import { loadRun } from "../src/engine/state.js";
 import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import { verifyRunEvidence } from "../src/evidence/verify.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -12,6 +15,11 @@ import { setLevel } from "../src/governance/autonomy-store.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 
 const SENTENCE = (level: string, what: string) => `autonomy ${level} does not allow ${what}; next step: promote the repository or flow`;
+
+const NEXT: Record<string, string> = { "plan-only": "guarded-write", "guarded-write": "delivery-handoff" };
+const RAISE = (cmd: string) => `: ${cmd}, then approve it and resume this run`;
+/** The refusal of a run that has no connected repository: the flow is the limit, so the command names the flow. */
+const REFUSED = (s: { flow: string }, level: string, what: string) => SENTENCE(level, what) + RAISE(`scf autonomy promote flows ${s.flow} ${NEXT[level]} --reason "<why>"`);
 
 let gh: ReturnType<typeof fakeGithub>;
 let work: string;
@@ -79,7 +87,7 @@ describe("plan-only", () => {
     const write = await go("plan-only", agent("write", "WRITE wrote.txt hi"));
     expect(rec(write, "write").error).toBe(SENTENCE("plan-only", "a writing agent step"));
     const push = await go("plan-only", shell("push", PUSH));
-    expect(rec(push, "push").error).toBe(SENTENCE("plan-only", "a push"));
+    expect(rec(push, "push").error).toBe(REFUSED(push, "plan-only", "a push"));
     expect(remoteBranches()).toEqual(["refs/heads/main"]);
   });
 });
@@ -90,10 +98,10 @@ describe("guarded-write", () => {
     expect(rec(written, "write").ok).toBe(true);
     expect(readFileSync(join(work, "wrote.txt"), "utf8")).toBe("hi");
     const push = await go("guarded-write", shell("push", PUSH));
-    expect(rec(push, "push").error).toBe(SENTENCE("guarded-write", "a push"));
+    expect(rec(push, "push").error).toBe(REFUSED(push, "guarded-write", "a push"));
     const swallow = await go("guarded-write", shell("swallow", `${PUSH} || true`));
     expect(rec(swallow, "swallow").ok).toBe(false);
-    expect(rec(swallow, "swallow").error).toBe(SENTENCE("guarded-write", "a push"));
+    expect(rec(swallow, "swallow").error).toBe(REFUSED(swallow, "guarded-write", "a push"));
     expect(remoteBranches()).toEqual(["refs/heads/main"]);
   });
 
@@ -102,12 +110,12 @@ describe("guarded-write", () => {
     expect(rec(withRescue, "rescue").output.trim()).toBe("rescued");
     const without = await go("guarded-write", shell("push", PUSH));
     expect(without.status).toBe("failed");
-    expect(without.reason).toContain(SENTENCE("guarded-write", "a push"));
+    expect(without.reason).toContain(REFUSED(without, "guarded-write", "a push"));
   });
 
   it("refuses to open a pull request, and records it", { timeout: 60_000 }, async () => {
     const s = await go("guarded-write", shell("open_pr", 'echo body | node "$FACTORY_TOOLS/story" pr-open --head feat --title T', "    repo_access: true\n"));
-    expect(rec(s, "open_pr").error).toBe(SENTENCE("guarded-write", "a pull request"));
+    expect(rec(s, "open_pr").error).toBe(REFUSED(s, "guarded-write", "a pull request"));
     expect(gh.ghLog()).not.toContain("pr create");
     expect(denials(s)).toHaveLength(1);
   });
@@ -122,7 +130,7 @@ describe("guarded-write", () => {
     writeFileSync(join(gh.tmp, "bin", "docker"), '#!/bin/sh\nfor a in "$@"; do echo "arg:$a"; cmd=$a; done\nexec sh -c "$cmd"\n', { mode: 0o755 });
     const s = await go("guarded-write", shell("box", PUSH, "    sandbox: true\n"), config({ sandbox: { docker_image: "img" } }));
     const box = rec(s, "box");
-    expect(box.error).toBe(SENTENCE("guarded-write", "a push"));
+    expect(box.error).toBe(REFUSED(s, "guarded-write", "a push"));
     for (const name of ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "FACTORY_NO_PUSH", "FACTORY_PUSH_LOG"]) expect(box.output).toContain(`arg:${name}\n`);
     expect(box.output).toMatch(/arg:.*\/hooks:.*\/hooks:ro\n/);
     expect(box.output).toMatch(/arg:.*\/pushes:.*\/pushes:rw\n/);
@@ -136,6 +144,47 @@ describe("guarded-write", () => {
   });
 });
 
+describe("a resumed run", () => {
+  const PUSH_AGAIN = "git checkout -q -B feat && git commit -q --allow-empty -m x && git push origin feat";
+  const connect = (level: AutonomyLevel) => {
+    const id = addRepo(randomUUID(), "https://github.com/acme/app", { ownerOk: () => true }).id;
+    setLevel("repos", id, level, "system:connect");
+    return id;
+  };
+  const resume = (s: RunSummary) => resumeRun({ runsDir: join(gh.tmp, "runs"), runId: s.runId, from: "push", claudeBin, config: config() });
+
+  it("pushes after the repository was raised", { timeout: 60_000 }, async () => {
+    const id = connect("guarded-write");
+    const s = await go("delivery-handoff", shell("push", PUSH_AGAIN));
+    expect(rec(s, "push").error).toBe(SENTENCE("guarded-write", "a push") + RAISE(`scf autonomy promote repos ${id} delivery-handoff --reason "<why>"`));
+    expect(remoteBranches()).toEqual(["refs/heads/main"]);
+
+    setLevel("repos", id, "delivery-handoff", "system:admin");
+    const done = await resume(s);
+    expect(done.status).toBe("succeeded");
+    expect(remoteBranches()).toContain("refs/heads/feat");
+    expect(loadRun(join(gh.tmp, "runs"), s.runId)!.autonomy).toMatchObject({ level: "delivery-handoff", repository: "delivery-handoff" });
+    const autonomyEvents = events(s).filter((e) => e.type === "run.autonomy");
+    expect(autonomyEvents).toHaveLength(2);
+    expect(autonomyEvents[1]).toMatchObject({ level: "delivery-handoff", resumed: true });
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was guarded-write");
+    expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
+  });
+
+  it("still refuses a push after the repository was lowered", { timeout: 60_000 }, async () => {
+    const id = connect("delivery-handoff");
+    const s = await go("delivery-handoff", shell("gate", "exit 1") + shell("push", PUSH_AGAIN));
+    expect(s.status).toBe("failed");
+    setLevel("repos", id, "guarded-write", "system:admin");
+    const again = await resume(s);
+    expect(rec(again, "push").error).toBe(SENTENCE("guarded-write", "a push") + RAISE(`scf autonomy promote repos ${id} delivery-handoff --reason "<why>"`));
+    expect(again.status).toBe("failed");
+    expect(remoteBranches()).toEqual(["refs/heads/main"]);
+    expect(loadRun(join(gh.tmp, "runs"), s.runId)!.autonomy).toMatchObject({ level: "guarded-write" });
+    expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
+  });
+});
+
 describe("a read-only Codex session below delivery-handoff", () => {
   // Codex's read-only sandbox has no folder for the push log: its own command results carry the refusal to the engine.
   const codex = (id: string, prompt: string, extra = "") => agent(id, prompt, `    agent: codex\n    permission_mode: plan\n${extra}`);
@@ -144,7 +193,7 @@ describe("a read-only Codex session below delivery-handoff", () => {
     try {
       const s = await go("guarded-write", codex("pr", "REFUSED a pull request", "    on_failure: rescue\n") + shell("rescue", "echo rescued", "    jump_only: true\n"));
       expect(rec(s, "pr").ok).toBe(false);
-      expect(rec(s, "pr").error).toBe(SENTENCE("guarded-write", "a pull request"));
+      expect(rec(s, "pr").error).toBe(REFUSED(s, "guarded-write", "a pull request"));
       expect(rec(s, "rescue").output.trim()).toBe("rescued");
       expect(denials(s)).toMatchObject([{ denial: { kind: "policy", reasonCode: "autonomy.denied" } }]);
       expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");

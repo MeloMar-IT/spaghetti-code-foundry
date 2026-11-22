@@ -238,7 +238,8 @@ const GEN: Rec[] = [
   { type: "governance.decided", outcome: "allowed", components: [] },
   ...AUTONOMY_LEVELS.map((level) => ({ type: "run.autonomy", level, flow: "plan-only" })),
   ...AUTONOMY_LEVELS.map((level) => ({ type: "run.autonomy", level, repository: level, flow: level })),
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((version) => ({ type: "run.queued", version })),
+  { type: "run.autonomy", level: "plan-only", repository: "guarded-write", flow: "plan-only", resumed: true },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((version) => ({ type: "run.queued", version })),
   ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
   ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
@@ -443,6 +444,7 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("a model name with a leading space", (e) => (e.model.model = " gpt"), "step.routed"),
       one("a flow name with a control character", (e) => (e.flow.name = "a\nb"), "run.created"),
       one("an unknown autonomy level", (e) => (e.level = "full"), "run.autonomy"),
+      one("resumed false", (e) => (e.resumed = false), "run.autonomy"),
       one("a flow version 0",(e) => (e.flow.version = 0), "run.created"),
       one("a parent of a//b", (e) => (e.step.parent = "a//b")),
       one("a step id with a digit first", (e) => (e.step.id = "1a")),

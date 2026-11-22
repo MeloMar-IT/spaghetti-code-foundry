@@ -10,8 +10,9 @@
  * 8 adds `localTest` on `run.created`.
  * 9 adds the `governance.decided` event (#665).
  * 10 adds the `run.autonomy` event (#643).
+ * 11 adds `resumed` on `run.autonomy` (#905).
  */
-export const EVIDENCE_EVENT_VERSION = 10;
+export const EVIDENCE_EVENT_VERSION = 11;
 /** The version of `evidence.json` (the manifest of a finished run) this Foundry writes. */
 export const RUN_EVIDENCE_VERSION = 1;
 
