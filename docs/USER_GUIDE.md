@@ -4435,6 +4435,12 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   The other issue is read with that repository's own sign-in (at most 20 reads per check). When it
   is closed as not planned, the story shows in Your turn with the reason, because it will never be
   done; reopen it or take it out of **Depends on**.
+  When that repository has no sign-in of its own (its method is `none`), the Foundry may not read the
+  issue, and the story waits for you. Its status comment names the issue, says it could not be read and
+  why, and gives the two ways out: give that repository a sign-in under My repositories, or take the line
+  out of **Depends on** once that issue is done. Your turn shows one notice for it, not one on every
+  check, and the notice goes away when the story is no longer held. The service log writes the refusal
+  once per story and reason.
   A blocker in another repository is shown as an `owner/name#72` link to its issue on GitHub (it opens
   in a new tab), on the Work page, in the story panel, on the run page under "What happens next" and
   on the Board. A blocker in this repository is shown as `#72`, as before.

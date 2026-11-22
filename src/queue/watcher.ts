@@ -181,7 +181,7 @@ export interface Hold {
 }
 
 /** An issue a story waits for: of this repository, or of another one (`repo`, "owner/name"). */
-type BlockerRef = { issue: number; repo?: string; notPlanned?: true };
+type BlockerRef = { issue: number; repo?: string; notPlanned?: true; noSignIn?: true };
 
 const holdKey = (h: Hold) => `${h.issue ?? ""}|${h.next.kind}|${h.next.runId ?? ""}`;
 
@@ -1365,7 +1365,7 @@ export class Watcher {
     const refText = (b: BlockerRef) => (b.repo ? `${b.repo}#${b.issue}` : `#${b.issue}`);
     /** A blocker's record; an issue of another repository has none (it is not followed further). */
     const describeRef = (b: BlockerRef, seen: Set<number>): Promise<BlockerInfo> =>
-      b.repo ? Promise.resolve({ issue: b.issue, repo: b.repo, ...(b.notPlanned ? { notPlanned: true as const } : {}) }) : describeBlocker(b.issue, seen);
+      b.repo ? Promise.resolve({ issue: b.issue, repo: b.repo, ...(b.notPlanned ? { notPlanned: true as const } : {}), ...(b.noSignIn ? { noSignIn: true as const } : {}) }) : describeBlocker(b.issue, seen);
     /** What a blocker is doing: its hold, its newest run (any flow), or what it waits for itself. */
     const describeBlocker = async (b: number, seen: Set<number>): Promise<BlockerInfo> => {
       const own = holds.find((h) => h.issue === b)?.next;

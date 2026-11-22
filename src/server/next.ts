@@ -309,7 +309,7 @@ export function ownRecord(rec: NextStep, mine: (runId: string) => boolean): Next
   }
   if (out.blockers) {
     // Every blocker is cut to its issue number (and repository): what it waits for in turn may be another account's run.
-    const blockers = out.blockers.map((b) => ({ issue: b.issue, ...(b.repo ? { repo: b.repo } : {}), ...(b.notPlanned ? { notPlanned: true as const } : {}) }));
+    const blockers = out.blockers.map((b) => ({ issue: b.issue, ...(b.repo ? { repo: b.repo } : {}), ...(b.notPlanned ? { notPlanned: true as const } : {}), ...(b.noSignIn ? { noSignIn: true as const } : {}) }));
     const again = nextStep("dependency", { repo: out.repo, issue: out.issue, title: out.title, runId: out.runId }, { blockers });
     // nextStep builds the url of a blocker of another repository again, from the checked name: a stored one is never copied.
     out = { ...out, blockers: again.blockers ?? blockers, why: again.why, text: again.text };

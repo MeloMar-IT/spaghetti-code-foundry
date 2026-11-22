@@ -8,6 +8,8 @@ export interface WordFacts {
   blockers?: (number | string)[];
   /** `dependency`: issues of other repositories it waits for that were closed as not planned ("owner/name#12"). */
   dropped?: string[];
+  /** `dependency`: issues of other repositories it waits for whose repository has no sign-in of its own. */
+  unread?: string[];
   /** `red_base`: the record is the repository card (a person must act), not a held story. */
   redProblem?: boolean;
   /** The Foundry itself failed, not the code. */
@@ -61,8 +63,10 @@ const GLOSSARY: Record<NextKind, Words> = {
       : "A release pull request brings finished work to main, and this one is not merged yet. Merge it and the Foundry goes on."),
   },
   dependency: {
-    status: (f) => (f.dropped?.length ? `waiting for you — ${f.dropped.join(", ")} closed as not planned` : `waiting for ${list(f)}`),
-    help: (f) => (f.dropped?.length
+    status: (f) => (f.unread?.length ? `waiting for you — ${f.unread.join(", ")} could not be read` : f.dropped?.length ? `waiting for you — ${f.dropped.join(", ")} closed as not planned` : `waiting for ${list(f)}`),
+    help: (f) => (f.unread?.length
+      ? `It needs ${f.unread.join(", ")}, and the Foundry may not read it because that repository has no sign-in of its own. Give the repository a sign-in under My repositories, or take it out of Depends on once it is done, and the story goes on.`
+      : f.dropped?.length
       ? `It needs ${f.dropped.join(", ")}, and that was closed as not planned, so it never gets done. Reopen it, or take it out of Depends on, and the story goes on.`
       : `It needs ${list(f)} to be done first. Nothing to do — it starts by itself after that.`),
   },
