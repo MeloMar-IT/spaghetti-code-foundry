@@ -36,7 +36,16 @@ if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$
 # $FAKE_GH_HOLD2=<file> and $FAKE_GH_HOLD2_ON=<text>: the same, a second hold, so a test can release one call and keep another.
 if [ -n "$FAKE_GH_HOLD2" ]; then case "$*" in *"$FAKE_GH_HOLD2_ON"*) while [ -e "$FAKE_GH_HOLD2" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
-if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+# $FAKE_GH_FAIL_TIMES=<n>: with $FAKE_GH_FAIL or $FAKE_GH_FAIL_ON only the first n matching calls fail (counted in $FAKE_GH_LOG.fails); later ones go on.
+fail_now() {
+  if [ -n "$FAKE_GH_FAIL_TIMES" ]; then
+    fc=$(cat "$FAKE_GH_LOG.fails" 2>/dev/null || echo 0)
+    [ "$fc" -ge "$FAKE_GH_FAIL_TIMES" ] && return 0
+    echo $((fc + 1)) > "$FAKE_GH_LOG.fails"
+  fi
+  printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1
+}
+if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then fail_now; fi
 # "issue view <n> --repo R --json number,title,state,body" answers {number,title,state (upper-case),body} from $FAKE_GH_ISSUES (or the --repo list), or exits 1
 # with "Could not resolve to an Issue". "issue edit <n> --body-file -" is logged as before and also stored in $FAKE_GH_LOG.issue-bodies.json
 # ({"<repo>#<n>": body}, <repo> is the --repo value), so a later view shows the new body.
@@ -48,7 +57,7 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # $FAKE_GH_FAIL_EDIT_AFTER=<n>: the issue body edits after the first n fail with $FAKE_GH_FAIL_TEXT (default "boom"); counted in $FAKE_GH_LOG.edits.
 # $FAKE_GH_FAIL_PR_READY=1:"pr ready" (also with --undo) fails.
 # $FAKE_GH_CI_FAILS=<n>: the first n "pr checks" calls fail with exit code $FAKE_GH_CI_EXIT (default 1); $FAKE_GH_CI_SIGNAL=<name> (TERM…): "pr checks" kills itself with that signal.
-if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
+if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) fail_now ;; esac; fi
 # $FAKE_GH_CLI_ISSUES=1: "issue create --repo R --title T --body-file - [--label L]…" keeps {number (101, 102, …), repo, title, body, labels, state OPEN, url}
 # in $FAKE_GH_LOG.cli-issues.json and prints the url; "issue list --repo R --state open …" prints the OPEN issues of R from that file. A test closes an
 # issue by setting its "state" to "CLOSED" in the file (or plants issues there). Both come after $FAKE_GH_FAIL / $FAKE_GH_FAIL_ON.

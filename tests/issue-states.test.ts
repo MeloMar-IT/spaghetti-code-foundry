@@ -219,7 +219,7 @@ describe("issueStates (GitHub)", () => {
   it("rejects when a later chunk fails, with no partial answer", async () => {
     process.env.FAKE_GH_GRAPHQL_FAIL_AFTER = "1";
     await expect(issueStates("acme/app", many(501))).rejects.toThrow();
-    expect(calls()).toHaveLength(2);
+    expect(calls()).toHaveLength(4); // the first chunk, then the failing one: HTTP 502 is a temporary error, so it is tried 3 times
   });
 
   it("stops asking when `before` throws", async () => {

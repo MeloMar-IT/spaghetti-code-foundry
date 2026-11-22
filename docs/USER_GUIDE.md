@@ -878,7 +878,7 @@ The line has one entry for each problem: who has the next move, what to do, why,
 
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
 - **A usage limit:** one line per agent (Claude, Codex), not per run, with the time it continues. It shows for an hour after the run stopped; a watcher tries again every 30 minutes, so a limit that lasts keeps showing. A used-up daily budget is a problem too; the link goes to Settings.
-- **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
+- **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. A short GitHub failure (HTTP 499 or 5xx, a timeout, a dropped connection) is read again up to 2 more times, and any "can't reach GitHub" error shows here only after 3 checks in a row failed; the next good check clears it. Error details and the log show every failed check. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
 - **A schedule run that is late:** a daily schedule run (the release, the daily report) that has not started an hour after its time shows as "The 17:00 release of acme/app is waiting: <why>". The reason names who has the next move: the server waits to restart, another run goes first, the owner's or the daily budget is used up (the link goes to Settings or Users), or the watcher has a problem (its link goes to Watchers). A run that is queued but not started links to its change page. A run that was never queued, because its watcher did not start it, stays until the next day's time. The line goes away when the run starts.
 - **An issue closed on GitHub while its run still works:** with a **Cancel run** button. A dialog asks "Cancel this run?": **Keep running** changes nothing, **Cancel the run** cancels that run and reloads the line. You can resume the run later, unless the issue is still closed (see below).
 - **A run of a closed issue:** Resume, Approve, Reject, **Retry** and **Retry with a hint…** look at the issue on GitHub first. If it is closed they are refused (409) with "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.", and no label or comment is posted. After a reopen they work again. The check uses the GitHub access of the run's owner (stored token or GitHub App); a run without an owner uses the server's `gh`. With a deploy key, or when access is refused, the Foundry cannot ask GitHub. When GitHub cannot be reached, only an issue stored as closed is refused; otherwise the run continues. The answer is stored only for a repository with an enabled issues watcher. A run without an issue makes no GitHub call. `scf resume`, `scf approve` and `scf reject` print the same sentence plus "Use --force to resume it anyway."; with `--force` they run. If the check cannot be made, they print one line and continue.
@@ -2855,7 +2855,24 @@ swallows the exit code of `git push` still fails. Pull requests are opened and m
 too.
 
 A repository with no entry, and a flow with no entry, is `delivery-handoff`. A repository connected through the
-API starts at `guarded-write`. A repository of an existing install gets no entry, so it stays at `delivery-handoff`.
+API starts at `guarded-write` unless the request gives `autonomy` (see "Starting level" below). A repository of an
+existing install gets no entry, so it stays at `delivery-handoff`.
+
+**Starting level.** `POST /api/repos` takes an optional `autonomy` and `autonomyReason`. A repository that starts at
+`guarded-write` can never push or open a pull request, so the promotion gate can never pass for it. Choose the level
+when you connect it instead of editing `autonomy.json`:
+
+- An admin may give any of the four levels. A non-admin may give `observe`, `plan-only` or `guarded-write`; asking
+  for `delivery-handoff` gets 403, and nothing is stored.
+- A level that is not valid gets 400, and so does `autonomyReason` without `autonomy`.
+- The reason is checked like the other autonomy reasons: 1 to 200 characters, no control characters, and nothing that
+  looks like a credential. Without one, "chosen when the repository was connected" is used.
+- With a level, `autonomy.json` holds it for the new repository, with `by` set to the admin. One audit line,
+  `autonomy-set-initial`, records the level and the reason.
+- In the terminal, `scf repos add`, `add-token`, `add-https-token`, `add-key` and `add-app` take `--autonomy <level>`
+  and `--autonomy-reason <text>`.
+- In the web interface, the Add repository dialog shows admins a **Starting autonomy level** select on the sign-in
+  step. It is set to `guarded-write`, and the level is sent only when you pick another one.
 
 Each run gets the **lower** of its repository's level and its flow's level. The repository is the connected
 repository with the run's GitHub name (`owner/repo`); a run without one gets only the flow's level. The level is
@@ -5366,6 +5383,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
+| `autonomy-set-initial` (admin) | A repository is connected with a chosen starting autonomy level (`POST /api/repos` with `autonomy`) | `repos:<id>` | the level and the reason |
 | `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `settings-change` | An account changes its metrics sharing answer | `metrics-sharing` | `<old> -> <new>` (`unasked`, `yes` or `no`); the same answer again writes nothing |
@@ -5727,6 +5745,8 @@ one). These calls manage it:
   (ask the administrator), 502 when GitHub cannot be asked.
 - `POST /api/repos {"url": …, "method": …, "username": …, "token": …}` adds one (201; 409 if you or
   another account has it; 400 for a bad URL or method; at most 50). `{"name": "owner/name"}` still works.
+  Optional `autonomy` (`observe`, `plan-only`, `guarded-write` or `delivery-handoff`) and `autonomyReason` set the
+  starting level (see "Starting level" under Autonomy levels); `delivery-handoff` is for admins only (403 otherwise).
 - `PUT /api/repos/<id>/auth` changes the method, user name, token or address. What you do not give
   keeps its value. The old stored token is wiped. 404 for an id that is not yours.
   `{"newKey": true}` makes a new deploy key (only for the method `ssh-deploy-key`; 400 otherwise); the
@@ -8906,6 +8926,7 @@ you can do first. Find yours in the table:
 | The run failed: no reason was saved | Look at the steps and the log on the run page |
 | The run failed: the error is not one the Foundry can explain | Look at Details on the run page |
 | The watcher for … can't reach GitHub: GitHub did not answer or did not let it in | Check the network and `gh auth status` |
+| The watcher can't reach GitHub: GitHub did not answer or did not let it in | Nothing — the watcher tries again by itself |
 | GitHub's request limit is used up: the Foundry asked GitHub too much in the last hour | Nothing — GitHub lifts the limit within the hour, and the watcher continues by itself |
 | The watcher for … cannot reach the repository: a call to GitHub failed | Check that gh is logged in and the repository is there |
 | The watcher for … did not finish its check: it took too long and was given up | Press Check now on the Watchers page to try again |

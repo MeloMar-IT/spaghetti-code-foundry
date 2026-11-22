@@ -26,6 +26,10 @@ function repoLines(d: unknown): string {
 
 const TOKEN = [{ field: "token", label: "Access token", hidden: true }];
 const USERNAME: Record<string, Flag> = { username: { type: "string", help: "the user name the token belongs to" } };
+const START_LEVEL: Record<string, Flag> = {
+  autonomy: { type: "string", help: "the starting autonomy level: observe, plan-only, guarded-write (default) or delivery-handoff (admin only)" },
+  "autonomy-reason": { type: "string", key: "autonomyReason", help: "why (1 to 200 characters, no credentials)" },
+};
 const SIGN_IN_LOST = "The sign-in stored for this repository (its token or key) is replaced and cannot be read back.";
 
 /**
@@ -47,11 +51,11 @@ const REPOS: Cmd[] = [
   { area: "repos", action: "methods", method: "GET", path: "repos/methods", help: "the sign-in methods you may choose",
     show: (d) => fields({ methods: rows(d, "methods").join(", "), "github app": pick(d, "githubApp.available") ? "set up" : "not set up", "install link": pick(d, "githubApp.installUrl") }) },
 
-  signIn({ area: "repos", action: "add", method: "POST", path: "repos", args: ["url"], help: "add a repository without a sign-in of its own (choose one later with a use-… command)", show: repoLines }),
-  signIn({ area: "repos", action: "add-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-token" }, prompts: TOKEN, help: "add a GitHub repository with a fine-grained token (asked for, never typed as an argument)", show: repoLines }),
-  signIn({ area: "repos", action: "add-https-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "https-token" }, prompts: TOKEN, flags: { username: { ...USERNAME.username!, required: true } }, help: "add an https repository on any host with a user name and a token (the token is asked for)", show: repoLines }),
-  signIn({ area: "repos", action: "add-key", method: "POST", path: "repos", args: ["url"], fixed: { method: "ssh-deploy-key" }, help: "add a repository by its SSH address; the Foundry makes a deploy key and shows its public half", show: repoLines }),
-  signIn({ area: "repos", action: "add-app", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-app" }, help: "add a GitHub repository that the installed GitHub App signs in to", show: repoLines }),
+  signIn({ area: "repos", action: "add", method: "POST", path: "repos", args: ["url"], flags: START_LEVEL, help: "add a repository without a sign-in of its own (choose one later with a use-… command)", show: repoLines }),
+  signIn({ area: "repos", action: "add-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-token" }, prompts: TOKEN, flags: START_LEVEL, help: "add a GitHub repository with a fine-grained token (asked for, never typed as an argument)", show: repoLines }),
+  signIn({ area: "repos", action: "add-https-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "https-token" }, prompts: TOKEN, flags: { username: { ...USERNAME.username!, required: true }, ...START_LEVEL }, help: "add an https repository on any host with a user name and a token (the token is asked for)", show: repoLines }),
+  signIn({ area: "repos", action: "add-key", method: "POST", path: "repos", args: ["url"], fixed: { method: "ssh-deploy-key" }, flags: START_LEVEL, help: "add a repository by its SSH address; the Foundry makes a deploy key and shows its public half", show: repoLines }),
+  signIn({ area: "repos", action: "add-app", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-app" }, flags: START_LEVEL, help: "add a GitHub repository that the installed GitHub App signs in to", show: repoLines }),
 
   signIn({ area: "repos", action: "use-token", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "github-token" }, prompts: TOKEN, confirm: SIGN_IN_LOST, help: "sign in to the repository with a GitHub fine-grained token (asked for); also replaces the token", show: repoLines }),
   signIn({ area: "repos", action: "use-https-token", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "https-token" }, prompts: TOKEN, flags: USERNAME, confirm: SIGN_IN_LOST, help: "sign in with a user name and a token (asked for); --username is needed when the method changes", show: repoLines }),

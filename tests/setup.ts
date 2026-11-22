@@ -18,6 +18,7 @@ process.env.FACTORY_NO_METRICS_PUSH = "1";
 // Suites that start failing runs without a fake `claude` must never reach a real one for the failure summary.
 process.env.FACTORY_NO_FAILURE_MODEL = "1";
 process.env.FACTORY_TRANSIENT_RETRY_MS = "20,20"; // retries of a briefly unavailable service: quick in tests
+process.env.FACTORY_GH_RETRY_MS = "10,10"; // retries of a gh read that failed with a temporary error
 // A user's shell steps are held in an OS sandbox on macOS (and refused where that is not possible). Suites run as before on every
 // system; the macOS sandbox tests delete this variable themselves.
 process.env.SCF_USER_SANDBOX = "off";

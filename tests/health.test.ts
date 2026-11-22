@@ -334,12 +334,12 @@ describe("health()", () => {
 
   describe("watcher error", () => {
     it("names the repository and a connection problem", () => {
-      const h = health(ctxOf({ watchers: [{ cfg: wcfg("a"), status: wstatus("a", { lastError: "cannot access acme/app with gh: boom" }) }] }), NOW);
+      const h = health(ctxOf({ watchers: [{ cfg: wcfg("a"), status: wstatus("a", { lastError: "cannot access acme/app with gh: boom", errorCount: 3 }) }] }), NOW);
       expect(h.problems[0]!.why).toBe("The watcher for acme/app can't reach GitHub: GitHub did not answer or did not let it in");
     });
 
     it("shows equal sentences once and different ones for the same repository both", () => {
-      const conn = (id: string) => ({ cfg: wcfg(id), status: wstatus(id, { lastError: "cannot access acme/app with gh: boom" }) });
+      const conn = (id: string) => ({ cfg: wcfg(id), status: wstatus(id, { lastError: "cannot access acme/app with gh: boom", errorCount: 3 }) });
       expect(health(ctxOf({ watchers: [conn("a"), conn("b")] }), NOW).problems).toHaveLength(1);
       const bad = { cfg: wcfg("b"), status: wstatus("b", { lastError: 'invalid interval "soon"' }) };
       expect(health(ctxOf({ watchers: [conn("a"), bad] }), NOW).problems).toHaveLength(2);
