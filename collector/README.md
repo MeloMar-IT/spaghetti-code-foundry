@@ -20,7 +20,7 @@ overwrites them. It uses Node.js only, no new dependencies, and it has no access
   gets `429` with `retry_after` (seconds) and the `Retry-After` header.
 - **Retention.** Reports older than 400 days are removed.
 - **Totals.** Worked out every hour, per day (the last 35 days) and per week (weeks start on Monday), over all
-  installs. Changes, speed histograms with their medians, splits, rework, quality shares, cost and tokens per
+  installs. Changes, speed histograms with their medians, splits, rework, quality shares, tokens per
   model and per built-in step, and use. Every number is shown, also one that a single install gives (`minInstalls` is 1). `sharing` counts
   the installs and accounts of the last 7 days.
 - **Privacy.** The receiver never stores or logs an IP address, a header other than the content type, or the

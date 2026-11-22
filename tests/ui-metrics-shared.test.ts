@@ -26,7 +26,7 @@ function report(): any {
 const preview = (o: any = {}) => ({
   scope: "own", allowed: true, answer: "yes", next: { day: "2026-11-19", sofar: false, report: report() }, last: null, lastUnreadable: false, stateUnreadable: false, ...o,
 });
-const GROUPS = ["Changes", "Speed", "Splits", "Rework", "Quality", "Cost and models", "Use"];
+const GROUPS = ["Changes", "Speed", "Splits", "Rework", "Quality", "Tokens and models", "Use"];
 const titles = (el: FakeElement) => el.all("h4").map((x) => x.textContent);
 const modalRoot = () => (document as any).getElementById("modal-root") as FakeElement;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -50,8 +50,8 @@ describe("the What is shared view", () => {
     expect(rows["Run time"]).toBe("2, on average 12 min");
     expect(rows["Time in the queue"]).toBe("none");
     expect(rows["Parts per split"]).toBe("1, on average 3.0 parts");
-    expect(rows["Model: opus"]).toBe("1200 in, 300 out, $0.50");
-    expect(rows.Cost).toBe("$0.50");
+    expect(rows["Model: opus"]).toBe("1200 in, 300 out");
+    expect(rows.Cost).toBeUndefined();
   });
 
   it("says when no report was sent yet, and shows no last groups", () => {
