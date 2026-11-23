@@ -50,7 +50,14 @@ export class RunIndex {
 
   /** Resolves when the index is ready (at once in sync mode). Lets request handlers wait without reading the files. */
   whenReady(): Promise<void> {
-    return this.ready ? Promise.resolve() : this.build();
+    return this.ready ? Promise.resolve() : this.settle();
+  }
+
+  /** The first pass; when it ended incomplete (a folder could not be listed) one more pass is tried. `ready` tells the result. */
+  private async settle(): Promise<void> {
+    await this.build();
+    if (this.built || this.stopped) return;
+    await this.pass();
   }
 
   /** The first pass; a second call returns the same promise. */
@@ -138,7 +145,13 @@ export class RunIndex {
 
   /** The entry of one run id (the same rule as entries()); undefined when there is none. */
   entryOf(id: string): RunIndexEntry | undefined {
-    if (!this.live) return readIndexSlot(this.runsDir, id)?.entry;
+    if (!this.live) {
+      for (const d of allRunsDirs(this.runsDir)) {
+        const e = readIndexSlot(d, id)?.entry;
+        if (e) return e;
+      }
+      return undefined;
+    }
     return this.view().byId.get(id);
   }
 

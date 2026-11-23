@@ -171,6 +171,30 @@ describe("RunIndex in sync mode", () => {
     raw(runs, "x", JSON.stringify({ runId: "x", flow: "f", status: "failed", startedAt: "2026-10-01T10:00:00Z", totalCostUsd: 0 }));
     expect(ids(idx)).toEqual(["x"]);
   });
+
+  it("entryOf finds a run saved in a workspace runs folder", () => {
+    mk(ws, "w1");
+    const idx = new RunIndex(runs, { live: false });
+    expect(idx.entryOf("w1")?.brief.runId).toBe("w1");
+    expect(idx.entryOf("nope")).toBeUndefined();
+  });
+});
+
+describe("RunIndex whenReady", () => {
+  it("tries a second pass when the first one was incomplete, and stays not ready if it fails again", async () => {
+    const idx = new RunIndex(runs);
+    // a runs folder that cannot be listed (a file, not a folder) makes the pass incomplete
+    rmSync(runs, { recursive: true });
+    writeFileSync(runs, "not a folder");
+    await idx.whenReady();
+    expect(idx.ready).toBe(false);
+    rmSync(runs);
+    mkdirSync(runs);
+    mk(runs, "r1");
+    await idx.whenReady();
+    expect(idx.ready).toBe(true);
+    expect(ids(idx)).toEqual(["r1"]);
+  });
 });
 
 describe("RunIndex spentToday", () => {

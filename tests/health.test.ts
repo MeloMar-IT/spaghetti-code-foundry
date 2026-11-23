@@ -65,6 +65,8 @@ const ctxOf = (s: Setup = {}): ApiContext => {
       statusOf: (id: string) => (s.get?.(id) ?? runs.find((r) => r.runId === id))?.status,
       briefs: () => briefsOf(runs as never),
       get: (id: string) => s.get?.(id) ?? runs.find((r) => r.runId === id),
+      slimOf: (id: string) => s.get?.(id) ?? runs.find((r) => r.runId === id),
+      whenIndexReady: async () => {},
       queue: () => ({ active: (s.active ?? []).map((runId) => ({ runId })), pending: (s.pending ?? []).map((runId) => ({ runId, kind: "run" })) }),
     },
     watchers: {

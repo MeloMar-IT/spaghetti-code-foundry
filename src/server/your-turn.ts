@@ -166,7 +166,7 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     for (const h of t.status.holds ?? []) {
       const id = h.next.runId;
       if (h.next.kind !== "closed_elsewhere" || h.issue === undefined || !id || t.issues.some((i) => i.issue === h.issue)) continue;
-      const run = list.find((r) => r.runId === id) ?? ctx.scheduler.get(id);
+      const run = list.find((r) => r.runId === id) ?? ctx.scheduler.slimOf(id);
       if (!live.has(id) && run?.status !== "waiting") continue; // the run is over: nothing is left to cancel
       const since = h.since ?? (run ? runSince(run) : h.seen);
       // A queued run has no run page yet: the Runs page lists the queue, where it can be cancelled.
@@ -194,7 +194,7 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     const origin = runOrigin(b.source);
     if (origin === "eval" || origin === "refinement") continue;
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version
-    const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
+    const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.slimOf(b.runId);
     if (!run) continue;
     const plain = c.next(run);
     // A failed automatic release build says so; the key stays the usual one, so earlier dismissals still match.
