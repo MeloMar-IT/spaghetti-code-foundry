@@ -21,6 +21,7 @@ import { RUNNING_SWEEP_MS, sweepStaleRunning, type StaleSweep } from "../engine/
 import { cleanLine } from "../errors.js";
 import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-glass.js";
 import { Scheduler } from "../queue/scheduler.js";
+import { RunIndex } from "../engine/run-index.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
 import { SESSION_RECHECK_MS, authRoutes, meRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
@@ -190,17 +191,18 @@ export function pluginBlockedDirs(runsDir: string, home: string, repo: string): 
 }
 
 export async function startServer(given: ServerOptions): Promise<StartedServer> {
-  const loaded: { plugins?: PluginRegistry } = {};
+  const loaded: { plugins?: PluginRegistry; runIndex?: RunIndex } = {};
   try {
     return await start(given, loaded);
   } catch (e) {
+    loaded.runIndex?.stop();
     // a start that fails after the plugins loaded (a bind error, for example) never reaches close(): their handlers go now
     loaded.plugins?.dispose?.();
     throw e;
   }
 }
 
-async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry }): Promise<StartedServer> {
+async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; runIndex?: RunIndex }):Promise<StartedServer> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
   const sink = given.log ?? (() => {});
   const ring = logRing(); // the newest redacted lines, for the monitor
@@ -273,7 +275,12 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   // a crash leaves markers and code-area locks of runs that no longer run: free them before anything can wait for them
   const startSweep = sweepStaleRunning(opts.runsDir, () => false, { atStart: true });
   let gapSweep: SkillGapSweeper | undefined;
+  // The run index is built in the background and refreshed every few seconds. Tests set FACTORY_RUN_INDEX_SYNC=1: every read looks at the files.
+  const runIndex = new RunIndex(opts.runsDir, { live: process.env.FACTORY_RUN_INDEX_SYNC !== "1" });
+  loaded.runIndex = runIndex;
+  runIndex.start();
   const scheduler = new Scheduler({
+    runIndex,
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,
     config: () => effective,
@@ -524,7 +531,9 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       log(`! could not give runs to the first admin: ${(e as Error).message}`);
     }
   };
-  adopt();
+  // The first look at every run waits for the run index, so the server answers (health, login) while a big folder is read.
+  if (runIndex.ready) adopt();
+  else void runIndex.build().then(() => adopt());
   const adoptTimer = setInterval(adopt, opts.adoptEveryMs ?? 60_000);
   adoptTimer.unref();
   const sweepTimer = setInterval(sweep, opts.accountSweepMs ?? ACCOUNT_SWEEP_MS);
@@ -635,6 +644,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       metrics?.stop();
       clearTimeout(retryTimer);
       scheduler.close();
+      runIndex.stop();
       notifier?.stop();
       notices.stop();
       watchers.stopAll();

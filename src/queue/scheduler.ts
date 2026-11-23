@@ -10,7 +10,8 @@ import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../wo
 import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
-import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
+import { RunIndex } from "../engine/run-index.js";
+import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, noteRunWritten, projectOfVars, readIndexSlot, slimRunOf, spentToday, type SlimRun, type RunIndexEntry, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -123,6 +124,8 @@ export interface SchedulerOptions {
   spentTodayByProject?: (project: ProjectRef) => number;
   /** Spend of an account's runs that started today. Default: read from the run files. */
   spentTodayBy?: (accountId: string) => number;
+  /** The run index of the server (built at start). Without it the scheduler looks at the files. */
+  runIndex?: RunIndex;
   /** The limits of a workspace (#819). Default: the workspace list. Never asked for "default" or in evals. Test hook. */
   workspaceLimits?: (workspaceId: string) => Readonly<WorkspaceLimits>;
   /** Spend of the runs of a workspace that started this UTC month. Default: read from the run files. Test hook. */
@@ -187,6 +190,8 @@ export class Scheduler {
   private lastStartOfWorkspace = new Map<string, number>();
   /** New runs this scheduler started that are still active: they count before and after their run.json exists. */
   private started = new Map<string, { account: string; day: string }>();
+
+  private runIndex?: RunIndex;
 
   constructor(private o: SchedulerOptions) {
     if (o.queueFile && existsSync(o.queueFile)) {
@@ -261,7 +266,7 @@ export class Scheduler {
     const day = now.toDateString();
     const ids = new Map<string, Set<string>>();
     const add = (owner: string, id: string) => (ids.get(owner) ?? ids.set(owner, new Set()).get(owner)!).add(id);
-    for (const b of listRunBriefs(this.o.runsDir)) {
+    for (const b of this.rawBriefs()) {
       const t = new Date(b.startedAt);
       if (isRefinementRun(b.source) || Number.isNaN(t.getTime()) || t.toDateString() !== day) continue;
       add(b.owner ?? "", b.runId);
@@ -557,7 +562,7 @@ export class Scheduler {
       a.controller.abort();
       counts.running++;
     }
-    for (const b of listRunBriefs(this.o.runsDir)) {
+    for (const b of this.rawBriefs()) {
       if (b.status !== "waiting" || b.owner !== accountId || !/^[\w-]+$/.test(b.dirName)) continue;
       const live = this.active.get(b.dirName);
       if (live && live.summary?.status !== "waiting") continue; // a resume is running; the active step handled it
@@ -680,12 +685,80 @@ export class Scheduler {
 
   /** A brief of every run, newest first (cheap: files are read again only when they changed). */
   briefs(): RunBrief[] {
-    return listRunBriefs(this.o.runsDir).map((b) => this.liveBrief(b));
+    return this.rawBriefs().map((b) => this.liveBrief(b));
   }
 
   /** The same, reading in batches so the server keeps answering (for the monitor). */
   async briefsAsync(): Promise<RunBrief[]> {
+    if (this.o.runIndex?.live && this.o.runIndex.ready) return this.briefs();
     return (await listRunBriefsAsync(this.o.runsDir)).map((b) => this.liveBrief(b));
+  }
+
+  private idx(): RunIndex {
+    return (this.runIndex ??= this.o.runIndex ?? new RunIndex(this.o.runsDir, { live: false }));
+  }
+
+  /** The briefs as stored: from the run index once it is built, else from the files. */
+  private rawBriefs(): RunBrief[] {
+    const i = this.idx();
+    return i.ready ? i.briefs() : listRunBriefs(this.o.runsDir);
+  }
+
+  /** False while the run index is still being built (only a live index builds). */
+  runIndexReady(): boolean {
+    return this.idx().ready;
+  }
+
+  /** The newest `limit` runs as slim runs, from the run index. Never reads a run file once the index is ready. */
+  slimRuns(limit = 100): SlimRun[] {
+    const i = this.idx();
+    const entries = i.ready ? i.entries() : listAllRunIds(this.o.runsDir).flatMap((e) => readIndexSlot(e.runsDir, e.id)?.entry ?? []);
+    return entries.slice(0, limit).map((e) => this.slimOfEntry(e));
+  }
+
+  /** One run by folder name as a slim run, from the index. Before the index is ready it reads the file, as get() does. */
+  slimOf(dirName: string): SlimRun | undefined {
+    const i = this.idx();
+    if (!i.ready) return this.get(dirName);
+    const e = i.entryOf(dirName);
+    return e ? this.slimOfEntry(e) : undefined;
+  }
+
+  /** Resolves when the run index is built (at once without a live index). Request handlers wait here instead of reading files. */
+  whenIndexReady(): Promise<void> {
+    return this.idx().whenReady();
+  }
+
+  /** The live view of an index entry: the active run's summary, or an interrupted run marked failed (as markStale does). */
+  private slimOfEntry(e: RunIndexEntry): SlimRun {
+    const live = this.active.get(e.brief.runId)?.summary;
+    if (live) return slimRunOf(live);
+    const s = e.slim;
+    if (s.status !== "running" || this.active.has(s.runId)) return s;
+    return { ...s, status: "failed", reason: "interrupted — resume it to continue", finishedAt: s.finishedAt ?? e.brief.updatedAt };
+  }
+
+  /** The status of a run from the index (a queued or active run: its live status); undefined when there is no such run. */
+  statusOf(runId: string): RunSummary["status"] | undefined {
+    const live = this.active.get(runId)?.summary;
+    if (live) return live.status;
+    const b = this.rawBriefs().find((x) => x.runId === runId);
+    return b ? this.liveBrief(b).status : undefined;
+  }
+
+  /** Spend of the runs that started today (local time), from the run index. */
+  spentToday(now = new Date()): number {
+    const i = this.idx();
+    return i.ready ? i.spentToday(now) : spentToday(this.o.runsDir, now);
+  }
+
+  /** True when the account has a daily budget and today's spend of its runs has reached it. */
+  ownerBudgetUsed(owner: string | undefined, now = new Date()): boolean {
+    if (!owner) return false;
+    const cap = this.userDailyBudget(owner);
+    if (cap === undefined) return false;
+    const i = this.idx();
+    return (i.ready ? i.spentToday(now, owner) : spentTodayBy(this.o.runsDir, owner, now)) >= cap;
   }
 
   private liveBrief(b: RunBrief): RunBrief {
@@ -867,7 +940,7 @@ export class Scheduler {
         }
         return base + (startedNow.get(acc) ?? 0);
       }
-      briefs ??= listRunBriefs(this.o.runsDir);
+      briefs ??= this.rawBriefs();
       const now = new Date();
       const ids = runIdsStartedToday(briefs, acc, now);
       // counted by run id, so a run that is in both the files and `started` counts once
@@ -1187,6 +1260,7 @@ export class Scheduler {
       },
       onUpdate: (summary: RunSummary) => {
         a.summary = structuredClone(summary);
+        noteRunWritten(summary.runDir, summary, { stat: false });
         emit({ type: "update", summary: a.summary });
       },
       // a job without an account falls to the first admin inside runFlow: it stays under the global budget only

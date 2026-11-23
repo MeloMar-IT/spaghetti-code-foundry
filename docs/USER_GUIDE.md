@@ -874,6 +874,8 @@ In the Admin view, when you open the app after a break of 30 minutes or more, a 
 
 In the Admin view, the top bar has a **health chip**. It reads **All good**, or the number of problems of the Foundry itself ("1 problem", "3 problems"), and it turns red when there is a problem. Press it to open the health line under the top bar; press it again to close it. The line opens by itself only when the server does not answer. Problems also show on Today.
 
+Right after the server starts, it reads all run records in the background, and the health line says "The run index is still being built" until that is done. The notice is not a problem: the chip still reads "All good" or the count, and the checks that need the runs (for example the daily budget and the late-run warnings) are left out until the build is done. The time it takes grows with the number of runs kept on the machine.
+
 The line has one entry for each problem: who has the next move, what to do, why, "Continues: …" when it continues by itself, and a link to the place to act. The sentences come from the server, so they read the same as on the other pages. It asks again on every page change and every 30 seconds while the tab is visible. A hidden tab does not refresh it; it asks once when you return. The count in the tab title keeps updating. When the server does not answer, the chip reads "No answer" and the line says so (once, not on every refresh).
 
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.

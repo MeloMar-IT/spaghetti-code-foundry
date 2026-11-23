@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
-import { saveRun, type RunSummary } from "../src/engine/state.js";
+import { runReadCount, saveRun, spentToday, type RunSummary } from "../src/engine/state.js";
 import { briefsOf } from "./helpers/briefs.js";
 import { findingsFile, saveFindings, type Finding } from "../src/monitor/findings.js";
 import { saveGuard } from "../src/monitor/guard.js";
 import { nextStep } from "../src/next-step.js";
 import { toHold } from "../src/queue/watcher.js";
-import { health } from "../src/server/health.js";
+import { health, RUN_INDEX_BUILDING } from "../src/server/health.js";
 import { addSkillPins } from "../src/skills/lock.js";
 import { clearSkillRegistryCache, discoverSkills } from "../src/skills/registry.js";
 import type { ApiContext } from "../src/server/server.js";
@@ -45,6 +45,8 @@ interface Setup {
   runsDir?: string;
   get?: (id: string) => Partial<RunSummary> | undefined;
   selfUpdate?: ApiContext["selfUpdate"];
+  /** The run index is not built yet. */
+  building?: boolean;
 }
 const ctxOf = (s: Setup = {}): ApiContext => {
   const runs = s.runs ?? [];
@@ -56,6 +58,11 @@ const ctxOf = (s: Setup = {}): ApiContext => {
     config: () => ConfigSchema.parse({ protected_branches: [], ...s.config }),
     scheduler: {
       list: () => runs,
+      slimRuns: () => runs,
+      runIndexReady: () => !s.building,
+      spentToday: (now?: Date) => spentToday(s.runsDir ?? "/nonexistent", now),
+      ownerBudgetUsed: () => false,
+      statusOf: (id: string) => (s.get?.(id) ?? runs.find((r) => r.runId === id))?.status,
       briefs: () => briefsOf(runs as never),
       get: (id: string) => s.get?.(id) ?? runs.find((r) => r.runId === id),
       queue: () => ({ active: (s.active ?? []).map((runId) => ({ runId })), pending: (s.pending ?? []).map((runId) => ({ runId, kind: "run" })) }),
@@ -67,6 +74,25 @@ const ctxOf = (s: Setup = {}): ApiContext => {
   } as unknown as ApiContext;
 };
 const kinds = (h: ReturnType<typeof health>) => h.problems.map((p) => p.kind);
+
+describe("health(): while the run index is built", () => {
+  it("answers with a notice and reads no run", () => {
+    const c = ctxOf({ building: true, restart: { why: "update" } as never, config: { daily_budget_usd: 5 } });
+    const boom = () => {
+      throw new Error("a run was read");
+    };
+    Object.assign(c.scheduler, { slimRuns: boom, list: boom, briefs: boom, get: boom, statusOf: boom, spentToday: boom, ownerBudgetUsed: boom });
+    const reads = runReadCount();
+    const h = health(c, NOW);
+    expect(h.runIndexBuilding).toBe(RUN_INDEX_BUILDING);
+    expect(kinds(h)).toEqual(["restart"]);
+    expect(runReadCount()).toBe(reads);
+  });
+
+  it("has no notice once the index is built", () => {
+    expect(health(ctxOf(), NOW)).not.toHaveProperty("runIndexBuilding");
+  });
+});
 
 describe("health(): services (#867)", () => {
   const view = (name: string, state: string, over: Record<string, unknown> = {}) => ({ name, state, since: NOW.toISOString(), restarts: 0, ...over });
