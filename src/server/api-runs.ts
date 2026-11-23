@@ -47,6 +47,16 @@ export function readRun(scheduler: ApiContext["scheduler"], dirName: string, own
   }
 }
 
+/** A run by folder name as a slim run (the run index); the same checks as readRun. Any error gives undefined. */
+export function slimRow(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): RunSummary | undefined {
+  try {
+    const s = scheduler.slimOf(dirName);
+    return s && s.runId === dirName && (!owner || s.owner === owner) ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Like readRun, but the runId inside the file must always agree with the folder name. */
 export function checkedRun(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): RunSummary | undefined {
   const s = readRun(scheduler, dirName, owner);
@@ -170,10 +180,12 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const filter = { ...parsed, owner: want };
     // The archive choice, the owner and q, repo, flow, status and since are applied before the cap. Loaded by folder name;
     // with an owner, the runId and owner inside the file must agree with it, else the run is left out.
+    // The rows are slim runs from the run index (the full file is read only for one named run, see GET /api/runs/:id).
+    await scheduler.whenIndexReady();
     const runs = scheduler.briefs()
       .filter((b) => matchesRun(b, filter) && briefInScope(user, ws, b))
       .slice(0, 200)
-      .flatMap((b) => readRun(scheduler, b.dirName, want) ?? []);
+      .flatMap((b) => slimRow(scheduler, b.dirName, want) ?? []);
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
     const aside = asideCheck();

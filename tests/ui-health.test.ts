@@ -88,6 +88,15 @@ describe("renderHealth", () => {
     expect(none.textContent).toBe("All good");
   });
 
+  it("says when the run index is still being built, and nothing otherwise", () => {
+    const e = el();
+    ui.renderHealth(e, { ...good, runIndexBuilding: "the run index is still being built" });
+    expect(e.textContent).toContain("The run index is still being built");
+    const none = el();
+    ui.renderHealth(none, good);
+    expect(none.textContent).not.toContain("run index");
+  });
+
   it("lists plugin problems with the plugin and the reason", () => {
     const e = el();
     ui.renderHealth(e, { ...good, ok: false, summary: "1 problem", pluginProblems: [{ plugin: "config.yaml", reason: "lists other plugins" }] });

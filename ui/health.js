@@ -45,6 +45,7 @@ export function renderHealth(el, health, { onCancel, readOnly = false } = {}) {
     plugins.length ? h("ul", { class: "holds" }, plugins.map((p) => h("li", {}, `Plugin ${p.plugin}: ${p.reason}`))) : null,
     services.length ? h("ul", { class: "holds" }, services.map((s) => h("li", {}, serviceText(s)))) : null,
     health.monitorFindings ? h("a", { class: "health-findings", "data-focus": "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
+    typeof health.runIndexBuilding === "string" && health.runIndexBuilding ? h("span", { class: "health-index muted" }, health.runIndexBuilding[0].toUpperCase() + health.runIndexBuilding.slice(1)) : null,
     health.governor?.changesToday > 0 ? h("span", { class: "health-governor muted" }, `The load governor changed the limits ${health.governor.changesToday} time${health.governor.changesToday === 1 ? "" : "s"} today`) : null,
     repos.length ? h("span", { class: "health-repos muted" }, repos.map((r) => h("span", {}, h("span", { class: "mono" }, r.repo), lastOkText({ lastOk: r.lastOk })))) : null,
     health.version || health.update ? h("span", { class: "health-version muted" },

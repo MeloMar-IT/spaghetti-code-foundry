@@ -15,6 +15,8 @@ process.env.FACTORY_LOCK_DIR = join(process.env.FACTORY_HOME, "locks");
 process.env.FACTORY_NO_NOTIFY = "1";
 // No server of a test pushes shared metrics; the pusher tests drive their own pusher against a fake receiver.
 process.env.FACTORY_NO_METRICS_PUSH = "1";
+// Servers of tests check the run files on every read (no background run index): many tests write run.json directly.
+process.env.FACTORY_RUN_INDEX_SYNC = "1";
 // Suites that start failing runs without a fake `claude` must never reach a real one for the failure summary.
 process.env.FACTORY_NO_FAILURE_MODEL = "1";
 process.env.FACTORY_TRANSIENT_RETRY_MS = "20,20"; // retries of a briefly unavailable service: quick in tests

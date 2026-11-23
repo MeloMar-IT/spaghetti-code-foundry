@@ -39,7 +39,7 @@ beforeAll(async () => {
     runsDir: join(tmp, "runs"),
     config: ConfigSchema.parse({ protected_branches: [] }),
   });
-  runId = s.id;
+  runId = s.runId;
   writeFileSync(join(process.env.FACTORY_HOME, "config.yaml"), "providers:\n  pa: { kind: anthropic-compatible, base_url: 'http://127.0.0.1:1', api_key_env: KEY_VAR_A_FOR_TEST }\n");
   resetRedactCache(); // the run above knew nothing of the key variables; the server must register them itself
   ({ close, base } = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
@@ -72,7 +72,7 @@ async function answers(): Promise<string> {
     replay += new TextDecoder().decode(value);
   }
   await reader.cancel();
-  return [await get(`/api/runs/${runId}`), await get("/api/runs"), await get(`/api/runs/${runId}/transcript/0`), replay].join("\n");
+  return [await get(`/api/runs/${runId}`),await get("/api/runs"), await get(`/api/runs/${runId}/transcript/0`), replay].join("\n");
 }
 
 describe("provider key variables in API answers", () => {
