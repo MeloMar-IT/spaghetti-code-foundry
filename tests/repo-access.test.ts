@@ -12,7 +12,7 @@ import { listBlocks } from "../src/flow/blocks.js";
 import { claudeBin, fakeGithub, flowPath } from "./helpers/fake-github.js";
 import { remoteTools, runsTestsOrBuild, scanRepoAccess, scanSteps, usesRepo } from "./helpers/repo-access-scan.js";
 
-const TOOLS = ["create-split", "daily-branch", "decide-questions.mjs", "local-branch", "post-questions", "release-upload", "repo-review", "split-family", "story", "waits-for"];
+const TOOLS = ["create-split", "daily-branch", "decide-questions.mjs", "deps-weekly", "local-branch", "post-questions", "release-upload", "repo-review", "split-family", "story", "waits-for"];
 
 describe("repo-access scan helpers", () => {
   it("usesRepo sees gh, the remote and the remote tools", () => {
@@ -73,6 +73,12 @@ describe("the scan catches", () => {
     for (const sub of ["baseline", "audit", "check", "plan"]) {
       expect(scan([{ id: "a", type: "shell", run: `node "$FACTORY_TOOLS/repo-review" ${sub} x` }]), sub).toEqual([]);
     }
+  });
+  it("deps-weekly is remote only for its file subcommand", () => {
+    expect(scan([{ id: "a", type: "shell", run: 'node "$FACTORY_TOOLS/deps-weekly" file "{{run.dir}}"' }])).toEqual([
+      { where: "f/a", problem: "calls gh or the remote without repo_access" },
+    ]);
+    expect(scan([{ id: "a", type: "shell", run: 'node "$FACTORY_TOOLS/deps-weekly" check x' }])).toEqual([]);
   });
   it("a flagged step that runs tests, or calls nothing", () => {
     expect(scan([{ id: "a", type: "shell", run: 'gh pr list; sh -c "$FACTORY_VAR_TEST_CMD"', repo_access: true }])).toEqual([

@@ -2,13 +2,20 @@
 // The check step of the deps-weekly flow. The logic is dist/deps/check.js (build first).
 // Usage:
 //   deps-weekly check <run-dir>   in the workspace: lists the outdated Maven and npm dependencies of repo/; writes deps.json; prints the table and a summary line; never fails
-// Files in <run-dir>: deps.json (and two empty npm config files).
+//   deps-weekly file <run-dir>    files deps.json as stories (patch and minor together, each major alone, security as bug); only issues and labels are written; safe to run again
+// repo-access: remote for file
+// Files in <run-dir>: deps.json (and two empty npm config files), filed.json (what file made or changed, saved after each write).
 // Env: FACTORY_OUT_CLONE (branch and commit), FACTORY_MVN_BIN (the mvn that runs; default mvn; ./mvnw of the repository comes first),
-//      FACTORY_NPM_BIN (the npm that runs; default npm).
+//      FACTORY_NPM_BIN (the npm that runs; default npm), FACTORY_VAR_DEPS_IGNORE (names and group:* patterns that are never reported),
+//      file: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_DEPS_LABELS, FACTORY_VAR_DEPS_MAJORS_GO,
+//      FACTORY_DEPS_LOCK_WAIT_MS (how long file waits for another run that files for the same repository; default 10 min).
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
+process.env.FACTORY_GH_BIN ||= "gh";
 const env = process.env;
 const [cmd, ...args] = process.argv.slice(2);
 
@@ -18,8 +25,10 @@ function fail(msg) {
 }
 
 let D;
+let S;
 try {
   D = await import(new URL("../dist/deps/check.js", import.meta.url).href);
+  S = await import(new URL("../dist/deps/stories.js", import.meta.url).href);
 } catch (e) {
   fail(`could not load the check logic: ${String(e?.message || e).split("\n")[0]}`);
 }
@@ -82,12 +91,198 @@ function check() {
     input.npm = npmInput;
   }
 
-  const report = D.buildReport(input);
+  // deps_ignore: an ignored dependency is never reported. A wrong entry is a note, not an error.
+  const ignore = S.parseIgnore(env.FACTORY_VAR_DEPS_IGNORE ?? "");
+  const report = S.withoutIgnored(D.buildReport(input), ignore.rules);
+  for (const b of ignore.bad) report.notes.push(`deps_ignore: "${b}" is not a dependency name or a group:* pattern and was left out`);
   const file = join(dir, "deps.json");
   writeFileSync(`${file}.tmp`, JSON.stringify(report));
   renameSync(`${file}.tmp`, file);
   console.log(D.reportText(report));
 }
 
+// ── file ──
+const saveJson = (path, v) => {
+  writeFileSync(`${path}.tmp`, JSON.stringify(v));
+  renameSync(`${path}.tmp`, path);
+};
+
+/**
+ * One filing process per repository at a time, across runs and direct calls: the lists, the plan and the writes happen under this lock,
+ * so two runs cannot both see "not filed yet". A lock whose process is gone (or that is older than 2 hours) is taken over.
+ */
+async function lockRepo(repo) {
+  const base = join(env.FACTORY_HOME || join(homedir(), ".claude-factory"), "locks");
+  mkdirSync(base, { recursive: true });
+  const dir = join(base, `deps-weekly-${repo.replace(/[^\w.-]/g, "_")}.lock`);
+  const wait = Number(env.FACTORY_DEPS_LOCK_WAIT_MS ?? 600_000);
+  const deadline = Date.now() + (Number.isFinite(wait) ? wait : 600_000);
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return e?.code === "EPERM";
+    }
+  };
+  for (;;) {
+    try {
+      mkdirSync(dir);
+      writeFileSync(join(dir, "pid"), String(process.pid));
+      break;
+    } catch (e) {
+      if (e?.code !== "EEXIST") fail(`could not lock the repository: ${String(e?.message || e).split("\n")[0]}`);
+    }
+    let stale = false;
+    try {
+      const age = Date.now() - lstatSync(dir).mtimeMs;
+      const pid = existsSync(join(dir, "pid")) ? Number(readFileSync(join(dir, "pid"), "utf8")) : 0;
+      stale = age > 2 * 3_600_000 || (Number.isInteger(pid) && pid > 0 ? !alive(pid) : age > 60_000);
+    } catch {
+      // the lock went away meanwhile: try again
+    }
+    if (stale) {
+      try {
+        renameSync(dir, `${dir}.${process.pid}.stale`);
+        rmSync(`${dir}.${process.pid}.stale`, { recursive: true, force: true });
+      } catch {
+        // another process took it over first
+      }
+      continue;
+    }
+    if (Date.now() >= deadline) fail("another deps-weekly run is filing for this repository; nothing was filed");
+    await sleep(100);
+  }
+  const release = () => rmSync(dir, { recursive: true, force: true });
+  process.on("exit", release);
+  for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(128 + (sig === "SIGTERM" ? 15 : 2)));
+  return release;
+}
+
+const COLORS = { bug: "d73a4a", enhancement: "a2eeef" };
+
+/** What the repository has, for the commands in a story. */
+function buildInfo() {
+  const info = {};
+  if (plainFile(join("repo", "pom.xml"))) info.maven = { wrapper: plainFile(join("repo", "mvnw")) };
+  if (plainFile(join("repo", "package.json"))) {
+    let scripts = {};
+    try {
+      const j = JSON.parse(readFileSync(join("repo", "package.json"), "utf8"));
+      if (j && typeof j.scripts === "object" && j.scripts) scripts = j.scripts;
+    } catch {
+      // not JSON: no scripts
+    }
+    const has = (n) => typeof scripts[n] === "string" && scripts[n].trim() !== "";
+    info.npm = { lock: plainFile(join("repo", "package-lock.json")), build: has("build"), test: has("test") && !/no test specified/.test(scripts.test) };
+  }
+  return info;
+}
+
+async function file() {
+  const dir = args[0] && args[0].length > 0 ? args[0] : fail("the run folder is missing");
+  let settings;
+  try {
+    settings = S.parseDepsSettings(env);
+  } catch (e) {
+    fail(e.message);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(join(dir, "deps.json"), "utf8"));
+  } catch {
+    fail("deps.json is missing or not readable: run the check step first");
+  }
+  const checked = S.validReport(raw);
+  const ignore = S.parseIgnore(env.FACTORY_VAR_DEPS_IGNORE ?? "");
+  const report = { ...checked, updates: checked.updates.filter((u) => !S.isIgnored(u.name, ignore.rules)) };
+  const notes = [];
+  if (checked.dropped > 0) notes.push(`${checked.dropped} entr${checked.dropped === 1 ? "y" : "ies"} of deps.json were not valid and were left out`);
+  if (report.updates.length === 0) {
+    const plan = S.planFiling({ report, issues: [], settings, filed: [], build: {} });
+    plan.notes.unshift(...notes);
+    console.log(S.fileText(plan, { stories: [] }));
+    return;
+  }
+
+  const repo = env.FACTORY_VAR_GITHUB_REPO ?? "";
+  let store;
+  try {
+    const M = await import(new URL("../dist/stories/store.js", import.meta.url).href);
+    if (!M.isStoryRepoName(repo)) fail("github_repo is not a repository name");
+    store = M.storeForTool(repo);
+  } catch (e) {
+    fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+  }
+
+  const release = await lockRepo(repo);
+  try {
+    // Dedupe needs the whole history: when a list is cut, older markers (also of issues closed as not planned) could be missed. Stop before writing.
+    let open;
+    let all;
+    try {
+      open = await store.listOpen({ pages: 10 });
+      all = await store.listAll({ pages: 10 });
+    } catch (e) {
+      fail(`could not read the issues: ${String(e?.message || e).split("\n")[0]}; nothing was filed`);
+    }
+    if (open.cut || all.cut) fail("the repository has more issues than the Foundry reads (1,000 open, 1,000 in all); it cannot tell what is already filed, so nothing was filed");
+    const byNumber = new Map();
+    for (const i of [...all.issues, ...open.issues]) byNumber.set(i.number, i);
+    const issues = [...byNumber.values()].map((i) => ({
+      number: i.number, state: String(i.state).toLowerCase() === "open" ? "open" : "closed", stateReason: i.state_reason ?? null, title: String(i.title ?? ""), body: String(i.body ?? ""),
+    }));
+
+    const filedFile = join(dir, "filed.json");
+    let entries = [];
+    try {
+      const j = JSON.parse(readFileSync(filedFile, "utf8"));
+      if (Array.isArray(j.entries)) entries = j.entries.filter((e) => e && Number.isInteger(e.number) && Array.isArray(e.markers));
+    } catch {
+      // none yet
+    }
+    const plan = S.planFiling({ report, issues, settings, filed: entries, build: buildInfo() });
+    plan.notes.unshift(...notes);
+
+    const labels = new Set([...plan.stories.flatMap((s) => s.labels), ...plan.edits.flatMap((e) => e.addLabels)]);
+    for (const name of labels) {
+      try {
+        await store.createLabelIfMissing(name, COLORS[name] ?? "0e8a16", "Made by the Foundry deps-weekly flow");
+      } catch {
+        fail(`could not create the label ${name}`);
+      }
+    }
+    const keep = (entry) => {
+      entries.push(entry);
+      saveJson(filedFile, { entries });
+    };
+    for (const e of plan.edits) {
+      try {
+        // Labels first: a rerun after a stop sees the old text again and finishes both.
+        for (const l of e.addLabels) await store.setLabels(e.number, l, []);
+        await store.edit(e.number, { ...(e.title ? { title: e.title } : {}), body: e.body });
+      } catch (err) {
+        fail(`could not update #${e.number}: ${String(err?.message || err).split("\n")[0]}`);
+      }
+      keep({ number: e.number, markers: e.updates.map((u) => S.marker(u.name, u.latest)), edit: true });
+    }
+    const made = { stories: [] };
+    for (const s of plan.stories) {
+      let r;
+      try {
+        r = await store.create({ title: s.title, body: s.body, labels: s.labels });
+      } catch {
+        fail(`could not create the story "${s.title}"`);
+      }
+      made.stories.push({ number: r.number });
+      keep({ number: r.number, url: r.html_url, markers: s.updates.map((u) => S.marker(u.name, u.latest)), edit: false });
+    }
+    console.log(S.fileText(plan, made));
+  } finally {
+    release();
+  }
+}
+
 if (cmd === "check") check();
-else fail("usage: deps-weekly check <run-dir>");
+else if (cmd === "file") await file();
+else fail("usage: deps-weekly check|file <run-dir>");
