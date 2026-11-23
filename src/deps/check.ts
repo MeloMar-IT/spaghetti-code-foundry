@@ -33,10 +33,15 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const line = (t: unknown, max = 200) => safeSentence(redactTokens(String(t ?? "")), max);
 const SECRET_ENV = /token|auth|password|secret|^npm_config_/i;
 const MAVEN_NAME = /^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+){0,2}$/;
-const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$/;
+export const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$/;
 const ADVISORY_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._~/?=&%#:+-]*$/;
 const npmName = (n: string) => n.length <= 214 && NPM_NAME.test(n);
 const mavenName = (n: string) => n.length <= 200 && MAVEN_NAME.test(n);
+
+/** Is this a plausible name of a dependency of that tool (the check that parsing applies)? */
+export function isDepName(tool: DepTool, name: string): boolean {
+  return typeof name === "string" && (tool === "maven" ? mavenName(name) : npmName(name));
+}
 
 /** The environment of the npm calls: no variable that looks like a credential, no npm setting, empty user and global config. */
 export function depsNpmEnv(src: Record<string, string | undefined>, userConfig: string, globalConfig: string): Record<string, string> {
