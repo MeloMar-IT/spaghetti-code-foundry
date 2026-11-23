@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunSummary } from "../src/engine/state.js";
 import type { EvidenceEvent } from "../src/evidence/schema.js";
 import { EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "../src/evidence/version.js";
@@ -290,6 +290,26 @@ describe("files", () => {
       writeFileSync(join(d, EVIDENCE_INCOMPLETE_FILE), "");
       expect((await cache.get(ended(d), "u", NOW))?.evidence.incomplete).toBe(true);
       expect(c.reads).toBe(1);
+    });
+
+    it("with freshTtlMs, keeps the file check of a folder for that long and looks again after it", async () => {
+      const d = folder("ttl", delivered());
+      const cache = new OutcomeFactsCache({ freshTtlMs: 40 });
+      expect((await cache.get(ended(d), "u", NOW))?.evidence.manifest).toBe(false);
+      writeFileSync(join(d, EVIDENCE_MANIFEST_FILE), "{}");
+      expect((await cache.get(ended(d), "u", NOW))?.evidence.manifest).toBe(false); // still the kept check
+      await vi.waitFor(async () => expect((await cache.get(ended(d), "u", NOW))?.evidence.manifest).toBe(true), { timeout: 2000, interval: 20 });
+    });
+
+    it("an unusable freshTtlMs means a look on every call", async () => {
+      const d = folder("ttl0", delivered());
+      for (const freshTtlMs of [0, -5, Number.NaN]) {
+        const cache = new OutcomeFactsCache({ freshTtlMs });
+        rmSync(join(d, EVIDENCE_MANIFEST_FILE), { force: true });
+        expect((await cache.get(ended(d), "u", NOW))?.evidence.manifest).toBe(false);
+        writeFileSync(join(d, EVIDENCE_MANIFEST_FILE), "{}");
+        expect((await cache.get(ended(d), "u", NOW))?.evidence.manifest).toBe(true);
+      }
     });
 
     it("tells a failed read from an empty stream", async () => {
