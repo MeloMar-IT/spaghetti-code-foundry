@@ -92,6 +92,13 @@ describe("markers and checks", () => {
     expect(r.advisories[0]!.title).not.toMatch(/@everyone/);
     expect(validReport(null).updates).toEqual([]);
   });
+  it("validReport leaves the updates of Gradle, pip, Go and GitHub Actions in the report, without calling them invalid", () => {
+    const row = (tool: string, name: string) => ({ ...up(name, "1.0.0", "1.1.0", "minor"), tool });
+    const r = validReport({ updates: [up("ok", "1.0.0", "1.0.1", "patch"), row("go", "github.com/a/b"), row("pip", "requests"), row("actions", "actions/checkout"), row("gradle", "g:a")] });
+    expect(r.updates.map((u) => u.name)).toEqual(["ok"]);
+    expect(r.reportOnly).toBe(4);
+    expect(r.dropped).toBe(0);
+  });
 });
 
 describe("bodies", () => {

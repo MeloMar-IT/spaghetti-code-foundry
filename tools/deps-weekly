@@ -305,6 +305,7 @@ async function file() {
   const report = { ...checked, updates: checked.updates.filter((u) => !S.isIgnored(u.name, ignore.rules)) };
   const notes = [];
   if (checked.dropped > 0) notes.push(`${checked.dropped} entr${checked.dropped === 1 ? "y" : "ies"} of deps.json were not valid and were left out`);
+  if (checked.reportOnly > 0) notes.push(`${checked.reportOnly} update${checked.reportOnly === 1 ? "" : "s"} of Gradle, pip, Go or GitHub Actions ${checked.reportOnly === 1 ? "is" : "are"} only in the report and ${checked.reportOnly === 1 ? "was" : "were"} not filed as stories`);
   if (report.updates.length === 0) {
     const plan = S.planFiling({ report, issues: [], settings, filed: [], build: {} });
     plan.notes.unshift(...notes);
