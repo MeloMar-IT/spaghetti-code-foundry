@@ -24,7 +24,7 @@ export const PARTS_EDGES = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 /** The flows the Foundry ships (the `name` of each flows/*.yaml). */
 export const SHIPPED_FLOWS = [
-  "daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-build", "release-daily", "repo-review", "skill-write",
+  "daily-pr", "deps-weekly", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-build", "release-daily", "repo-review", "skill-write",
 ] as const;
 
 /** The step ids of the shipped flows. */
