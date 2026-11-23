@@ -70,6 +70,7 @@ const describeVars = (vars, own = {}) => Object.fromEntries(Object.keys(vars).ma
 //   refinement        — refine-brief (the architect reads a repository and its backlog; changes nothing)
 //                       refine-round — the architect asks the questions of a refinement round, answers one, suggests text for a draft, reviews a draft, says what a draft touches, judges its readiness, or proposes ways to split a draft (read-only)
 //   repository review — repo-review (reviews a whole repository, confirms each finding with a second agent, files the confirmed problems as stories)
+//   dependency check  — deps-weekly (lists outdated Maven and npm dependencies of the develop branch; changes nothing)
 // Everything else is retired: still generated (the tests run on these flows), but not shipped.
 const RETIRED = new Set(["chore", "ci-fix", "github-auto", "github-issue", "github-pr", "jira-ticket", "linear-ticket", "pr-feedback", "issue-deliver"]);
 
@@ -81,7 +82,7 @@ ${header.lines.map((l) => `# ${l}`).join("\n")}
 `;
   // Flows that change code: one run per repository at a time. Planning / PR-only flows run in parallel.
   const { description, workspace, vars, var_info, steps: flowSteps, ...rest } = flow;
-  const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "release-build", "issue-gitflow", "refine-brief", "refine-round", "repo-review"].includes(name);
+  const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "release-build", "issue-gitflow", "refine-brief", "refine-round", "repo-review", "deps-weekly"].includes(name);
   // Retired flows are no longer shipped; they stay as test material (tests/fixtures/flows) and get no var_info.
   const retired = RETIRED.has(name);
   const described = vars === undefined || retired ? {} : { var_info: describeVars(vars, var_info) };
@@ -3654,6 +3655,39 @@ write("repo-review", {
       repo_access: true,
       description: "Create the missing labels, then the stories (story 1 first); only issues and labels are written",
       run: 'node "$FACTORY_TOOLS/repo-review" file "{{run.dir}}"',
+    },
+  ],
+});
+
+// ── deps-weekly: list the outdated dependencies of a repository (a schedule watcher starts it every 7 days) ──
+// clone (the repo-review clone: no way back to the remote) → check (Maven and npm in Node, tools/deps-weekly). No agent; nothing is written to the repository or to GitHub.
+write("deps-weekly", {
+  title: "List the outdated Maven and npm dependencies of a repository",
+  lines: [
+    "scf run deps-weekly --var github_repo=owner/name [--var develop_branch=develop]",
+    "",
+    "clone → check (Maven versions plugin, npm ci, npm outdated, npm audit)",
+    "Each update is patch, minor or major; npm audit findings are marked security. The result is in deps.json and in the output of check.",
+    "A tool that is missing or fails is a note; the run stays green. Nothing is written to the repository or to GitHub.",
+  ],
+}, {
+  description: "Lists the outdated Maven and npm dependencies of the develop branch as patch, minor or major updates, marks the ones npm audit lists as security, and files nothing",
+  workspace: "empty",
+  defaults: { timeout_sec: 2700 },
+  vars: { github_repo: "owner/repo", develop_branch: "", chore_watcher: "" },
+  var_info: {
+    develop_branch: { label: "Branch to check", help: "The branch to clone. Empty: develop, else the default branch.", kind: "text" },
+    chore_watcher: RUN_SET,
+  },
+  steps: [
+    REVIEW_CLONE,
+    {
+      id: "check",
+      type: "shell",
+      description: "List the outdated Maven and npm dependencies (patch, minor, major, security) and write deps.json; a missing tool is a note",
+      // The tool limits run one after another: Maven 20 + npm ci 10 + npm outdated 5 + npm audit 2 = 37 min; 45 min leaves room for start-up.
+      timeout_sec: 2700,
+      run: 'node "$FACTORY_TOOLS/deps-weekly" check "{{run.dir}}"',
     },
   ],
 });

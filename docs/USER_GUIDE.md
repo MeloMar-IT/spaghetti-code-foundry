@@ -787,6 +787,56 @@ Text from the agents is redacted before it is filed: a token-like string is remo
 
 **What it never writes.** The review writes only issues and labels. It does not push, open pull requests or change the repository.
 
+### Check dependencies weekly
+
+`deps-weekly` lists the dependencies of a repository that have a newer version, and the ones with a known vulnerability, so you can see what needs updating. It reports only: it files no issue, opens no pull request and changes nothing in the repository. It uses no agent.
+
+Start it by hand, or let a schedule watcher start it every 7 days:
+
+```bash
+scf run deps-weekly --var github_repo=owner/name [--var develop_branch=develop]
+```
+
+```yaml
+watchers:
+  - id: webshop-deps
+    source: schedule
+    flow: deps-weekly              # lists the outdated dependencies of develop
+    github_repo: acme/webshop
+    every: 7d                      # a schedule without "at": one run every 7 days
+    task: Weekly dependency check
+```
+
+What it does, in order:
+
+1. **Clone.** It clones the branch `develop_branch`, else `develop`, else the default branch, the same way as [Review a whole repository](#review-a-whole-repository). The clone has no remote.
+2. **Check.** Without any agent, it looks for a Maven project (`pom.xml`) and an npm project (`package.json`) at the top of the repository:
+   - **Maven:** `versions:display-dependency-updates`, `versions:display-plugin-updates` and `versions:display-parent-updates`, run with `./mvnw` when the repository has it, else with `mvn`.
+   - **npm:** `npm ci` in the clone (scripts are not run), then `npm outdated --json` and `npm audit --json` of the `package-lock.json`. Without a lock file, the check uses `npm outdated` alone and no audit. The project's own `.npmrc` and your npm credentials are not used.
+
+Each update is marked:
+
+- **Class:** `patch`, `minor` or `major`, from the change in the version number.
+- **Security:** when `npm audit` lists the current version of the package.
+
+The result is written to `deps.json` in the run folder. The output of the check step shows the same table as plain text. An example (the names are made up):
+
+```
+TOOL  KIND        NAME                 CURRENT  LATEST  CLASS  SECURITY
+npm   dependency  lodash               4.17.20  4.17.21 patch  security
+maven dependency  com.example:core     1.2.0    1.4.0   minor
+```
+
+The table shows at most 100 rows; `deps.json` has all of them. A vulnerable package with no newer version is listed below the table, with "no update available".
+
+**Results.**
+
+- **Nothing outdated:** the run succeeds and says "All dependencies are up to date.".
+- **A tool is missing or fails** (for example `mvn` is not installed, `npm` cannot reach the registry, or a check takes longer than its time limit): the failure is a note in the output and in `deps.json`, and the run still succeeds. A note also says when the result is incomplete.
+- **The summary line** is the last line of the output: `Updates found: 12 (2 security). Tools not available: 1. Incomplete: 0.`
+
+The run can take up to 45 minutes; the time limit covers Maven, `npm ci`, `npm outdated` and `npm audit`.
+
 ---
 
 ## 3. Follow, approve and resume runs

@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+// The check step of the deps-weekly flow. The logic is dist/deps/check.js (build first).
+// Usage:
+//   deps-weekly check <run-dir>   in the workspace: lists the outdated Maven and npm dependencies of repo/; writes deps.json; prints the table and a summary line; never fails
+// Files in <run-dir>: deps.json (and two empty npm config files).
+// Env: FACTORY_OUT_CLONE (branch and commit), FACTORY_MVN_BIN (the mvn that runs; default mvn; ./mvnw of the repository comes first),
+//      FACTORY_NPM_BIN (the npm that runs; default npm).
+import { spawnSync } from "node:child_process";
+import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const env = process.env;
+const [cmd, ...args] = process.argv.slice(2);
+
+function fail(msg) {
+  process.stderr.write(`deps-weekly: ${msg}\n`);
+  process.exit(1);
+}
+
+let D;
+try {
+  D = await import(new URL("../dist/deps/check.js", import.meta.url).href);
+} catch (e) {
+  fail(`could not load the check logic: ${String(e?.message || e).split("\n")[0]}`);
+}
+
+const plainFile = (p) => {
+  try {
+    return lstatSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+const exec = (bin, argv, timeout) =>
+  spawnSync(bin, argv, { cwd: "repo", env: toolEnv, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+// What a step can see of a finished tool.
+const result = (r) => ({ stdout: r.stdout, status: r.status, error: r.error });
+
+let toolEnv = env;
+
+function check() {
+  const dir = args[0] && args[0].length > 0 ? args[0] : fail("the run folder is missing");
+  const { branch, commit } = D.cloneInfo(env.FACTORY_OUT_CLONE ?? "");
+  const input = { branch, commit };
+
+  if (plainFile(join("repo", "pom.xml"))) {
+    const wrapper = plainFile(join("repo", "mvnw"));
+    const run = wrapper ? exec("/bin/sh", ["./mvnw", ...D.MAVEN_ARGS], D.MAVEN_TIMEOUT_MS) : exec(env.FACTORY_MVN_BIN || "mvn", D.MAVEN_ARGS, D.MAVEN_TIMEOUT_MS);
+    input.maven = { run: result(run), cmd: wrapper ? "./mvnw" : "mvn" };
+  }
+
+  if (plainFile(join("repo", "package.json"))) {
+    // The project's npm settings and the machine's credentials stay out of the throwaway clone's npm calls.
+    rmSync(join("repo", ".npmrc"), { force: true });
+    // Two empty, distinct config files: npm refuses one file loaded as both user and global config.
+    const user = join(dir, "npm-user.npmrc");
+    const global = join(dir, "npm-global.npmrc");
+    writeFileSync(user, "");
+    writeFileSync(global, "");
+    toolEnv = D.depsNpmEnv(env, user, global);
+    const npm = env.FACTORY_NPM_BIN || "npm";
+    const lockFile = join("repo", "package-lock.json");
+    const hasLock = plainFile(lockFile);
+    const npmInput = {};
+    if (hasLock) {
+      npmInput.ci = result(exec(npm, D.NPM_CI_ARGS, D.NPM_CI_TIMEOUT_MS));
+      try {
+        const text = readFileSync(lockFile, "utf8");
+        if (text.length <= 32 * 1024 * 1024) npmInput.lock = text;
+      } catch {
+        // the lock cannot be read: current versions come from npm outdated alone
+      }
+    }
+    npmInput.outdated = result(exec(npm, D.NPM_OUTDATED_ARGS, D.NPM_OUTDATED_TIMEOUT_MS));
+    if (hasLock) {
+      const auditArgs = [
+        "audit", "--package-lock-only", "--json", "--include=prod", "--include=dev", "--include=optional", "--include=peer",
+        "--registry=https://registry.npmjs.org/", "--no-update-notifier", "--offline=false",
+      ];
+      npmInput.audit = D.auditAllFromRun(result(exec(npm, auditArgs, D.AUDIT_TIMEOUT_MS)));
+    } else npmInput.audit = { checked: false, reason: "the repository has no package-lock.json" };
+    input.npm = npmInput;
+  }
+
+  const report = D.buildReport(input);
+  const file = join(dir, "deps.json");
+  writeFileSync(`${file}.tmp`, JSON.stringify(report));
+  renameSync(`${file}.tmp`, file);
+  console.log(D.reportText(report));
+}
+
+if (cmd === "check") check();
+else fail("usage: deps-weekly check <run-dir>");
