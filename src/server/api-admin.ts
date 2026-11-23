@@ -293,7 +293,8 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   if (seg[0] === "stats" && method === "GET") {
     const now = new Date(); // one clock for every "today" number
-    const runs = scheduler.list(2000);
+    await scheduler.whenIndexReady();
+    const runs = scheduler.slimRuns(2000);
     const stats = computeStats(runs, 30, now);
     const active = new Map<string, number>();
     for (const a of scheduler.queue().active) {

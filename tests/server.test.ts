@@ -809,7 +809,7 @@ steps:
     ];
     const stub = {
       config: () => cfg,
-      scheduler: { list: () => [], queue: () => ({ pending: [], active: [] }) },
+      scheduler: { list: () => [], slimRuns: () => [], queue: () => ({ pending: [], active: [] }) },
       watchers: { tracked: () => tracked },
     } as unknown as import("../src/server/server.js").ApiContext;
     const out = allNext(stub);
@@ -1081,7 +1081,7 @@ steps:
       const byId = new Map(runs.map((r) => [r.runId as string, r]));
       return {
         config: () => ConfigSchema.parse({}),
-        scheduler: { list: () => [...past, ...runs], queue: () => ({ pending: [], active: [] }), isActive: (id: string) => active() && byId.has(id), get: (id: string) => byId.get(id) },
+        scheduler: { list: () => [...past, ...runs], slimRuns: () => [...past, ...runs], queue: () => ({ pending: [], active: [] }), isActive: (id: string) => active() && byId.has(id), get: (id: string) => byId.get(id) },
         watchers: { tracked: () => [], statuses: () => [] },
       } as unknown as Ctx;
     };

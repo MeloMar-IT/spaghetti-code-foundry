@@ -82,7 +82,7 @@ const histories = new WeakMap<ApiContext, { at: number; history: DurationHistory
 export function historyFor(ctx: ApiContext): DurationHistory {
   const have = histories.get(ctx);
   if (have && Date.now() - have.at < HISTORY_TTL_MS) return have.history;
-  const history = buildHistory(ctx.scheduler.list(HISTORY_RUNS));
+  const history = buildHistory(ctx.scheduler.slimRuns(HISTORY_RUNS));
   histories.set(ctx, { at: Date.now(), history });
   return history;
 }

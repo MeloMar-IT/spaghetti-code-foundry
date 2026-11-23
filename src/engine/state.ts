@@ -323,7 +323,32 @@ export type SlimRun = RunSummary;
 
 export const SLIM_OUTPUT_MAX = 16_000;
 /** Lines of a step output that readers look for (split parts, closed issues, planned issues, pushes): next-step.ts, failure.ts, user-view.ts. */
-const OUTPUT_MARKERS = [/^SPLIT_PARTS: /, /^#\d+ \S/, /^#{2,4}\s*ISSUE\s+\d+\s*:/i, /^PUSHED:/, /closed #\d+/];
+const OUTPUT_MARKERS = [
+  /^SPLIT_PARTS: /, /^#\d+ \S/, /^#{2,4}\s*ISSUE\s+\d+\s*:/i, /^PUSHED:/, /closed #\d+/,
+  // safe-points.ts: push_develop, verify and changes outputs.
+  /^COMMIT: /i, /^TESTED: /i, /^CHECKS: /i, /^\s*(?:Merge|Resolve) #\d+: /,
+];
+/** A first or last output line longer than this is cut (first) or replaced (last), so memory stays small. */
+export const SLIM_LINE_MAX = 2000;
+/** Stands in for a last output line that is too long to keep; it matches no reader. */
+const CUT_LINE = "[line cut]";
+
+/**
+ * Marker lines of a successful output, plus its first line (storyTitle: `# #n: Title`) and its last non-blank line
+ * (greenOf: `BASE_GREEN: …`), in order. A first line over SLIM_LINE_MAX is cut; a last line over it becomes CUT_LINE,
+ * so a reader never takes an earlier line for the last one.
+ */
+function outputLines(text: string): string {
+  const lines = text.split("\n");
+  const last = text.trimEnd().split("\n").length - 1;
+  const out: string[] = [];
+  lines.forEach((l, i) => {
+    if (OUTPUT_MARKERS.some((r) => r.test(l))) out.push(l);
+    else if (i === last) out.push(l.length <= SLIM_LINE_MAX ? l : CUT_LINE);
+    else if (i === 0) out.push(l.slice(0, SLIM_LINE_MAX));
+  });
+  return out.join("\n");
+}
 /** Steps whose newest output a reader shows in full (cut at SLIM_OUTPUT_MAX). */
 const HEAD_STEPS = ["send_back", "ask_for_info", "wait_for_story", "claim_areas"];
 /** Lines of a step text that name the task or close the issue (flow/publish.ts usesTask, next-step.ts). */
@@ -372,7 +397,7 @@ export function slimRunOf(s: RunSummary): SlimRun {
       const text = typeof output === "string" ? output : "";
       if (HEAD_STEPS.includes(r.id) && newestHead.get(r.id) === i) rec.output = text.slice(0, SLIM_OUTPUT_MAX);
       else if (!r.ok) rec.output = text.length <= 4 * SLIM_OUTPUT_MAX ? text : text.slice(0, SLIM_OUTPUT_MAX) + "\n" + text.slice(-SLIM_OUTPUT_MAX);
-      else rec.output = markerLines(text, OUTPUT_MARKERS);
+      else rec.output = outputLines(text);
       return rec;
     });
   }

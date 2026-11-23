@@ -2117,11 +2117,12 @@ export class Watcher {
   private async reportStatus(runs: Map<string, RunSummary>, holds: Hold[], tracked: TrackedIssue[], closed: { issue: number; title: string }[], complete: boolean, alive: () => boolean, quiet: number[]) {
     try {
       let all: RunSummary[] | undefined; // loaded at most once per check
+      await this.d.scheduler.whenIndexReady(); // the status text reads runs from the index, never every file
       await this.statusComments.report(this.cfg.id, {
         id: this.cfg.id, label: this.cfg.label, failedLabel: this.L.failed, tracked, holds, closed, complete, quiet,
         scheduler: this.d.scheduler, areaWait: this.d.areaWait,
         lastRunId: (n) => runs.get(String(n))?.runId,
-        releaseAt: (run) => releaseAtFor(this.d.watchers?.() ?? [], run, (all ??= this.d.scheduler.list(1000))),
+        releaseAt: (run) => releaseAtFor(this.d.watchers?.() ?? [], run, (all ??= this.d.scheduler.slimRuns(1000))),
       }, alive);
     } catch (e) {
       this.d.log(`[${this.cfg.id}] ! status comments: ${errorLine((e as Error).message)}`);

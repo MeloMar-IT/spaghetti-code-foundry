@@ -47,6 +47,7 @@ export function scenarioCtx(w: World): ApiContext {
     restart: w.restart,
     scheduler: {
       list: (n = 100) => w.runs.slice(0, n),
+      slimRuns: (n = 100) => w.runs.slice(0, n),
       get: (id: string) => w.runs.find((r) => r.runId === id),
       ownerOf: (id: string) => w.runs.find((r) => r.runId === id)?.owner,
       briefs: () => briefsOf(w.runs),

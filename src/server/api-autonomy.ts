@@ -29,7 +29,7 @@ import { AutonomyError, emptyAutonomyStore, levelsOf, readAutonomy, requestOf, t
 import { evalCoverage, promotionGate, readGateFindings, type EvalCoverage, type GateDeps, type GateFindings, type GateRuns, type PromotionGate } from "../governance/gate.js";
 import type { OutcomeWindow } from "../outcomes.js";
 import { factsCacheOf, loadWithFacts, narrowBriefs } from "./api-outcomes.js";
-import { checkedRunAsync } from "./api-runs.js";
+import { slimRow } from "./api-runs.js";
 import { autonomyHistory } from "./api-audit.js";
 import { guardedRepos } from "./api-repos.js";
 import { HttpError, readJson, send } from "./http.js";
@@ -116,7 +116,7 @@ export function gateDepsFor(ctx: ApiContext, now: Date, known?: Promise<RunBrief
   const scopes = new Map<string, Promise<GateRuns>>();
   const load = (b: RunBrief): Promise<RunSummary | undefined> => {
     let p = loads.get(b.dirName);
-    if (!p) loads.set(b.dirName, (p = checkedRunAsync(ctx.scheduler, b.dirName)));
+    if (!p) loads.set(b.dirName, (p = Promise.resolve(slimRow(ctx.scheduler, b.dirName))));
     return p;
   };
   return {
@@ -130,6 +130,7 @@ export function gateDepsFor(ctx: ApiContext, now: Date, known?: Promise<RunBrief
       let p = scopes.get(key);
       if (!p) {
         p = (async () => {
+          await ctx.scheduler.whenIndexReady();
           briefs ??= known ?? ctx.scheduler.briefsAsync();
           const chosen = gateBriefs(await briefs, scope, window);
           const r = await loadWithFacts(chosen, window, { load, cache: factsCacheOf(ctx) });
@@ -208,7 +209,7 @@ export async function autonomyStatus(ctx: ApiContext, now: Date, viewer?: string
   }
   const unreadable = problem !== undefined;
   // The runs are listed once and shared with the gates. A gate sees a failure itself; the newest-run lookup reports it.
-  const known = ctx.scheduler.briefsAsync();
+  const known = ctx.scheduler.whenIndexReady().then(() => ctx.scheduler.briefsAsync());
   let all: RunBrief[] | undefined;
   let runsProblem: string | undefined;
   try {

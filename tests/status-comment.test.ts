@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { RunSummary } from "../src/engine/state.js";
+import { slimRunOf, type RunSummary } from "../src/engine/state.js";
 import { commentId, type GhSession, isBot, isStatusComment, sameBody, STATUS_MARKER, upsertStatusComment } from "../src/github.js";
 import type { RepoGhIdentity } from "../src/queue/gh-identity.js";
 import { issueRank, issueRecord } from "../src/issue-record.js";
@@ -156,7 +156,7 @@ describe("statusTargets", () => {
   const sched = (o: { pending?: unknown[]; active?: string[]; runs?: RunSummary[] } = {}) =>
     ({
       queue: () => ({ pending: o.pending ?? [], active: (o.active ?? []).map((runId) => ({ runId })) }),
-      get: (id: string) => o.runs?.find((r) => r.runId === id),
+      slimOf: (id: string) => o.runs?.find((r) => r.runId === id),
     }) as unknown as StatusView["scheduler"];
   const view = (over: Partial<StatusView> = {}): StatusView => ({
     id: "w", label: "claude-factory", failedLabel: "factory:failed", tracked: [], holds: [], closed: [], complete: true,
@@ -186,6 +186,20 @@ describe("statusTargets", () => {
         expect(body.toLowerCase()).toContain(limit === "per_day" ? "your limit for today is reached" : "your limit of runs at the same time is reached");
         expect(body.replace(/#7|r1|issues\/7/g, "")).not.toMatch(/\d/);
       }
+    }
+  });
+
+  it("writes the same text for a slim run as for the full run (#932)", () => {
+    const step = (id: string, ok: boolean, output: string) => ({ id, type: "shell", visit: 1, ok, output, startedAt: "2026-10-01T08:01:00Z", durationMs: 1000, logFile: "x" });
+    const runs = [
+      run({ runId: "r1", status: "failed", reason: "boom", history: [step("build", false, "error one\nerror two")] }),
+      run({ runId: "r1", status: "waiting", history: [step("ask_for_info", true, "What colour?\n1. red\n2. blue")] }),
+      run({ runId: "r1", status: "succeeded", history: [step("pull_ticket", true, "# #7: T\nbody"), step("push_develop", true, "COMMIT: " + "a".repeat(40))] }),
+      run({ runId: "r1", status: "succeeded", history: [step("plan", true, "SPLIT_PARTS: 2\n#8 A\n#9 B")] }),
+    ];
+    for (const r of runs) {
+      const bodies = (s: RunSummary) => statusTargets(REPO, [view({ tracked: [t7({ runId: "r1" })], scheduler: sched({ runs: [s] }), lastRunId: () => "r1" })], new Map(), true).map((t) => t.body);
+      expect(bodies(slimRunOf(r))).toEqual(bodies(r));
     }
   });
 
@@ -485,7 +499,7 @@ describe("with the fake gh", () => {
       log = [];
       setComments();
     });
-    const sched = { queue: () => ({ pending: [], active: [] }), get: () => undefined } as unknown as StatusView["scheduler"];
+    const sched = { queue: () => ({ pending: [], active: [] }), slimOf: () => undefined } as unknown as StatusView["scheduler"];
     const doneView = (nums: number[], over: Partial<StatusView> = {}): StatusView => ({
       id: "w", label: "claude-factory", failedLabel: "factory:failed",
       tracked: nums.map((issue) => ({ issue, title: "T", done: true })), holds: [], closed: [], complete: true,
@@ -672,7 +686,7 @@ describe("StatusComments with a repository's sign-in", () => {
   });
   afterEach(() => gh.restore());
 
-  const sched = { queue: () => ({ pending: [], active: [] }), get: () => undefined } as unknown as StatusView["scheduler"];
+  const sched = { queue: () => ({ pending: [], active: [] }), slimOf: () => undefined } as unknown as StatusView["scheduler"];
   const view = (nums: number[]): StatusView =>
     ({ id: "w", label: "claude-factory", failedLabel: "factory:failed", tracked: nums.map((issue) => ({ issue, title: "T", done: true })), holds: [], closed: [], complete: true, scheduler: sched, lastRunId: () => undefined }) as StatusView;
   const session = (token: string, app = false): GhSession => ({ env: { GH_TOKEN: token, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: gh.tmp }, app, stamp: token });
