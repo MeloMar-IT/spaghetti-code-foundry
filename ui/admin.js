@@ -124,6 +124,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const publicIn = input(net.public_url ?? "", { class: "mono", placeholder: "https://mymac.local", autocomplete: "off" });
   const insecure = check(net.allow_insecure_http, "Allow plain HTTP from other computers");
   const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
+  const archiveDays = input(String(c.runs_archive_days ?? 30), { type: "number", min: 1, max: 3650, step: 1 });
   const redesign = check(c.ui?.redesign === true, "Show the redesigned pages (still being built)");
   const err = h("div");
   const restartSlot = h("div");
@@ -189,6 +190,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       skills: skills.value(),
       ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
+      runs_archive_days: archiveDays.value.trim() === "" ? 30 : Number(archiveDays.value),
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, publicUrl: publicIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
       simple_project_daily_budget_usd: num(projectBudget) ?? 0,
@@ -321,7 +323,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       hinted(sbxClaude.row, sbxClaude.el, hint("sandbox.claude")),
       hinted(sbxOff.row, sbxOff.el, hint("sandbox.user_runs", "Without the sandbox, a shell step of a user's run can read this Mac account's files.")),
       f("Docker image for sandboxed shell steps", sbxImage, hint("sandbox.docker_image", "Steps marked “Run in Docker” run in this image with only the workspace mounted.")),
-      f("Keep the audit log for … days", auditDays, hint("audit.retention_days"))),
+      f("Keep the audit log for … days", auditDays, hint("audit.retention_days")),
+      f("Move old runs to the archive after … days", archiveDays, hint("runs_archive_days"))),
     skills.el,
     ...extra.cards,
     ...(askScf.card ? [askScf.card] : []),

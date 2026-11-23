@@ -131,8 +131,8 @@ export function userError(raw: string): string {
 }
 
 /** Replaces the folders of a run (workspace, run folder, repository) in every string of a value. The longest path goes first; a path of one character or less (like "/") is ignored. */
-export function hidePaths<T>(value: T, s: { workdir?: string; runDir?: string; repo?: string } = {}): T {
-  const paths = [...new Set([s.workdir, s.runDir, s.repo].filter((p): p is string => typeof p === "string" && p.length > 1))].sort((a, b) => b.length - a.length);
+export function hidePaths<T>(value: T, s: { workdir?: string; runDir?: string; movedFrom?: string; repo?: string } = {}): T {
+  const paths = [...new Set([s.workdir, s.runDir, s.movedFrom, s.repo].filter((p): p is string => typeof p === "string" && p.length > 1))].sort((a, b) => b.length - a.length);
   if (!paths.length) return value;
   const walk = (v: unknown): unknown => {
     if (typeof v === "string") return paths.reduce((t, p) => t.split(p).join(PATH_HIDDEN), v);
@@ -265,6 +265,7 @@ const START_FAILURES: RegExp[] = [
   /^run already succeeded \(pass a step to re-run from\)$/,
   /^the run's workspace no longer exists$/,
   /^nothing to resume$/,
+  /^RUN_IN_ARCHIVE: this run was moved to runs-archive; it can be read but not resumed or changed$/,
   /^unknown step "[\w./-]+"$/,
   /^this run was created by an older version of Spaghetti Code Foundry and can't be resumed$/,
 ];

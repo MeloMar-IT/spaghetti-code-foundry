@@ -40,7 +40,7 @@ import { readPlainFile, runSandbox } from "./os-sandbox.js";
 import { localRepoEnv, ownerReposEnv, removeSignInDir } from "./repo-access.js";
 import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
-import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -359,6 +359,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   configureTelemetry(config);
   const summary = loadRun(opts.runsDir, opts.runId);
   if (!summary) throw new Error(`run ${opts.runId} not found`);
+  if (isInRunsArchive(opts.runsDir, opts.runId)) throw new Error(RUN_IN_ARCHIVE);
   if (!knownWorkspace(validWorkspaceId(summary.workspace) ? summary.workspace : DEFAULT_WORKSPACE)) throw new Error(WORKSPACE_REMOVED);
   if (!summary.flowDef || !summary.state) throw new Error("this run was created by an older version of Spaghetti Code Foundry and can't be resumed");
   if (opts.decision && summary.status !== "waiting") throw new Error(`run ${opts.runId} is not waiting for approval`);

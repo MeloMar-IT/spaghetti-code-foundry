@@ -5042,6 +5042,17 @@ at the first check after 03:00, it removes the workspaces of runs that ended mor
 as `scf clean --older-than 2` does: run records, logs and branches stay, and active or paused
 runs are not touched.
 
+**Old runs move to `runs-archive/`.** Right after the clean-up, once a night, housekeeping moves old runs
+out of `runs/` into `runs-archive/` in the data folder, one folder per run (`runs-archive/<run id>/`, the
+same layout). Nothing is deleted. A succeeded or cancelled run moves when it ended more than
+`runs_archive_days` days ago (default 30). A failed or stopped run moves only when it is more than 90 days
+old. Waiting, running, queued and other unfinished runs never move, and neither does the newest run of each
+issue, pull request or chore, so the watchers still see it. A moved run still opens by its id (the run page
+at `#/runs/<run id>`, `GET /api/runs/:id`). It is in no list, not in the Archived view and not in the run
+index. It is read only: resume, answer, cancel, archive, approve, reject and the check calls answer 409
+(`RUN_IN_ARCHIVE`). Runs that were moved to `runs-archive/` by hand, with the same layout, open the same way.
+The digest and `housekeeping/memory.log` name the number of runs moved.
+
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
 stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
 and so are runs that were interrupted (they say "running", but their process is gone). Below that
@@ -5148,6 +5159,10 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 - **Audit log** — "Keep the audit log for … days": a whole number from 1 to 3650, default 180.
   Older lines are removed when the server starts and once a day (see "How long the audit log is
   kept" below). Stored as `audit.retention_days` in `config.yaml` (an older build rejects that key).
+- **Move old runs to the archive** — "Move old runs to the archive after … days": a whole number from 1
+  to 3650, default 30. Housekeeping moves finished runs that ended this many days ago to `runs-archive/`
+  once a night (failed and stopped runs only after 90 days; see "Old runs move to `runs-archive/`" in
+  chapter 4). Stored as `runs_archive_days` in `config.yaml`; an install without the key gets 30.
 - **Secret scan** — every push is checked for API keys, tokens, private keys, connection
   strings and `.env`/key files in the new commits. Findings are shown masked and the push is
   refused. A private-key header only counts when key data follows it, so code (or a test) that
@@ -8073,7 +8088,7 @@ the answer is hidden as before).
 - **Who can read the key.** Anyone who runs commands as your macOS user, flow steps included. The
   encryption protects copies of the data folder: backups, sync, another user.
 
-Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`.
+Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`, and old runs that housekeeping has moved in `~/.spaghetti-code-foundry/runs-archive/` (see "Old runs move to `runs-archive/`" in chapter 4).
 
 ### Workspaces
 

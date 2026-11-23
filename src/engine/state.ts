@@ -132,6 +132,8 @@ export interface RunSummary {
   /** When a watcher saw the run's open issue without its trigger label while the run waited for answers or was cancelled while stopped. A resume removes it. */
   parkedAt?: string;
   runDir: string;
+  /** In memory only: the stored runDir of a run that was read from runs-archive. */
+  movedFrom?: string;
   workdir?: string;
   branch?: string;
   /** Commit the workspace started from (for diffs). */
@@ -684,15 +686,18 @@ export function rewriteRunMark(runDir: string, change: (s: Record<string, unknow
 export function loadRun(runsDir: string, runId: string): RunSummary | undefined {
   const dir = runDirOf(runsDir, runId);
   if (!dir) return undefined;
-  return parseRunText(readFileSync(runFile(dir), "utf8")) as RunSummary;
+  const s = parseRunText(readFileSync(runFile(dir), "utf8")) as RunSummary;
+  return dirname(dir) === runsArchiveDir(runsDir) ? fromArchive(s, dir) : s;
 }
 
 /** Like loadRun, but reads with fs/promises so the event loop stays free. A missing run.json gives undefined. */
 export async function loadRunAsync(runsDir: string, runId: string): Promise<RunSummary | undefined> {
   if (!RUN_ID_RE.test(runId)) return undefined;
-  for (const dir of allRunsDirs(runsDir)) {
+  const archive = runsArchiveIn(runsDir);
+  for (const dir of [...allRunsDirs(runsDir), ...(archive ? [archive] : [])]) {
     try {
-      return parseRunText(await readFile(runFile(join(dir, runId)), "utf8")) as RunSummary;
+      const s = parseRunText(await readFile(runFile(join(dir, runId)), "utf8")) as RunSummary;
+      return dir === archive ? fromArchive(s, join(dir, runId)) : s;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw e;
@@ -802,6 +807,12 @@ export function accountingRunsDirs(runsDir: string): string[] {
   const data = dirname(runsDir);
   const container = join(data, WORKSPACES_DIR);
   const out = [runsDir];
+  // runs-archive counts too (spending stays counted); a link is skipped, any other failed look throws
+  try {
+    if (lstatSync(runsArchiveDir(runsDir)).isDirectory()) out.push(runsArchiveDir(runsDir));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ENOTDIR") throw e;
+  }
   try {
     lstatSync(container);
   } catch (e) {
@@ -1026,7 +1037,47 @@ export function runDirOf(runsDir: string, runId: string): string | undefined {
     const d = join(dir, runId);
     if (existsSync(runFile(d))) return d;
   }
+  const archive = runsArchiveIn(runsDir);
+  if (archive) {
+    const d = join(archive, runId);
+    if (existsSync(runFile(d))) return d;
+  }
   return undefined;
+}
+
+/** Old runs are moved by housekeeping to `<data>/runs-archive/<id>/`; they open by id but are in no list. */
+export const RUNS_ARCHIVE_DIR = "runs-archive";
+export const RUN_IN_ARCHIVE = "RUN_IN_ARCHIVE: this run was moved to runs-archive; it can be read but not resumed or changed";
+export const runsArchiveDir = (runsDir: string): string => join(dirname(runsDir), RUNS_ARCHIVE_DIR);
+
+/** The archive folder when it is a real folder (a link is never followed), else undefined. */
+function runsArchiveIn(runsDir: string): string | undefined {
+  const a = runsArchiveDir(runsDir);
+  return isRealDir(a) ? a : undefined;
+}
+
+/** True when the run is found in runs-archive and nowhere else. Never throws. */
+export function isInRunsArchive(runsDir: string, runId: string): boolean {
+  try {
+    const d = runDirOf(runsDir, runId);
+    return d !== undefined && dirname(d) === runsArchiveDir(runsDir);
+  } catch {
+    return false;
+  }
+}
+
+/** A run read from runs-archive: runDir is the folder it was found in, the paths below the stored runDir follow it. In memory only. */
+function fromArchive(s: RunSummary, dir: string): RunSummary {
+  const old = s.runDir;
+  if (typeof old !== "string" || old === "" || old === dir) return { ...s, runDir: dir };
+  const rebase = (p: string): string => (p === old ? dir : p.startsWith(old + sep) ? dir + p.slice(old.length) : p);
+  return {
+    ...s,
+    runDir: dir,
+    movedFrom: old,
+    ...(typeof s.workdir === "string" ? { workdir: rebase(s.workdir) } : {}),
+    ...(Array.isArray(s.history) ? { history: s.history.map((h) => (typeof h?.logFile === "string" ? { ...h, logFile: rebase(h.logFile) } : h)) } : {}),
+  };
 }
 
 /** True when any runs folder (but `except`, a runs folder) has an entry with this id, with or without run.json. */
@@ -1040,7 +1091,12 @@ export function runIdTaken(runsDir: string, runId: string, except?: string): boo
       // not here
     }
   }
-  return false;
+  try {
+    lstatSync(join(runsArchiveDir(runsDir), runId));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
