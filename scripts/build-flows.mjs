@@ -70,7 +70,7 @@ const describeVars = (vars, own = {}) => Object.fromEntries(Object.keys(vars).ma
 //   refinement        — refine-brief (the architect reads a repository and its backlog; changes nothing)
 //                       refine-round — the architect asks the questions of a refinement round, answers one, suggests text for a draft, reviews a draft, says what a draft touches, judges its readiness, or proposes ways to split a draft (read-only)
 //   repository review — repo-review (reviews a whole repository, confirms each finding with a second agent, files the confirmed problems as stories)
-//   dependency check  — deps-weekly (lists outdated Maven and npm dependencies of the develop branch and files them as stories)
+//   dependency check  — deps-weekly (lists outdated Maven, npm, Gradle, pip, Go and GitHub Actions dependencies of the develop branch and files them as stories)
 // Everything else is retired: still generated (the tests run on these flows), but not shipped.
 const RETIRED = new Set(["chore", "ci-fix", "github-auto", "github-issue", "github-pr", "jira-ticket", "linear-ticket", "pr-feedback", "issue-deliver"]);
 
@@ -3660,22 +3660,24 @@ write("repo-review", {
 });
 
 // ── deps-weekly: list the outdated dependencies of a repository (a schedule watcher starts it every 7 days) ──
-// clone (the repo-review clone: no way back to the remote) → check (Maven and npm in Node, tools/deps-weekly) → file_stories (issues and labels only). No agent.
+// clone (the repo-review clone: no way back to the remote) → actions (the newest release of each pinned GitHub Action through gh; the only step with the token
+// besides clone and file_stories; it runs no repository code) → check (Maven, npm, Gradle, pip, Go and OSV in Node, tools/deps-weekly; it runs repository code and has no token)
+// → file_stories (issues and labels only). No agent.
 write("deps-weekly", {
-  title: "List the outdated Maven and npm dependencies of a repository and file them as stories",
+  title: "List the outdated Maven, npm, Gradle, pip, Go and GitHub Actions dependencies of a repository and file them as stories",
   lines: [
     "scf run deps-weekly --var github_repo=owner/name [--var develop_branch=develop]",
     "",
-    "clone → check (Maven versions plugin, npm ci, npm outdated, npm audit) → file_stories",
-    "Each update is patch, minor or major; npm audit findings are marked security. The result is in deps.json and in the output of check.",
+    "clone → actions (newest release of each pinned action) → check (Maven, npm ci, npm outdated, npm audit, Gradle versions plugin, pip, Go, OSV scanner) → file_stories",
+    "Each update is patch, minor or major; npm audit and OSV scanner findings are marked security. The result is in deps.json and in the output of check.",
     "A tool that is missing or fails is a note; the run stays green.",
     "file_stories files the updates at once: patch and minor in one story, each major alone, security as bug.",
     "Only issues and labels are written, never the repository. An update is never filed twice for the same version.",
   ],
 }, {
-  description: "Lists the outdated Maven and npm dependencies of the develop branch as patch, minor or major updates, marks the ones npm audit lists as security, and files them as stories (patch and minor together, each major alone, security as bug) without duplicates",
+  description: "Lists the outdated Maven, npm, Gradle, pip, Go and GitHub Actions dependencies of the develop branch as patch, minor or major updates, marks the ones npm audit or the OSV scanner list as security, and files them as stories (patch and minor together, each major alone, security as bug) without duplicates",
   workspace: "empty",
-  defaults: { timeout_sec: 2700 },
+  defaults: { timeout_sec: 5400 },
   vars: { github_repo: "owner/repo", develop_branch: "", chore_watcher: "", deps_labels: "Factory_go", deps_majors_go: "no", deps_ignore: "" },
   var_info: {
     develop_branch: { label: "Branch to check", help: "The branch to clone. Empty: develop, else the default branch.", kind: "text" },
@@ -3687,11 +3689,20 @@ write("deps-weekly", {
   steps: [
     REVIEW_CLONE,
     {
+      id: "actions",
+      type: "shell",
+      repo_access: true,
+      description: "Look up the newest release of each GitHub Action pinned in the workflows and write actions.json; runs no repository code",
+      // At most 100 actions, 20 s per call, 5 min in all; 10 min leaves room for start-up.
+      timeout_sec: 600,
+      run: 'node "$FACTORY_TOOLS/deps-weekly" actions "{{run.dir}}"',
+    },
+    {
       id: "check",
       type: "shell",
-      description: "List the outdated Maven and npm dependencies (patch, minor, major, security) and write deps.json; a missing tool is a note",
-      // The tool limits run one after another: Maven 20 + npm ci 10 + npm outdated 5 + npm audit 2 = 37 min; 45 min leaves room for start-up.
-      timeout_sec: 2700,
+      description: "List the outdated Maven, npm, Gradle, pip, Go and GitHub Actions dependencies (patch, minor, major, security) and write deps.json; a missing tool is a note",
+      // The tool limits run one after another: Maven 20 + npm ci 10 + npm outdated 5 + npm audit 2 + Gradle 20 + pip 5 + Go 10 + OSV 5 = 77 min; 90 min leaves room for start-up.
+      timeout_sec: 5400,
       run: 'node "$FACTORY_TOOLS/deps-weekly" check "{{run.dir}}"',
     },
     {

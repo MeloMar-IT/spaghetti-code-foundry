@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-// The check step of the deps-weekly flow. The logic is dist/deps/check.js (build first).
+// The steps of the deps-weekly flow. The logic is dist/deps/*.js (build first).
 // Usage:
-//   deps-weekly check <run-dir>   in the workspace: lists the outdated Maven and npm dependencies of repo/; writes deps.json; prints the table and a summary line; never fails
-//   deps-weekly file <run-dir>    files deps.json as stories (patch and minor together, each major alone, security as bug); only issues and labels are written; safe to run again
-// repo-access: remote for file
-// Files in <run-dir>: deps.json (and two empty npm config files), filed.json (what file made or changed, saved after each write).
+//   deps-weekly actions <run-dir>  in the workspace: finds the pinned GitHub Actions in repo/.github/workflows and asks gh for the newest release of each; writes actions.json; runs no repository code; never fails
+//   deps-weekly check <run-dir>    in the workspace: lists the outdated Maven, npm, Gradle, pip and Go dependencies of repo/ and the outdated actions of actions.json; OSV marks security; writes deps.json; prints the table and a summary line; never fails
+//   deps-weekly file <run-dir>     files deps.json as stories (patch and minor together, each major alone, security as bug); only issues and labels are written; safe to run again
+// repo-access: remote for actions, file
+// Files in <run-dir>: actions.json, deps.json (and two empty npm config files), filed.json (what file made or changed, saved after each write).
 // Env: FACTORY_OUT_CLONE (branch and commit), FACTORY_MVN_BIN (the mvn that runs; default mvn; ./mvnw of the repository comes first),
-//      FACTORY_NPM_BIN (the npm that runs; default npm), FACTORY_VAR_DEPS_IGNORE (names and group:* patterns that are never reported),
+//      FACTORY_NPM_BIN (default npm), FACTORY_GRADLE_BIN (default gradle; ./gradlew comes first), FACTORY_PIP_BIN (the pip of the project's Python environment; unset: pip is not run),
+//      FACTORY_GO_BIN (default go), FACTORY_OSV_BIN (default osv-scanner), FACTORY_GH_BIN (default gh; the actions step only),
+//      FACTORY_VAR_DEPS_IGNORE (names and group:* patterns that are never reported),
 //      file: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_DEPS_LABELS, FACTORY_VAR_DEPS_MAJORS_GO,
 //      FACTORY_DEPS_LOCK_WAIT_MS (how long file waits for another run that files for the same repository; default 10 min).
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 process.env.FACTORY_GH_BIN ||= "gh";
@@ -24,41 +27,129 @@ function fail(msg) {
   process.exit(1);
 }
 
-let D;
-let S;
+let D, E, A, O, S;
 try {
   D = await import(new URL("../dist/deps/check.js", import.meta.url).href);
+  E = await import(new URL("../dist/deps/ecosystems.js", import.meta.url).href);
+  A = await import(new URL("../dist/deps/actions.js", import.meta.url).href);
+  O = await import(new URL("../dist/deps/osv.js", import.meta.url).href);
   S = await import(new URL("../dist/deps/stories.js", import.meta.url).href);
 } catch (e) {
   fail(`could not load the check logic: ${String(e?.message || e).split("\n")[0]}`);
 }
 
-const plainFile = (p) => {
+const stat = (p) => {
   try {
-    return lstatSync(p).isFile();
+    return lstatSync(p);
   } catch {
-    return false;
+    return undefined;
   }
 };
-const exec = (bin, argv, timeout) =>
-  spawnSync(bin, argv, { cwd: "repo", env: toolEnv, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+const plainFile = (p) => stat(p)?.isFile() === true;
+const anyFile = (names) => names.some((n) => plainFile(join("repo", n)));
+/** The text of a plain file of at most `max` bytes under repo/ (no link out of the clone); undefined otherwise. */
+const readRepoFile = (rel, max) => {
+  const p = join("repo", rel);
+  try {
+    const st = lstatSync(p);
+    if (!st.isFile() || st.size > max) return undefined;
+    if (!realpathSync(p).startsWith(realpathSync("repo") + sep)) return undefined;
+    return readFileSync(p, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+const exec = (bin, argv, timeout, e = env, cwd = "repo") =>
+  spawnSync(bin, argv, { cwd, env: e, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 // What a step can see of a finished tool.
-const result = (r) => ({ stdout: r.stdout, status: r.status, error: r.error });
+const result = (r) => ({ stdout: r.stdout, stderr: r.stderr, status: r.status, error: r.error });
 
-let toolEnv = env;
+const runDirArg = () => (args[0] && args[0].length > 0 ? args[0] : fail("the run folder is missing"));
+
+// ── actions: the newest release of each pinned action (the only step with the gh token; it runs no repository code) ──
+function actions() {
+  const dir = runDirArg();
+  const file = { version: 1, workflows: 0, pins: [], releases: {}, releaseShas: {}, noRelease: [], failed: [], invalid: 0 };
+  const wf = join("repo", ".github", "workflows");
+  const st = stat(wf);
+  if (st && !st.isDirectory()) file.invalid = 1; // a link or a file where the folder should be: not followed
+  else if (st) {
+    const names = readdirSync(wf).filter((n) => /\.ya?ml$/i.test(n)).sort();
+    const texts = [];
+    for (const n of names.slice(0, A.WORKFLOW_FILES_MAX)) {
+      const text = readRepoFile(join(".github", "workflows", n), A.WORKFLOW_BYTES_MAX);
+      if (text === undefined) file.invalid++;
+      else texts.push(text);
+    }
+    file.workflows = texts.length;
+    const parsed = A.parseWorkflows(texts);
+    file.pins = parsed.pins;
+    file.invalid += parsed.invalid;
+    const gh = env.FACTORY_GH_BIN || "gh";
+    const api = (path, extra = []) => result(exec(gh, ["api", path, ...extra], A.GH_TIMEOUT_MS, env, "."));
+    const deadline = Date.now() + A.ACTIONS_DEADLINE_MS;
+    const repos = [...new Set(parsed.pins.map((p) => p.repo))].slice(0, A.ACTIONS_MAX);
+    for (const repo of repos) {
+      if (Date.now() > deadline) break;
+      const rel = A.releaseFromGh(api(`repos/${repo}/releases/latest`));
+      if (rel.kind === "none") file.noRelease.push(repo);
+      else if (rel.kind === "failed") file.failed.push(repo);
+      else {
+        file.releases[repo] = rel.value;
+        // A SHA pin is matched by commit, whatever its comment says.
+        if (parsed.pins.some((p) => p.repo === repo && A.isSha(p.ref))) {
+          const sha = A.commitFromGh(api(`repos/${repo}/commits/${rel.value}`, ["--jq", ".sha"]));
+          if (sha) file.releaseShas[repo] = sha;
+        }
+      }
+    }
+  }
+  const out = join(dir, "actions.json");
+  writeFileSync(`${out}.tmp`, JSON.stringify(file));
+  renameSync(`${out}.tmp`, out);
+  console.log(A.actionsSummary(file));
+}
+
+/** The result of the actions step: the file, nothing (no workflows), or unreadable. */
+function readActions(dir) {
+  const p = join(dir, "actions.json");
+  const st = stat(p);
+  if (!st) return stat(join("repo", ".github", "workflows")) ? { unreadable: true } : {};
+  if (!st.isFile() || st.size > A.ACTIONS_FILE_MAX) return { unreadable: true };
+  try {
+    const file = A.readActionsFile(readFileSync(p, "utf8"));
+    return file ? { file } : { unreadable: true };
+  } catch {
+    return { unreadable: true };
+  }
+}
 
 function check() {
-  const dir = args[0] && args[0].length > 0 ? args[0] : fail("the run folder is missing");
+  const dir = runDirArg();
   const { branch, commit } = D.cloneInfo(env.FACTORY_OUT_CLONE ?? "");
   const input = { branch, commit };
 
-  if (plainFile(join("repo", "pom.xml"))) {
+  // The result of the credentialed step is read first, before any repository code runs.
+  const act = readActions(dir);
+  if (act.file || act.unreadable) input.actions = act;
+
+  const has = {
+    maven: plainFile(join("repo", "pom.xml")), npm: plainFile(join("repo", "package.json")),
+    gradle: anyFile(E.GRADLE_MARKERS), pip: anyFile(E.PIP_MARKERS), go: anyFile(E.GO_MARKERS),
+  };
+  const safeEnv = E.depsToolEnv(env);
+
+  if (O && (Object.values(has).some(Boolean) || (act.file && act.file.pins.length > 0))) {
+    input.osv = result(exec(env.FACTORY_OSV_BIN || "osv-scanner", O.OSV_ARGS, O.OSV_TIMEOUT_MS, safeEnv));
+  }
+
+  if (has.maven) {
     const wrapper = plainFile(join("repo", "mvnw"));
     const run = wrapper ? exec("/bin/sh", ["./mvnw", ...D.MAVEN_ARGS], D.MAVEN_TIMEOUT_MS) : exec(env.FACTORY_MVN_BIN || "mvn", D.MAVEN_ARGS, D.MAVEN_TIMEOUT_MS);
     input.maven = { run: result(run), cmd: wrapper ? "./mvnw" : "mvn" };
   }
 
-  if (plainFile(join("repo", "package.json"))) {
+  if (has.npm) {
     // The project's npm settings and the machine's credentials stay out of the throwaway clone's npm calls.
     rmSync(join("repo", ".npmrc"), { force: true });
     // Two empty, distinct config files: npm refuses one file loaded as both user and global config.
@@ -66,13 +157,13 @@ function check() {
     const global = join(dir, "npm-global.npmrc");
     writeFileSync(user, "");
     writeFileSync(global, "");
-    toolEnv = D.depsNpmEnv(env, user, global);
+    const npmEnv = D.depsNpmEnv(env, user, global);
     const npm = env.FACTORY_NPM_BIN || "npm";
     const lockFile = join("repo", "package-lock.json");
     const hasLock = plainFile(lockFile);
     const npmInput = {};
     if (hasLock) {
-      npmInput.ci = result(exec(npm, D.NPM_CI_ARGS, D.NPM_CI_TIMEOUT_MS));
+      npmInput.ci = result(exec(npm, D.NPM_CI_ARGS, D.NPM_CI_TIMEOUT_MS, npmEnv));
       try {
         const text = readFileSync(lockFile, "utf8");
         if (text.length <= 32 * 1024 * 1024) npmInput.lock = text;
@@ -80,16 +171,32 @@ function check() {
         // the lock cannot be read: current versions come from npm outdated alone
       }
     }
-    npmInput.outdated = result(exec(npm, D.NPM_OUTDATED_ARGS, D.NPM_OUTDATED_TIMEOUT_MS));
+    npmInput.outdated = result(exec(npm, D.NPM_OUTDATED_ARGS, D.NPM_OUTDATED_TIMEOUT_MS, npmEnv));
     if (hasLock) {
       const auditArgs = [
         "audit", "--package-lock-only", "--json", "--include=prod", "--include=dev", "--include=optional", "--include=peer",
         "--registry=https://registry.npmjs.org/", "--no-update-notifier", "--offline=false",
       ];
-      npmInput.audit = D.auditAllFromRun(result(exec(npm, auditArgs, D.AUDIT_TIMEOUT_MS)));
+      npmInput.audit = D.auditAllFromRun(result(exec(npm, auditArgs, D.AUDIT_TIMEOUT_MS, npmEnv)));
     } else npmInput.audit = { checked: false, reason: "the repository has no package-lock.json" };
     input.npm = npmInput;
   }
+
+  if (has.gradle) {
+    // An old report of the clone must not pass for this run's.
+    rmSync(join("repo", E.GRADLE_REPORT), { force: true });
+    const wrapper = plainFile(join("repo", "gradlew"));
+    const run = wrapper
+      ? exec("/bin/sh", ["./gradlew", ...E.GRADLE_ARGS], E.GRADLE_TIMEOUT_MS, safeEnv)
+      : exec(env.FACTORY_GRADLE_BIN || "gradle", E.GRADLE_ARGS, E.GRADLE_TIMEOUT_MS, safeEnv);
+    input.gradle = { run: result(run), cmd: wrapper ? "./gradlew" : "gradle" };
+    const report = readRepoFile(E.GRADLE_REPORT, E.GRADLE_REPORT_MAX);
+    if (report !== undefined) input.gradle.report = report;
+  }
+
+  // Without a configured environment pip would list the runner's packages, which say nothing about the project: it is not run.
+  if (has.pip) input.pip = env.FACTORY_PIP_BIN ? { run: result(exec(env.FACTORY_PIP_BIN, E.PIP_ARGS, E.PIP_TIMEOUT_MS, E.depsPipEnv(env))), cmd: "pip" } : { cmd: "pip" };
+  if (has.go) input.go = { run: result(exec(env.FACTORY_GO_BIN || "go", E.GO_ARGS, E.GO_TIMEOUT_MS, E.depsGoEnv(env))), cmd: "go" };
 
   // deps_ignore: an ignored dependency is never reported. A wrong entry is a note, not an error.
   const ignore = S.parseIgnore(env.FACTORY_VAR_DEPS_IGNORE ?? "");
@@ -198,6 +305,7 @@ async function file() {
   const report = { ...checked, updates: checked.updates.filter((u) => !S.isIgnored(u.name, ignore.rules)) };
   const notes = [];
   if (checked.dropped > 0) notes.push(`${checked.dropped} entr${checked.dropped === 1 ? "y" : "ies"} of deps.json were not valid and were left out`);
+  if (checked.reportOnly > 0) notes.push(`${checked.reportOnly} update${checked.reportOnly === 1 ? "" : "s"} of Gradle, pip, Go or GitHub Actions ${checked.reportOnly === 1 ? "is" : "are"} only in the report and ${checked.reportOnly === 1 ? "was" : "were"} not filed as stories`);
   if (report.updates.length === 0) {
     const plan = S.planFiling({ report, issues: [], settings, filed: [], build: {} });
     plan.notes.unshift(...notes);
@@ -284,5 +392,6 @@ async function file() {
 }
 
 if (cmd === "check") check();
+else if (cmd === "actions") actions();
 else if (cmd === "file") await file();
-else fail("usage: deps-weekly check|file <run-dir>");
+else fail("usage: deps-weekly actions|check|file <run-dir>");

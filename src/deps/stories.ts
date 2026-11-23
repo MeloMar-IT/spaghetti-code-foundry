@@ -82,17 +82,22 @@ const SEVERITIES = ["info", "low", "moderate", "high", "critical"];
 const URL_OK = /^https:\/\/[^\s()<>"`]{1,300}$/;
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
-export interface CheckedReport { updates: DepUpdate[]; advisories: Advisory[]; branch: string; commit: string; unavailable: number; dropped: number }
+export interface CheckedReport { updates: DepUpdate[]; advisories: Advisory[]; branch: string; commit: string; unavailable: number; dropped: number; reportOnly: number }
 
 /** What deps.json says, with every name, version and word checked again before it goes into a title or a body. */
 export function validReport(r: unknown): CheckedReport {
-  const out: CheckedReport = { updates: [], advisories: [], branch: "", commit: "", unavailable: 0, dropped: 0 };
+  const out: CheckedReport = { updates: [], advisories: [], branch: "", commit: "", unavailable: 0, dropped: 0, reportOnly: 0 };
   if (!isObj(r)) return out;
   if (typeof r.branch === "string" && r.branch.length <= 200 && BRANCH.test(r.branch)) out.branch = r.branch;
   if (typeof r.commit === "string" && /^[0-9a-f]{40}$/.test(r.commit)) out.commit = r.commit;
   if (typeof r.unavailable === "number" && Number.isInteger(r.unavailable) && r.unavailable >= 0) out.unavailable = r.unavailable;
   const seen = new Set<string>();
   for (const u of Array.isArray(r.updates) ? r.updates : []) {
+    // Gradle, pip, Go and GitHub Actions updates are only in the report; stories are filed for Maven and npm.
+    if (isObj(u) && typeof u.tool === "string" && ["gradle", "pip", "go", "actions"].includes(u.tool)) {
+      out.reportOnly++;
+      continue;
+    }
     if (
       !isObj(u) || (u.tool !== "maven" && u.tool !== "npm") || !KINDS.includes(u.kind as DepKind) || !CLASSES.includes(u.class as UpdateClass) ||
       typeof u.name !== "string" || !isDepName(u.tool, u.name) || typeof u.current !== "string" || !VERSION.test(u.current) ||
@@ -116,7 +121,7 @@ export function validReport(r: unknown): CheckedReport {
 
 // ── text ──
 const RANK = { critical: 4, high: 3, moderate: 2, low: 1, info: 0 } as const;
-const TOOL_NAME: Record<DepTool, string> = { maven: "Maven", npm: "npm" };
+const TOOL_NAME: Record<DepTool, string> = { maven: "Maven", npm: "npm", gradle: "Gradle", pip: "pip", go: "Go", actions: "GitHub Actions" };
 const SECURITY_WORD = ", security: ";
 
 /** One update, one line, ending with its marker. Names sit in backticks, so an npm scope never becomes a mention. */

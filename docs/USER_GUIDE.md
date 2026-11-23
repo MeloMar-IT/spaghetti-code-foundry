@@ -810,22 +810,37 @@ watchers:
 What it does, in order:
 
 1. **Clone.** It clones the branch `develop_branch`, else `develop`, else the default branch, the same way as [Review a whole repository](#review-a-whole-repository). The clone has no remote.
-2. **Check.** Without any agent, it looks for a Maven project (`pom.xml`) and an npm project (`package.json`) at the top of the repository:
-   - **Maven:** `versions:display-dependency-updates`, `versions:display-plugin-updates` and `versions:display-parent-updates`, run with `./mvnw` when the repository has it, else with `mvn`.
-   - **npm:** `npm ci` in the clone (scripts are not run), then `npm outdated --json` and `npm audit --json` of the `package-lock.json`. Without a lock file, the check uses `npm outdated` alone and no audit. The project's own `.npmrc` and your npm credentials are not used.
-3. **File.** It files the updates as stories on the repository (`github_repo`), with the labels set below. This step has `repo_access`, so it writes to GitHub; the check step does not.
+2. **Actions.** It finds the GitHub Actions pinned in `.github/workflows/*.yml` (the `uses:` of each step and of each reusable job) and asks GitHub, with `gh`, for the newest release of each one. This step and the File step are the only ones that talk to GitHub, and this one runs no code from the repository. A pin is compared at its own precision: `@v4` is not an update while the newest release is `v4.2.0`. A pin to a full commit SHA is compared by the version in its comment (for example `# v4.2.0`). Without such a comment, the SHA is compared with the commit of the newest release, and a different commit is listed as "not compared".
+3. **Check.** Without any agent, it checks each project it finds at the top of the repository, and the whole repository with the OSV scanner. The tools are:
+
+| Tool | Finds | Runs | Override variable |
+|---|---|---|---|
+| Maven | `pom.xml` | `versions:display-dependency-updates`, `versions:display-plugin-updates` and `versions:display-parent-updates`, with `./mvnw` when the repository has it, else `mvn` | `FACTORY_MVN_BIN` |
+| npm | `package.json` | `npm ci` in the clone (scripts are not run), then `npm outdated --json` and `npm audit --json` of the `package-lock.json`. Without a lock file, `npm outdated` alone and no audit. The project's own `.npmrc` and your npm credentials are not used. | `FACTORY_NPM_BIN` |
+| Gradle | `build.gradle`, `build.gradle.kts`, `settings.gradle` or `settings.gradle.kts` | `dependencyUpdates` of the Gradle versions plugin (`com.github.ben-manes.versions`), with `./gradlew` when the repository has it, else `gradle`. Only stable releases count. Without the plugin, Gradle is skipped with a note. | `FACTORY_GRADLE_BIN` |
+| pip | `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg` or `Pipfile` | `pip list --outdated --format json` against PyPI. It runs only when `FACTORY_PIP_BIN` names the pip of the project's Python environment. Unset, pip is not run and a note says so. | `FACTORY_PIP_BIN` |
+| Go | `go.mod` | `go list -m -u -json all`, without downloading a toolchain | `FACTORY_GO_BIN` |
+| GitHub Actions | `.github/workflows/*.yml` | `gh` looks up the newest release of each pinned action (step 2) | `FACTORY_GH_BIN` |
+| OSV scanner | the whole repository | `osv-scanner --format json --recursive .`. Its findings mark the matching updates as security. Without it, a note says so. | `FACTORY_OSV_BIN` |
+
+Each override names the program to run. Without one, the command name in the Runs column is looked up on the `PATH`; pip has no default, as above. The overrides are set in the environment that runs the Foundry.
+4. **File.** It files the updates as stories on the repository (`github_repo`), with the labels set below. This step has `repo_access`, so it writes to GitHub; the check step does not.
 
 Each update is marked:
 
-- **Class:** `patch`, `minor` or `major`, from the change in the version number.
-- **Security:** when `npm audit` lists the current version of the package.
+- **Class:** `patch`, `minor` or `major`, from the change in the version number. For a pinned action, the class is the change from the pinned version to the newest release.
+- **Security:** when `npm audit` or the OSV scanner lists the current version of the package.
 
 The result is written to `deps.json` in the run folder. The output of the check step shows the same table as plain text. An example (the names are made up):
 
 ```
-TOOL  KIND        NAME                 CURRENT  LATEST  CLASS  SECURITY
-npm   dependency  lodash               4.17.20  4.17.21 patch  security
-maven dependency  com.example:core     1.2.0    1.4.0   minor
+TOOL     KIND        NAME                   CURRENT  LATEST  CLASS  SECURITY
+npm      dependency  lodash                 4.17.20  4.17.21 patch  security
+gradle   dependency  org.example:core       1.2.0    1.4.0   minor
+maven    dependency  com.example:core       1.2.0    1.4.0   minor
+pip      dependency  requests               2.28.0   2.32.3  minor
+actions  action      actions/checkout       v3       v4.2.0  major
+go       dependency  example.com/lib/json   1.0.2    2.0.0   major
 ```
 
 The table shows at most 100 rows; `deps.json` has all of them. A vulnerable package with no newer version is listed below the table, with "no update available".
@@ -863,7 +878,7 @@ Filing does not repeat itself:
 - **A tool is missing or fails** (for example `mvn` is not installed, `npm` cannot reach the registry, or a check takes longer than its time limit): the failure is a note in the output and in `deps.json`, and the run still succeeds. A note also says when the result is incomplete.
 - **The summary line** is the last line of the output, for example: `Updates found: 12. Filed: 3 in 2 stories. Updated in open stories: 1. Skipped as already filed: 8. Tools not available: 1.`
 
-The run can take up to 45 minutes; the time limit covers Maven, `npm ci`, `npm outdated` and `npm audit`.
+Each tool has its own time limit (Gradle 20 minutes, Go 10, pip and the OSV scanner 5). The check step as a whole can take up to 90 minutes, and the actions step up to 10 minutes.
 
 ---
 
