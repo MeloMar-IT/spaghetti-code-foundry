@@ -874,6 +874,8 @@ In the Admin view, when you open the app after a break of 30 minutes or more, a 
 
 In the Admin view, the top bar has a **health chip**. It reads **All good**, or the number of problems of the Foundry itself ("1 problem", "3 problems"), and it turns red when there is a problem. Press it to open the health line under the top bar; press it again to close it. The line opens by itself only when the server does not answer. Problems also show on Today.
 
+Right after the server starts, it reads all run records in the background, and the health line says "The run index is still being built" until that is done. The notice is not a problem: the chip still reads "All good" or the count, and the checks that need the runs (for example the daily budget and the late-run warnings) are left out until the build is done. The time it takes grows with the number of runs kept on the machine.
+
 The line has one entry for each problem: who has the next move, what to do, why, "Continues: …" when it continues by itself, and a link to the place to act. The sentences come from the server, so they read the same as on the other pages. It asks again on every page change and every 30 seconds while the tab is visible. A hidden tab does not refresh it; it asks once when you return. The count in the tab title keeps updating. When the server does not answer, the chip reads "No answer" and the line says so (once, not on every refresh).
 
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
@@ -1935,6 +1937,9 @@ can be found.
   Version 10 adds the event `run.autonomy` (see "Autonomy levels"). Versions 1 to 9 are read as before. A
   delivery validator that only knows version 9 refuses version 10 lines, so the validator is 1.3.0 from this
   change on: update the pin first.
+  Version 11 adds `resumed: true` to the event `run.autonomy`, written when a resumed run has another level than
+  before (see "Autonomy levels"). Versions 1 to 10 are read as before. A delivery validator that only knows
+  version 10 refuses version 11 lines, so the validator is 1.4.0 from this change on: update the pin first.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -2580,7 +2585,7 @@ check-runs API of the commit.
 delivery-contract:
   runs-on: ubuntu-latest
   env:
-    VALIDATOR_VERSION: "1.3.0"          # the version you pin
+    VALIDATOR_VERSION: "1.4.0"          # the version you pin
     RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
     GH_TOKEN: ${{ github.token }}
   steps:
@@ -2620,7 +2625,7 @@ folder, which the job gets from the workflow's artifacts or from the pull reques
 **Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
 
 ```sh
-V=1.3.0
+V=1.4.0
 BASE="<download folder of that release>"   # the release's assets, from the release page
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
@@ -2847,7 +2852,9 @@ lowest first, are `observe`, `plan-only`, `guarded-write` and `delivery-handoff`
 | `delivery-handoff` | No extra limit. This is how Foundry worked before autonomy levels. |
 
 A refused step fails with a message such as `autonomy observe does not allow a writing agent step; next step: promote
-the repository or flow`. The run's own failure handling (`on_failure`) then runs, and the refusal is recorded in the
+the repository or flow`. A refused push or pull request also names the command that raises the level, for example
+`: scf autonomy promote repos <id> guarded-write --reason "<why>", then approve it and resume this run`; it is left
+out at the top level or when the repository or flow cannot be named. The run's own failure handling (`on_failure`) then runs, and the refusal is recorded in the
 evidence as a `step.denied` event with the reason `autonomy.denied`. A refused writing agent step starts no agent. A
 refused push is stopped by the pre-push hook, which is installed for runs below `delivery-handoff`, so a step that
 swallows the exit code of `git push` still fails. Pull requests are opened and merged by the story tools
@@ -2880,7 +2887,12 @@ kept in three places:
 
 - `run.json`, as `autonomy` (`level`, `repository` when there is one, and `flow`);
 - the live log, as a line such as `autonomy: plan-only (repository guarded-write, flow plan-only)`;
-- the evidence, as the event `run.autonomy`, written right after `run.created`. A resumed run does not write it again.
+- the evidence, as the event `run.autonomy`, written right after `run.created`.
+
+A stopped run is not stuck at the level it started with. On each resume the level is worked out again from the current
+settings, as at the start, and stored in `run.json`. So after you raise the level, resume the stopped run: it pushes and
+goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>` and the
+evidence gets `run.autonomy` with `resumed: true`. A resume with no change writes no new event.
 
 Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
 routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion
@@ -4291,6 +4303,14 @@ baseline commit that passed or was named). The check passes only when:
 
 If it does not pass, the run stops at the test step, and the log lists what is not yet right.
 
+**Resume after a fix made by hand.** If a run stopped at `red_develop` and you commit a fix on the feature branch, resume the run at `merge_develop`, not at `test_develop`:
+
+```bash
+scf resume <run-id> --from merge_develop
+```
+
+`merge_develop` merges the feature branch with the newest `develop` again, and `test_develop` tests that merge. `push_develop` then pushes only the commit that `test_develop` passed, so an untested merge never reaches `develop`. If you resume at `test_develop` or `push_develop` while `HEAD` is not on `develop`, or while the feature branch has a commit that the tested merge lacks, the run stops before any test runs or any push. The log then says `nothing is tested or pushed` and names `merge_develop` as the step to resume. Changes in the workspace are kept. A run saved before this change picks up the new steps when it is resumed.
+
 **Not covered.** A test that fails by chance is still run only once more, not fixed by this rule. The
 baseline on `main` for a release is not changed. You cannot switch the baseline check off for a
 repository with this.
@@ -4425,6 +4445,12 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   The other issue is read with that repository's own sign-in (at most 20 reads per check). When it
   is closed as not planned, the story shows in Your turn with the reason, because it will never be
   done; reopen it or take it out of **Depends on**.
+  When that repository has no sign-in of its own (its method is `none`), the Foundry may not read the
+  issue, and the story waits for you. Its status comment names the issue, says it could not be read and
+  why, and gives the two ways out: give that repository a sign-in under My repositories, or take the line
+  out of **Depends on** once that issue is done. Your turn shows one notice for it, not one on every
+  check, and the notice goes away when the story is no longer held. The service log writes the refusal
+  once per story and reason.
   A blocker in another repository is shown as an `owner/name#72` link to its issue on GitHub (it opens
   in a new tab), on the Work page, in the story panel, on the run page under "What happens next" and
   on the Board. A blocker in this repository is shown as `#72`, as before.
@@ -5016,6 +5042,17 @@ at the first check after 03:00, it removes the workspaces of runs that ended mor
 as `scf clean --older-than 2` does: run records, logs and branches stay, and active or paused
 runs are not touched.
 
+**Old runs move to `runs-archive/`.** Right after the clean-up, once a night, housekeeping moves old runs
+out of `runs/` into `runs-archive/` in the data folder, one folder per run (`runs-archive/<run id>/`, the
+same layout). Nothing is deleted. A succeeded or cancelled run moves when it ended more than
+`runs_archive_days` days ago (default 30). A failed or stopped run moves only when it is more than 90 days
+old. Waiting, running, queued and other unfinished runs never move, and neither does the newest run of each
+issue, pull request or chore, so the watchers still see it. A moved run still opens by its id (the run page
+at `#/runs/<run id>`, `GET /api/runs/:id`). It is in no list, not in the Archived view and not in the run
+index. It is read only: resume, answer, cancel, archive, approve, reject and the check calls answer 409
+(`RUN_IN_ARCHIVE`). Runs that were moved to `runs-archive/` by hand, with the same layout, open the same way.
+The digest and `housekeeping/memory.log` name the number of runs moved.
+
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
 stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
 and so are runs that were interrupted (they say "running", but their process is gone). Below that
@@ -5122,6 +5159,10 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 - **Audit log** — "Keep the audit log for … days": a whole number from 1 to 3650, default 180.
   Older lines are removed when the server starts and once a day (see "How long the audit log is
   kept" below). Stored as `audit.retention_days` in `config.yaml` (an older build rejects that key).
+- **Move old runs to the archive** — "Move old runs to the archive after … days": a whole number from 1
+  to 3650, default 30. Housekeeping moves finished runs that ended this many days ago to `runs-archive/`
+  once a night (failed and stopped runs only after 90 days; see "Old runs move to `runs-archive/`" in
+  chapter 4). Stored as `runs_archive_days` in `config.yaml`; an install without the key gets 30.
 - **Secret scan** — every push is checked for API keys, tokens, private keys, connection
   strings and `.env`/key files in the new commits. Findings are shown masked and the push is
   refused. A private-key header only counts when key data follows it, so code (or a test) that
@@ -8047,7 +8088,7 @@ the answer is hidden as before).
 - **Who can read the key.** Anyone who runs commands as your macOS user, flow steps included. The
   encryption protects copies of the data folder: backups, sync, another user.
 
-Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`.
+Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`, and old runs that housekeeping has moved in `~/.spaghetti-code-foundry/runs-archive/` (see "Old runs move to `runs-archive/`" in chapter 4).
 
 ### Workspaces
 

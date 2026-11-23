@@ -181,7 +181,7 @@ export interface Hold {
 }
 
 /** An issue a story waits for: of this repository, or of another one (`repo`, "owner/name"). */
-type BlockerRef = { issue: number; repo?: string; notPlanned?: true };
+type BlockerRef = { issue: number; repo?: string; notPlanned?: true; noSignIn?: true };
 
 const holdKey = (h: Hold) => `${h.issue ?? ""}|${h.next.kind}|${h.next.runId ?? ""}`;
 
@@ -1365,7 +1365,7 @@ export class Watcher {
     const refText = (b: BlockerRef) => (b.repo ? `${b.repo}#${b.issue}` : `#${b.issue}`);
     /** A blocker's record; an issue of another repository has none (it is not followed further). */
     const describeRef = (b: BlockerRef, seen: Set<number>): Promise<BlockerInfo> =>
-      b.repo ? Promise.resolve({ issue: b.issue, repo: b.repo, ...(b.notPlanned ? { notPlanned: true as const } : {}) }) : describeBlocker(b.issue, seen);
+      b.repo ? Promise.resolve({ issue: b.issue, repo: b.repo, ...(b.notPlanned ? { notPlanned: true as const } : {}), ...(b.noSignIn ? { noSignIn: true as const } : {}) }) : describeBlocker(b.issue, seen);
     /** What a blocker is doing: its hold, its newest run (any flow), or what it waits for itself. */
     const describeBlocker = async (b: number, seen: Set<number>): Promise<BlockerInfo> => {
       const own = holds.find((h) => h.issue === b)?.next;
@@ -2117,11 +2117,12 @@ export class Watcher {
   private async reportStatus(runs: Map<string, RunSummary>, holds: Hold[], tracked: TrackedIssue[], closed: { issue: number; title: string }[], complete: boolean, alive: () => boolean, quiet: number[]) {
     try {
       let all: RunSummary[] | undefined; // loaded at most once per check
+      await this.d.scheduler.whenIndexReady(); // the status text reads runs from the index, never every file
       await this.statusComments.report(this.cfg.id, {
         id: this.cfg.id, label: this.cfg.label, failedLabel: this.L.failed, tracked, holds, closed, complete, quiet,
         scheduler: this.d.scheduler, areaWait: this.d.areaWait,
         lastRunId: (n) => runs.get(String(n))?.runId,
-        releaseAt: (run) => releaseAtFor(this.d.watchers?.() ?? [], run, (all ??= this.d.scheduler.list(1000))),
+        releaseAt: (run) => releaseAtFor(this.d.watchers?.() ?? [], run, (all ??= this.d.scheduler.slimRuns(1000))),
       }, alive);
     } catch (e) {
       this.d.log(`[${this.cfg.id}] ! status comments: ${errorLine((e as Error).message)}`);

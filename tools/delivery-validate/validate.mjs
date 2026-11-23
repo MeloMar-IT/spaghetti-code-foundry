@@ -32,7 +32,7 @@ const execFileAsync = promisify(execFile);
 const NAMESPACE = "scf-delivery-contract";
 // Raise this when a verdict, an option or the output changes. The release files are named after it
 // (scf-delivery-validate-<version>.mjs). It is not the `version` of the --json output.
-const VALIDATOR_VERSION = "1.3.0";
+const VALIDATOR_VERSION = "1.4.0";
 const STOP_CONDITIONS = ["commit-changed", "lock-changed", "workflow-changed", "required-check-failed", "evidence-unverified", "signature-unverified", "superseded"];
 const WORKFLOWS_DIR = ".github/workflows/";
 const EVIDENCE_EVENTS_FILE = "evidence.jsonl";
@@ -368,7 +368,7 @@ function checkContract(text, sigText, key) {
 // same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
 
 /** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
-const EVIDENCE_EVENT_VERSION = 10;
+const EVIDENCE_EVENT_VERSION = 11;
 const EVENTS_MAX = 256 * 1024 * 1024;
 const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
 const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
@@ -495,7 +495,7 @@ const event = (shape) =>
 const stepEnd = { step, model: opt(model), exitCode: opt(int()), durationMs: int(0), artifacts: arr(artifactRef), test: opt(testResult) };
 const EVENT_TYPES = {
   "run.created": event({ flow: flowIdentity, by: actor, localTest: opt((v) => v === true) }),
-  "run.autonomy": event({ level: oneOf(AUTONOMY_LEVELS), repository: opt(oneOf(AUTONOMY_LEVELS)), flow: oneOf(AUTONOMY_LEVELS) }),
+  "run.autonomy": event({ level: oneOf(AUTONOMY_LEVELS), repository: opt(oneOf(AUTONOMY_LEVELS)), flow: oneOf(AUTONOMY_LEVELS), resumed: opt((v) => v === true) }),
   "run.queued": event({}),
   "run.started": event({ base: opt(gitIdentity) }),
   "run.stopped": event({ at: opt(stepId) }),
@@ -588,7 +588,7 @@ function eventRules(e) {
 }
 const isEvent = both(union("type", EVENT_TYPES), eventRules);
 
-/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→10 only set the version), then the schema holds. */
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→11 only set the version), then the schema holds. */
 function readEvent(raw) {
   const v = raw.version;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;

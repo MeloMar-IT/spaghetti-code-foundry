@@ -21,6 +21,8 @@ export interface CrossBlocker {
   issue: number;
   /** It was closed as not planned: only the owner can sort that out. */
   notPlanned?: true;
+  /** (method none) Its repository has no sign-in of its own: only the owner can sort that out. */
+  noSignIn?: true;
 }
 
 export interface CrossDepOptions {
@@ -40,7 +42,7 @@ export interface CrossDepOptions {
   cap?: number;
 }
 
-type Lookup = { kind: "skip" } | { kind: "refused"; why: string } | { kind: "ok"; rec: RepoRecord };
+type Lookup = { kind: "skip" } | { kind: "refused"; why: string; noSignIn?: true } | { kind: "ok"; rec: RepoRecord };
 type Result = { state: CrossState } | { failed: string };
 type CrossRef = { repo: string; issue: number };
 
@@ -51,6 +53,11 @@ export class CrossDeps {
   private lookups = new Map<string, Lookup>();
   private results = new Map<string, Promise<Result>>();
   private said = new Set<string>();
+  /**
+   * Refusals already written to the log, kept across checks: "story|reference" → the reason and the check that last saw it.
+   * An entry goes when the reference resolves another way, or when the last whole check did not look at it.
+   */
+  private refusals = new Map<string, { why: string; seen: number }>();
   private capSaid = false;
   /** The number of the check that runs (1 for the first). */
   private serial = 0;
@@ -71,12 +78,14 @@ export class CrossDeps {
   /**
    * Starts a check. `bodies` are the issues this check looks at: their references get the read slots (at most `cap`),
    * the ones read longest ago first, so that no reference is starved by the others. Nothing is kept from earlier checks
-   * (a reopened issue holds again), and a reference without a slot holds its story for this check.
+   * (a reopened issue holds again), except which refusals the log has told already, and a reference without a slot holds its story for this check.
    */
   startCheck(bodies: readonly { number: number; body?: string }[] = []): void {
     this.lookups.clear();
     this.results.clear();
     this.said.clear();
+    // Forget a refusal only when no look at it happened in the whole last check: a story found late in a check still counts.
+    for (const [k, e] of this.refusals) if (e.seen < this.serial) this.refusals.delete(k);
     this.capSaid = false;
     this.serial++;
     this.slots = this.plan(bodies);
@@ -111,13 +120,17 @@ export class CrossDeps {
       if (ref.repo.toLowerCase() === self) continue;
       const name = `${ref.repo}#${ref.issue}`;
       const look = this.lookup(ref.repo);
+      const rk = `${issue.number}|${keyOf(ref.repo, ref.issue)}`;
+      if (look.kind !== "refused") this.refusals.delete(rk);
       if (look.kind === "skip") {
         this.once("act", `#${issue.number}: ${name} is not a repository of the Foundry; not waited for`);
         continue;
       }
       if (look.kind === "refused") {
-        this.once("warn", `#${issue.number}: ${name} could not be read: ${look.why}`);
-        out.push({ repo: ref.repo, issue: ref.issue });
+        const was = this.refusals.get(rk);
+        this.refusals.set(rk, { why: look.why, seen: this.serial });
+        if (was?.why !== look.why) this.o.warn(`#${issue.number}: ${name} could not be read: ${look.why}`);
+        out.push({ repo: ref.repo, issue: ref.issue, ...(look.noSignIn ? { noSignIn: true as const } : {}) });
         continue;
       }
       const r = await this.result(look.rec, ref.repo, ref.issue, alive);
@@ -146,7 +159,7 @@ export class CrossDeps {
       try {
         const rec = this.find(this.o.owner, repo);
         if (!rec || rec.owner !== this.o.owner) l = { kind: "skip" };
-        else if (rec.method === "none") l = { kind: "refused", why: NO_OWN_SIGN_IN };
+        else if (rec.method === "none") l = { kind: "refused", why: NO_OWN_SIGN_IN, noSignIn: true };
         else l = { kind: "ok", rec };
       } catch (e) {
         l = { kind: "refused", why: errorLine((e as Error).message) };

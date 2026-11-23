@@ -97,7 +97,7 @@ const EventUnion = z.discriminatedUnion("type", [
   /** The run got its id and folder. `by` is who asked for it. */
   event("run.created", { flow: FlowIdentitySchema, by: ActorSchema, localTest: z.literal(true).optional() }),
   /** The most autonomy the run may use: the lower of its repository's and its flow's stored level. Level words only. Written once, at the start (#643). */
-  event("run.autonomy", { level: AutonomyLevelSchema, repository: AutonomyLevelSchema.optional(), flow: AutonomyLevelSchema }),
+  event("run.autonomy", { level: AutonomyLevelSchema, repository: AutonomyLevelSchema.optional(), flow: AutonomyLevelSchema, resumed: z.literal(true).optional() }),
   /** The run was put in the queue. */
   event("run.queued", {}),
   /** The first step is about to run. `base` is the commit the workspace started from, when there is one. */

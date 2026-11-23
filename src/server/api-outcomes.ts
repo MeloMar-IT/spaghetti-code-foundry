@@ -5,7 +5,7 @@ import type { RunBrief, RunSummary } from "../engine/state.js";
 import { PolicyIdentitySchema, modelIdentityOf } from "../evidence/identity.js";
 import { OutcomeFactsCache, type OutcomeFacts } from "../outcome-facts.js";
 import { OUTCOME_DEFINITIONS, computeOutcomes, type OutcomeDefinition, type OutcomeValue, type OutcomeWindow } from "../outcomes.js";
-import { checkedRunAsync } from "./api-runs.js";
+import { slimRow } from "./api-runs.js";
 import { guardedRepos } from "./api-repos.js";
 import { callerWorkspaces, inWorkspaces, scopedRepos } from "./workspace-scope.js";
 import { HttpError, send } from "./http.js";
@@ -203,13 +203,14 @@ export const outcomeRoutes: Route = async (ctx, req, res, seg, method, user) => 
   const filter = parseOutcomeFilter(new URL(req.url ?? "/", "http://x").searchParams);
   if (!admin && (filter.model !== undefined || filter.policy !== undefined)) throw new HttpError(403, ADMIN_ONLY_TEXT);
   const repos = admin ? undefined : new Set(guardedRepos(ctx, () => scopedRepos(user, listRepos(user.id))).flatMap((r) => githubNameOf(r.url)?.toLowerCase() ?? []));
+  await ctx.scheduler.whenIndexReady();
   const visible = visibleBriefs(await ctx.scheduler.briefsAsync(), { owner: admin ? undefined : user.id, repos, workspaces: callerWorkspaces(user) });
   const to = new Date();
   const from = new Date(to.getTime() - filter.days * DAY_MS);
   const window: OutcomeWindow = { from, to, previousFrom: new Date(from.getTime() - filter.days * DAY_MS) };
   const briefs = narrowBriefs(visible, { repo: filter.repo, flow: filter.flow }, window);
   const owner = admin ? undefined : user.id;
-  const r = await outcomesFor({ briefs, filter, admin, window }, { load: (b) => checkedRunAsync(ctx.scheduler, b.dirName, owner), cache: factsCacheOf(ctx) });
+  const r = await outcomesFor({ briefs, filter, admin, window }, { load: async (b) => slimRow(ctx.scheduler, b.dirName, owner), cache: factsCacheOf(ctx) });
   send(res, 200, {
     window: { from: from.toISOString(), to: to.toISOString(), days: filter.days },
     filters: filter,

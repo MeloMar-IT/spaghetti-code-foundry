@@ -98,6 +98,21 @@ function actedNow(ctx: ApiContext, now: Date): Record<string, { since: string }>
 export const turnKey = (n: NextStep) => `${n.repo}#${n.issue ?? ""}|${n.kind}|${n.runId ?? ""}`;
 const keyOf = turnKey;
 
+/**
+ * The reason a dependency hold waits for the owner, as a short fingerprint ("" for any other record). It is part of the stamp,
+ * so a hold that changes its reason (not planned, then no sign-in; another issue) is told about again and is not hidden by an
+ * earlier dismissal.
+ */
+export function holdReason(n: NextStep): string {
+  if (n.kind !== "dependency") return "";
+  const parts = (n.blockers ?? [])
+    .filter((b) => b.notPlanned || b.noSignIn)
+    .map((b) => `${b.repo ?? ""}#${b.issue}:${b.noSignIn ? "nosignin" : "notplanned"}`)
+    .sort();
+  return parts.length ? `hold:${parts.join(",")}` : "";
+}
+const stampOf = (since: string | undefined, n: NextStep) => [since ?? "", holdReason(n)].filter(Boolean).join("|");
+
 /** Every current item (dismissed ones too) and the page. */
 export function turnFor(ctx: ApiContext, now = new Date()) {
   const cfg = ctx.config();
@@ -109,7 +124,7 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     const error = e.next.kind === "watcher_error";
     return {
       key: error ? `error|${e.watcher ?? e.next.repo}` : keyOf(e.next), next: e.next, since: e.since ?? e.seen,
-      stamp: e.since ?? "", dismissable: !error, watcher: e.watcher, prTitle: e.prTitle,
+      stamp: stampOf(e.since, e.next), dismissable: !error, watcher: e.watcher, prTitle: e.prTitle,
     };
   };
   const sources: TurnSource[] = [...c.watchers.map(fromEntry), ...c.issues.map(fromEntry)];
@@ -151,7 +166,7 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     for (const h of t.status.holds ?? []) {
       const id = h.next.runId;
       if (h.next.kind !== "closed_elsewhere" || h.issue === undefined || !id || t.issues.some((i) => i.issue === h.issue)) continue;
-      const run = list.find((r) => r.runId === id) ?? ctx.scheduler.get(id);
+      const run = list.find((r) => r.runId === id) ?? ctx.scheduler.slimOf(id);
       if (!live.has(id) && run?.status !== "waiting") continue; // the run is over: nothing is left to cancel
       const since = h.since ?? (run ? runSince(run) : h.seen);
       // A queued run has no run page yet: the Runs page lists the queue, where it can be cancelled.
@@ -179,7 +194,7 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     const origin = runOrigin(b.source);
     if (origin === "eval" || origin === "refinement") continue;
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version
-    const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
+    const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.slimOf(b.runId);
     if (!run) continue;
     const plain = c.next(run);
     // A failed automatic release build says so; the key stays the usual one, so earlier dismissals still match.

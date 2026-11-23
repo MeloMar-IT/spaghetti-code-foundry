@@ -1,4 +1,4 @@
-import { spentToday, type RunSummary } from "../engine/state.js";
+import type { RunSummary } from "../engine/state.js";
 import { AGENTS } from "../flow/schema.js";
 import { briefFailure, FAILURE_SHOWN_MS, LIMIT_SHOWN_MS, nextStep, type NextStep } from "../next-step.js";
 import type { UpdateView } from "../self-update.js";
@@ -19,7 +19,6 @@ import type { ServiceView } from "../services/supervisor.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
 import { lateChores } from "./late-chores.js";
-import { accountBudgetLeft } from "../queue/watcher.js";
 import type { ApiContext, Route } from "./server.js";
 
 /** What GET /api/health answers: the problems of the Foundry itself, in one sentence each. */
@@ -46,6 +45,8 @@ export interface Health {
   pluginProblems?: PluginProblem[];
   /** The managed services (#867): state, restarts and last exit. Absent when none is configured. */
   services?: ServiceView[];
+  /** Set while the run index is built after a start: the checks that read runs are left out until it is done. Not a problem: it does not change `ok`. */
+  runIndexBuilding?: string;
   /** The `version` of the Foundry's package.json (#876), on a checkout and on an install. Absent when it cannot be read. */
   package?: string;
 }
@@ -66,6 +67,9 @@ export function packageVersion(): string | undefined {
   packageCache = { value };
   return value;
 }
+
+/** The notice while the run index is built. */
+export const RUN_INDEX_BUILDING = "the run index is still being built";
 
 const RUNS = { label: "Runs page", url: "#/runs" };
 const MAX_FAILURES = 5;
@@ -103,7 +107,9 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   const cfg = ctx.config();
   const q = ctx.scheduler.queue();
   const tracked = ctx.watchers.tracked();
-  const runs = ctx.scheduler.list(200);
+  // While the run index is built, nothing here reads a run: the checks that need runs wait for the next call.
+  const building = !ctx.scheduler.runIndexReady();
+  const runs = building ? [] : ctx.scheduler.slimRuns(200);
   const replaced = supersededRuns(runs);
   const t = now.getTime();
   const problems: NextStep[] = [];
@@ -126,7 +132,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     problems.push(RESET_TIME.test(rec.until ?? "") ? rec : nextStep("usage_limit", {}, data));
   }
 
-  const budgetUsed = !!cfg.cost_limits && cfg.daily_budget_usd !== undefined && spentToday(ctx.opts.runsDir, now) >= cfg.daily_budget_usd;
+  const budgetUsed = !!cfg.cost_limits && cfg.daily_budget_usd !== undefined && !building && ctx.scheduler.spentToday(now) >= cfg.daily_budget_usd;
   if (budgetUsed) problems.push(nextStep("daily_budget"));
 
   const seen = new Set<string>();
@@ -149,18 +155,18 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   // The status of a watcher: `tracked()` still has it after stopAll(), `statuses()` does not.
   problems.push(...lateChores({
     watchers: ctx.watchers.statuses().map((w) => ({ ...w, status: tracked.find((x) => x.watcher.id === w.id)?.status ?? w.status })),
-    pending: q.pending, active: q.active, briefs: () => ctx.scheduler.briefs(),
+    pending: q.pending, active: q.active, briefs: () => (building ? [] : ctx.scheduler.briefs()),
     concurrency: cfg.concurrency, waitsToRestart: !!ctx.restart || !!ctx.scheduler.draining, dailyBudgetUsed: budgetUsed,
-    ownerBudgetUsed: (owner) => !accountBudgetLeft(ctx.scheduler, ctx.opts.runsDir, owner), now,
+    ownerBudgetUsed: (owner) => !building && ctx.scheduler.ownerBudgetUsed(owner, now), now,
   }));
 
   const busy = new Set([...q.active.map((a) => a.runId), ...q.pending.map((p) => p.runId)]);
   const closed = new Set<string>();
-  for (const w of tracked) {
+  for (const w of building ? [] : tracked) {
     for (const h of w.status.holds ?? []) {
       const id = h.next.runId;
       if (h.next.kind !== "closed_elsewhere" || !id || closed.has(id)) continue;
-      const status = ctx.scheduler.get(id)?.status;
+      const status = ctx.scheduler.statusOf(id);
       if (!busy.has(id) && status !== "running" && status !== "waiting") continue;
       closed.add(id);
       problems.push(h.next);
@@ -207,6 +213,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     ok: count === 0,
     summary: count === 0 ? "All good" : count === 1 ? "1 problem" : `${count} problems`,
     problems: list,
+    ...(building ? { runIndexBuilding: RUN_INDEX_BUILDING } : {}),
     repos,
     ...(skillProblems.length ? { skillProblems } : {}),
     ...(skillAll.length > skillProblems.length ? { skillProblemsMore: skillAll.length - skillProblems.length } : {}),

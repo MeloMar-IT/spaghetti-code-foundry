@@ -6,7 +6,7 @@ import { trackingWatcher } from "../next-step.js";
 import { runOrigin } from "../your-turn.js";
 import { boardFor } from "./board.js";
 import { send } from "./http.js";
-import { knownRuns, nextFor, watcherProblem } from "./next.js";
+import { indexReady, knownRuns, nextFor, watcherProblem } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 import { evalRunIds, turnFor, turnKey } from "./your-turn.js";
 
@@ -60,7 +60,7 @@ export function candidatesFor(ctx: ApiContext, now = new Date()): Candidate[] {
     for (const h of t.status.holds ?? []) {
       const id = h.next.runId;
       if (h.next.kind !== "closed_elsewhere" || !id) continue;
-      if (busy.has(id) || ctx.scheduler.get(id)?.status === "waiting") out.push({ next: h.next, watcher: t.watcher.id });
+      if (busy.has(id) || ctx.scheduler.statusOf(id) === "waiting") out.push({ next: h.next, watcher: t.watcher.id });
     }
   }
 
@@ -73,7 +73,7 @@ export function candidatesFor(ctx: ApiContext, now = new Date()): Candidate[] {
     const origin = runOrigin(b.source);
     if (origin === "eval" || origin === "refinement") continue;
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue;
-    const run = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
+    const run = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.slimOf(b.runId);
     if (!run) continue;
     // A run its watcher shows: the watcher's list is only known after a good check.
     const w = origin === "hand" ? undefined : trackingWatcher(cfg.watchers, run);
@@ -117,6 +117,7 @@ export function clarityFor(ctx: ApiContext, now = new Date()): ClarityAnswer {
 
 export const clarityRoutes: Route = async (ctx, _req, res, seg, method) => {
   if (seg[0] !== "clarity" || seg[1] || method !== "GET") return false;
+  if (!(await indexReady(ctx, res))) return true;
   return send(res, 200, clarityFor(ctx)), true;
 };
 
@@ -140,6 +141,7 @@ export class ClarityRecorder {
 
   check(now = new Date()) {
     try {
+      if (!this.ctx.scheduler.runIndexReady()) return; // no sample from a half-built index
       if (sampleClarity(this.ctx, now) === undefined && !this.warned) {
         this.warned = true;
         this.deps.log?.("clarity.json is from a newer version — left as it is");

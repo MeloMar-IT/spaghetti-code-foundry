@@ -230,6 +230,11 @@ describe("ownRecord", () => {
     expect(ownRecord(planted, () => false).blockers).toEqual([{ issue: 3, repo: "acme/lib", url: URL }]);
   });
 
+  it("keeps noSignIn on a blocker of another repository", () => {
+    const rec = nextStep("dependency", { repo: "o/r", issue: 4 }, { blockers: [{ issue: 3, repo: "acme/lib", noSignIn: true }] });
+    expect(ownRecord(rec, () => false).blockers?.[0]).toMatchObject({ issue: 3, repo: "acme/lib", noSignIn: true });
+  });
+
   it("removes a foreign afterRun and links to the runs page; an own one stays", () => {
     const rec = nextStep("one_at_a_time", { repo: "o/r", runId: "mine" }, { blockingRun: "theirs" });
     expect(rec.afterRun).toBe("theirs");

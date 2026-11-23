@@ -63,6 +63,8 @@ describe("glossary", () => {
     expect(statusName("dependency")).toBe("waiting for another story");
     expect(statusName("dependency", { blockers: ["acme/lib#3", 5] })).toBe("waiting for acme/lib#3, #5");
     expect(statusName("dependency", { blockers: ["acme/lib#3"], dropped: ["acme/lib#3"] })).toBe("waiting for you — acme/lib#3 closed as not planned");
+    expect(statusName("dependency", { blockers: ["acme/lib#3"], unread: ["acme/lib#3"] })).toBe("waiting for you — acme/lib#3 could not be read");
+    expect(statusHelp("dependency", { unread: ["acme/lib#3"] })).toMatch(/^It needs acme\/lib#3, .*no sign-in of its own\. Give the repository a sign-in under My repositories, .*Depends on/);
     expect(statusHelp("dependency", { dropped: ["acme/lib#3"] })).toMatch(/^It needs acme\/lib#3, .*not planned.*\. Reopen it/);
   });
 

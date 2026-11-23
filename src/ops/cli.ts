@@ -255,8 +255,8 @@ export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; aliv
   };
   const extra = [
     part("Housekeeping", () => {
-      const h = latest<{ memory?: { fseventsdGb: number; serverGb: number }; warnings?: string[]; cleaned?: { workspaces: number; freedMb: number } }>("housekeeping");
-      return [...(h.warnings ?? []), ...(h.cleaned ? [`the nightly clean-up removed ${h.cleaned.workspaces} old workspaces (${h.cleaned.freedMb} MB)`] : [])];
+      const h = latest<{ memory?: { fseventsdGb: number; serverGb: number }; warnings?: string[]; cleaned?: { workspaces: number; freedMb: number }; archived?: { runs: number; days: number } }>("housekeeping");
+      return [...(h.warnings ?? []), ...(h.cleaned ? [`the nightly clean-up removed ${h.cleaned.workspaces} old workspaces (${h.cleaned.freedMb} MB)`] : []), ...(h.archived ? [`the nightly archive moved ${h.archived.runs} old runs to runs-archive`] : [])];
     }),
     part("Holds work up", () => (latest<{ blockers: { story: string; holdsUp: string[]; state: string }[] }>("blockage").blockers ?? []).slice(0, 3).map((b) => (b.holdsUp.length ? `${b.story} holds up ${b.holdsUp.length} (${b.state})` : `${b.story} (${b.state})`))),
     part("Usage limits", () => (latest<{ forecasts: { family: string; percentNow?: number; emptyAt?: string }[] }>("limits").forecasts ?? []).filter((f) => f.percentNow !== undefined).map((f) => `${f.family}: about ${f.percentNow}% of the week used${f.emptyAt ? `; at this pace reached ${f.emptyAt.slice(0, 16).replace("T", " ")} UTC, before the reset` : ""}`)),
@@ -321,9 +321,16 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       if (name === "governor") governor(out, now);
       else if (name === "housekeeping") {
         const { runHousekeeping, readPs } = await import("./housekeeping.js");
-        const r = runHousekeeping({ dir, runsDir: join(dataDir(), "runs"), now, ps: readPs() });
+        // when the config cannot be read, nothing is moved
+        let archiveDays: number | undefined;
+        try {
+          archiveDays = loadConfig().runs_archive_days;
+        } catch {
+          archiveDays = undefined;
+        }
+        const r = runHousekeeping({ dir, runsDir: join(dataDir(), "runs"), now, ps: readPs(), ...(archiveDays !== undefined ? { archiveDays, queueFile: join(dataDir(), "queue.json") } : {}) });
         for (const text of r.notify) await sendDesktop({ title: "Foundry housekeeping", message: text });
-        out(`${now.toISOString()} fseventsd ${r.result.memory.fseventsdGb} GB, server ${r.result.memory.serverGb} GB${r.result.cleaned ? `; cleaned ${r.result.cleaned.workspaces} workspaces, ${r.result.cleaned.freedMb} MB` : ""}${r.result.warnings.length ? ` — ${r.result.warnings.length} warning(s)` : ""}`);
+        out(`${now.toISOString()} fseventsd ${r.result.memory.fseventsdGb} GB, server ${r.result.memory.serverGb} GB${r.result.cleaned ? `; cleaned ${r.result.cleaned.workspaces} workspaces, ${r.result.cleaned.freedMb} MB` : ""}${r.result.archived ? `; moved ${r.result.archived.runs} runs to runs-archive` : ""}${r.result.warnings.length ? ` — ${r.result.warnings.length} warning(s)` : ""}`);
       } else if (name === "flaky") {
         const r = runFlaky({ runsDir: join(dataDir(), "runs"), dir, now, file: ghFile });
         out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);

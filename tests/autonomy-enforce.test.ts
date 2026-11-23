@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { addRepo } from "../src/auth/repos.js";
+import { setLevel } from "../src/governance/autonomy-store.js";
+import { raiseCommand, recordRunAutonomy, runAutonomyOnResume } from "../src/governance/run-autonomy.js";
 import { writable } from "../src/agents/run.js";
 import { autonomyStop, stepEnv, type Engine, type Scope } from "../src/engine/execute.js";
 import { dockerCommand, hookMounts, protectedBranchEnv } from "../src/engine/guards.js";
@@ -182,6 +186,165 @@ describe("autonomyStop", () => {
     const { e } = engine({ level: "plan-only", flow: "plan-only" });
     expect(autonomyStop(e, id, "repo-access")).toBeUndefined();
   });
+
+  describe("with the command that raises the level", () => {
+    const withRun = (autonomy: unknown, flow = "f", vars: Record<string, string> = {}) => {
+      const r = engine(autonomy);
+      Object.assign(r.e.summary, { flow, vars });
+      return r;
+    };
+    const cmd = (kind: string, name: string, next: string) => `: scf autonomy promote ${kind} ${name} ${next} --reason "<why>", then approve it and resume this run`;
+
+    it("names the flow for a push and a pull request, in the error, the output and the log", () => {
+      for (const action of ["push", "pull-request"] as const) {
+        const { e, lines } = withRun({ level: "guarded-write", flow: "guarded-write" });
+        setLevel("flows", "f", "guarded-write", "system:admin");
+        const res = autonomyStop(e, id, action);
+        const text = autonomyRefusal("guarded-write", action) + cmd("flows", "f", "delivery-handoff");
+        expect(res).toEqual({ ok: false, output: text, error: text });
+        expect(lines).toEqual([`    ! ${text}`]);
+      }
+    });
+
+    it("does not change the sentence for a writing agent or repo access", () => {
+      setLevel("flows", "f", "observe", "system:admin");
+      const { e } = withRun({ level: "observe", flow: "observe" });
+      expect(autonomyStop(e, id, "agent-write")?.error).toBe(autonomyRefusal("observe", "agent-write"));
+      expect(autonomyStop(e, id, "repo-access")?.error).toBe(autonomyRefusal("observe", "repo-access"));
+    });
+
+    it("gives the plain sentence when the store cannot be read", () => {
+      mkdirSync(process.env.FACTORY_HOME!, { recursive: true });
+      writeFileSync(join(process.env.FACTORY_HOME!, "autonomy.json"), "{");
+      const { e } = withRun({ level: "observe", flow: "observe" });
+      expect(autonomyStop(e, id, "push")?.error).toBe(autonomyRefusal("observe", "push"));
+    });
+  });
+});
+
+describe("raiseCommand", () => {
+  const home = () => {
+    mkdirSync(process.env.FACTORY_HOME!, { recursive: true });
+    return process.env.FACTORY_HOME!;
+  };
+  const connect = (level: AutonomyLevel) => {
+    const rid = addRepo(randomUUID(), "https://github.com/acme/app", { ownerOk: () => true }).id;
+    setLevel("repos", rid, level, "system:connect");
+    return rid;
+  };
+  const vars = { github_repo: "acme/app" };
+  const text = (kind: string, id: string, next: string) => `scf autonomy promote ${kind} ${id} ${next} --reason "<why>"`;
+
+  it("names the repository, with the next level", () => {
+    const rid = connect("guarded-write");
+    expect(raiseCommand({ flow: "f", vars })).toBe(text("repos", rid, "delivery-handoff"));
+  });
+
+  it("picks the record with the lowest level when a repository has several", () => {
+    const low = connect("plan-only");
+    // an old install: a second record of the same repository (addRepo refuses it now)
+    const file = join(home(), "repos.json");
+    const data = JSON.parse(readFileSync(file, "utf8")) as { repos: { id: string }[] };
+    const second = randomUUID();
+    data.repos.push({ ...data.repos[0]!, id: second });
+    writeFileSync(file, JSON.stringify(data));
+    setLevel("repos", second, "guarded-write", "system:connect");
+    expect(raiseCommand({ flow: "f", vars })).toBe(text("repos", low, "guarded-write"));
+  });
+
+  it("names the flow when it is lower, and the repository on a tie", () => {
+    const rid = connect("guarded-write");
+    setLevel("flows", "f", "plan-only", "system:admin");
+    expect(raiseCommand({ flow: "f", vars })).toBe(text("flows", "f", "guarded-write"));
+    setLevel("flows", "f", "guarded-write", "system:admin");
+    expect(raiseCommand({ flow: "f", vars })).toBe(text("repos", rid, "delivery-handoff"));
+  });
+
+  it("names the flow when there is no repository", () => {
+    setLevel("flows", "f", "guarded-write", "system:admin");
+    expect(raiseCommand({ flow: "f" })).toBe(text("flows", "f", "delivery-handoff"));
+  });
+
+  it("gives nothing at the top, without an id, or without a run", () => {
+    connect("delivery-handoff");
+    expect(raiseCommand({ flow: "f", vars })).toBeUndefined();
+    expect(raiseCommand({})).toBeUndefined();
+    expect(raiseCommand({ vars })).toBeUndefined();
+  });
+
+  it("gives nothing when a store cannot be read, and never throws", () => {
+    connect("guarded-write");
+    writeFileSync(join(home(), "autonomy.json"), "{");
+    expect(raiseCommand({ flow: "f", vars })).toBeUndefined();
+    rmSync(join(home(), "autonomy.json"));
+    writeFileSync(join(home(), "repos.json"), "{");
+    expect(raiseCommand({ flow: "f", vars })).toBeUndefined();
+  });
+
+  it("gives nothing for a flow name that is not safe to print, even with a connected repository", () => {
+    connect("guarded-write");
+    for (const flow of ["a b;rm", "$(x)", "a b", "-x", "x".repeat(101)]) expect(raiseCommand({ flow, vars })).toBeUndefined();
+    setLevel("flows", "a b", "plan-only", "system:admin");
+    expect(raiseCommand({ flow: "a b", vars })).toBeUndefined();
+  });
+});
+
+describe("runAutonomyOnResume", () => {
+  const run = (autonomy?: unknown) => ({ flow: "f", vars: { github_repo: "acme/app" }, ...(autonomy === undefined ? {} : { autonomy }) });
+  const connect = (level: AutonomyLevel) => {
+    const rid = addRepo(randomUUID(), "https://github.com/acme/app", { ownerOk: () => true }).id;
+    setLevel("repos", rid, level, "system:connect");
+  };
+
+  it("is unchanged with the same stores", () => {
+    connect("guarded-write");
+    const r = runAutonomyOnResume(run({ level: "guarded-write", repository: "guarded-write", flow: "delivery-handoff" }));
+    expect(r.changed).toBe(false);
+    expect(r.autonomy.level).toBe("guarded-write");
+  });
+
+  it("is changed, with the old level, when the level was lowered", () => {
+    connect("guarded-write");
+    setLevel("flows", "f", "plan-only", "system:admin");
+    const r = runAutonomyOnResume(run({ level: "guarded-write", repository: "guarded-write", flow: "delivery-handoff" }));
+    expect(r).toMatchObject({ changed: true, was: "guarded-write", autonomy: { level: "plan-only" } });
+  });
+
+  it("is changed when a source level moved but the level did not", () => {
+    connect("guarded-write");
+    setLevel("flows", "f", "plan-only", "system:admin");
+    const r = runAutonomyOnResume(run({ level: "plan-only", repository: "plan-only", flow: "plan-only" }));
+    expect(r).toMatchObject({ changed: true, was: "plan-only", autonomy: { level: "plan-only", repository: "guarded-write" } });
+  });
+
+  it("counts a run without the field as changed, from delivery-handoff", () => {
+    connect("guarded-write");
+    expect(runAutonomyOnResume(run())).toMatchObject({ changed: true, was: "delivery-handoff" });
+  });
+
+  it("counts an invalid field as changed, from observe", () => {
+    connect("guarded-write");
+    expect(runAutonomyOnResume(run({ level: "wat" }))).toMatchObject({ changed: true, was: "observe" });
+  });
+});
+
+describe("recordRunAutonomy", () => {
+  const start = { autonomy: { level: "plan-only" as const, flow: "plan-only" as const }, problems: ["x"] };
+
+  it("records a resume with the flag and the old level", () => {
+    const got: unknown[] = [];
+    const lines: string[] = [];
+    recordRunAutonomy(start, (l) => lines.push(l), { runAutonomy: (...a: unknown[]) => void got.push(a) } as never, { resumed: true, was: "guarded-write" });
+    expect(got).toEqual([[start.autonomy, { resumed: true }]]);
+    expect(lines).toEqual(["! autonomy: x", "autonomy: plan-only (no repository, flow plan-only); resumed, was guarded-write"]);
+  });
+
+  it("does not throw when the logger or the evidence writer fails", () => {
+    const boom = () => {
+      throw new Error("x");
+    };
+    expect(() => recordRunAutonomy(start, boom, { runAutonomy: boom } as never, { resumed: true, was: "observe" })).not.toThrow();
+  });
 });
 
 describe("stepEnv", () => {
@@ -203,10 +366,15 @@ describe("how a refusal is explained", () => {
     const person = explainError(`step "push" failed: ${error}`, "run");
     expect(person.what).toBe("The step push failed");
     expect(person.why).toBe("its autonomy level observe does not allow a push");
-    expect(person.todo).toBe("Promote the repository or flow, then start a new run");
-    expect(person.startOver).toBe(true);
+    expect(person.todo).toBe("Raise the level of the repository or flow, then resume the run");
+    expect(person.startOver).toBe(false);
+    const withCommand = explainError(`step "push" failed: ${error}: scf autonomy promote flows f guarded-write --reason "<why>", then approve it and resume this run`, "run");
+    expect(withCommand.todo).toBe("Raise the level of the repository or flow, then resume the run");
+    expect(withCommand.startOver).toBe(false);
     const user = explainError(error, "run", true);
     expect(user.limit).toBe(true);
+    expect(user.todo).toBe("Ask the administrator");
+    expect(user.startOver).toBe(true);
     expect(user.why).toBe("the administrator's limit was reached");
   });
 

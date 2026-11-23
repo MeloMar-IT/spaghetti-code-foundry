@@ -3,7 +3,7 @@ import type { RunSummary } from "../engine/state.js";
 import { trackingWatcher } from "../next-step.js";
 import { runOrigin } from "../your-turn.js";
 import { send } from "./http.js";
-import { collectNext, jobNext, knownRuns, ownerInfo, runSince } from "./next.js";
+import { collectNext, indexReady, jobNext, knownRuns, ownerInfo, runSince } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 import { evalRunIds } from "./your-turn.js";
 
@@ -39,7 +39,7 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
     covered.set(i.key.toLowerCase(), sources.length);
     const id = i.next.runId;
     sources.push({
-      next: i.next, run: id ? byRun.get(id) ?? ctx.scheduler.get(id) : undefined,
+      next: i.next, run: id ? byRun.get(id) ?? ctx.scheduler.slimOf(id) : undefined,
       runId: i.runId, since: i.since, rank: i.rank, watcher: i.watcher, goesFirst: i.priority,
     });
   }
@@ -65,7 +65,7 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
     if (old && !(b.status === "succeeded" && byRun.has(b.runId))) continue;
     const origin = runOrigin(b.source);
     if (origin === "eval") continue;
-    const run = byRun.get(b.runId) ?? ctx.scheduler.get(b.runId);
+    const run = byRun.get(b.runId) ?? ctx.scheduler.slimOf(b.runId);
     const story = run && storyOf(run);
     if (!run || !story) continue;
     const key = `${story.repo}#${story.issue}`.toLowerCase();
@@ -93,7 +93,7 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
     const n = p.issue && /^\d+$/.test(p.issue) ? Number(p.issue) : undefined;
     if (p.kind !== "run" || !p.githubRepo || p.githubRepo === "owner/repo" || n === undefined) continue;
     const key = `${p.githubRepo}#${n}`.toLowerCase();
-    if (ctx.scheduler.get(p.runId)) continue;
+    if (ctx.scheduler.slimOf(p.runId)) continue;
     const at = covered.get(key);
     // the board is an admin view: a budget hold names the amount
     const budget = !forUser && p.limit === "budget" ? ctx.scheduler.userDailyBudget(ownerOf(p.runId).owner ?? "") : undefined;
@@ -112,5 +112,6 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
 
 export const boardRoutes: Route = async (ctx, _req, res, seg, method) => {
   if (seg[0] !== "board" || seg[1] || method !== "GET") return false;
+  if (!(await indexReady(ctx, res))) return true;
   return send(res, 200, boardFor(ctx)), true;
 };

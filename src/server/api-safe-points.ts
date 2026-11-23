@@ -30,6 +30,15 @@ const cache = new Map<string, Scan>();
 
 const keyOf = (briefs: RunBrief[], main: string): string => `${main}|${briefs.map((b) => `${b.runId}:${b.updatedAt}`).join(",")}`;
 
+/** A run from the index; undefined when it cannot be read. */
+function slimRun(ctx: ApiContext, dirName: string) {
+  try {
+    return ctx.scheduler.slimOf(dirName);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The branch and the points of the sources found so far. */
 function view(sources: SafeSource[], o: { watched: boolean; main: string; develop?: string | undefined }, viewer: { id: string; admin: boolean }) {
   const gitflow = o.watched || sources.some((s) => s.role === "develop");
@@ -47,6 +56,7 @@ export async function safePointsFor(ctx: ApiContext, user: User, repoId: string)
   const develop = rec.settings?.developBranch;
   const viewer = { id: user.id, admin: user.role === "admin" };
   const ws = callerWorkspaces(user);
+  await ctx.scheduler.whenIndexReady();
   const watched = ctx.config().watchers.some((w) => w.enabled && w.source === "issues" && projectRun(rec, { vars: { github_repo: w.github_repo } }) && gitflowOf(w, w.github_repo));
   // A brief has `githubRepo`, a summary has `vars.github_repo`: the same matcher gets the one shape it knows.
   const briefs = ctx.scheduler.briefs().filter((b) =>
@@ -72,7 +82,7 @@ export async function safePointsFor(ctx: ApiContext, user: User, repoId: string)
       if (settled(view(sources, { watched, main, develop }, viewer), briefs[i]!)) break;
       await yieldLoop();
     }
-    const run = ctx.scheduler.get(briefs[i]!.runId);
+    const run = slimRun(ctx, briefs[i]!.dirName);
     if (run) sources.push(...safeSourcesOf(run, { mainBranch: main }));
   }
   const next = briefs[i];

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname, join, sep } from "node:path";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { CheckMark, PersonCheck } from "./plan-checks.js";
@@ -132,6 +132,8 @@ export interface RunSummary {
   /** When a watcher saw the run's open issue without its trigger label while the run waited for answers or was cancelled while stopped. A resume removes it. */
   parkedAt?: string;
   runDir: string;
+  /** In memory only: the stored runDir of a run that was read from runs-archive. */
+  movedFrom?: string;
   workdir?: string;
   branch?: string;
   /** Commit the workspace started from (for diffs). */
@@ -177,7 +179,7 @@ export interface RunSummary {
   toolProfile?: unknown;
   /** True for a local test (`scf run --local-test`, evals): it is not checked against `promotion.enforce` and never counts as a promoted delivery (#740). Only evals skip governance (#665). */
   localTest?: true;
-  /** The most autonomy the run may use, worked out once at the start (#643). Absent on older runs, which read as `delivery-handoff` through `autonomyOfRun`. The engine enforces it (#644); a resume keeps it. */
+  /** The most autonomy the run may use, worked out at the start and again on each resume (#643, #905). Absent on older runs, which read as `delivery-handoff` through `autonomyOfRun`. The engine enforces it (#644). */
   autonomy?: RunAutonomy;
   /** The id of the custom flow as `scf promote` knows it (its file name), saved so a resume checks the same id (#665). Absent: the flow's name. */
   flowId?: string;
@@ -306,7 +308,155 @@ export function runUpdatedAt(runDir: string): string | undefined {
   }
 }
 
-const briefCache = new Map<string, { mtimeMs: number; size: number; brief: RunBrief }>();
+/** How many full JSON.parse calls of a run.json this process made (tests read it). */
+let runReads = 0;
+export function runReadCount(): number {
+  return runReads;
+}
+function parseRunText(text: string): unknown {
+  runReads++;
+  return JSON.parse(text);
+}
+
+/** Marks a slim run: it must never be saved over a full run.json. A symbol, so it survives a spread and never reaches JSON. */
+export const SLIM_RUN: unique symbol = Symbol("slim run");
+/** A run without its heavy parts: no state.steps, only the task line, a flow skeleton and cut step outputs. */
+export type SlimRun = RunSummary;
+
+export const SLIM_OUTPUT_MAX = 16_000;
+/** Lines of a step output that readers look for (split parts, closed issues, planned issues, pushes): next-step.ts, failure.ts, user-view.ts. */
+/** The issue title line of a pull_ticket output (the Board and "since" show it). */
+const TITLE_LINE = /^# #\d+: /;
+const OUTPUT_MARKERS = [
+  /^SPLIT_PARTS: /, /^#\d+ \S/, /^#{2,4}\s*ISSUE\s+\d+\s*:/i, /^PUSHED:/, /closed #\d+/, TITLE_LINE,
+  // safe-points.ts: push_develop, verify and changes outputs.
+  /^COMMIT: /i, /^TESTED: /i, /^CHECKS: /i, /^\s*(?:Merge|Resolve) #\d+: /,
+];
+/** A first or last output line longer than this is cut (first) or replaced (last), so memory stays small. */
+export const SLIM_LINE_MAX = 2000;
+/** Stands in for a last output line that is too long to keep; it matches no reader. */
+const CUT_LINE = "[line cut]";
+
+/**
+ * Marker lines of a successful output, plus its first line (storyTitle: `# #n: Title`) and, for a baseline_tests step
+ * (`keepLast`), its last non-blank line (greenOf: `BASE_GREEN: …`), in order. A first line over SLIM_LINE_MAX is cut; a last line over it becomes CUT_LINE,
+ * so a reader never takes an earlier line for the last one.
+ */
+function outputLines(text: string, keepLast = false): string {
+  const lines = text.split("\n");
+  const last = text.trimEnd().split("\n").length - 1;
+  const out: string[] = [];
+  lines.forEach((l, i) => {
+    if (i === 0 && TITLE_LINE.test(l)) out.push(l.slice(0, SLIM_LINE_MAX));
+    else if (OUTPUT_MARKERS.some((r) => r.test(l))) out.push(l);
+    else if (keepLast && i === last) out.push(l.length <= SLIM_LINE_MAX ? l : CUT_LINE);
+    else if (i === 0) out.push(l.slice(0, SLIM_LINE_MAX));
+  });
+  return out.join("\n");
+}
+/** Steps whose newest output a reader shows in full (cut at SLIM_OUTPUT_MAX). */
+const HEAD_STEPS = ["send_back", "ask_for_info", "wait_for_story", "claim_areas"];
+/** Lines of a step text that name the task or close the issue (flow/publish.ts usesTask, next-step.ts). */
+const STEP_TEXT_MARKERS = [/\{\{\s*task\s*\}\}|\b(?:FACTORY|SCF)_TASK\b/, /gh issue close|(?:FACTORY|SCF)_TOOLS\}?\/story"? close\b/];
+const STEP_TEXT_KEYS = ["prompt", "system_prompt", "run", "message"];
+
+function markerLines(text: string, patterns: RegExp[]): string {
+  return text.split("\n").filter((l) => patterns.some((r) => r.test(l))).join("\n");
+}
+
+function slimFlowStep(step: unknown): unknown {
+  if (!step || typeof step !== "object") return step;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(step as Record<string, unknown>)) {
+    if (STEP_TEXT_KEYS.includes(k)) {
+      if (typeof v === "string") out[k] = markerLines(v, STEP_TEXT_MARKERS);
+    } else if (k === "steps" && Array.isArray(v)) out[k] = v.map(slimFlowStep);
+    else if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The run without its heavy parts: no state.steps (but the title line of pull_ticket), the flow without the text of its steps (only the lines that name the
+ * task or close the issue), and cut step outputs. Readers of the cut parts: next-step.ts, failure.ts, user-view.ts,
+ * publish.ts. A deep copy. Failed outputs keep their head and tail (a whole output up to 4 × SLIM_OUTPUT_MAX).
+ */
+export function slimRunOf(s: RunSummary): SlimRun {
+  const { history, state, flowDef, task, ...rest } = s;
+  const out = structuredClone(rest) as unknown as RunSummary;
+  // The whole task stays: answer room (answerRoom) and the user's view read it. A task is at most TASK_MAX_BYTES.
+  out.task = task;
+  if (flowDef && typeof flowDef === "object") {
+    const { steps, ...others } = flowDef as unknown as Record<string, unknown>;
+    out.flowDef = { ...(structuredClone(others) as object), steps: Array.isArray(steps) ? steps.map(slimFlowStep) : steps } as unknown as Flow;
+  }
+  if (state && typeof state === "object") {
+    // Only the title line of pull_ticket stays: the Board shows it (src/board.ts).
+    const t = state.steps?.pull_ticket?.output;
+    const title = typeof t === "string" ? markerLines(t, [TITLE_LINE]) : "";
+    out.state = { next: state.next, steps: title ? { pull_ticket: { output: title } } : {}, visits: structuredClone(state.visits ?? {}) } as RunSummary["state"];
+  }
+  if (Array.isArray(history)) {
+    // A sub-flow step id is "prefix/step": the step name is its last part (as stepIs in next-step.ts reads it).
+    const nameOf = (id: unknown) => String(id ?? "").split("/").at(-1)!;
+    const newestHead = new Map<string, number>();
+    history.forEach((r, i) => {
+      if (HEAD_STEPS.includes(nameOf(r?.id))) newestHead.set(nameOf(r.id), i);
+    });
+    out.history = history.map((r, i) => {
+      const { output, ...other } = r;
+      const rec = structuredClone(other) as StepRecord;
+      const text = typeof output === "string" ? output : "";
+      if (HEAD_STEPS.includes(nameOf(r.id)) && newestHead.get(nameOf(r.id)) === i) rec.output = text.slice(0, SLIM_OUTPUT_MAX);
+      else if (!r.ok) rec.output = text.length <= 4 * SLIM_OUTPUT_MAX ? text : text.slice(0, SLIM_OUTPUT_MAX) + "\n" + text.slice(-SLIM_OUTPUT_MAX);
+      else rec.output = outputLines(text, nameOf(r.id) === "baseline_tests");
+      return rec;
+    });
+  }
+  Object.defineProperty(out, SLIM_RUN, { value: true, enumerable: false });
+  return out;
+}
+
+/** What the index keeps of one run. */
+export interface RunIndexEntry {
+  brief: RunBrief;
+  totalCostUsd: number;
+  /** `state.next`: the step the run is at. */
+  step: string | null;
+  slim: SlimRun;
+}
+
+/** One run.json in the store: its time and size when read; `entry` is absent for a file that cannot be used (kept so it is not parsed again). */
+export interface IndexSlot {
+  runsDir: string;
+  id: string;
+  mtimeMs: number;
+  size: number;
+  entry?: RunIndexEntry;
+}
+const store = new Map<string, IndexSlot>(); // key: path of run.json
+let storeVersion = 0;
+export const indexVersion = (): number => storeVersion;
+export function indexSlots(): Iterable<IndexSlot> {
+  return store.values();
+}
+export function indexSlotOf(runsDir: string, id: string): IndexSlot | undefined {
+  return store.get(runFile(join(runsDir, id)));
+}
+export function dropIndexSlot(file: string): void {
+  if (store.delete(file)) storeVersion++;
+}
+function setSlot(file: string, slot: IndexSlot): IndexSlot {
+  store.set(file, slot);
+  storeVersion++;
+  return slot;
+}
+
+/** The entry of a run.json that was read (undefined when it has no runId or status). */
+export function indexEntryOf(s: RunSummary, dirName: string, mtimeMs: number): RunIndexEntry | undefined {
+  if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
+  return { brief: briefFrom(s, dirName, mtimeMs), totalCostUsd: s.totalCostUsd, step: typeof s.state?.next === "string" ? s.state.next : null, slim: slimRunOf(s) };
+}
 
 /** A brief of every run, newest first. A run.json is read again only when its time or size changed; broken files are skipped. */
 export function listRunBriefs(runsDir: string): RunBrief[] {
@@ -325,27 +475,91 @@ export async function listRunBriefsAsync(runsDir: string): Promise<RunBrief[]> {
 }
 
 function briefOf(runsDir: string, id: string): RunBrief | undefined {
+  return readIndexSlot(runsDir, id)?.entry?.brief;
+}
+
+/** The slot of one run.json, read again only when its time or size changed. Undefined when the file is not there. */
+export function readIndexSlot(runsDir: string, id: string): IndexSlot | undefined {
   const file = runFile(join(runsDir, id));
   try {
     const st = statSync(file);
-    let hit = briefCache.get(file);
+    let hit = store.get(file);
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
-      const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
-      if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(Array.isArray(s.timeLimits) ? { timeLimits: s.timeLimits } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}), ...(s.autonomy !== undefined ? { autonomy: s.autonomy } : {}), ...(s.localTest ? { localTest: true as const } : {}), ...(typeof s.workspace === "string" ? { workspace: s.workspace } : {}) } };
-      briefCache.set(file, hit);
+      let entry: RunIndexEntry | undefined;
+      try {
+        entry = indexEntryOf(parseRunText(readFileSync(file, "utf8")) as RunSummary, id, st.mtimeMs);
+      } catch {
+        entry = undefined;
+      }
+      hit = setSlot(file, { runsDir, id, mtimeMs: st.mtimeMs, size: st.size, ...(entry ? { entry } : {}) });
     }
-    return hit.brief;
+    return hit;
   } catch {
+    dropIndexSlot(file);
     return undefined;
   }
+}
+
+/**
+ * Like readIndexSlot, with fs/promises. Never throws. A write by this process that lands while the file is read wins
+ * (the slot changed), and a missing file removes the slot only when nothing wrote it meanwhile.
+ */
+export async function readIndexSlotAsync(runsDir: string, id: string): Promise<IndexSlot | undefined> {
+  const file = runFile(join(runsDir, id));
+  const before = store.get(file);
+  try {
+    const st = await stat(file);
+    if (before && before.mtimeMs === st.mtimeMs && before.size === st.size) return before;
+    const text = await readFile(file, "utf8");
+    let entry: RunIndexEntry | undefined;
+    try {
+      entry = indexEntryOf(parseRunText(text) as RunSummary, id, st.mtimeMs);
+    } catch {
+      entry = undefined;
+    }
+    const now = store.get(file);
+    if (now !== before) return now; // written (or removed) by this process while we read
+    return setSlot(file, { runsDir, id, mtimeMs: st.mtimeMs, size: st.size, ...(entry ? { entry } : {}) });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT" && store.get(file) === before) dropIndexSlot(file);
+    return store.get(file);
+  }
+}
+
+/**
+ * This process wrote a run.json: update its entry from the object in memory (no read). With `stat` (the default) the
+ * file time and size are taken from disk; with `stat: false` the old ones stay (NaN when there are none), so the next
+ * refresh reads the file once. Never throws.
+ */
+export function noteRunWritten(runDir: string, run: object, o: { stat?: boolean } = {}): void {
+  try {
+    const file = runFile(runDir);
+    const old = store.get(file);
+    let mtimeMs = old?.mtimeMs ?? NaN;
+    let size = old?.size ?? NaN;
+    if (o.stat !== false) {
+      const st = statSync(file);
+      mtimeMs = st.mtimeMs;
+      size = st.size;
+    }
+    const entry = indexEntryOf(run as RunSummary, basename(runDir), Number.isFinite(mtimeMs) ? mtimeMs : Date.now());
+    setSlot(file, { runsDir: dirname(runDir), id: basename(runDir), mtimeMs, size, ...(entry ? { entry } : {}) });
+  } catch {
+    // index work never breaks a write
+  }
+}
+
+function briefFrom(s: RunSummary, id: string, mtimeMs: number): RunBrief {
+  return { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(Array.isArray(s.timeLimits) ? { timeLimits: s.timeLimits } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}), ...(s.autonomy !== undefined ? { autonomy: s.autonomy } : {}), ...(s.localTest ? { localTest: true as const } : {}), ...(typeof s.workspace === "string" ? { workspace: s.workspace } : {}) };
 }
 
 export const runFile = (runDir: string) => join(runDir, "run.json");
 export const liveLogFile = (runDir: string) => join(runDir, "live.log");
 
 export function saveRun(s: RunSummary) {
+  if ((s as unknown as Record<symbol, unknown>)[SLIM_RUN]) throw new Error("a slim run cannot be saved");
   writeFileSync(runFile(s.runDir), JSON.stringify(s, null, 2));
+  noteRunWritten(s.runDir, s);
 }
 
 export const pidAlive = (pid: unknown): boolean => {
@@ -370,7 +584,7 @@ export function adoptRun(runDir: string, owner: string, hooks: { beforeSwap?: ()
   try {
     const st = statSync(file);
     const text = readFileSync(file, "utf8");
-    const s = JSON.parse(text) as Record<string, unknown>;
+    const s = parseRunText(text) as Record<string, unknown>;
     if (!s || typeof s !== "object" || Array.isArray(s) || typeof s.owner === "string") return false;
     if (s.status === "running" && pidAlive(s.pid)) return false;
     writeFileSync(tmp, JSON.stringify({ ...s, owner }, null, 2), { mode: st.mode & 0o777, flag: "wx" });
@@ -380,6 +594,7 @@ export function adoptRun(runDir: string, owner: string, hooks: { beforeSwap?: ()
     // A second look: another process may have written run.json while we worked.
     if (readFileSync(file, "utf8") !== text) return false;
     renameSync(tmp, file);
+    noteRunWritten(runDir, { ...s, owner });
     return true;
   } catch {
     return false;
@@ -448,7 +663,7 @@ export function rewriteRunMark(runDir: string, change: (s: Record<string, unknow
   try {
     const st = statSync(file);
     const text = readFileSync(file, "utf8");
-    const s = JSON.parse(text) as Record<string, unknown>;
+    const s = parseRunText(text) as Record<string, unknown>;
     if (!s || typeof s !== "object" || Array.isArray(s)) return false;
     const next = change(s);
     if (!next) return false;
@@ -459,7 +674,7 @@ export function rewriteRunMark(runDir: string, change: (s: Record<string, unknow
     // A second look: another process may have written run.json while we worked.
     if (readFileSync(file, "utf8") !== text) return false;
     renameSync(tmp, file);
-    briefCache.delete(file);
+    noteRunWritten(runDir, next);
     return true;
   } catch {
     return false;
@@ -471,15 +686,18 @@ export function rewriteRunMark(runDir: string, change: (s: Record<string, unknow
 export function loadRun(runsDir: string, runId: string): RunSummary | undefined {
   const dir = runDirOf(runsDir, runId);
   if (!dir) return undefined;
-  return JSON.parse(readFileSync(runFile(dir), "utf8")) as RunSummary;
+  const s = parseRunText(readFileSync(runFile(dir), "utf8")) as RunSummary;
+  return dirname(dir) === runsArchiveDir(runsDir) ? fromArchive(s, dir) : s;
 }
 
 /** Like loadRun, but reads with fs/promises so the event loop stays free. A missing run.json gives undefined. */
 export async function loadRunAsync(runsDir: string, runId: string): Promise<RunSummary | undefined> {
   if (!RUN_ID_RE.test(runId)) return undefined;
-  for (const dir of allRunsDirs(runsDir)) {
+  const archive = runsArchiveIn(runsDir);
+  for (const dir of [...allRunsDirs(runsDir), ...(archive ? [archive] : [])]) {
     try {
-      return JSON.parse(await readFile(runFile(join(dir, runId)), "utf8")) as RunSummary;
+      const s = parseRunText(await readFile(runFile(join(dir, runId)), "utf8")) as RunSummary;
+      return dir === archive ? fromArchive(s, join(dir, runId)) : s;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw e;
@@ -492,7 +710,7 @@ export async function loadRunAsync(runsDir: string, runId: string): Promise<RunS
 function loadRunIn(dir: string, id: string): RunSummary | undefined {
   const p = runFile(join(dir, id));
   if (!existsSync(p)) return undefined;
-  return JSON.parse(readFileSync(p, "utf8")) as RunSummary;
+  return parseRunText(readFileSync(p, "utf8")) as RunSummary;
 }
 
 export function listRunIds(runsDir: string): string[] {
@@ -589,6 +807,12 @@ export function accountingRunsDirs(runsDir: string): string[] {
   const data = dirname(runsDir);
   const container = join(data, WORKSPACES_DIR);
   const out = [runsDir];
+  // runs-archive counts too (spending stays counted); a link is skipped, any other failed look throws
+  try {
+    if (lstatSync(runsArchiveDir(runsDir)).isDirectory()) out.push(runsArchiveDir(runsDir));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ENOTDIR") throw e;
+  }
   try {
     lstatSync(container);
   } catch (e) {
@@ -640,7 +864,7 @@ function monthSpend(runsDir: string, now: Date, keep: (workspace: string) => boo
       const st = statSync(file);
       let e = monthCache.get(file);
       if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
-        const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
+        const s = parseRunText(readFileSync(file, "utf8")) as RunSummary;
         e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
         monthCache.set(file, e);
       }
@@ -813,7 +1037,47 @@ export function runDirOf(runsDir: string, runId: string): string | undefined {
     const d = join(dir, runId);
     if (existsSync(runFile(d))) return d;
   }
+  const archive = runsArchiveIn(runsDir);
+  if (archive) {
+    const d = join(archive, runId);
+    if (existsSync(runFile(d))) return d;
+  }
   return undefined;
+}
+
+/** Old runs are moved by housekeeping to `<data>/runs-archive/<id>/`; they open by id but are in no list. */
+export const RUNS_ARCHIVE_DIR = "runs-archive";
+export const RUN_IN_ARCHIVE = "RUN_IN_ARCHIVE: this run was moved to runs-archive; it can be read but not resumed or changed";
+export const runsArchiveDir = (runsDir: string): string => join(dirname(runsDir), RUNS_ARCHIVE_DIR);
+
+/** The archive folder when it is a real folder (a link is never followed), else undefined. */
+function runsArchiveIn(runsDir: string): string | undefined {
+  const a = runsArchiveDir(runsDir);
+  return isRealDir(a) ? a : undefined;
+}
+
+/** True when the run is found in runs-archive and nowhere else. Never throws. */
+export function isInRunsArchive(runsDir: string, runId: string): boolean {
+  try {
+    const d = runDirOf(runsDir, runId);
+    return d !== undefined && dirname(d) === runsArchiveDir(runsDir);
+  } catch {
+    return false;
+  }
+}
+
+/** A run read from runs-archive: runDir is the folder it was found in, the paths below the stored runDir follow it. In memory only. */
+function fromArchive(s: RunSummary, dir: string): RunSummary {
+  const old = s.runDir;
+  if (typeof old !== "string" || old === "" || old === dir) return { ...s, runDir: dir };
+  const rebase = (p: string): string => (p === old ? dir : p.startsWith(old + sep) ? dir + p.slice(old.length) : p);
+  return {
+    ...s,
+    runDir: dir,
+    movedFrom: old,
+    ...(typeof s.workdir === "string" ? { workdir: rebase(s.workdir) } : {}),
+    ...(Array.isArray(s.history) ? { history: s.history.map((h) => (typeof h?.logFile === "string" ? { ...h, logFile: rebase(h.logFile) } : h)) } : {}),
+  };
 }
 
 /** True when any runs folder (but `except`, a runs folder) has an entry with this id, with or without run.json. */
@@ -827,7 +1091,12 @@ export function runIdTaken(runsDir: string, runId: string, except?: string): boo
       // not here
     }
   }
-  return false;
+  try {
+    lstatSync(join(runsArchiveDir(runsDir), runId));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

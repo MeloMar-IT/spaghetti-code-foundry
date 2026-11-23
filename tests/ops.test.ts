@@ -1150,6 +1150,37 @@ describe("housekeeping", () => {
     expect(runHousekeeping({ dir, runsDir: dir, now: at(7), ps: PS, clean }).result.cleaned).toEqual({ workspaces: 0, freedMb: 0 });
   });
 
+  it("moves old runs once a night after the clean-up, only when asked, and tries again after a failure", async () => {
+    const { runHousekeeping } = await import("../src/ops/housekeeping.js");
+    const dir = join(tmp(), "housekeeping");
+    const calls: number[] = [];
+    let mode: "ok" | "throw" | "failed" = "ok";
+    const archive = ((o: { days: number }) => {
+      calls.push(o.days);
+      if (mode === "throw") throw new Error("disk");
+      return mode === "failed" ? { moved: [], kept: [], failed: "queue" } : { moved: ["a", "b"], kept: [] };
+    }) as never;
+    const args = { dir, runsDir: join(dir, "runs"), ps: PS, archiveDays: 30, queueFile: join(dir, "queue.json"), archive };
+
+    expect(runHousekeeping({ ...args, now: at(1) }).result.archived).toBeUndefined();
+    mode = "throw";
+    expect(runHousekeeping({ ...args, now: at(4) }).result.archived).toBeUndefined();
+    mode = "failed";
+    expect(runHousekeeping({ ...args, now: at(5) }).result.archived).toBeUndefined();
+    mode = "ok";
+    const r = runHousekeeping({ ...args, now: at(6) });
+    expect(r.result.archived).toEqual({ runs: 2, days: 30 });
+    expect(readFileSync(join(dir, "report.md"), "utf8")).toContain("2 runs moved to runs-archive");
+    expect(readFileSync(join(dir, "memory.log"), "utf8")).toMatch(/ archived=2 runs\n$/);
+    expect(runHousekeeping({ ...args, now: at(7) }).result.archived).toBeUndefined();
+    expect(calls).toEqual([30, 30, 30]);
+
+    // without archiveDays no archive pass runs
+    const none: number[] = [];
+    runHousekeeping({ dir: join(tmp(), "hk2"), runsDir: dir, now: at(4), ps: PS, archive: (() => (none.push(1), { moved: [], kept: [] })) as never });
+    expect(none).toEqual([]);
+  });
+
   it("is a helper of its own that runs every three hours", async () => {
     const { JOBS } = await import("../src/ops/cli.js");
     expect(JOBS.housekeeping).toEqual({ name: "housekeeping", everySec: 10800 });

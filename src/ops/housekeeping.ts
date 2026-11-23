@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanRuns, type CleanResult } from "../clean.js";
+import { archiveOldRuns } from "./runs-archive.js";
 
 /** Memory of two processes that grew unnoticed before: the system's file-change tracker and the Foundry's own server. */
 export interface Memory { fseventsdGb: number; serverGb: number }
@@ -14,13 +15,15 @@ export const CLEAN_OLDER_THAN_DAYS = 2;
 /** The clean-up runs at the first check at or after this hour (local time), once a day. */
 export const CLEAN_FROM_HOUR = 3;
 
-export interface HousekeepingState { lastCleanDay?: string; warnedDay?: Record<string, string> }
+export interface HousekeepingState { lastCleanDay?: string; lastArchiveDay?: string; warnedDay?: Record<string, string> }
 export interface Housekeeping {
   at: string;
   memory: Memory;
   warnings: string[];
   /** Set when this check did the nightly clean-up. */
   cleaned?: { workspaces: number; freedMb: number };
+  /** Set when this check moved old runs to runs-archive. */
+  archived?: { runs: number; days: number };
 }
 
 /** `ps -Ao rss=,command=` output → gigabytes of the two processes. The server is every process running `… serve` of this Foundry's CLI. */
@@ -63,7 +66,7 @@ const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).pad
  * night remove the workspaces of runs that ended days ago (the files that feed the file-change tracker).
  * Nothing here can stop a run: the clean-up skips runs that are active, paused or newer than the limit.
  */
-export function runHousekeeping(o: { dir: string; runsDir: string; now: Date; ps: string; clean?: typeof cleanRuns; isActive?: (runId: string) => boolean }): { result: Housekeeping; notify: string[] } {
+export function runHousekeeping(o: { dir: string; runsDir: string; now: Date; ps: string; clean?: typeof cleanRuns; isActive?: (runId: string) => boolean; archiveDays?: number; queueFile?: string; archive?: typeof archiveOldRuns }): { result: Housekeeping; notify: string[] } {
   mkdirSync(o.dir, { recursive: true });
   const stateFile = join(o.dir, "state.json");
   let state: HousekeepingState = {};
@@ -94,9 +97,24 @@ export function runHousekeeping(o: { dir: string; runsDir: string; now: Date; ps
     }
   }
 
-  const result: Housekeeping = { at: o.now.toISOString(), memory, warnings: warnings.map((w) => w.text), ...(cleaned ? { cleaned } : {}) };
-  appendFileSync(join(o.dir, "memory.log"), `${result.at} fseventsd=${memory.fseventsdGb}GB server=${memory.serverGb}GB${cleaned ? ` cleaned=${cleaned.workspaces} workspaces, ${cleaned.freedMb} MB` : ""}\n`);
-  writeFileSync(stateFile, JSON.stringify({ ...(lastCleanDay ? { lastCleanDay } : {}), warnedDay: warned }));
+  // After the clean-up, in the same nightly window: old runs move to runs-archive. Only when asked for (days and queue file given).
+  let archived: Housekeeping["archived"];
+  let lastArchiveDay = state.lastArchiveDay;
+  if (o.archiveDays !== undefined && o.queueFile && o.now.getHours() >= CLEAN_FROM_HOUR && lastArchiveDay !== today) {
+    try {
+      const r = (o.archive ?? archiveOldRuns)({ runsDir: o.runsDir, queueFile: o.queueFile, days: o.archiveDays, now: o.now, ...(o.isActive ? { isActive: o.isActive } : {}) });
+      if (!r.failed) {
+        lastArchiveDay = today;
+        if (r.moved.length > 0) archived = { runs: r.moved.length, days: o.archiveDays };
+      }
+    } catch {
+      // tried again at the next check
+    }
+  }
+
+  const result: Housekeeping = { at: o.now.toISOString(), memory, warnings: warnings.map((w) => w.text), ...(cleaned ? { cleaned } : {}), ...(archived ? { archived } : {}) };
+  appendFileSync(join(o.dir, "memory.log"), `${result.at} fseventsd=${memory.fseventsdGb}GB server=${memory.serverGb}GB${cleaned ? ` cleaned=${cleaned.workspaces} workspaces, ${cleaned.freedMb} MB` : ""}${archived ? ` archived=${archived.runs} runs` : ""}\n`);
+  writeFileSync(stateFile, JSON.stringify({ ...(lastCleanDay ? { lastCleanDay } : {}), ...(lastArchiveDay ? { lastArchiveDay } : {}), warnedDay: warned }));
   writeFileSync(join(o.dir, "latest.json"), JSON.stringify(result, null, 2));
   writeFileSync(join(o.dir, "report.md"), housekeepingReport(result));
   return { result, notify };
@@ -109,6 +127,7 @@ export function housekeepingReport(r: Housekeeping): string {
     `- File-change tracker (fseventsd): ${r.memory.fseventsdGb} GB (a line is written above ${FSEVENTSD_WARN_GB} GB).`,
     `- Foundry server: ${r.memory.serverGb} GB (a line is written above ${SERVER_WARN_GB} GB).`,
     ...(r.cleaned ? [`- Nightly clean-up: ${r.cleaned.workspaces} workspace${r.cleaned.workspaces === 1 ? "" : "s"} of runs that ended more than ${CLEAN_OLDER_THAN_DAYS} days ago removed, ${r.cleaned.freedMb} MB freed.`] : []),
+    ...(r.archived ? [`- Nightly archive: ${r.archived.runs} run${r.archived.runs === 1 ? "" : "s"} moved to runs-archive (finished more than ${r.archived.days} days ago; failed and stopped ones after at least 90).`] : []),
     ...(r.warnings.length ? ["", "**Needs you:**", ...r.warnings.map((w) => `- ${w}`)] : ["", "Nothing needs you."]),
     "",
   ].join("\n");

@@ -134,8 +134,8 @@ export class RunRecorder {
   }
 
   /** The autonomy level the run starts with (#643). */
-  runAutonomy(a: RunAutonomy): void {
-    this.put(() => ({ type: "run.autonomy", level: a.level, ...(a.repository ? { repository: a.repository } : {}), flow: a.flow }));
+  runAutonomy(a: RunAutonomy, o: { resumed?: true } = {}): void {
+    this.put(() => ({ type: "run.autonomy", level: a.level, ...(a.repository ? { repository: a.repository } : {}), flow: a.flow, ...(o.resumed ? { resumed: true as const } : {}) }));
   }
 
   started(run: Pick<RunSummary, "baseSha" | "branch" | "vars">): void {

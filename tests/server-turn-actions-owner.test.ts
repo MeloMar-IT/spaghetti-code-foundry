@@ -54,7 +54,7 @@ function stub(ws: W[]) {
   return {
     opts: { log: vi.fn() },
     config: () => config,
-    scheduler: { list: () => [], get: () => undefined, ownerOf: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
+    scheduler: { list: () => [], get: () => undefined, slimRuns: () => [], slimOf: () => undefined, statusOf: () => undefined, runIndexReady: () => true, ownerOf: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
     watchers: {
       statuses: () => [],
       identityOf,

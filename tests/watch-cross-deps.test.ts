@@ -146,10 +146,32 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     story("- acme/app2#3", [T]);
     const w = watcher();
     await w.tick();
-    expect(hold(w)?.next.kind).toBe("dependency");
+    const h = hold(w)!;
+    expect(h.next.kind).toBe("dependency");
+    expect(h.next.who).toBe("You");
+    expect(needsUser(h.next)).toBe(true);
+    for (const part of ["acme/app2#3", "no sign-in of its own", "My repositories", "Depends on"]) expect(`${h.next.why}. ${h.next.action}`).toContain(part);
     expect(submit).not.toHaveBeenCalled();
-    expect(logged).toContain("[w] ! #4: acme/app2#3 could not be read: the repository has no sign-in of its own");
+    const line = "[w] ! #4: acme/app2#3 could not be read: the repository has no sign-in of its own";
+    expect(logged.filter((l) => l === line)).toHaveLength(1);
+    await w.tick();
+    expect(logged.filter((l) => l === line)).toHaveLength(1); // told once, not on every check
     expect(gh.ghLog()).not.toContain("api repos/acme/app2");
+    // The line is taken out of Depends on: the hold is gone and the story starts.
+    story("", [T]);
+    await w.tick();
+    expect(hold(w)).toBeUndefined();
+    expect(submit).toHaveBeenCalledOnce();
+    w.stop();
+  });
+
+  it("says in the status comment which issue could not be read and why", async () => {
+    story("- acme/app2#3", [T]);
+    const w = watcher({ status_comment: true });
+    await w.tick();
+    const mine = gh.statusComments();
+    expect(mine).toHaveLength(1);
+    for (const part of ["acme/app2#3", "no sign-in of its own", "My repositories"]) expect(mine[0].body).toContain(part);
     w.stop();
   });
 
