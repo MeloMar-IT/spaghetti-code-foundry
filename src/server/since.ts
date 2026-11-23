@@ -3,7 +3,7 @@ import { storeFor } from "../stories/store.js";
 import { buildSince, isReleaseBody, MAX_REPOS, MAX_RUNS, MERGED_LIMIT, parseSince, type MergedRead, type SinceSummary } from "../since.js";
 import { runOrigin } from "../your-turn.js";
 import { HttpError, send } from "./http.js";
-import { nextFor } from "./next.js";
+import { indexReady, nextFor } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 import { evalRunIds, turnFor } from "./your-turn.js";
 
@@ -66,10 +66,10 @@ export async function sinceFor(
     .sort((a, b) => Date.parse(b.finishedAt!) - Date.parse(a.finishedAt!));
   const max = o.maxRuns ?? MAX_RUNS;
   const runsCut = finished.length > max;
-  const loaded = finished.slice(0, max).flatMap((b) => ctx.scheduler.get(b.runId) ?? []);
+  const loaded = finished.slice(0, max).flatMap((b) => ctx.scheduler.slimOf(b.runId) ?? []);
 
   // The newest runs plus the window, so a failed run is checked for a replacement against all of it.
-  const listed = ctx.scheduler.list(200);
+  const listed = ctx.scheduler.slimRuns(200);
   const known = new Set(listed.map((r) => r.runId));
   const next = nextFor(ctx, [...listed, ...loaded.filter((r) => !known.has(r.runId))]);
   const runs = loaded.map((run) => ({ run, next: next(run) }));
@@ -99,5 +99,6 @@ export const sinceRoutes: Route = async (ctx, req, res, seg, method) => {
   if (seg[0] !== "since" || seg[1] || method !== "GET") return false;
   const since = parseSince(new URL(req.url ?? "/", "http://x").searchParams.get("since"));
   if (!since) throw new HttpError(400, '"since" must be a time');
+  if (!(await indexReady(ctx, res))) return true;
   return send(res, 200, await sinceFor(ctx, since)), true;
 };

@@ -216,7 +216,8 @@ export class Scheduler {
   /** The account that started a run, also while it is still queued. Undefined: no owner, or the run cannot be read. Never throws. */
   ownerOf(runId: string): string | undefined {
     try {
-      const owner = this.get(runId)?.owner;
+      // From the run index once it is ready: no run file is read.
+      const owner = this.active.get(runId)?.summary?.owner ?? this.slimOf(runId)?.owner;
       if (typeof owner === "string") return owner;
     } catch {
       // a run.json that cannot be read has no owner
@@ -228,7 +229,7 @@ export class Scheduler {
   /** The workspace of a run, also while it is still queued (#817). "default" for an unknown run or an older one. Never throws. */
   workspaceOf(runId: string): string {
     try {
-      const ws = this.get(runId)?.workspace;
+      const ws = this.active.get(runId)?.summary?.workspace ?? this.slimOf(runId)?.workspace; // from the run index: no run file is read
       if (validWorkspaceId(ws)) return ws;
     } catch {
       // a run.json that cannot be read has no workspace

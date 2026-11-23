@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import { join } from "node:path";
 import { stepLogFile } from "../engine/execute.js";
 import { isCantReachGitHub } from "../errors.js";
@@ -78,7 +79,7 @@ const HISTORY_RUNS = 500;
 const HISTORY_TTL_MS = 5 * 60_000;
 const histories = new WeakMap<ApiContext, { at: number; history: DurationHistory }>();
 
-/** Durations of the newest runs; built at most every 5 minutes because it reads many run files. */
+/** Durations of the newest runs; built at most every 5 minutes (it walks 500 slim runs; no run file is read). */
 export function historyFor(ctx: ApiContext): DurationHistory {
   const have = histories.get(ctx);
   if (have && Date.now() - have.at < HISTORY_TTL_MS) return have.history;
@@ -148,7 +149,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
   const pending = ctx.scheduler.queue().pending;
   const tracked = ctx.watchers.tracked();
   let list = runs;
-  const load = () => (list ??= ctx.scheduler.list(200));
+  const load = () => (list ??= ctx.scheduler.slimRuns(200));
   // The newest run per issue, pull request or CI run, from the briefs of every run (no run.json is read again).
   let newest: Map<string, { runId: string; startedAt: string }> | undefined;
   const newestOf = () => {
@@ -487,11 +488,11 @@ export function collectNext(ctx: ApiContext, list: RunSummary[], forUser = false
 
 /** The newest runs plus the run of every tracked issue. */
 export function knownRuns(ctx: ApiContext, limit = 200): RunSummary[] {
-  const list = ctx.scheduler.list(limit);
+  const list = [...ctx.scheduler.slimRuns(limit)];
   const loaded = new Set(list.map((r) => r.runId));
   for (const t of ctx.watchers.tracked()) {
     for (const i of t.issues) {
-      const run = i.runId && !loaded.has(i.runId) ? ctx.scheduler.get(i.runId) : undefined;
+      const run = i.runId && !loaded.has(i.runId) ? ctx.scheduler.slimOf(i.runId) : undefined;
       if (run) list.push(run), loaded.add(run.runId);
     }
   }
@@ -500,7 +501,7 @@ export function knownRuns(ctx: ApiContext, limit = 200): RunSummary[] {
 
 /** Records for the server, the watchers, every tracked issue and every run. */
 export function allNext(ctx: ApiContext): { server: NextStep[]; watchers: NextStep[]; issues: NextStep[]; runs: NextStep[] } {
-  const c = collectNext(ctx, ctx.scheduler.list(Infinity)); // every record, not just the newest runs
+  const c = collectNext(ctx, ctx.scheduler.slimRuns(Infinity)); // every record, not just the newest runs
   // collectNext keeps one record per issue already; the rank pick stays: a running one first, a finished one last; the first watcher wins a tie.
   const picked = new Map<string, { rank: number; rec: NextStep }>();
   for (const i of c.issues) {
@@ -510,7 +511,16 @@ export function allNext(ctx: ApiContext): { server: NextStep[]; watchers: NextSt
   return { server: c.server, watchers: c.watchers.map((w) => w.next), issues: [...picked.values()].map((p) => p.rec), runs: c.runs() };
 }
 
+/** Waits for the run index. False (and a 503 sent) when the build did not finish: these answers never fall back to reading every run file. */
+export async function indexReady(ctx: ApiContext, res: ServerResponse): Promise<boolean> {
+  await ctx.scheduler.whenIndexReady();
+  if (ctx.scheduler.runIndexReady()) return true;
+  send(res, 503, { error: "The run index is not ready yet; try again in a moment." });
+  return false;
+}
+
 export const nextRoutes: Route = async (ctx, _req, res, seg, method) => {
   if (seg[0] !== "next" || seg[1] || method !== "GET") return false;
+  if (!(await indexReady(ctx, res))) return true;
   return send(res, 200, allNext(ctx)), true;
 };

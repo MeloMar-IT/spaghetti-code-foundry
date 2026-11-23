@@ -37,6 +37,11 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
     scheduler: {
       list: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
+      slimRuns: (n = 100) => runs.slice(0, n),
+      slimOf: (id: string) => runs.find((r) => r.runId === id),
+      statusOf: (id: string) => runs.find((r) => r.runId === id)?.status,
+      runIndexReady: () => true,
+      whenIndexReady: async () => {},
       ownerOf: (id: string) => runs.find((r) => r.runId === id)?.owner,
       briefs: () => briefsOf(runs),
       queue: () => ({ pending: [], active: [] }),

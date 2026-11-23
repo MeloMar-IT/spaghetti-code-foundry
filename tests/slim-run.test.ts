@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { indexEntryOf, saveRun, slimRunOf, type RunSummary } from "../src/engine/state.js";
+import { indexEntryOf, saveRun, SLIM_OUTPUT_MAX, slimRunOf, type RunSummary } from "../src/engine/state.js";
+import { parseWaitsFor } from "../src/queue/waits-for.js";
 import { usesTask } from "../src/flow/publish.js";
+import { storyTitle } from "../src/since.js";
 import { buildHistory } from "../src/estimate.js";
 import { computeStats, supersededRuns } from "../src/stats.js";
 
@@ -104,6 +106,32 @@ describe("slimRunOf", () => {
     const old = { runId: "o", flow: "f", status: "succeeded", startedAt: "2026-01-01T00:00:00Z", totalCostUsd: 0, vars: {}, task: "t", runDir: "/x" } as unknown as RunSummary;
     expect(() => slimRunOf(old)).not.toThrow();
     expect(indexEntryOf(old, "o", 1)?.step).toBeNull();
+  });
+});
+
+describe("slimRunOf: sub-flow steps", () => {
+  it("keeps the WAITS_FOR output of a wait_for_story step with a sub-flow prefix", () => {
+    const waits = "WAITS_FOR: #3, #4\n" + big;
+    const f = full();
+    f.history = [{ id: "build/wait_for_story", type: "shell", visit: 1, ok: true, output: waits }] as never;
+    const slim = slimRunOf(f);
+    expect(slim.history[0]!.output).toBe(waits.slice(0, SLIM_OUTPUT_MAX));
+    expect(parseWaitsFor(slim.history[0]!.output!)?.issues).toEqual([3, 4]);
+    expect(parseWaitsFor(slim.history[0]!.output!)).toEqual(parseWaitsFor(waits));
+  });
+});
+
+describe("slimRunOf: the issue title", () => {
+  it("keeps only the title line of pull_ticket in state.steps and in the history output", () => {
+    const f = full();
+    const out = "# #7: Seven\n\nbody\n" + big;
+    f.state.steps = { pull_ticket: { output: out } } as never;
+    (f.history as unknown[]).unshift({ id: "pull_ticket", type: "shell", visit: 1, ok: true, output: out });
+    const slim = slimRunOf(f);
+    expect(slim.state.steps).toEqual({ pull_ticket: { output: "# #7: Seven" } });
+    expect(slim.history[0]!.output).toBe("# #7: Seven");
+    expect(storyTitle(slim)).toBe(storyTitle(f));
+    expect(storyTitle(slim)).toBe("Seven");
   });
 });
 

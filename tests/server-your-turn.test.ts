@@ -41,6 +41,11 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
     scheduler: {
       list: (n = 100) => runs.slice(0, o.listed ?? n).slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
+      slimRuns: (n = 100) => runs.slice(0, o.listed ?? n).slice(0, n),
+      slimOf: (id: string) => runs.find((r) => r.runId === id),
+      statusOf: (id: string) => runs.find((r) => r.runId === id)?.status,
+      runIndexReady: () => true,
+      whenIndexReady: async () => {},
       ownerOf: (id: string) => runs.find((r) => r.runId === id)?.owner,
       briefs: () => briefsOf(runs),
       queue: () => ({ pending: [], active: [] }),
@@ -222,11 +227,11 @@ describe("Your turn runs", () => {
       const base = stub({ config: cfg([issuesWatcher]), runs });
       const gets: string[] = [];
       let biggest = 0;
-      const sched = base.scheduler as unknown as { list: (n?: number) => unknown; get: (id: string) => unknown };
-      const list = sched.list.bind(sched);
-      const get = sched.get.bind(sched);
-      sched.list = (n?: number) => { biggest = Math.max(biggest, n ?? 100); return list(n); };
-      sched.get = (id: string) => { gets.push(id); return get(id); };
+      const sched = base.scheduler as unknown as { slimRuns: (n?: number) => unknown; slimOf: (id: string) => unknown };
+      const list = sched.slimRuns.bind(sched);
+      const get = sched.slimOf.bind(sched);
+      sched.slimRuns = (n?: number) => { biggest = Math.max(biggest, n ?? 100); return list(n); };
+      sched.slimOf = (id: string) => { gets.push(id); return get(id); };
       expect(items(base).map((i) => i.next.runId)).not.toContain("ow");
       expect(biggest).toBeLessThanOrEqual(200);
       expect(gets.filter((id) => /^s\d+$/.test(id))).toEqual([]);

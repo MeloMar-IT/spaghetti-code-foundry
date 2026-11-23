@@ -323,8 +323,10 @@ export type SlimRun = RunSummary;
 
 export const SLIM_OUTPUT_MAX = 16_000;
 /** Lines of a step output that readers look for (split parts, closed issues, planned issues, pushes): next-step.ts, failure.ts, user-view.ts. */
+/** The issue title line of a pull_ticket output (the Board and "since" show it). */
+const TITLE_LINE = /^# #\d+: /;
 const OUTPUT_MARKERS = [
-  /^SPLIT_PARTS: /, /^#\d+ \S/, /^#{2,4}\s*ISSUE\s+\d+\s*:/i, /^PUSHED:/, /closed #\d+/,
+  /^SPLIT_PARTS: /, /^#\d+ \S/, /^#{2,4}\s*ISSUE\s+\d+\s*:/i, /^PUSHED:/, /closed #\d+/, TITLE_LINE,
   // safe-points.ts: push_develop, verify and changes outputs.
   /^COMMIT: /i, /^TESTED: /i, /^CHECKS: /i, /^\s*(?:Merge|Resolve) #\d+: /,
 ];
@@ -372,7 +374,7 @@ function slimFlowStep(step: unknown): unknown {
 }
 
 /**
- * The run without its heavy parts: no state.steps, the flow without the text of its steps (only the lines that name the
+ * The run without its heavy parts: no state.steps (but the title line of pull_ticket), the flow without the text of its steps (only the lines that name the
  * task or close the issue), and cut step outputs. Readers of the cut parts: next-step.ts, failure.ts, user-view.ts,
  * publish.ts. A deep copy. Failed outputs keep their head and tail (a whole output up to 4 × SLIM_OUTPUT_MAX).
  */
@@ -385,17 +387,24 @@ export function slimRunOf(s: RunSummary): SlimRun {
     const { steps, ...others } = flowDef as unknown as Record<string, unknown>;
     out.flowDef = { ...(structuredClone(others) as object), steps: Array.isArray(steps) ? steps.map(slimFlowStep) : steps } as unknown as Flow;
   }
-  if (state && typeof state === "object") out.state = { next: state.next, steps: {}, visits: structuredClone(state.visits ?? {}) };
+  if (state && typeof state === "object") {
+    // Only the title line of pull_ticket stays: the Board shows it (src/board.ts).
+    const t = state.steps?.pull_ticket?.output;
+    const title = typeof t === "string" ? markerLines(t, [TITLE_LINE]) : "";
+    out.state = { next: state.next, steps: title ? { pull_ticket: { output: title } } : {}, visits: structuredClone(state.visits ?? {}) } as RunSummary["state"];
+  }
   if (Array.isArray(history)) {
+    // A sub-flow step id is "prefix/step": the step name is its last part (as stepIs in next-step.ts reads it).
+    const nameOf = (id: unknown) => String(id ?? "").split("/").at(-1)!;
     const newestHead = new Map<string, number>();
     history.forEach((r, i) => {
-      if (HEAD_STEPS.includes(r?.id)) newestHead.set(r.id, i);
+      if (HEAD_STEPS.includes(nameOf(r?.id))) newestHead.set(nameOf(r.id), i);
     });
     out.history = history.map((r, i) => {
       const { output, ...other } = r;
       const rec = structuredClone(other) as StepRecord;
       const text = typeof output === "string" ? output : "";
-      if (HEAD_STEPS.includes(r.id) && newestHead.get(r.id) === i) rec.output = text.slice(0, SLIM_OUTPUT_MAX);
+      if (HEAD_STEPS.includes(nameOf(r.id)) && newestHead.get(nameOf(r.id)) === i) rec.output = text.slice(0, SLIM_OUTPUT_MAX);
       else if (!r.ok) rec.output = text.length <= 4 * SLIM_OUTPUT_MAX ? text : text.slice(0, SLIM_OUTPUT_MAX) + "\n" + text.slice(-SLIM_OUTPUT_MAX);
       else rec.output = outputLines(text);
       return rec;
