@@ -11,7 +11,7 @@ import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
 import { RunIndex } from "../engine/run-index.js";
-import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, noteRunWritten, projectOfVars, readIndexSlot, slimRunOf, spentToday, type SlimRun, type RunIndexEntry, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
+import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, noteRunWritten, projectOfVars, readIndexSlot, slimRunOf, spentToday, type SlimRun, type RunIndexEntry, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -145,7 +145,7 @@ export interface SchedulerOptions {
 
 const ID_TRIES = 20;
 
-export type ArchiveResult = "done" | "same" | "busy" | "missing" | "removed";
+export type ArchiveResult = "done" | "same" | "busy" | "missing" | "removed" | "stored";
 
 export interface AccountInfo {
   id: string;
@@ -278,6 +278,7 @@ export class Scheduler {
   /** Saves an answer with a stopped run and queues its resume, in one synchronous step. The text goes to run.json only. */
   answer(runId: string, text: string, by: string, meta: JobMeta = {}): void {
     if (this.removedRun(runId)) throw new AnswerRefused("state", WORKSPACE_REMOVED);
+    if (this.inRunsArchive(runId)) throw new AnswerRefused("state", RUN_IN_ARCHIVE);
     if (this.isActive(runId) || this.isQueued(runId)) throw new Error(`run ${runId} is already queued or running`);
     const { undo } = saveAnswer(this.o.runsDir, runId, text, by);
     try {
@@ -317,6 +318,11 @@ export class Scheduler {
     }
   }
 
+  /** True when the run was moved to runs-archive (read-only). Never throws. */
+  inRunsArchive(runId: string): boolean {
+    return isInRunsArchive(this.o.runsDir, runId);
+  }
+
   /** True when the run belongs to a workspace that is not in the list any more: its saved run is read-only (#824). Never throws. */
   private removedRun(runId: string): boolean {
     try {
@@ -343,6 +349,7 @@ export class Scheduler {
     const job = this.freezeRunVars(input, meta.owner);
     const runId = job.kind === "run" ? this.freeId() : job.runId;
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
+    if (job.kind === "resume" && this.inRunsArchive(runId)) throw new Error(RUN_IN_ARCHIVE);
     const repoLock = this.repoLockFor(job);
     const { priority, storyAt, workspace: givenWorkspace, ...rest } = meta;
     const workspace = this.workspaceFor(job, givenWorkspace, meta.owner);
@@ -439,7 +446,7 @@ export class Scheduler {
       return true;
     }
     const a = this.active.get(runId);
-    if (!a) return this.cancelWaiting(runId, by) || this.cancelStopped(runId, by);
+    if (!a) return !this.inRunsArchive(runId) && (this.cancelWaiting(runId, by) || this.cancelStopped(runId, by));
     // A run that stopped but is still finishing (its notification runs): the stop is saved, so cancel it like a stopped run.
     if (a.summary?.status === "stopped" && !a.controller.signal.aborted && this.cancelStopped(runId, by)) return true;
     a.cancelledBy ??= by;
@@ -475,6 +482,7 @@ export class Scheduler {
   /** Sets or removes the archive mark of a finished run. Refuses a run that is queued, active, running or waiting. */
   setArchived(runId: string, archived: boolean, by: string): ArchiveResult {
     if (this.removedRun(runId)) return "removed";
+    if (this.inRunsArchive(runId)) return "stored";
     if (this.isActive(runId) || this.isQueued(runId)) return "busy";
     let s: RunSummary | undefined;
     try {
@@ -529,7 +537,7 @@ export class Scheduler {
 
   /** Sets the parked mark of a stopped or cancelled run. Refuses a run that is queued or active. */
   setParked(runId: string): boolean {
-    if (this.isActive(runId) || this.isQueued(runId) || this.removedRun(runId)) return false;
+    if (this.isActive(runId) || this.isQueued(runId) || this.removedRun(runId) || this.inRunsArchive(runId)) return false;
     if (!setRunParked(runDirOf(this.o.runsDir, runId) ?? join(this.o.runsDir, runId), new Date().toISOString())) return false;
     const summary = this.get(runId);
     if (summary) for (const fn of [...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
@@ -538,7 +546,7 @@ export class Scheduler {
 
   /** Takes the parked mark off again (a park that could not be finished on GitHub). Refuses a run that is queued or active. */
   clearParked(runId: string): boolean {
-    if (this.isActive(runId) || this.isQueued(runId) || this.removedRun(runId)) return false;
+    if (this.isActive(runId) || this.isQueued(runId) || this.removedRun(runId) || this.inRunsArchive(runId)) return false;
     return clearRunParked(runDirOf(this.o.runsDir, runId) ?? join(this.o.runsDir, runId));
   }
 

@@ -475,6 +475,8 @@ export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
     server: ServerSchema,
+    /** Housekeeping moves finished runs older than this many days to runs-archive (failed and stopped ones after at least 90). */
+    runs_archive_days: z.number().int().min(1).max(3650).default(30),
     /** The audit log (`audit.jsonl`): how long lines are kept. */
     audit: AuditSchema,
     /** Model spec for agent steps with no model anywhere (flow, step or router). */
