@@ -81,7 +81,7 @@ export interface StatusView {
   closed: { issue: number; title: string }[];
   /** The lists were whole: an issue that is not in them is gone. */
   complete: boolean;
-  scheduler: Pick<Scheduler, "queue" | "get">;
+  scheduler: Pick<Scheduler, "queue" | "slimOf">;
   areaWait?: (run: RunSummary) => { runId: string; areas: string } | undefined;
   lastRunId: (issue: number) => string | undefined;
   /** "HH:MM" of the scheduled release a finished run waits for. */
@@ -110,7 +110,7 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
     const { pending, active } = v.scheduler.queue();
     const get = (id: string): RunSummary | undefined => {
       try {
-        return v.scheduler.get(id);
+        return v.scheduler.slimOf(id);
       } catch {
         return undefined;
       }

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { RunSummary } from "../src/engine/state.js";
+import { slimRunOf, type RunSummary } from "../src/engine/state.js";
 import { MAX_SAFE_CHANGES, MAX_SAFE_POINTS, mergedChanges, releasePlan, safePoints, safeSourcesOf, startedBy, type SafeSource } from "../src/safe-points.js";
 
 const A = "a".repeat(40), B = "b".repeat(40), C = "c".repeat(40);
@@ -47,6 +47,29 @@ describe("safeSourcesOf", () => {
     const titles = safePoints([...safeSourcesOf(base, o), ...safeSourcesOf(pushA, o), ...safeSourcesOf(pushA2, o)], { branch: "develop", viewer, names }).flatMap((p) => p.changes.map((c) => c.title));
     expect(titles).not.toContain("Change B");
     expect(titles).toEqual(expect.arrayContaining(["Change A"]));
+  });
+  it("gives the same sources for a slim run as for the full run (#932)", () => {
+    const noise = "noise line\n".repeat(50);
+    const long = "z".repeat(3000);
+    const green = `BASE_GREEN: develop ${C} 2026-11-02T08:00:00Z`;
+    const runs = [
+      run({ history: [step("pull_ticket", `# #5: Title\n${noise}`), step("push_develop", `${noise}COMMIT: ${A}\nmore`)] }),
+      run({ flow: "release-daily", history: [
+        step("changes", `${noise}  Merge #3: A (feature/x)\n${noise}Resolve #4: B (feature/y)\n`),
+        step("verify", `${noise}TESTED: ${B}\nCHECKS: yes\n${noise}`),
+      ] }),
+      run({ history: [step("baseline_tests", `${noise}${green}\n`)] }),
+      // a BASE_GREEN line that is not the last line gives no point, in both forms
+      run({ history: [step("baseline_tests", `${green}\nnoise`)] }),
+      // a valid first line followed by a last line that is too long: no point (the slim run must not invent one)
+      run({ history: [step("baseline_tests", `${green}\n${noise}${long}`)] }),
+      // a first line that is too long
+      run({ history: [step("pull_ticket", `# #5: ${long}\n${noise}`), step("push_develop", `COMMIT: ${A}`)] }),
+    ];
+    for (const r of runs) expect(safeSourcesOf(slimRunOf(r), o)).toEqual(safeSourcesOf(r, o));
+    expect(safeSourcesOf(runs[2]!, o)).toHaveLength(1);
+    expect(safeSourcesOf(runs[3]!, o)).toEqual([]);
+    expect(safeSourcesOf(runs[4]!, o)).toEqual([]);
   });
   it("reads a release build of the main branch only, with its changes", () => {
     const rb = (vars: Record<string, string>, outputs?: Record<string, string>) => run({ flow: "release-build", vars: { github_repo: "acme/app", ...vars }, ...(outputs ? { outputs } : {}) });

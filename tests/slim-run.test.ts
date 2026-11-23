@@ -6,7 +6,8 @@ import { indexEntryOf, saveRun, SLIM_OUTPUT_MAX, slimRunOf, type RunSummary } fr
 import { parseWaitsFor } from "../src/queue/waits-for.js";
 import { usesTask } from "../src/flow/publish.js";
 import { storyTitle } from "../src/since.js";
-import { supersededRuns } from "../src/stats.js";
+import { buildHistory } from "../src/estimate.js";
+import { computeStats, supersededRuns } from "../src/stats.js";
 
 const big = "x".repeat(200_000);
 const full = (): RunSummary =>
@@ -30,8 +31,9 @@ describe("slimRunOf", () => {
     const slim = slimRunOf(f);
     expect(JSON.stringify(slim).length).toBeLessThan(JSON.stringify(f).length / 10);
     expect(slim.task).toBe(f.task); // the whole task: answer room and the user's view read it
-    expect(slim.state).toEqual({ next: "create_split", steps: {}, visits: { plan: 1 } }); // no title line in this output
-    expect(slim.history[0]!.output).toBe("### ISSUE 1: a\n### ISSUE 2: b");
+    expect(slim.state).toEqual({ next: "create_split", steps: {}, visits: { plan: 1 } });
+    // the first line and the marker lines (the last line is kept only for baseline_tests)
+    expect(slim.history[0]!.output).toBe("intro\n### ISSUE 1: a\n### ISSUE 2: b");
     expect(slim.history[1]!.output).toBe("#12 A\n#13 B\nfailed here");
     expect(usesTask(slim.flowDef)).toBe(usesTask(f.flowDef));
     expect((slim.flowDef.steps[1] as { run: string }).run).toBe("gh issue close 7");
@@ -60,6 +62,38 @@ describe("slimRunOf", () => {
     const a = { ...full(), runId: "a", startedAt: "2026-10-01T10:00:00Z" } as RunSummary;
     const b = { ...full(), runId: "b", startedAt: "2026-10-01T11:00:00Z" } as RunSummary;
     expect([...supersededRuns([a, b].map(slimRunOf))]).toEqual([...supersededRuns([a, b])]);
+  });
+
+  it("keeps the lines safe points read, and the first and last line", () => {
+    const f = full();
+    const sha = "a".repeat(40);
+    f.history[0]!.id = "baseline_tests";
+    f.history[0]!.output = `# #5: Title\nnoise\nCOMMIT: ${sha}\nTESTED: ${sha}\nCHECKS: yes\n  Merge #3: A (feature/x)\nResolve #4: B (b)\nmore noise\nBASE_GREEN: develop ${sha} 2026-11-01T10:00:00Z\n\n`;
+    expect(slimRunOf(f).history[0]!.output).toBe(
+      `# #5: Title\nCOMMIT: ${sha}\nTESTED: ${sha}\nCHECKS: yes\n  Merge #3: A (feature/x)\nResolve #4: B (b)\nBASE_GREEN: develop ${sha} 2026-11-01T10:00:00Z`,
+    );
+  });
+
+  it("never takes an earlier line for the last one, and cuts a long first line", () => {
+    const f = full();
+    const green = "BASE_GREEN: develop " + "a".repeat(40) + " 2026-11-01T10:00:00Z";
+    f.history[0]!.id = "baseline_tests";
+    f.history[0]!.output = `${green}\nnoise\n${big}`;
+    expect(slimRunOf(f).history[0]!.output).toBe(`${green}\n[line cut]`);
+    f.history[0]!.output = `# #5: ${big}\nnoise\nlast`;
+    const out = slimRunOf(f).history[0]!.output.split("\n");
+    expect(out[0]!.length).toBe(2000);
+    expect(out.slice(1)).toEqual(["last"]);
+    // another step keeps no last line
+    f.history[0]!.id = "plan";
+    expect(slimRunOf(f).history[0]!.output.split("\n")).toHaveLength(1);
+  });
+
+  it("gives the same stats and duration history as the full run", () => {
+    const runs = [full(), { ...full(), runId: "r2", status: "succeeded", finishedAt: "2026-10-01T10:30:00Z" } as RunSummary];
+    const now = new Date("2026-10-02T00:00:00Z");
+    expect(computeStats(runs.map(slimRunOf), 30, now)).toEqual(computeStats(runs, 30, now));
+    expect(buildHistory(runs.map(slimRunOf))).toEqual(buildHistory(runs));
   });
 
   it("cannot be saved, also after a spread", () => {

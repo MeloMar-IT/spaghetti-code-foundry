@@ -300,6 +300,7 @@ function stub(o: { watchers?: Record<string, unknown>[]; runs?: RunSummary[]; tr
     config: () => config,
     scheduler: {
       list: (n = 100) => runs.slice(0, n),
+      slimRuns: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
       slimRuns: (n = 100) => runs.slice(0, n),
       slimOf: (id: string) => runs.find((r) => r.runId === id),

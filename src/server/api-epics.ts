@@ -52,7 +52,7 @@ function epicsInput(ctx: ApiContext, user: User, repoId: string, now: Date): Epi
     if (!have || rank < have.rank) picked.set(s.next.issue, { rank, next: admin ? s.next : userRecord(ownRecord(s.next, mine)) });
   }
   base.states = new Map([...picked].map(([n, p]) => [n, p.next]));
-  const history = ws === undefined ? historyFor(ctx) : buildHistory(ctx.scheduler.list(HISTORY_RUNS).filter((r) => inWorkspaces(ws, r.workspace)));
+  const history = ws === undefined ? historyFor(ctx) : buildHistory(ctx.scheduler.slimRuns(HISTORY_RUNS).filter((r) => inWorkspaces(ws, r.workspace)));
   const median = medianRunMs(history, first.github_repo);
   if (median !== undefined) base.medianStoryMs = median;
   return base;
@@ -72,6 +72,7 @@ async function saveDue(ctx: ApiContext, repo: string, save: Map<string, Forecast
 export const epicRoutes: Route = async (ctx, _req, res, seg, method, user) => {
   if (seg[0] !== "repos" || seg[2] !== "epics" || method !== "GET" || (seg.length !== 3 && seg.length !== 4)) return false;
   const now = new Date();
+  await ctx.scheduler.whenIndexReady();
   let input = epicsInput(ctx, user, seg[1]!, now);
   // After a save the answer is made again from what the file holds: it never shows a day that was not saved, and a day
   // that another request saved first is the one shown.
