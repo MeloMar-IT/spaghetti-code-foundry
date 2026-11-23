@@ -94,15 +94,22 @@ export function outcomeFactsOf(run: RunSummary, events: readonly EvidenceEvent[]
 }
 
 export interface OutcomeFactsCacheOptions {
-  /** Finished reads kept (the least recently used one goes first). Default 2000. */
+  /** Finished reads kept (the least recently used one goes first). Default 10000. */
   maxEntries?: number;
   /** An evidence.jsonl above this size is not read. Default MAX_EVIDENCE_BYTES. */
   maxBytes?: number;
   /** For tests: replaces the reader. */
   reader?: typeof readEvidenceEvents;
+  /**
+   * How long the answer of the file check (stream, manifest, incomplete marker) of one run folder is kept, in ms.
+   * Default 0: every call looks again. A server with thousands of runs sets a few seconds, so a request does not
+   * look at every run folder (#934). A manifest or marker then shows up at most this long late.
+   */
+  freshTtlMs?: number;
 }
 
-const MAX_ENTRIES = 2000;
+// The facts are small. A server with thousands of runs in the outcome window must not evict them on every call (#934).
+const MAX_ENTRIES = 10_000;
 
 /**
  * The facts of settled runs. evidence.jsonl is read at most once per run folder, run id and `updatedAt`; calls that
@@ -116,11 +123,28 @@ export class OutcomeFactsCache {
   private readonly maxEntries: number;
   private readonly maxBytes: number;
   private readonly reader: typeof readEvidenceEvents;
+  private readonly freshTtlMs: number;
+  /** The last file check of each run folder, kept for `freshTtlMs`. */
+  private checked = new Map<string, { at: number; files: Awaited<ReturnType<typeof evidenceFiles>> }>();
 
   constructor(opts: OutcomeFactsCacheOptions = {}) {
     this.maxEntries = Math.max(1, Math.floor(opts.maxEntries ?? MAX_ENTRIES));
     this.maxBytes = opts.maxBytes ?? MAX_EVIDENCE_BYTES;
     this.reader = opts.reader ?? readEvidenceEvents;
+    this.freshTtlMs = Number.isFinite(opts.freshTtlMs) && (opts.freshTtlMs as number) > 0 ? (opts.freshTtlMs as number) : 0;
+  }
+
+  /** The evidence files of a run folder: looked at again unless a check younger than `freshTtlMs` is kept. */
+  private async filesOf(runDir: string): Promise<Awaited<ReturnType<typeof evidenceFiles>>> {
+    if (this.freshTtlMs <= 0) return evidenceFiles(runDir);
+    const kept = this.checked.get(runDir);
+    const now = Date.now();
+    if (kept && now - kept.at < this.freshTtlMs) return kept.files;
+    const files = await evidenceFiles(runDir);
+    this.checked.delete(runDir);
+    this.checked.set(runDir, { at: now, files });
+    while (this.checked.size > this.maxEntries) this.checked.delete(this.checked.keys().next().value as string);
+    return files;
   }
 
   /** undefined: not an object, no runDir, not ended, not settled (now − finishedAt < SETTLE_MS) or no updatedAt. Never throws. */
@@ -145,7 +169,7 @@ export class OutcomeFactsCache {
         }
         facts = await pending;
       }
-      const fresh = await evidenceFiles(run.runDir);
+      const fresh = await this.filesOf(run.runDir);
       return { ...facts, evidence: { stream: fresh.stream, read: fresh.stream && facts.evidence.read, manifest: fresh.manifest, incomplete: fresh.incomplete } };
     } catch {
       return undefined;
@@ -174,11 +198,16 @@ export class OutcomeFactsCache {
   async collect(runs: readonly RunSummary[], updatedAt: ReadonlyMap<string, string>, now: Date): Promise<Map<string, OutcomeFacts>> {
     const out = new Map<string, OutcomeFacts>();
     try {
-      let i = 0;
-      for (const run of Array.isArray(runs) ? runs : []) {
-        if (i++ > 0 && i % 10 === 0) await nap();
-        const facts = await this.get(run, run && typeof run.runDir === "string" ? updatedAt.get(run.runDir) : undefined, now);
-        if (facts) out.set(run.runId, facts);
+      const list = Array.isArray(runs) ? runs : [];
+      // Batches of 20 are checked side by side (each one waits on the disk), with a turn of the event loop between batches.
+      for (let i = 0; i < list.length; i += 20) {
+        if (i > 0) await nap();
+        const batch = list.slice(i, i + 20);
+        const got = await Promise.all(batch.map((run) => this.get(run, run && typeof run.runDir === "string" ? updatedAt.get(run.runDir) : undefined, now)));
+        batch.forEach((run, k) => {
+          const facts = got[k];
+          if (facts) out.set(run.runId, facts);
+        });
       }
     } catch {
       // what was collected stays

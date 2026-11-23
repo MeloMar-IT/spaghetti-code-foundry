@@ -20,6 +20,8 @@ export const OUTCOME_DAYS_DEFAULT = 30;
 const DAY_MS = 86_400_000;
 const NAME_MAX = 200;
 const LOAD_YIELD = 25;
+/** The file check of a run folder (evidence stream, manifest, marker) is kept this long, so a request does not look at every folder (#934). */
+const FILE_CHECK_TTL_MS = 2000;
 
 export interface OutcomeFilter { days: number; repo?: string; flow?: string; model?: string; policy?: string }
 
@@ -190,7 +192,7 @@ const caches = new WeakMap<ApiContext, OutcomeFactsCache>();
 export function factsCacheOf(ctx: ApiContext): OutcomeFactsCache {
   let c = caches.get(ctx);
   if (!c) {
-    c = new OutcomeFactsCache();
+    c = new OutcomeFactsCache({ freshTtlMs: FILE_CHECK_TTL_MS });
     caches.set(ctx, c);
   }
   return c;
