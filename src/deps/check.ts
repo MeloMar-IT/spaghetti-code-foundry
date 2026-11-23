@@ -1,15 +1,17 @@
 // The weekly dependency check (flow deps-weekly): outdated Maven and npm dependencies, marked patch, minor or major,
 // and security when npm audit lists the package. Pure logic; tools/deps-weekly runs the child processes and calls this.
-import { safeSentence } from "../failure.js";
-import { AUDIT_TIMEOUT_MS, NPM_NAME, npmAuditEnv, redactTokens } from "../review/stories.js";
+import { AUDIT_TIMEOUT_MS, NPM_NAME, npmAuditEnv } from "../review/stories.js";
+import { ACTIONS_LOST_NOTE, isSha, type ActionsFile } from "./actions.js";
+import { PIP_NOT_SET_NOTE, SECRET_ENV, VERSION, gradleFromRun, goFromRun, isObj, oneLine, pipClass, pipFromRun, toolFailure, type EcosystemResult, type RawUpdate, type ToolRun } from "./ecosystems.js";
+import { OSV_MISSING_NOTE, OSV_TOOLS, osvFromRun, osvKey } from "./osv.js";
 
-export type DepTool = "maven" | "npm";
-export type DepKind = "dependency" | "plugin" | "parent";
+export type DepTool = "maven" | "npm" | "gradle" | "pip" | "go" | "actions";
+export type DepKind = "dependency" | "plugin" | "parent" | "action";
 export type UpdateClass = "patch" | "minor" | "major";
-export type CheckName = "maven" | "npm ci" | "npm outdated" | "npm audit";
+export type CheckName = "maven" | "npm ci" | "npm outdated" | "npm audit" | "gradle" | "pip" | "go" | "osv-scanner" | "actions";
 export interface DepUpdate { tool: DepTool; kind: DepKind; name: string; current: string; latest: string; class: UpdateClass; security: boolean }
 export interface Advisory { package: string; severity: "info" | "low" | "moderate" | "high" | "critical"; title: string; url: string; fix: boolean }
-export interface ToolRun { stdout?: string | null; status?: number | null; error?: { code?: string } | null }
+export type { ToolRun };
 export interface CheckResult { check: CheckName; ok: boolean; note?: string }
 export interface DepsReport {
   version: 1; branch: string; commit: string; projects: DepTool[];
@@ -29,11 +31,8 @@ export const NPM_OUTDATED_ARGS = ["outdated", "--json", REGISTRY, "--no-update-n
 export const NPM_CI_ARGS = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", REGISTRY, "--no-update-notifier"];
 export const UP_TO_DATE = "All dependencies are up to date.";
 
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const line = (t: unknown, max = 200) => safeSentence(redactTokens(String(t ?? "")), max);
-const SECRET_ENV = /token|auth|password|secret|^npm_config_/i;
+const line = oneLine;
 const MAVEN_NAME = /^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+){0,2}$/;
-const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$/;
 const ADVISORY_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._~/?=&%#:+-]*$/;
 const npmName = (n: string) => n.length <= 214 && NPM_NAME.test(n);
 const mavenName = (n: string) => n.length <= 200 && MAVEN_NAME.test(n);
@@ -257,14 +256,7 @@ export function parseNpmAuditAll(text: string): AuditAll {
 }
 
 // ── from a run of a tool to a result ──
-function failure(name: string, r: ToolRun, limitMs: number): string | undefined {
-  const code = r.error?.code;
-  if (code === "ENOENT") return `${name} was not found`;
-  if (code === "ETIMEDOUT") return `${name} did not finish in ${Math.round(limitMs / 60_000)} min`;
-  if (code === "ENOBUFS") return `the output of ${name} is too large`;
-  if (r.error) return `${name} could not run`;
-  return undefined;
-}
+const failure = toolFailure;
 
 export function auditAllFromRun(r: ToolRun): AuditAll {
   const code = r.error?.code;
@@ -308,6 +300,57 @@ export interface ReportInput {
   branch: string; commit: string;
   maven?: { run: ToolRun; cmd: string };
   npm?: { ci?: ToolRun; outdated: ToolRun; audit: AuditAll; lock?: string };
+  gradle?: { run: ToolRun; cmd: string; report?: string };
+  /** Without a run, FACTORY_PIP_BIN is not set: the packages of the runner would not be the project's, so pip is not run. */
+  pip?: { run?: ToolRun; cmd: string };
+  go?: { run: ToolRun; cmd: string };
+  /** The run of osv-scanner; its findings mark the matching rows as security. */
+  osv?: ToolRun;
+  /** The result of the actions step; `unreadable`: the file is missing, corrupt or too large while the repository has workflows. */
+  actions?: { file?: ActionsFile; unreadable?: boolean };
+}
+
+/** Compares at the precision the pin gives: @v4 against the release v4.2.0 is the same major. */
+export function classifyPinned(current: string, latest: string): UpdateClass | undefined {
+  const parts = /^v?(\d+(?:\.\d+)*)/.exec(current)?.[1]?.split(".").length;
+  const m = /^v?(\d+(?:\.\d+)*)/.exec(latest);
+  if (!parts || !m || parts >= 3) return classify(current, latest);
+  return classify(current, m[1]!.split(".").slice(0, parts).join("."));
+}
+
+const SKIPPED_MAX = 8;
+const PIN_VERSION = /^v?\d+(?:\.\d+){0,2}$/;
+// A version comment that names all three numbers: the only one a SHA pin can be compared with.
+const FULL_VERSION = /^v?\d+\.\d+\.\d+$/;
+
+/**
+ * The update rows of the pins; a pin that cannot be compared goes into `skipped`. Returns the number of pins lost to a failed lookup.
+ * A SHA pin is up to date when its commit is the newest release's commit. Otherwise its version comes from the comment, and only a
+ * full three-part comment counts: "# v4" names a floating major, not the commit it is pinned to.
+ */
+function actionRows(f: ActionsFile, rows: DepUpdate[], skipped: Set<string>): number {
+  const seen = new Set<string>();
+  let lost = 0;
+  for (const pin of f.pins) {
+    if (f.failed.includes(pin.repo)) {
+      lost++;
+      continue;
+    }
+    const sha = isSha(pin.ref);
+    if (sha && f.releaseShas[pin.repo] === pin.ref) continue;
+    const short = sha ? pin.ref.slice(0, 7) : pin.ref;
+    const tag = f.releases[pin.repo];
+    const current = sha ? (pin.comment && FULL_VERSION.test(pin.comment) ? pin.comment : undefined) : PIN_VERSION.test(pin.ref) ? pin.ref : undefined;
+    if (!tag || current === undefined) {
+      const where = tag ? `newest release ${tag}` : "no newest release known";
+      skipped.add(`${pin.name}@${short} (${where}${sha && current === undefined ? "; its version is not known" : ""})`);
+    } else if (!seen.has(`${pin.name}\u0000${current}`)) {
+      seen.add(`${pin.name}\u0000${current}`);
+      const c = classifyPinned(current, tag);
+      if (c) rows.push({ tool: "actions", kind: "action", name: pin.name, current, latest: tag, class: c, security: false });
+    }
+  }
+  return lost;
 }
 
 export function buildReport(i: ReportInput): DepsReport {
@@ -350,6 +393,55 @@ export function buildReport(i: ReportInput): DepsReport {
       if (c) updates.push({ tool: "npm", kind: "dependency", ...e, class: c, security: flagged.has(e.name) });
     }
   }
+  const ecosystems: [DepTool, { run?: ToolRun; cmd: string; report?: string } | undefined, (r: ToolRun, c: string, rep?: string) => EcosystemResult][] = [
+    ["gradle", i.gradle, gradleFromRun], ["pip", i.pip, pipFromRun], ["go", i.go, goFromRun],
+  ];
+  for (const [tool, inp, from] of ecosystems) {
+    if (!inp) continue;
+    projects.push(tool);
+    if (!inp.run) {
+      // Only pip can lack a run: no project environment was configured.
+      checks.push({ check: "pip", ok: false, note: PIP_NOT_SET_NOTE });
+      continue;
+    }
+    const r = from(inp.run, inp.cmd, inp.report);
+    checks.push({ check: tool as CheckName, ok: r.ok, ...(r.note ? { note: r.note } : {}) });
+    incomplete += r.incomplete;
+    if (r.incomplete > 0) notes.push(`${tool}: ${r.incomplete} ${r.incomplete === 1 ? "entry was" : "entries were"} not usable and left out`);
+    for (const f of r.found) {
+      const c = tool === "pip" ? pipClass(f.current, f.latest) : classify(f.current, f.latest);
+      if (c) updates.push({ tool, kind: "dependency", ...(f as RawUpdate), class: c, security: false });
+    }
+  }
+  if (i.actions?.unreadable) {
+    projects.push("actions");
+    checks.push({ check: "actions", ok: false, note: ACTIONS_LOST_NOTE });
+  } else if (i.actions?.file && (i.actions.file.pins.length > 0 || i.actions.file.invalid > 0 || i.actions.file.failed.length > 0)) {
+    const f = i.actions.file;
+    projects.push("actions");
+    const skipped = new Set<string>();
+    incomplete += actionRows(f, updates, skipped) + skipped.size;
+    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    const bad = [
+      f.failed.length > 0 ? `the newest release of ${plural(f.failed.length, "action", "actions")} could not be looked up` : "",
+      f.invalid > 0 ? `${plural(f.invalid, "workflow file was", "workflow files were")} not valid` : "",
+    ].filter(Boolean);
+    checks.push({ check: "actions", ok: bad.length === 0, ...(bad.length > 0 ? { note: bad.join("; ") } : {}) });
+    if (skipped.size > 0) {
+      const list = [...skipped];
+      notes.push(`actions: not compared: ${list.slice(0, SKIPPED_MAX).join(", ")}${list.length > SKIPPED_MAX ? `, and ${list.length - SKIPPED_MAX} more` : ""}`);
+    }
+  }
+  if (i.osv) {
+    const o = osvFromRun(i.osv);
+    if (!o.installed) notes.push(`osv-scanner: ${OSV_MISSING_NOTE}`);
+    else {
+      checks.push({ check: "osv-scanner", ok: o.ok, ...(o.note ? { note: o.note } : {}) });
+      const hit = new Set<string>();
+      for (const f of o.findings) for (const t of OSV_TOOLS[f.ecosystem] ?? []) hit.add(osvKey(t, f.name, f.version));
+      for (const u of updates) if (hit.has(osvKey(u.tool, u.name, u.current))) u.security = true;
+    }
+  }
   updates.sort((a, b) => Number(b.security) - Number(a.security) || ORDER[a.class] - ORDER[b.class] || a.tool.localeCompare(b.tool) || a.name.localeCompare(b.name));
   const withRow = new Set(updates.filter((u) => u.tool === "npm").map((u) => u.name));
   const unlisted = advisories.filter((a) => !withRow.has(a.package));
@@ -380,7 +472,7 @@ export function reportText(r: DepsReport): string {
     for (const a of r.unlisted) out.push(`- ${a.severity} ${a.package}: ${a.title}${a.url ? ` — ${a.url}` : ""} — ${a.fix ? "fix available" : "no fix available"}, no update available`);
   }
   for (const n of r.notes) out.push(`Note: ${n}`);
-  if (r.projects.length === 0) out.push("No pom.xml or package.json at the top of the repository: nothing to check.");
+  if (r.projects.length === 0) out.push("No pom.xml, package.json, Gradle, Python or go.mod project, and no pinned GitHub Action, at the top of the repository: nothing to check.");
   else if (r.updates.length === 0 && r.advisories.length === 0) {
     out.push(r.unavailable === 0 && r.incomplete === 0 ? UP_TO_DATE : "No updates found by the checks that ran; some could not run or were incomplete (see the notes).");
   }

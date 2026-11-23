@@ -22,7 +22,7 @@ const COMMAND_RE = new RegExp(
 );
 
 /** Tools that talk to the remote only in some subcommands (their header says so: "repo-access: remote for <subcommand>"). */
-const PARTLY_REMOTE: Record<string, string[]> = { "repo-review": ["file"] };
+const PARTLY_REMOTE: Record<string, string[]> = { "repo-review": ["file"], "deps-weekly": ["actions"] };
 
 /** Names of the files in tools/ that call gh or the remote, sorted. */
 export function remoteTools(root = "."): string[] {

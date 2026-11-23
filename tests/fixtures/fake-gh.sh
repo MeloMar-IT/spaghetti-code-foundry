@@ -225,6 +225,9 @@ esac
 # -f/-F fields", "api -X DELETE repos/R/releases/<id>" and ".../releases/assets/<id>", and "api -X POST https://uploads.github.com/repos/R/releases/<id>/assets?name=X
 # --input <file>" (an existing name: 422 already_exists). "release list|view|create|upload|delete" work on the same state; like the real gh, view, upload and delete
 # find a tag among the PUBLISHED releases only. $FAKE_GH_FAIL_API=release-list|release-upload|release-delete makes that call fail.
+# "api repos/R/releases/latest" answers {"tag_name": T, "draft": false, "prerelease": false} with T from $FAKE_GH_LATEST_RELEASES (JSON {"owner/name": "v4.2.0"}); an unknown
+# repository gives "gh: Not Found (HTTP 404)" and exit 1. "api repos/R/commits/TAG --jq .sha" prints the SHA in $FAKE_GH_TAG_SHAS (JSON {"owner/name@TAG": "<40 hex>"}), else 404.
+# $FAKE_GH_FAIL_API=release-latest|commit makes those calls fail.
 REL_JS='const fs=require("fs");const f=process.argv[1];const a=process.argv.slice(2);
 const load=()=>fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const save=(l)=>fs.writeFileSync(f,JSON.stringify(l,null,1));
 const die=(m,c)=>{console.error(m);process.exit(c||1)};const failOn=(n)=>{if(process.env.FAKE_GH_FAIL_API===n)die(process.env.FAKE_GH_FAIL_TEXT||"boom")};
@@ -266,8 +269,11 @@ if(m=/^repos\/([^/]+\/[^/]+)\/releases\/assets\/(\d+)$/.exec(path)){if(method!==
 if(m=/^repos\/([^/]+\/[^/]+)\/releases\/(\d+)$/.exec(path)){const r=l.find((x)=>x.id===Number(m[2]));
  if(method==="DELETE"){failOn("release-delete");if(!r)nf();save(l.filter((x)=>x!==r));process.exit(0)}
  if(method!=="GET")process.exit(99);if(!r)nf();console.log(JSON.stringify(view(r)));process.exit(0)}
+if(m=/^repos\/([^/]+\/[^/]+)\/releases\/latest$/.exec(path)){failOn("release-latest");const t=JSON.parse(process.env.FAKE_GH_LATEST_RELEASES||"{}")[m[1]];if(!t)nf();
+ console.log(JSON.stringify({tag_name:t,draft:false,prerelease:false}));process.exit(0)}
+if(m=/^repos\/([^/]+\/[^/]+)\/commits\/([^/]+)$/.exec(path)){failOn("commit");const s=JSON.parse(process.env.FAKE_GH_TAG_SHAS||"{}")[m[1]+"@"+m[2]];if(!s)nf();console.log(s);process.exit(0)}
 process.exit(99)'
-case "$all" in "release "*|"api "*"releases"*)
+case "$all" in "release "*|"api "*"releases"*|"api repos/"*"/commits/"*)
   node -e "$REL_JS" "$FAKE_GH_LOG.releases.json" "$@"; rc=$?
   [ "$rc" -ne 99 ] && exit "$rc" ;;
 esac

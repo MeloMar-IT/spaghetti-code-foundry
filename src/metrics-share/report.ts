@@ -29,7 +29,7 @@ export const SHIPPED_FLOWS = [
 
 /** The step ids of the shipped flows. */
 export const SHIPPED_STEPS = [
-  "address_review_1", "address_review_2", "after_review", "approve_plan", "approve_split", "approve_stories", "ask", "ask_for_info", "baseline_failed", "baseline_main", "baseline_tests",
+  "actions", "address_review_1", "address_review_2", "after_review", "approve_plan", "approve_split", "approve_stories", "ask", "ask_for_info", "baseline_failed", "baseline_main", "baseline_tests",
   "audit", "brief", "build", "changes", "check", "check_brief", "check_round", "check_verify", "checks", "claim_areas", "clone", "close_parts", "commit", "commit_back_fix", "commit_develop_fix",
   "create_split", "daily_branch", "docs", "feature_branch", "fetch_main", "file_stories", "final_ask", "final_close", "final_files", "final_guard", "final_merge", "final_rejected",
   "final_report", "find_branch", "finish_back", "finish_merge", "fix_back", "fix_develop", "fix_fixed_tests", "fix_guard", "fix_tests", "fix_tests_1", "fix_tests_2", "fix_verify",
