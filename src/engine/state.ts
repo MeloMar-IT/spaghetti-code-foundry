@@ -336,17 +336,18 @@ export const SLIM_LINE_MAX = 2000;
 const CUT_LINE = "[line cut]";
 
 /**
- * Marker lines of a successful output, plus its first line (storyTitle: `# #n: Title`) and its last non-blank line
- * (greenOf: `BASE_GREEN: …`), in order. A first line over SLIM_LINE_MAX is cut; a last line over it becomes CUT_LINE,
+ * Marker lines of a successful output, plus its first line (storyTitle: `# #n: Title`) and, for a baseline_tests step
+ * (`keepLast`), its last non-blank line (greenOf: `BASE_GREEN: …`), in order. A first line over SLIM_LINE_MAX is cut; a last line over it becomes CUT_LINE,
  * so a reader never takes an earlier line for the last one.
  */
-function outputLines(text: string): string {
+function outputLines(text: string, keepLast = false): string {
   const lines = text.split("\n");
   const last = text.trimEnd().split("\n").length - 1;
   const out: string[] = [];
   lines.forEach((l, i) => {
-    if (OUTPUT_MARKERS.some((r) => r.test(l))) out.push(l);
-    else if (i === last) out.push(l.length <= SLIM_LINE_MAX ? l : CUT_LINE);
+    if (i === 0 && TITLE_LINE.test(l)) out.push(l.slice(0, SLIM_LINE_MAX));
+    else if (OUTPUT_MARKERS.some((r) => r.test(l))) out.push(l);
+    else if (keepLast && i === last) out.push(l.length <= SLIM_LINE_MAX ? l : CUT_LINE);
     else if (i === 0) out.push(l.slice(0, SLIM_LINE_MAX));
   });
   return out.join("\n");
@@ -406,7 +407,7 @@ export function slimRunOf(s: RunSummary): SlimRun {
       const text = typeof output === "string" ? output : "";
       if (HEAD_STEPS.includes(nameOf(r.id)) && newestHead.get(nameOf(r.id)) === i) rec.output = text.slice(0, SLIM_OUTPUT_MAX);
       else if (!r.ok) rec.output = text.length <= 4 * SLIM_OUTPUT_MAX ? text : text.slice(0, SLIM_OUTPUT_MAX) + "\n" + text.slice(-SLIM_OUTPUT_MAX);
-      else rec.output = outputLines(text);
+      else rec.output = outputLines(text, nameOf(r.id) === "baseline_tests");
       return rec;
     });
   }
