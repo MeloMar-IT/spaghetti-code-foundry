@@ -12,7 +12,9 @@ import { boardFor } from "../src/server/board.js";
 import { ClarityRecorder, candidatesFor, clarityFor } from "../src/server/clarity.js";
 import { health } from "../src/server/health.js";
 import { allNext, forgetHistory, historyFor, indexReady, knownRuns } from "../src/server/next.js";
+import { SEARCH_Q_MAX, searchRoutes } from "../src/server/search.js";
 import type { ApiContext } from "../src/server/server.js";
+import { yourTurnRoutes } from "../src/server/your-turn.js";
 import { sinceFor } from "../src/server/since.js";
 import type { MergedRead } from "../src/since.js";
 
@@ -190,6 +192,27 @@ describe("waiting for the index", () => {
     const r = res();
     expect(await indexReady(ctx, r)).toBe(false);
     expect(r.statusCode).toBe(503);
+  });
+
+  it("Your turn and search answer 503 when the index cannot be built, and read no run file", async () => {
+    rmSync(runs, { recursive: true });
+    writeFileSync(runs, "not a folder");
+    const idx2 = new RunIndex(runs);
+    idx = idx2;
+    const config = ConfigSchema.parse({});
+    sched = new Scheduler({ runsDir: runs, config: () => config, runIndex: idx2 });
+    const ctx = { scheduler: sched } as unknown as ApiContext;
+    const user = { id: "u", role: "admin" } as never;
+    const before = runReadCount();
+    const a = res();
+    expect(await yourTurnRoutes(ctx, { url: "/api/your-turn" } as never, a, ["your-turn"], "GET", user)).toBe(true);
+    expect(a.statusCode).toBe(503);
+    const b = res();
+    expect(await searchRoutes(ctx, { url: "/api/search?q=x" } as never, b, ["search"], "GET", user)).toBe(true);
+    expect(b.statusCode).toBe(503);
+    await expect(searchRoutes(ctx, { url: `/api/search?q=${"x".repeat(SEARCH_Q_MAX + 1)}` } as never, res(), ["search"], "GET", user)).rejects.toThrow();
+    expect(await yourTurnRoutes(ctx, { url: "/api/your-turn/mine" } as never, res(), ["your-turn", "mine"], "GET", user)).toBe(false);
+    expect(runReadCount() - before).toBe(0);
   });
 });
 

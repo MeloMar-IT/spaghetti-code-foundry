@@ -82,7 +82,7 @@ export function runsListFor(ctx: ApiContext, owner?: string, archived = false): 
   return ctx.scheduler.briefs()
     .filter((b) => (owner === undefined || (b.owner === owner && inWorkspaces(ws, b.workspace))) && !!b.archived === archived)
     .slice(0, 200)
-    .flatMap((b) => checkedRun(ctx.scheduler, b.dirName, owner) ?? []);
+    .flatMap((b) => slimRow(ctx.scheduler, b.dirName, owner) ?? []);
 }
 
 export type ResumeAction = "resume" | "approve" | "reject";
