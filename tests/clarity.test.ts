@@ -294,7 +294,7 @@ describe("the sample", () => {
 
   it("the recorder does not throw when the scheduler does, and logs one line", () => {
     const ctx = scenarioCtx({ config: c0, runs: [], tracked: [] });
-    (ctx.scheduler as any).list = () => { throw new Error("disk gone"); };
+    (ctx.scheduler as any).slimRuns = () => { throw new Error("disk gone"); };
     const log = vi.fn();
     expect(() => new ClarityRecorder(ctx, { log }).check(NOW)).not.toThrow();
     expect(log).toHaveBeenCalledTimes(1);

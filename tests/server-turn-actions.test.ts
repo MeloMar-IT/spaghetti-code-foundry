@@ -37,7 +37,7 @@ function stub(holds: ReturnType<typeof hold>[], labels?: Record<string, string>)
   return {
     opts: { log },
     config: () => config,
-    scheduler: { list: () => [], get: () => undefined, ownerOf: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
+    scheduler: { list: () => [], get: () => undefined, slimRuns: () => [], slimOf: () => undefined, statusOf: () => undefined, runIndexReady: () => true, ownerOf: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
     watchers: { statuses: () => [], identityOf: () => undefined, tracked: () => [{ watcher: config.watchers[0], status: { id: "a", lastActions: [], holds }, issues: holds.filter((h) => h.issue !== undefined && h.next.kind !== "release").map((h) => ({ issue: h.issue, title: `T${h.issue}`, runId: h.next.runId })) }], kickRepo: kick },
   } as unknown as ApiContext;
 }
@@ -333,6 +333,8 @@ describe("retry of a retired flow", () => {
     const r = { runId: "r8", flow: "gone", source: "watcher a issue #8", repo, vars: { github_repo: "acme/app", issue: "8" }, status: "failed", reason: 'step "x" failed', startedAt: SINCE, finishedAt: SINCE, history: [], state: { next: null, steps: {}, visits: {} }, runDir: "/tmp/none", task: "t", totalCostUsd: 0 };
     ctx.scheduler.list = () => [r];
     ctx.scheduler.get = (id: string) => (id === "r8" ? r : undefined);
+    ctx.scheduler.slimRuns = () => [r];
+    ctx.scheduler.slimOf = (id: string) => (id === "r8" ? r : undefined);
     ctx.scheduler.briefs = () => [{ runId: "r8", flow: "gone", status: "failed", startedAt: SINCE, source: r.source, githubRepo: "acme/app", issue: "8", dirName: "r8", runDir: "/tmp/none", updatedAt: SINCE }];
     return ctx as unknown as ApiContext;
   };
