@@ -90,12 +90,15 @@ const MAVEN = [
 const audit = (pkg: string, severity: string) => JSON.stringify({ vulnerabilities: { [pkg]: { via: [{ name: pkg, severity, title: "Bad", url: "https://github.com/advisories/GHSA-1" }], fixAvailable: true } } });
 
 describe("deps-weekly flow", { timeout: 60_000 }, () => {
-  it("has the shape of a read-only flow", () => {
+  it("has the shape of a flow that writes only issues and labels", () => {
     const { flow } = loadFlow("deps-weekly", gh.tmp);
-    expect(flow.steps.map((s) => s.id)).toEqual(["clone", "actions", "check"]);
-    // Only the lookup step (which runs no repository code) and the clone have the token; the step that runs the repository's code has none.
-    expect(flow.steps.filter((s) => (s as { repo_access?: boolean }).repo_access === true).map((s) => s.id)).toEqual(["clone", "actions"]);
+    expect(flow.steps.map((s) => s.id)).toEqual(["clone", "actions", "check", "file_stories"]);
+    // Only the clone, the lookup step (which runs no repository code) and the filing step have the token; the step that runs the repository's code has none.
+    expect(flow.steps.filter((s) => (s as { repo_access?: boolean }).repo_access === true).map((s) => s.id)).toEqual(["clone", "actions", "file_stories"]);
     expect(flow.steps[2]).not.toHaveProperty("repo_access");
+    expect(flow.steps[3]).toMatchObject({ type: "shell", repo_access: true });
+    expect(flow.steps.every((s) => s.type === "shell" || s.id === "clone")).toBe(true);
+    expect(flow.vars).toMatchObject({ deps_labels: "Factory_go", deps_majors_go: "no", deps_ignore: "" });
     // The tool limits run one after another; the step backstop must outlast them.
     const worst = (MAVEN_TIMEOUT_MS + NPM_CI_TIMEOUT_MS + NPM_OUTDATED_TIMEOUT_MS + AUDIT_TIMEOUT_MS + GRADLE_TIMEOUT_MS + PIP_TIMEOUT_MS + GO_TIMEOUT_MS + OSV_TIMEOUT_MS) / 1000;
     expect((flow.steps[2] as { timeout_sec?: number }).timeout_sec!).toBeGreaterThan(worst);
@@ -111,7 +114,7 @@ describe("deps-weekly flow", { timeout: 60_000 }, () => {
     const before = gh.remoteGit("for-each-ref");
     const s = await run();
     expect(s.status).toBe("succeeded");
-    expect(s.history.map((h) => h.id)).toEqual(["clone", "actions", "check"]);
+    expect(s.history.map((h) => h.id)).toEqual(["clone", "actions", "check", "file_stories"]);
     const text = checkOut(s);
     expect(text).toContain("All dependencies are up to date.");
     expect(text.trimEnd().split("\n").at(-1)).toBe(LAST);
@@ -128,6 +131,7 @@ describe("deps-weekly flow", { timeout: 60_000 }, () => {
       "pom.xml": "<project/>", "package.json": "{}", "package-lock.json": lock("4.17.20"), ".npmrc": "@acme:registry=https://example.invalid/\n",
     });
     process.env.NPM_TOKEN = "sentinel-secret";
+    const before = gh.remoteGit("for-each-ref");
     process.env.FAKE_MVN_OUT = MAVEN;
     process.env.FAKE_NPM_OUTDATED = JSON.stringify({
       lodash: { latest: "4.17.21" }, react: { current: "17.0.0", latest: "18.0.0" }, jest: { current: "29.0.0", latest: "29.1.0", dependent: "app" },
@@ -144,6 +148,12 @@ describe("deps-weekly flow", { timeout: 60_000 }, () => {
     expect(row("react")).toMatchObject({ class: "major", security: false });
     expect(checkOut(s).trimEnd().split("\n").at(-1)).toBe("Updates found: 6 (1 security). Tools not available: 0. Incomplete: 0.");
     expect(checkOut(s)).toContain("org.p:parent");
+    // file_stories: one security story, one patch/minor story, one story for each of the two majors; the remote's refs do not change
+    expect(gh.createdBodies().map((m) => m.labels)).toEqual([["Factory_go", "bug"], ["Factory_go", "enhancement"], ["enhancement"], ["enhancement"]]);
+    expect(s.history.find((h) => h.id === "file_stories")?.output.trimEnd().split("\n").at(-1)).toBe(
+      "Updates found: 6. Filed: 6 in 4 stories. Updated in open stories: 0. Skipped as already filed: 0. Tools not available: 0.",
+    );
+    expect(gh.remoteGit("for-each-ref")).toBe(before);
     expect(npmLog()).toContain("tokens=0");
     expect(npmLog()).toContain("npmrc=no");
     expect(npmLog()).toContain("versions:display-dependency-updates");

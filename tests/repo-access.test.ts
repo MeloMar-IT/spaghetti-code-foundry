@@ -74,11 +74,13 @@ describe("the scan catches", () => {
       expect(scan([{ id: "a", type: "shell", run: `node "$FACTORY_TOOLS/repo-review" ${sub} x` }]), sub).toEqual([]);
     }
   });
-  it("deps-weekly is remote only for its actions subcommand", () => {
-    expect(scan([{ id: "a", type: "shell", run: 'node "$FACTORY_TOOLS/deps-weekly" actions "{{run.dir}}"' }])).toEqual([
-      { where: "f/a", problem: "calls gh or the remote without repo_access" },
-    ]);
-    expect(scan([{ id: "a", type: "shell", run: 'node "$FACTORY_TOOLS/deps-weekly" actions "{{run.dir}}"', repo_access: true }])).toEqual([]);
+  it("deps-weekly is remote only for its actions and file subcommands", () => {
+    for (const sub of ["actions", "file"]) {
+      expect(scan([{ id: "a", type: "shell", run: `node "$FACTORY_TOOLS/deps-weekly" ${sub} "{{run.dir}}"` }]), sub).toEqual([
+        { where: "f/a", problem: "calls gh or the remote without repo_access" },
+      ]);
+      expect(scan([{ id: "a", type: "shell", run: `node "$FACTORY_TOOLS/deps-weekly" ${sub} "{{run.dir}}"`, repo_access: true }]), sub).toEqual([]);
+    }
     expect(scan([{ id: "a", type: "shell", run: 'node "$FACTORY_TOOLS/deps-weekly" check "{{run.dir}}"' }])).toEqual([]);
   });
   it("a flagged step that runs tests, or calls nothing", () => {
