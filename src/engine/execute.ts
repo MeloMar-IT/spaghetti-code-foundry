@@ -7,6 +7,7 @@ import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
 import { FACTORY_HOME } from "../home.js";
 import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
+import { refusedCommandReason } from "../agents/command-allow.js";
 import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
 import type { ProcessMeter } from "../steps/process.js";
@@ -137,6 +138,8 @@ export interface ApprovalDecision {
 export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held" | "slotWaitMs"> & {
   /** A shell step printed more than it kept. Not stored in the record: it shows as the `oversize` signal of its label. */
   oversize?: boolean;
+  /** A step with `allow_commands` needed a command that was refused (the command): the loop stops the run there. Not stored. */
+  refusedCommand?: string;
 };
 
 /** Position (1-based) of each step's latest record in the run history, for the steps of `scope` (keys without the scope prefix). */
@@ -202,7 +205,7 @@ export function outputLabel(step: Step, scope: Scope, res: StepResult): StepReco
 
 /** Store a finished step in history and in the scope's template context. */
 export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number, meter?: ProcessMeter, paths?: string[]): StepRecord {
-  const { oversize: _oversize, ...stored } = res;
+  const { oversize: _oversize, refusedCommand: _refused, ...stored } = res;
   const rec: StepRecord = {
     id: scope.prefix + step.id,
     label: outputLabel(step, scope, res),
@@ -613,6 +616,8 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           }
           const rec = recordStep(sub, scope, engine, res, started, lf, visit, meter, await stepAfterPaths(engine));
           res = { ...res, ok: rec.ok, error: rec.error, held: rec.held, limited: rec.limited };
+          // a step that still needs a refused command stops the run, not only this branch
+          if (res.refusedCommand) engine.nestedStop ??= res.error ?? refusedCommandReason(sub.id, res.refusedCommand);
           return { id, res };
         }),
       );

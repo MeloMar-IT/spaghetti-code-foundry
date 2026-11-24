@@ -517,6 +517,40 @@ that, open **Flows** in the sidebar (Admin view), choose a flow and press **Test
 
 When a run finishes, its branch stays in your repository. Review it, merge it, or delete it.
 
+### What agent steps may run
+
+An agent step (Claude Code or Codex) may run only the commands its tools allow. A step in a code flow can also ask for
+one of two named sets of extra commands in its flow file, with `allow_commands` (see
+[Flow authoring](FLOW_AUTHORING.md)). Only steps that can write may ask for them; a reviewer or read-only step may not.
+
+- **`images`**: the image tools `magick`, `sips`, `cwebp`, `dwebp`, `pngquant` and `qlmanage -t`. Only the tools that
+  are installed on the computer are allowed. Each call goes through a checked gate (`tools/image-gate.mjs`). The gate
+  allows a fixed list of options and paths that stay inside the run's workspace (links are followed). It refuses
+  paths outside the workspace, expressions and options that read other files (such as `-draw`, `-font`, `text:` or
+  `@list` arguments), URLs, and wildcards. A refused call prints the reason and changes nothing.
+- **`project_scripts`**: the build and test scripts of the repository's own `package.json` (`build`, `test`, `test:unit`
+  and the like), run with `npm run` and `npm test`; pnpm and yarn too when the repository has their lock file. Other
+  scripts, such as `lint` or `deploy`, are not allowed. The conflict and fix steps use this set to make generated files
+  again.
+
+The gate is defence in depth, not a sandbox. The operating-system sandbox and Claude's permission rules remain the
+real limit.
+
+**A refused command stops the run.** When a step needs a command it may not run, the run stops once, as needs you, and
+the reason names the command, for example `needs a command that is not allowed: magick photo.jpg photo.png`. The step is
+not retried by its `on_failure` branch. The agent is asked to end its answer with the line `REFUSED_COMMAND: <the command>`
+when it cannot finish a part of the issue without it. A refused image-tool call stops the run even when the agent does
+not write that line. A stop from a sub-flow stops the parent run too.
+
+To go on, first fix the cause: install the tool, or, in a custom flow, add the set the step needs to `allow_commands`
+and save the flow. Then **Retry from the failing step** on the run's page, or `scf resume <run>`. The step runs again
+from its first visit. A refused command that is not an image tool stops the run only when the same program is refused
+again on a later visit of the step (for example a fix loop).
+
+**Check the image tools.** `scf doctor` lists `magick`, `sips`, `cwebp`, `dwebp`, `pngquant` and `qlmanage` as installed
+or missing (`sips` and `qlmanage` only on macOS). On macOS install the missing ones with
+`brew install imagemagick webp pngquant`. A missing tool never makes the check fail.
+
 ### Review before start
 
 On **Start work**, when you choose a flow under **Advanced**, the main button is **Review**. It runs the same check for required fields as before. If all is filled in, it shows a review page instead of sending anything.

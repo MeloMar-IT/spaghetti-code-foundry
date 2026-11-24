@@ -167,6 +167,7 @@ A run is **not** checked against `var_info`. Values from `--var`, from `.claude-
   system_prompt: You are a careful senior engineer.   # optional, appended to the agent's system prompt
   permission_mode: acceptEdits      # optional: acceptEdits | auto | bypassPermissions | default | dontAsk | plan
   allowed_tools: [Read, Edit, Write, Glob, Grep, "Bash(npm test*)"]   # optional
+  allow_commands: [images, project_scripts]   # optional; extra commands for a step that can write
   resume: plan                      # optional: continue the session of an earlier claude step (by id)
   max_budget_usd: 3                 # optional: stop this step at this cost
   sandbox: true                     # optional: agent's shell commands may only write inside the workspace
@@ -203,6 +204,13 @@ A run is **not** checked against `var_info`. Values from `--var`, from `.claude-
   `allowed_tools: [Read, Glob, Grep]` — the agent can then only read.
 - **Editing steps**: `permission_mode: acceptEdits` and the tools it needs, e.g. `Edit`, `Write`,
   `Bash(npm test*)`. `Bash(git push*)` is never allowed — pushing is a shell step.
+- **`allow_commands`** (optional, claude steps): a list of named command sets the step may run on top of its
+  tools. The values are `images` (magick, sips, cwebp, dwebp, pngquant, qlmanage -t: only the installed ones,
+  only through the image gate, workspace paths only) and `project_scripts` (the build and test scripts of the
+  repository's `package.json`). Each value at most once; the list is not empty. It is refused on a reviewer step
+  and on a read-only step (`dontAsk` or `plan`), because only a step that can write may use it. With a declared
+  tool profile the sets add nothing. A refused command that the step needs stops the run once, as needs you; see
+  "What agent steps may run" in the user guide.
 - `resume: <id>` continues that step's conversation: the agent already knows the code, so fix
   and follow-up steps are cheaper and better. Only resume steps of the **same agent**.
 - To make routing reliable, tell the agent to **end with a fixed line**, e.g.

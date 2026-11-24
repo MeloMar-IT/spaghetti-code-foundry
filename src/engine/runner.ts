@@ -929,6 +929,14 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       const reason = /^signed out —/.test(res.error ?? "") ? res.error! : `${res.error} — continues automatically after the limit resets (or resume it)`;
       return { outcome: "stopped", reason, next: step.id, lastOutput };
     }
+    if (res.refusedCommand) {
+      // The step needs a command that is refused: one stop that names it, not a loop through the fix steps. A resume runs the step again.
+      visits[step.id] = visit - 1;
+      setNext(step.id);
+      const reason = res.error ?? res.refusedCommand;
+      if (!top) engine.nestedStop ??= reason;
+      return { outcome: "stopped", reason, next: step.id, lastOutput };
+    }
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason(`cancelled during step "${step.id}"`), ...here() };
     if (engine.nestedStop !== undefined) {
       // a limit or plugin stop inside a parallel step or a sub-flow: each loop up to the top one stops here, and only the
