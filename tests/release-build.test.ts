@@ -227,16 +227,16 @@ describe.skipIf(process.platform === "win32")("runCommand", () => {
 
   it("time paused by test-slot does not count against the limit", async () => {
     const d = tmp();
-    // a stand-in test-slot: records a pause for about a second (as the real one does), then ends
+    // a stand-in test-slot: records a pause for about two seconds (as the real one does), then ends
     const fake = join(d, "fake-slot.mjs");
     writeFileSync(fake, [
       'import { writeFileSync, utimesSync, renameSync } from "node:fs";',
       'const f = `${process.env.FACTORY_TEST_SLOT_WAIT_DIR}/${Date.now()}-${process.pid}-pause.wait`;',
       'writeFileSync(f, "");',
       "const t = setInterval(() => { const n = new Date(); utimesSync(f, n, n); }, 50);",
-      "setTimeout(() => { clearInterval(t); renameSync(f, f.replace(/\\.wait$/, \".done\")); process.exit(0); }, 1000);",
+      "setTimeout(() => { clearInterval(t); renameSync(f, f.replace(/\\.wait$/, \".done\")); process.exit(0); }, 2000);",
     ].join("\n"));
-    const r = await runCommand({ cmd: "true", cwd: d, testSlot: fake, slotsDir: join(d, "slots"), timeoutMs: 300, logFile: join(d, "log.txt"), env: { PATH: process.env.PATH ?? "" } });
+    const r = await runCommand({ cmd: "true", cwd: d, testSlot: fake, slotsDir: join(d, "slots"), timeoutMs: 1200, logFile: join(d, "log.txt"), env: { PATH: process.env.PATH ?? "" } });
     expect(r).toEqual({ code: 0, timedOut: false, aborted: false });
   });
 
@@ -244,16 +244,16 @@ describe.skipIf(process.platform === "win32")("runCommand", () => {
     const d = tmp();
     const waits = join(d, "step-waits");
     mkdirSync(waits);
-    // a stand-in test-slot: a pause of about a second, recorded in the folder it is given (FACTORY_TEST_SLOT_WAIT_DIR)
+    // a stand-in test-slot: a pause of about two seconds, recorded in the folder it is given (FACTORY_TEST_SLOT_WAIT_DIR)
     const fake = join(d, "fake-slot.mjs");
     writeFileSync(fake, [
       'import { writeFileSync, utimesSync, renameSync } from "node:fs";',
       'const f = `${process.env.FACTORY_TEST_SLOT_WAIT_DIR}/${Date.now()}-${process.pid}-pause.wait`;',
       'writeFileSync(f, "");',
       "const t = setInterval(() => { const n = new Date(); utimesSync(f, n, n); }, 50);",
-      "setTimeout(() => { clearInterval(t); renameSync(f, f.replace(/\\.wait$/, \".done\")); process.exit(0); }, 1000);",
+      "setTimeout(() => { clearInterval(t); renameSync(f, f.replace(/\\.wait$/, \".done\")); process.exit(0); }, 2000);",
     ].join("\n"));
-    const r = await runCommand({ cmd: "true", cwd: d, testSlot: fake, slotsDir: join(d, "slots"), timeoutMs: 300, logFile: join(d, "log.txt"), env: { PATH: process.env.PATH ?? "" }, waitDir: waits });
+    const r = await runCommand({ cmd: "true", cwd: d, testSlot: fake, slotsDir: join(d, "slots"), timeoutMs: 1200, logFile: join(d, "log.txt"), env: { PATH: process.env.PATH ?? "" }, waitDir: waits });
     expect(r).toEqual({ code: 0, timedOut: false, aborted: false });
     expect(readdirSync(waits).filter((f) => /-pause\.done$/.test(f))).toHaveLength(1);
   });

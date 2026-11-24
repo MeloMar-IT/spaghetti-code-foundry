@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { isMainThread } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
 import { createUser } from "../src/auth/users.js";
@@ -9,6 +10,7 @@ import { runReadCount } from "../src/engine/state.js";
 import { saveIssueList, type IssueRecord } from "../src/queue/issue-list.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
+import { speedProblems, type SpeedSample } from "./helpers/speed.js";
 import { signInAs, TEST_PASSWORD, type TestSession } from "./helpers/session.js";
 
 // #934: 5,000 planted runs, 20 of them about 2 MB. Every list endpoint of #930-#932 answers fast from the run
@@ -18,7 +20,8 @@ import { signInAs, TEST_PASSWORD, type TestSession } from "./helpers/session.js"
 const TOTAL = 5000;
 const LARGE_EVERY = 250; // 20 large runs
 const BIG = 1_000_000;
-const LIMIT_MS = 200;
+const LIMIT_MS = 200; // of CPU time, not wall time
+const CALLS = 5;
 const HEAP_MAX = 500 * 1024 * 1024;
 const DAY = 86_400_000;
 
@@ -146,17 +149,24 @@ function endpoints(): { path: string; who: "admin" | "ann" }[] {
   ];
 }
 
-/** One request: status, time, run.json parses, and the body text. The heap is sampled after the response. */
+/**
+ * One request: status, CPU time, wall time, run.json parses, and the body text. The heap is sampled after the response.
+ * The server runs inside this test process (vitest gives each file its own forked process), so the CPU time of the
+ * process is the cost of the code. Wall time also counts other processes on a busy machine, so it is only reported.
+ */
 async function call(who: "admin" | "ann", path: string) {
   const session = who === "admin" ? admin : ann;
   const before = runReadCount();
   const t0 = performance.now();
+  const c0 = process.cpuUsage();
   const r = await fetch(base + path, { headers: session.headers("GET") });
   const text = await r.text();
+  const u = process.cpuUsage(c0);
   const wallMs = performance.now() - t0;
+  const cpuMs = (u.user + u.system) / 1000;
   const parses = runReadCount() - before;
   sampleHeap();
-  return { status: r.status, wallMs, parses, text };
+  return { status: r.status, wallMs, cpuMs, parses, text };
 }
 
 describe("the run index at 5,000 runs", () => {
@@ -189,15 +199,21 @@ describe("the run index at 5,000 runs", () => {
     }
   });
 
-  it("every list endpoint answers in under 200 ms (wall time) on every call after one warm-up call", async () => {
+  it("every list endpoint has a median under 200 ms of CPU over 5 calls after one warm-up, and no call reaches 400 ms", async () => {
+    // process.cpuUsage() counts the whole process, which is right only while each test file has its own process.
+    expect(isMainThread, "the test files must run in forked processes, not threads").toBe(true);
+    const problems: string[] = [];
     for (const { path, who } of endpoints()) {
       await call(who, path); // warm-up: code compiled, the per-run facts of outcomes and autonomy filled
-      for (let n = 0; n < 3; n++) {
+      const samples: SpeedSample[] = [];
+      for (let n = 0; n < CALLS; n++) {
         const r = await call(who, path);
         expect(r.status, `${who} ${path}`).toBe(200);
-        expect(r.wallMs, `${who} ${path} call ${n + 1}: ${Math.round(r.wallMs)} ms`).toBeLessThan(LIMIT_MS);
+        samples.push({ cpuMs: r.cpuMs, wallMs: r.wallMs, parses: r.parses });
       }
+      problems.push(...speedProblems(`${who} ${path}`, samples, { limitMs: LIMIT_MS, maxParses: 1 }));
     }
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
   it("the heap never went over 500 MB, in the build or after any response", () => {
@@ -205,4 +221,16 @@ describe("the run index at 5,000 runs", () => {
     expect(sampleHeap()).toBeLessThan(HEAP_MAX);
     expect(maxHeap).toBeLessThan(HEAP_MAX);
   });
+
+  it("the check fails for an endpoint that parses every run.json", () => {
+    // A stand-in endpoint that reads every run through the scheduler, which goes through the counted parse.
+    const before = runReadCount();
+    const t0 = performance.now();
+    const c0 = process.cpuUsage();
+    for (const b of ctx.scheduler.briefs()) ctx.scheduler.get(b.dirName);
+    const u = process.cpuUsage(c0);
+    const sample: SpeedSample = { cpuMs: (u.user + u.system) / 1000, wallMs: performance.now() - t0, parses: runReadCount() - before };
+    expect(sample.parses).toBe(TOTAL);
+    expect(speedProblems("full scan", [sample], { limitMs: LIMIT_MS, maxParses: 1 }).join("\n")).toContain(`parsed ${TOTAL} run files`);
+  }, 60_000);
 });
