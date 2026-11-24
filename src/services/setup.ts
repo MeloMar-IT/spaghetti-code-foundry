@@ -142,7 +142,42 @@ export function serviceToken(name: string, scope: string[], actsFor?: string): {
   }
 }
 
-export const ACTS_FOR_NONE = "acts_for names no person account";
+/**
+ * The read-only part of `serviceToken` (#941): the problem sentence `serviceToken` would raise for this service, or undefined.
+ * It rotates, creates and writes nothing, so a change to config.yaml can be checked before the running program is replaced.
+ */
+export function accountProblem(name: string, scope: string[], actsFor?: string): string | undefined {
+  void scope;
+  try {
+    let map: AccountMap;
+    try {
+      map = readMap();
+    } catch {
+      throw new ServiceProblem("the list of service accounts cannot be read");
+    }
+    if (actsFor !== undefined) resolvePerson(actsFor);
+    const known = map.accounts[name];
+    if (known) {
+      const account = getServiceAccountSafe(known);
+      if (account && account.status !== "active") throw new ServiceProblem("the service account is blocked");
+      if (account) return undefined;
+    }
+    let users;
+    try {
+      users = readUsersFile().users;
+    } catch {
+      throw new ServiceProblem("the list of service accounts cannot be read");
+    }
+    if (users.some((u) => u.kind === "service" && u.name === name)) {
+      throw new ServiceProblem("a service account with that name exists already, or the account cannot be made");
+    }
+    return undefined;
+  } catch (e) {
+    return e instanceof ServiceProblem ? e.message : ACCOUNT;
+  }
+}
+
+export const ACTS_FOR_NONE ="acts_for names no person account";
 export const ACTS_FOR_SEVERAL = "acts_for names more than one person account; use the e-mail";
 
 /** The id of the one person `acts_for` names (a name or an e-mail), or a ServiceProblem with a fixed sentence. */

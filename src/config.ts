@@ -972,7 +972,7 @@ export const ConfigSchema = z
       .max(MAX_PLUGINS)
       .refine((l) => new Set(l.map((p) => p.module)).size === l.length, "names the same plugin twice")
       .default([]),
-    /** Managed services (#867): companion programs the server starts, restarts and stops. Set in config.yaml only; applies after a restart. */
+    /** Managed services (#867): companion programs the server starts, restarts and stops. Set in config.yaml only; a change applies while the server runs (#941). */
     services: z
       .array(ServiceSchema)
       .max(10, "at most 10 services")
@@ -1029,6 +1029,15 @@ export function parseConfigText(text: string, path = CONFIG_PATH()): Config {
     throw new ConfigIssuesError(`${path}: invalid config\n${issues}`);
   }
   return res.data;
+}
+
+/** Like parseConfigText, but the text must be a settings mapping: empty, comments-only, `---` and `null` documents throw (#941). */
+export function parseConfigTextStrict(text: string, path = CONFIG_PATH()): Config {
+  const doc: unknown = parse(text);
+  if (doc === null || doc === undefined || typeof doc !== "object" || Array.isArray(doc)) {
+    throw new ConfigIssuesError(`${path}: invalid config\n  - the file is not a settings mapping`);
+  }
+  return parseConfigText(text, path);
 }
 
 /** The file is YAML but not valid settings; the message is built from key paths and rules, not from lines of the file. */

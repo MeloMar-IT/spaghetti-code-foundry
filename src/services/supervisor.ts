@@ -1,12 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { isDeepStrictEqual } from "node:util";
+import { writeAudit } from "../auth/audit.js";
 import type { ServiceConfig } from "../config.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream } from "../credentials/redact.js";
 import { sleepSync } from "../home-migrate.js";
 import { holdLiveGroup, stopGroup } from "../steps/process.js";
 import { ServiceLog, MAX_LOG_BYTES } from "./log.js";
-import { ServiceProblem, actsForState, programProblem, reconcileServiceTokens, revokeServiceTokenSafe, serviceToken, signatureProblem } from "./setup.js";
+import { ServiceProblem, accountProblem, actsForState, programProblem, reconcileServiceTokens, revokeServiceTokenSafe, serviceToken, signatureProblem } from "./setup.js";
 
 export type ServiceState = "starting" | "running" | "waiting" | "refused" | "stopped";
 
@@ -47,6 +49,17 @@ export interface SupervisorOptions {
   maxLogBytes?: number;
   /** Whether a process still runs (a zombie does not count). */
   alive?: (pid: number) => boolean;
+  /** Writes an audit line for a start, stop or refusal caused by a change in config.yaml (#941). Default: the audit log, as `cli`. */
+  audit?: (e: ServiceAuditEvent) => void;
+  /** Test hook: called after a change passed its checks and before the running program is stopped. */
+  afterCheck?: (name: string) => void;
+}
+
+export interface ServiceAuditEvent {
+  action: "service-start" | "service-stop" | "service-refuse";
+  result: "ok" | "failed";
+  target: string;
+  detail: string;
 }
 
 /** The part of the supervisor the server and the CLI use. */
@@ -78,6 +91,8 @@ interface Run {
   open: number;
   settle: () => void;
   settled: Promise<void>;
+  /** Stopped on purpose (a change or a removal): no restart follows. */
+  halted?: boolean;
 }
 
 interface Slot {
@@ -93,6 +108,14 @@ interface Slot {
   timer?: NodeJS.Timeout;
   run?: Run;
   accountId?: string;
+  /** A change from config.yaml that is not applied yet, and why (#941). */
+  pending?: ServiceConfig;
+  changeProblem?: string;
+  pendingTimer?: NodeJS.Timeout;
+  pendingFailures: number;
+  /** The slot was started or changed by a config.yaml change: its start and refusals are audited. */
+  fromChange?: boolean;
+  lastAudited?: string;
 }
 
 const now = () => new Date().toISOString();
@@ -108,6 +131,10 @@ function actsForStateSafe(accountId: string): string | undefined {
 /** Starts the configured programs, restarts them with a backoff, and stops them (#867). */
 export class ServiceSupervisor implements ServicesHandle {
   private readonly slots: Slot[];
+  private readonly leaving = new Set<Slot>();
+  private readonly retries = new Set<Slot>();
+  private queued?: readonly ServiceConfig[];
+  private running?: Promise<void>;
   private stopping = false;
   private readonly backoff: Backoff;
   private readonly graceMs: number;
@@ -118,10 +145,22 @@ export class ServiceSupervisor implements ServicesHandle {
     this.backoff = o.backoff ?? DEFAULT_BACKOFF;
     this.graceMs = o.graceMs ?? 5000;
     this.alive = o.alive ?? psAlive;
-    this.slots = o.services.map((cfg) => ({
-      cfg, state: "starting", since: now(), restarts: 0, failures: 0,
-      log: new ServiceLog(join(o.home, "services", `${cfg.name}.log`), o.maxLogBytes ?? MAX_LOG_BYTES),
-    }));
+    this.slots = o.services.map((cfg) => this.newSlot(cfg));
+  }
+
+  private newSlot(cfg: ServiceConfig): Slot {
+    return {
+      cfg, state: "starting", since: now(), restarts: 0, failures: 0, pendingFailures: 0,
+      log: new ServiceLog(join(this.o.home, "services", `${cfg.name}.log`), this.o.maxLogBytes ?? MAX_LOG_BYTES),
+    };
+  }
+
+  private audit(e: ServiceAuditEvent): void {
+    try {
+      (this.o.audit ?? ((x) => writeAudit("cli", x, 0)))(e);
+    } catch {
+      this.o.log("services: an audit line could not be written");
+    }
   }
 
   /** Revokes the tokens an earlier run left, then starts every service. */
@@ -137,7 +176,9 @@ export class ServiceSupervisor implements ServicesHandle {
   view(): ServiceView[] {
     return this.slots.map((s) => {
       // a running service whose person can no longer sign in gets every request refused (#876): Health shows why
-      const problem = s.problem ?? (s.state === "running" && s.accountId ? actsForStateSafe(s.accountId) : undefined);
+      const problem = s.problem
+        ?? (s.changeProblem ? `the change in config.yaml is not applied: ${s.changeProblem}` : undefined)
+        ?? (s.state === "running" && s.accountId ? actsForStateSafe(s.accountId) : undefined);
       return {
         name: s.cfg.name, state: s.state, since: s.since,
         ...(s.run?.pid !== undefined && !s.run.exited ? { pid: s.run.pid } : {}),
@@ -171,6 +212,11 @@ export class ServiceSupervisor implements ServicesHandle {
   private refuse(s: Slot, problem: string): void {
     s.problem = problem;
     this.o.log(`services: ${s.cfg.name} is not started: ${problem}`);
+    this.record(s, `not started: ${problem}`);
+    if (s.fromChange && s.lastAudited !== problem) {
+      s.lastAudited = problem;
+      this.audit({ action: "service-refuse", result: "failed", target: s.cfg.name, detail: problem });
+    }
     this.schedule(s, "refused");
   }
 
@@ -220,6 +266,7 @@ export class ServiceSupervisor implements ServicesHandle {
       run.release?.();
       revokeServiceTokenSafe(accountId);
       settle();
+      if (run.halted) return;
       this.refuse(s, "the program could not be started");
     });
     if (child.pid === undefined) return; // the error event follows
@@ -227,6 +274,11 @@ export class ServiceSupervisor implements ServicesHandle {
     this.record(s, `started (pid ${child.pid})`);
     this.o.log(`services: ${cfg.name} started (pid ${child.pid})`);
     this.setState(s, "running");
+    if (s.fromChange) {
+      s.fromChange = false;
+      s.lastAudited = undefined;
+      this.audit({ action: "service-start", result: "ok", target: cfg.name, detail: "started" });
+    }
 
     const secrets = [token, ...Object.values(cfg.env)].filter((v) => v !== "");
     const launchRedactor = makeRedactor(secrets);
@@ -263,7 +315,7 @@ export class ServiceSupervisor implements ServicesHandle {
     run.release?.();
     run.exited = true;
     if (run.open <= 0) run.settle();
-    if (this.stopping) return;
+    if (this.stopping || run.halted) return;
     s.restarts++;
     this.schedule(s, "waiting");
   }
@@ -285,13 +337,202 @@ export class ServiceSupervisor implements ServicesHandle {
     }
   }
 
+  private clearTimers(s: Slot): void {
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = undefined;
+    if (s.pendingTimer) clearTimeout(s.pendingTimer);
+    s.pendingTimer = undefined;
+    this.retries.delete(s);
+  }
+
+  /** Drops a pending change and its retry only; a crash-restart timer of the running settings is left alone. */
+  private clearPending(s: Slot): void {
+    if (s.pendingTimer) clearTimeout(s.pendingTimer);
+    s.pendingTimer = undefined;
+    this.retries.delete(s);
+    s.pending = undefined;
+    s.changeProblem = undefined;
+    s.pendingFailures = 0;
+  }
+
+  /**
+   * Applies a new `services:` list while the server runs (#941), matched by name: new entries start, removed ones stop, changed
+   * ones restart, the others are left alone. Updates run one after another; while one runs only the newest list is kept. Never rejects.
+   */
+  update(services: readonly ServiceConfig[]): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    this.queued = services;
+    return this.kick();
+  }
+
+  private kick(): Promise<void> {
+    this.running ??= this.drain();
+    return this.running;
+  }
+
+  private async drain(): Promise<void> {
+    await Promise.resolve();
+    try {
+      while (!this.stopping && (this.queued || this.retries.size)) {
+        try {
+          const list = this.queued;
+          this.queued = undefined;
+          if (list) await this.apply(list);
+          for (const s of [...this.retries]) {
+            this.retries.delete(s);
+            if (this.stopping) break;
+            if (s.pending && this.slots.includes(s)) await this.change(s, s.pending, false);
+          }
+        } catch {
+          this.o.log("services: a change in config.yaml could not be applied");
+        }
+      }
+    } finally {
+      this.running = undefined;
+    }
+  }
+
+  private async apply(list: readonly ServiceConfig[]): Promise<void> {
+    const wanted = new Map(list.map((c) => [c.name, c]));
+    // new entries first, so a slow stop never holds them back
+    for (const cfg of list) {
+      if (this.slots.some((s) => s.cfg.name === cfg.name)) continue;
+      const s = this.newSlot(cfg);
+      s.fromChange = true;
+      this.slots.push(s);
+      this.launch(s);
+    }
+    const tasks: Promise<void>[] = [];
+    for (const s of this.slots.filter((x) => !wanted.has(x.cfg.name))) {
+      this.slots.splice(this.slots.indexOf(s), 1);
+      this.leaving.add(s);
+      tasks.push(this.remove(s));
+    }
+    for (const s of this.slots) {
+      const cfg = wanted.get(s.cfg.name)!;
+      if (isDeepStrictEqual(cfg, s.cfg)) {
+        if (s.pending) this.clearPending(s);
+        s.lastAudited = undefined;
+        continue;
+      }
+      if (s.pending && isDeepStrictEqual(cfg, s.pending)) continue;
+      tasks.push(this.change(s, cfg, true).catch(() => undefined));
+    }
+    await Promise.all(tasks);
+    const order = [...wanted.keys()];
+    this.slots.sort((a, b) => order.indexOf(a.cfg.name) - order.indexOf(b.cfg.name));
+  }
+
+  private async remove(s: Slot): Promise<void> {
+    try {
+      await this.halt(s);
+      s.nextStart = undefined;
+      this.setState(s, "stopped");
+      this.record(s, "stopped (removed from config.yaml)");
+      this.o.log(`services: ${s.cfg.name} stopped (removed from config.yaml)`);
+      this.audit({ action: "service-stop", result: "ok", target: s.cfg.name, detail: "removed from config.yaml" });
+    } catch {
+      // the entry is gone from the list either way
+    } finally {
+      this.leaving.delete(s);
+    }
+  }
+
+  /** The first reason this configuration cannot be started now, without changing anything. */
+  private precheck(cfg: ServiceConfig): string | undefined {
+    const prog = programProblem(cfg.command, { home: this.o.home, runsDir: this.o.runsDir });
+    if ("problem" in prog) return prog.problem;
+    if (cfg.public_key) {
+      const bad = signatureProblem(cfg.command, prog.realPath, cfg.public_key);
+      if (bad) return bad;
+    }
+    return this.o.checkScope(cfg.scope) ?? accountProblem(cfg.name, cfg.scope, cfg.acts_for);
+  }
+
+  private async change(s: Slot, cfg: ServiceConfig, fresh: boolean): Promise<void> {
+    if (this.stopping || !this.slots.includes(s)) return;
+    if (fresh) {
+      if (s.pendingTimer) clearTimeout(s.pendingTimer);
+      s.pendingTimer = undefined;
+      s.pendingFailures = 0;
+    }
+    const problem = this.precheck(cfg);
+    if (!s.run || s.run.exited) {
+      // nothing runs (refused or waiting): the new settings start only when they pass the checks; otherwise the last accepted ones stay in force
+      if (problem) return this.refuseChange(s, cfg, problem);
+      this.clearPending(s);
+      if (s.timer) clearTimeout(s.timer);
+      s.timer = undefined;
+      s.cfg = cfg;
+      s.failures = 0;
+      s.fromChange = true;
+      s.lastAudited = undefined;
+      this.launch(s);
+      return;
+    }
+    if (problem) return this.refuseChange(s, cfg, problem);
+    this.o.afterCheck?.(s.cfg.name);
+    await this.halt(s);
+    if (this.stopping || !this.slots.includes(s)) return;
+    this.record(s, "restarting (changed in config.yaml)");
+    this.o.log(`services: ${s.cfg.name} restarting (changed in config.yaml)`);
+    this.audit({ action: "service-stop", result: "ok", target: s.cfg.name, detail: "changed in config.yaml" });
+    this.clearPending(s);
+    s.cfg = cfg;
+    s.failures = 0;
+    s.fromChange = true;
+    s.lastAudited = undefined;
+    this.launch(s);
+  }
+
+  /** Keeps the running (or last accepted) settings, shows why the change is refused, and retries it with the backoff (#941). */
+  private refuseChange(s: Slot, cfg: ServiceConfig, problem: string): void {
+    s.pending = cfg;
+    s.changeProblem = problem;
+    this.o.log(`services: ${s.cfg.name} change refused: ${problem}`);
+    this.record(s, `change refused: ${problem}`);
+    if (s.lastAudited !== problem) {
+      s.lastAudited = problem;
+      this.audit({ action: "service-refuse", result: "failed", target: s.cfg.name, detail: problem });
+    }
+    if (s.pendingTimer) clearTimeout(s.pendingTimer);
+    const delay = nextDelay(s.pendingFailures++, this.backoff);
+    s.pendingTimer = setTimeout(() => {
+      s.pendingTimer = undefined;
+      if (this.stopping || !this.slots.includes(s)) return;
+      this.retries.add(s);
+      void this.kick();
+    }, delay);
+    s.pendingTimer.unref();
+  }
+
+  /** Stops the running program of a slot on purpose: no restart follows. Revokes its token. */
+  private async halt(s: Slot): Promise<void> {
+    this.clearTimers(s);
+    const run = s.run;
+    try {
+      if (run) {
+        run.halted = true;
+        if (!run.exited && run.pid !== undefined) await stopGroup(run.pid, this.graceMs);
+        await Promise.race([run.settled, new Promise((r) => setTimeout(r, 1000).unref())]);
+      }
+    } catch {
+      // go on: the token is revoked below
+    }
+    if (s.accountId) revokeServiceTokenSafe(s.accountId);
+  }
+
   /** Stops every program (SIGTERM, SIGKILL after the grace time), lets the output drain, revokes the tokens. Never throws. */
   async stop(): Promise<void> {
     this.stopping = true;
-    await Promise.all(this.slots.map(async (s) => {
+    try {
+      await this.running;
+    } catch {
+      // go on with the stop
+    }
+    await Promise.all([...this.slots, ...this.leaving].map(async (s) => {
       try {
-        if (s.timer) clearTimeout(s.timer);
-        s.timer = undefined;
+        this.clearTimers(s);
         const run = s.run;
         if (run && !run.exited && run.pid !== undefined) await stopGroup(run.pid, this.graceMs);
         if (run) await Promise.race([run.settled, new Promise((r) => setTimeout(r, 1000).unref())]);
@@ -319,10 +560,9 @@ export class ServiceSupervisor implements ServicesHandle {
   stopNow(): void {
     this.stopping = true;
     const signalled: { s: Slot; pid: number }[] = [];
-    for (const s of this.slots) {
+    for (const s of [...this.slots, ...this.leaving]) {
       try {
-        if (s.timer) clearTimeout(s.timer);
-        s.timer = undefined;
+        this.clearTimers(s);
         const pid = s.run && !s.run.exited ? s.run.pid : undefined;
         if (pid === undefined) continue;
         for (const sig of ["SIGTERM", "SIGCONT"] as const) {
@@ -358,7 +598,7 @@ export class ServiceSupervisor implements ServicesHandle {
         // the exit hook kills the group anyway
       }
     }
-    for (const s of this.slots) this.finish(s);
+    for (const s of [...this.slots, ...this.leaving]) this.finish(s);
   }
 }
 

@@ -12,7 +12,8 @@ import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock
  * holds a password, hash, token, key, name or e-mail. Lines also record actions made in the web interface; they never
  * hold a note or task text; the exception is a governance reason (autonomy-*), which is short free text with no credential. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
  * A `service-line` detail holds text a service account wrote itself (#884): it is the program's claim, checked only for its
- * shape, and never a token.
+ * shape, and never a token. A `service-start`, `service-stop` or `service-refuse` line (#941) is written when a change to `services:`
+ * in config.yaml is applied; its target is the service name and its detail a fixed sentence.
  */
 export const auditPath = () => join(dataHome(), "audit.jsonl");
 
@@ -70,6 +71,9 @@ export const EVENT_ACTIONS = [
   "service-line-dropped",
   "service-token-rotate",
   "service-token-revoke",
+  "service-start",
+  "service-stop",
+  "service-refuse",
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;
