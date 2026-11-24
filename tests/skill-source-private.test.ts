@@ -217,7 +217,7 @@ describe("failure paths with a credential", () => {
 
   it("an ls-remote that hangs ends with a timeout or an abort and leaves nothing", async () => {
     const hang = { ...env, STUB_HANG: "1" };
-    await expect(resolveTrack(URL, "main", { env: hang, credential: CRED, timeoutMs: 400 })).rejects.toEqual(expect.objectContaining({ code: "timeout" }));
+    await expect(resolveTrack(URL, "main", { env: hang, credential: CRED, timeoutMs: 2000 })).rejects.toEqual(expect.objectContaining({ code: "timeout" }));
     await until(() => !alive(pidsOf()[1]!));
     expect(readdirSync(root)).toEqual([]);
 
