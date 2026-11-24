@@ -8311,6 +8311,21 @@ services:
 ```
 
 - **When they start.** After the server listens and the watchers have started. Up to 10 services.
+- **Changes while the server runs.** The server reads `config.yaml` once a second. When the `services:` list
+  has changed in two reads in a row, the change is applied within about 2 seconds, with no restart:
+  - a new entry starts;
+  - a removed entry stops (its token is revoked), and `services: []` removes every service;
+  - an entry whose `command`, `args`, `env`, `public_key`, `scope` or `acts_for` changed is stopped and started
+    again. Other services keep running untouched.
+  
+  Before a running entry is replaced, the same checks as a start run: the program, the signature (with
+  `public_key`), the scope and the `acts_for` person. If one fails, the change is refused for that entry only,
+  the running program keeps running, and the Health page says `the change in config.yaml is not applied:` with
+  the reason. The change is tried again with the usual backoff, so fix the cause and it applies by itself.
+  A file that is half-written, empty, not valid settings or unreadable changes nothing: the last valid list stays
+  in force, and the problem is logged once for that version of the file. Each start, stop and refusal caused by
+  a change is a line in the service log and in the audit log (`service-start`, `service-stop`,
+  `service-refuse`).
 - **What they get.** Their environment holds a few system variables (`PATH`, `HOME`, `USER`, `LANG`,
   `TMPDIR` and others), your `env` values, `SCF_URL` (the server's address on this computer) and
   `SCF_SERVICE_TOKEN`. The token is a new token of the service's own account on every start, and the
@@ -8322,8 +8337,8 @@ services:
 - **Signed programs.** With `public_key`, the Foundry checks `<command>.sig` (a detached Ed25519
   signature of the program file) before every start. A program that does not match is not started, and
   the Health page says why: the signature file is missing or is not a valid signature, or the signature
-  does not match the program. Fix the file or the signature, then restart the server; the check runs again
-  at each start.
+  does not match the program. Fix the file or the signature; the check runs again before each start and
+  each retry, so the program starts by itself.
 - **Restarts.** A program that exits is started again after 1 second, then 2, 4, 8 and so on, at most
   5 minutes apart. A run that lasted 5 minutes or more starts the count again at 1 second.
 - **Stopping.** On shutdown, and before a self-update restart, each program gets a stop signal and is
@@ -8335,7 +8350,7 @@ services:
   restart, last exit code 1". A refused or waiting service counts as a problem on the health line.
   `scf services` (or `scf services list`) prints the same: state, restarts, last exit and the problem. It
   needs a running, signed-in server (admin).
-- **Where they are set.** In `config.yaml` only, and a change needs a restart. `PUT /api/config` refuses a
+- **Where they are set.** In `config.yaml` only; a change applies while the server runs (see above). `PUT /api/config` refuses a
   `services` key, and a save from the Settings page keeps the stored list. There is no control on the
   Settings page, by choice: a program started with the Foundry's rights should be changed by the owner of
   the file, not from a browser.

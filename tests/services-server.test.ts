@@ -92,3 +92,29 @@ describe("services at server start", () => {
     }
   });
 });
+
+describe("services changed in config.yaml while the server runs (#941)", () => {
+  it("starts an added entry, keeps it through an invalid file, stops it when removed", async () => {
+    const outFile = join(tmp, "out3.jsonl");
+    rmSync(outFile, { force: true });
+    const cfgPath = join(home, "config.yaml");
+    writeFileSync(cfgPath, "concurrency: 1\n");
+    const s = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), watchers: false, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), servicesWatchMs: 30 });
+    try {
+      writeFileSync(cfgPath, `concurrency: 1\nservices:\n  - name: late-bot\n    command: ${FIXTURE}\n    args: ["--out", ${JSON.stringify(outFile)}]\n    scope: ["GET health"]\n`);
+      await until(() => existsSync(outFile) && readFileSync(outFile, "utf8").includes("\n"));
+      const started = JSON.parse(readFileSync(outFile, "utf8").split("\n")[0]!) as { token: string };
+      const admin = await signInAs(s.base);
+      const health = async () => ((await (await fetch(`${s.base}/api/health`, { headers: admin.headers("GET") })).json()) as { services?: { name: string; state: string }[] }).services;
+      expect(await health()).toMatchObject([{ name: "late-bot", state: "running" }]);
+      writeFileSync(cfgPath, "services: [unclosed\n");
+      await new Promise((r) => setTimeout(r, 200)); // several checks
+      expect(await health()).toMatchObject([{ name: "late-bot", state: "running" }]);
+      expect(lookupServiceToken(started.token)?.state).toBe("live");
+      writeFileSync(cfgPath, "concurrency: 1\nservices: []\n");
+      await until(() => readFileSync(outFile, "utf8").includes("term") && lookupServiceToken(started.token)?.state !== "live");
+    } finally {
+      s.close();
+    }
+  });
+});
