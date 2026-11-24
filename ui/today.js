@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { character } from "./character.js";
 import { h } from "./dom.js";
 import { needsUser, recordLink } from "./home.js";
 import { phaseStrip } from "./kit/product.js";
@@ -308,7 +309,7 @@ export function buildingItem(b, focus) {
  * Finished recently. opts: { focus (prefix of the Tab stops), simple, list (Simple: the group whose list is shown under the counters),
  * onboarding (nothing at all yet: say so and offer the first steps) }.
  */
-export function todayView(model, { focus = "today", simple = false, list = "", onboarding = false } = {}) {
+export function todayView(model, { focus = "today", simple = false, list = "", onboarding = false, character: showCharacter = true } = {}) {
   const cards = model.attention;
   const needs = cards.length + (model.extraNeeds ?? 0);
   const counters = counterLinks(model.counts, { simple });
@@ -317,6 +318,7 @@ export function todayView(model, { focus = "today", simple = false, list = "", o
   return [
     h("h1", { class: "today-greeting" }, greeting(model.now)),
     h("p", { class: "today-summary" }, summaryLine({ check: needs, building: model.counts.building, finishedToday: model.counts["finished-today"], unknown: model.needsUnknown })),
+    needs === 0 && !model.needsUnknown && showCharacter ? character() : null,
     onboarding
       ? h("div", { class: "today-empty home-clear" },
         h("p", {}, TODAY.empty),

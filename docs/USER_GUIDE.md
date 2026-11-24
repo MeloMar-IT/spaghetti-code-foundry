@@ -979,7 +979,7 @@ Today asks again every 30 seconds; Your turn on the admin page every 5 seconds.
 - **Closed issues:** a failed, stopped, waiting or cancelled run of an issue that is closed on GitHub is not listed, not counted, not a card on the Board and not in the failed list of "since", and nothing is sent for it. This holds for every run, whoever started it, except a run that closed its own issue (for example a hotfix that could not be merged back to `develop`). Its change page shows "Nothing — the issue is closed" and no Approve, Reject or Retry. If the last check of the issue on GitHub failed and nothing is stored, the item stays listed with the note "The state of the issue on GitHub could not be checked". If the issue is opened again, the run is listed again.
 - **Retired flow:** a run that a watcher started (or that has no source) and whose flow no longer exists in any flow folder cannot be resumed. Its change page shows "This run's flow is retired — it cannot be resumed." and no Approve, Reject or Retry; Your turn offers no Retry for it. The record says to start over (failed) or to start a new run (stopped, cancelled, interrupted). The three API routes answer 409 `The flow "<name>" is retired — this run cannot be resumed. Start the work again with a current flow.` and `scf resume|approve|reject` refuse without `--force`. A run you started by hand is never retired. If the issue is closed, the closed message comes first.
 - **Checked every minute:** the Foundry checks that the Board, the watchers, the runs and this list agree. The result is on the [Dashboard](#dashboard).
-- **Empty:** it says "Nothing needs you." and, when it can, how many stories are being built and when the next release pull request is expected.
+- **Empty:** it says "Nothing needs you." and, when it can, how many stories are being built and when the next release pull request is expected. The Foundry's character shows as a small picture next to that sentence, on its own page (the copy on Home has no picture).
 - **Badge:** the number of items shows on **Today** in the sidebar, on the **Menu** button of a narrow screen, and in the tab title, for example "(3) Foundry". When something waits, the app opens on Today.
 - **Notifications:** new items can also reach you as a macOS or Slack message; see **Notifications** under Settings.
 
@@ -9924,6 +9924,12 @@ Following a link closes the panel and opens the page.
 The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no **Ask Foundry** button.
+
+**The Foundry's character.** The panel's header shows the Foundry's character, a small picture, as its
+avatar. It is hidden while the panel shows an error or a refused or failed reply, so the picture never sits
+next to a problem. The same character shows on **Today** when nothing needs you, and in the empty
+**Changes** list ("No runs yet."). It never shows in an error, a permission notice or an item that asks
+for your decision.
 
 ### What Ask Foundry knows, and how to check an answer
 

@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { plainServerText } from "./change-words.js";
+import { character } from "./character.js";
 import { h, mount, toast } from "./dom.js";
 import { dialogOpen, keepScroll, liveStates, poller } from "./live.js";
 import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
@@ -172,7 +173,7 @@ export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embed
   const count = typeof keep === "function" ? groups.reduce((n, g) => n + g.items.length, 0) : data.count;
   return [
     turnHead(embedded, count),
-    count === 0 ? h("div", { class: embedded ? "home-clear" : "empty" }, data.empty ?? "Nothing needs you.") : null,
+    count === 0 ? h("div", { class: embedded ? "home-clear" : "empty" }, embedded ? null : character(), data.empty ?? "Nothing needs you.") : null,
     ...groups.map((g) =>
       h("div", { class: "card turn-group" }, h("h3", {}, g.repo), ...g.items.map((i) => itemView(i, { onDismiss, onLeave, onAct }, embedded)))),
     data.continuing?.length

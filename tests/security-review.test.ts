@@ -89,6 +89,26 @@ describe("serveStatic", () => {
       rmSync(base, { recursive: true, force: true });
     }
   });
+
+  it("sends the right content type for pictures and keeps the others", () => {
+    const base = mkdtempSync(join(tmpdir(), "static-"));
+    try {
+      for (const f of ["a.png", "a.webp", "a.svg", "a.js", "a.bin"]) writeFileSync(join(base, f), "x");
+      const type = (rel: string) => {
+        let headers: Record<string, string> = {};
+        const res = { writeHead: (_s: number, h: Record<string, string>) => ((headers = h), res), end: () => res } as unknown as ServerResponse;
+        serveStatic(res, base, rel);
+        return headers["content-type"];
+      };
+      expect(type("a.png")).toBe("image/png");
+      expect(type("a.webp")).toBe("image/webp");
+      expect(type("a.svg")).toBe("image/svg+xml");
+      expect(type("a.js")).toBe("text/javascript; charset=utf-8");
+      expect(type("a.bin")).toBe("application/octet-stream");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("parseRepoUrl", () => {

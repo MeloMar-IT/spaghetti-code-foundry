@@ -459,6 +459,33 @@ describe("a turn from question to answer", () => {
     expect(actions(d)).toEqual(["Try again", "Archive", "Delete"]);
   });
 
+  it("the character is not in the header next to a failed or limit reply, and comes back with an answer (#939)", async () => {
+    const pics = (d: any) => walk(d.ui.drawer).filter((e) => e.tag === "img" && (e.attrs.src ?? "").startsWith("/brand/character"));
+    const head = (d: any) => walk(d.ui.drawer).find((e) => e.attrs.class === "ask-head");
+    const { d } = await asked({ api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)) } });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(texts(d.ui.thread, "ask-failed")).toHaveLength(1);
+    expect(d.ui.avatar.hidden).toBe(true);
+    expect(pics(d)).toHaveLength(1); // the picture is in the header, hidden with its wrapper
+    expect(head(d).children).toContain(d.ui.avatar);
+    const limit = await asked({ api: { helpConversation: vi.fn(async () => failed("limit", false, LIMIT)) } });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(limit.d.ui.avatar.hidden).toBe(true);
+    const ok = await asked({ api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { text: "Because." })])) } });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(ok.d.ui.avatar.hidden).toBe(false);
+  });
+
+  it("the character is hidden while a refused action shows its error line, and back once it is cleared", async () => {
+    const { d } = await asked({ api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { text: "Because." })])) } });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(d.ui.avatar.hidden).toBe(false);
+    d.ui.error.textContent = "You are not allowed to do this.";
+    expect(d.ui.avatar.hidden).toBe(true);
+    d.ui.error.textContent = "";
+    expect(d.ui.avatar.hidden).toBe(false);
+  });
+
   it("limit: the fixed sentence and no Try again, for a reply and for a refused question", async () => {
     const { d } = await asked({ api: { helpConversation: vi.fn(async () => failed("limit", false, LIMIT)) } });
     await vi.advanceTimersByTimeAsync(1500);

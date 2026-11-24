@@ -129,8 +129,11 @@ export function createAsk(role, {
       onDraft: (message, reasons) => st.drafts.set(message, reasons),
     };
     // `mount` keeps the focus on the control with the same name, so voting by keyboard works across a redraw
-    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id), outcomes: (id) => st.outcomes.get(id) ?? [], simple }).flatMap((entry) => [entryNode({ ...entry, handoffs: simple ? [] : recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
+    const entries = threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id), outcomes: (id) => st.outcomes.get(id) ?? [], simple });
+    mount(ui.thread, entries.flatMap((entry) => [entryNode({ ...entry, handoffs: simple ? [] : recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
     ui.thread.hidden = !st.conversation;
+    // A failed or refused reply is a notice: the character stays out of the header while it is shown.
+    ui.setThreadNotice(entries.some((entry) => entry.kind === "failed" || entry.kind === "limit"));
     const controls = { ...controlsFor(st.conversation, { busy: st.busy, paused: st.paused }), solved: solveOffered(st.conversation, { busy: st.busy }) };
     mount(ui.actions, actionNodes(controls, CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), solved: () => void solve(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
     // suggestions are for a start: a conversation that runs has its own questions

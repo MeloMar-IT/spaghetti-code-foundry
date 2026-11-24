@@ -218,6 +218,13 @@ button.problem-link { border: none; background: transparent; padding: 0; color: 
 .log .step { color: var(--color-log-step); font-weight: 600; }
 .log .dim { color: var(--color-log-dim); }
 .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+.scf-character { display: block; flex: none; }
+.scf-character img { display: block; height: auto; border-radius: var(--radius-md); }
+.scf-character-empty { margin-block: var(--space-md); }
+.scf-character-empty img { width: 56px; }
+.empty .scf-character-empty { width: max-content; margin-inline: auto; }
+.scf-character-avatar img { width: auto; height: 36px; border-radius: var(--radius-sm); }
+[data-refresh-failed] .scf-character-empty { display: none; }
 .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: var(--radius-round); animation: spin .8s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skeleton { display: grid; gap: 10px; padding: 14px 0; }

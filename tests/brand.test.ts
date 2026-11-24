@@ -152,6 +152,18 @@ describe("brand files", () => {
     expect(w).toContain("#f08a50");
   });
 
+  it("has the four web versions of the character in the app, equal to the website's", () => {
+    const names = ["character-1x.png", "character-2x.png", "character-1x.webp", "character-2x.webp"];
+    expect(readdirSync(join(ROOT, "ui/brand")).sort()).toEqual([...names].sort());
+    for (const f of names) {
+      const app = readFileSync(join(ROOT, "ui/brand", f));
+      expect(app.equals(readFileSync(join(ROOT, "website/static/brand", f))), f).toBe(true);
+      expect(app.length, f).toBeLessThanOrEqual(150 * 1024);
+      const magic = f.endsWith(".png") ? [0x89, 0x50, 0x4e, 0x47] : [0x52, 0x49, 0x46, 0x46];
+      expect([...app.subarray(0, 4)], f).toEqual(magic);
+    }
+  });
+
   it("has the source images", () => {
     for (const f of ["logo.jpg", "mascot.jpg"]) {
       const p = join(ROOT, "docs/brand/source", f);
