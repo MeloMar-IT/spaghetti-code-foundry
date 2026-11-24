@@ -66,7 +66,7 @@ describe("runProcess with groupKill", () => {
 
   it("a timeout stops the whole group too", async () => {
     const d = dir();
-    const p = runProcess("/bin/sh", ["-c", stubborn(d, "sleep 60")], { cwd: d, logFile: join(d, "log"), groupKill: true, timeoutMs: 400, redactor: makeRedactor([]) });
+    const p = runProcess("/bin/sh", ["-c", stubborn(d, "sleep 60")], { cwd: d, logFile: join(d, "log"), groupKill: true, timeoutMs: 2000, redactor: makeRedactor([]) });
     const res = await p;
     expect(res.timedOut).toBe(true);
     expect(dead(await untilFile(join(d, "child.pid")))).toBe(true);

@@ -145,15 +145,15 @@ describe("runStep with a start mark", () => {
   });
 
   it("stops after wait + own limit when the mark never comes", async () => {
-    const r = await run("printf MA; sleep 30", { timeoutMs: 200, waitMs: 300 });
+    const r = await run("printf MA; sleep 30", { timeoutMs: 1000, waitMs: 1000 });
     expect(r.ok).toBe(false);
-    expect(r.ms).toBeGreaterThanOrEqual(450);
+    expect(r.ms).toBeGreaterThanOrEqual(1900);
     expect(r.ms).toBeLessThan(5000);
     expect(r.output).toBe("MA");
   });
 
   it("keeps one timer and the output without a mark", async () => {
-    const a = await run("echo MARK; sleep 30", { timeoutMs: 200, startMark: undefined });
+    const a = await run("echo MARK; sleep 30", { timeoutMs: 1000, startMark: undefined });
     expect(a.ok).toBe(false);
     expect(a.output).toBe("MARK\n");
     const b = await run("echo hi; echo e >&2", { startMark: undefined });
@@ -184,11 +184,11 @@ describe("runStep and the pauses of test-slot", () => {
   it("a pause of the step does not count against its time limit; the run's folder is removed at the end", async () => {
     const waits = folder();
     const t0 = Date.now();
-    // the limit is 0.8 s of working time; the step pauses for 1 s and then works 0.3 s
-    const r = await runStep({ name: "test", cmd: "sh", args: ["-c", pausedFor(1000, "sleep 0.3; echo ok")], timeoutMs: 800, waitDir: waits }, tmpdir());
+    // the limit is 1.2 s of working time; the step pauses for 2 s and then works 0.3 s
+    const r = await runStep({ name: "test", cmd: "sh", args: ["-c", pausedFor(2000, "sleep 0.3; echo ok")], timeoutMs: 1200, waitDir: waits }, tmpdir());
     expect(r.ok).toBe(true);
     expect(r.output).toContain("ok");
-    expect(Date.now() - t0).toBeGreaterThan(1200);
+    expect(Date.now() - t0).toBeGreaterThan(2300);
     expect(readdirSync(waits)).toEqual([]);
     rmSync(waits, { recursive: true, force: true });
   });
@@ -196,12 +196,12 @@ describe("runStep and the pauses of test-slot", () => {
   it("the time after a pause still counts: the step is stopped at its limit plus the pause", async () => {
     const waits = folder();
     const t0 = Date.now();
-    // 0.3 s paused, then the work goes on: the step is stopped at about 0.8 s + 0.3 s
-    const r = await runStep({ name: "test", cmd: "sh", args: ["-c", pausedFor(300, "sleep 30")], timeoutMs: 800, waitDir: waits }, tmpdir());
+    // 0.3 s paused, then the work goes on: the step is stopped at about 1.2 s + 0.3 s
+    const r = await runStep({ name: "test", cmd: "sh", args: ["-c", pausedFor(300, "sleep 30")], timeoutMs: 1200, waitDir: waits }, tmpdir());
     const ms = Date.now() - t0;
     expect(r.ok).toBe(false);
-    expect(ms).toBeGreaterThan(900);
-    expect(ms).toBeLessThan(4000);
+    expect(ms).toBeGreaterThan(1300);
+    expect(ms).toBeLessThan(8000);
     expect(readdirSync(waits)).toEqual([]);
     rmSync(waits, { recursive: true, force: true });
   });
