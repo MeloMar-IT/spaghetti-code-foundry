@@ -12,6 +12,9 @@ export const SITE = {
   imageHeight: 900,
 };
 
+// The spaghetti-flame mark, inline so it follows the theme accent (docs/brand/ has the same drawing).
+const MARK = '<svg class="mark" viewBox="0 0 64 64" width="24" height="24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13 47C6 38 8 27 18 19C17 27 20 31 25 33"></path><path d="M51 47C58 38 56 27 46 19C47 27 44 31 39 33"></path><path d="M32 5C39 13 27 18 32 25C34 29 38 27 38 31"></path><path d="M14 45C14 36 23 31 32 32C41 31 50 36 50 45C50 54 41 58 32 58C23 58 14 54 14 45Z"></path><path d="M26 40L22 45L26 50"></path><path d="M38 40L42 45L38 50"></path><path d="M34 39L30 51"></path></svg>';
+
 export const NAV = [
   { url: "/features/", label: "Features" },
   { url: "/how-to/", label: "How-to" },
@@ -37,7 +40,7 @@ function header(current) {
   return `<a class="skip" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap header-row">
-    <a class="brand" href="/" aria-label="${e(SITE.name)} home"><span class="logo" aria-hidden="true">◆</span><span class="brand-full">${e(SITE.name)}</span><span class="brand-short">SCF</span></a>
+    <a class="brand" href="/" aria-label="${e(SITE.name)} home"><span class="logo" aria-hidden="true">${MARK}</span><span class="brand-full">${e(SITE.name)}</span><span class="brand-short">SCF</span></a>
     <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
     <nav id="site-nav" class="site-nav" aria-label="Main">${nav}<a href="${SITE.repo}" rel="noopener" class="nav-gh">GitHub</a></nav>
     <div class="search" role="search">
@@ -53,7 +56,7 @@ function header(current) {
 function footer() {
   return `<footer class="site-footer">
   <div class="wrap footer-grid">
-    <div><a class="brand" href="/"><span class="logo" aria-hidden="true">◆</span> ${e(SITE.name)}</a>
+    <div><a class="brand" href="/"><span class="logo" aria-hidden="true">${MARK}</span> ${e(SITE.name)}</a>
       <p>A source-available AI coding factory that runs on your own machine. Free to self-host (FSL-1.1-MIT).</p></div>
     <div><h2>Learn</h2><a href="/how-to/install/">Install</a><a href="/how-to/">How-to guides</a><a href="/guide/">User guide</a><a href="/flow-format/">Flow format</a></div>
     <div><h2>Inside</h2><a href="/features/">Features</a><a href="/design/">Design</a><a href="/security/">Security</a><a href="/lessons-learned/">Lessons learned</a><a href="/metrics/">Metrics</a></div>
