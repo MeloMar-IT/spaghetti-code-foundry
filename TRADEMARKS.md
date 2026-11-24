@@ -4,7 +4,7 @@
 
 - the name "Spaghetti Code Foundry"
 - the short name "SCF"
-- the logo: the ◆ mark shown with the name, and the icon in `website/static/favicon.svg`
+- the logo: the spaghetti-flame mark (a flame of noodles around `</>`) shown with the name, its drawings in `docs/brand/`, and the icon `website/static/favicon.svg` (also `ui/favicon.svg`)
 
 They belong to the licensor named in [LICENSE](LICENSE).
 
