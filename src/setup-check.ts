@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { IMAGE_TOOLS, installedImageTools } from "./agents/command-allow.js";
 import { resolveClaudeBinAsync } from "./steps/claude.js";
 import { resolveCodexBin } from "./steps/codex.js";
 
@@ -31,6 +32,8 @@ export interface SetupReport {
   /** Needed items that could not be checked. */
   unchecked: number;
   checkedAt: string;
+  /** The image tools agent steps may use (allow_commands: images). Missing ones never make the check fail. */
+  imageTools?: { name: string; installed: boolean }[];
 }
 
 export interface ProbeResult {
@@ -94,6 +97,17 @@ export interface SetupCheckOptions {
   codexBin?: string;
   needs?: ExtraTool[];
   now?: Date;
+  /** The PATH to look for the image tools on (default: this process's PATH). */
+  path?: string;
+}
+
+/** The tools that only exist on macOS. */
+const MAC_IMAGE_TOOLS = ["sips", "qlmanage"];
+
+/** Which image tools are installed here. `sips` and `qlmanage` are listed on macOS only. */
+export function imageToolReport(platform: SetupReport["platform"], path: string | undefined): { name: string; installed: boolean }[] {
+  const have = new Set(installedImageTools(path).map((t) => t.name as string));
+  return IMAGE_TOOLS.filter((n) => platform === "macos" || !MAC_IMAGE_TOOLS.includes(n)).map((name) => ({ name, installed: have.has(name) }));
 }
 
 /** `need` values: one string, a list, or comma separated. Throws for a tool that is not on the list. */
@@ -230,6 +244,7 @@ export async function setupCheck(o: SetupCheckOptions = {}): Promise<SetupReport
     problems: needed.filter((i) => i.state === "missing" || i.state === "signed-out").length,
     unchecked: needed.filter((i) => i.state === "unknown").length,
     checkedAt: (o.now ?? new Date()).toISOString(),
+    imageTools: imageToolReport(platform, o.path ?? process.env.PATH),
   };
 }
 
@@ -263,6 +278,13 @@ export function setupText(r: SetupReport, o: { simple: boolean }): string {
     lines.push(`    ${i.explain}`);
     if (i.command) lines.push(`    Run: ${i.command}`);
     if (i.link) lines.push(`    Or open: ${i.link.url}`);
+  }
+  if (r.imageTools?.length) {
+    lines.push("", "Image tools for agent steps (optional)");
+    for (const t of r.imageTools) lines.push(`${t.installed ? "✔" : "✘"} ${t.name}`);
+    if (r.imageTools.some((t) => !t.installed)) {
+      lines.push(`    Run: ${r.platform === "macos" ? "brew install imagemagick webp pngquant" : "sudo apt install imagemagick webp pngquant"}`);
+    }
   }
   lines.push("", summaryLine(r));
   return lines.join("\n");

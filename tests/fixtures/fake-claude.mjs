@@ -20,6 +20,7 @@
 // For a round whose prompt has the line "The words: simple" it asks one plain question ("Who will use this change?").
 // FAKE_UNDERSTAND replaces only the answer of "understand", FAKE_SIMPLE_ROUND only the answer of a round with "The words: simple"; both win over FAKE_ROUND.
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
+// "RUN <command>" runs the command when an --allowedTools rule allows it (Bash(<p>) or Bash(<p> *)), else adds a Bash permission denial.
 // "REQUEST <json>" appends the line to $FACTORY_REPO_REQUESTS (a repository request for the broker; nothing when the variable is unset).
 // Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -112,6 +113,25 @@ for (const line of prompt.split("\n")) {
     emit({ type: "assistant", message: { usage, content: [{ type: "tool_use", id, name: "Write", input: { file_path: w[1] } }] } });
     writeFileSync(w[1], w[2]);
     emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id }] } });
+  }
+  // "RUN <command>": runs the command (/bin/sh -c, in the folder, with this PATH) when an --allowedTools rule `Bash(<p>)` or `Bash(<p> *)` allows it; otherwise a Bash permission denial.
+  const rn = noTools ? null : line.match(/^RUN (.*)$/);
+  if (rn) {
+    const cmd = rn[1];
+    const rules = (args.includes("--allowedTools") ? args[args.indexOf("--allowedTools") + 1] : "").split(",");
+    const allowed = rules.some((r) => {
+      const m = /^Bash\((.*)\)$/.exec(r);
+      if (!m) return false;
+      if (m[1].endsWith("*")) return cmd.startsWith(m[1].slice(0, -1).trimEnd());
+      return cmd === m[1];
+    });
+    if (allowed) {
+      try {
+        execFileSync("/bin/sh", ["-c", cmd], { stdio: "ignore" });
+      } catch {
+        /* a refused or failing command is the agent's problem, not this fake's */
+      }
+    } else denials.push({ tool_name: "Bash", tool_use_id: `toolu_${denials.length}`, tool_input: { command: cmd } });
   }
   const rq = line.match(/^REQUEST (.*)$/);
   if (rq && process.env.FACTORY_REPO_REQUESTS) appendFileSync(process.env.FACTORY_REPO_REQUESTS, `${rq[1]}\n`);

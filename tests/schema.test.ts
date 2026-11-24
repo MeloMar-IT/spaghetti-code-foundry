@@ -422,3 +422,19 @@ describe("flow skills syntax", () => {
     expect(() => parseFlow("name: t\nsteps:\n  - {id: a, type: shell, run: x, skills: off}")).toThrow();
   });
 });
+
+describe("allow_commands", () => {
+  const st = (extra: string) => parseFlow(minimal(`  - {id: a, type: claude, prompt: x${extra}}`)).steps[0]!;
+  it("accepts the named sets", () => {
+    expect(st(", allow_commands: [images, project_scripts]")).toMatchObject({ allow_commands: ["images", "project_scripts"] });
+    expect("allow_commands" in st("")).toBe(false);
+  });
+  it("refuses an unknown or empty set, a repeat, a reviewer step and a read-only step", () => {
+    expect(() => st(", allow_commands: [curl]")).toThrow();
+    expect(() => st(", allow_commands: []")).toThrow();
+    expect(() => st(", allow_commands: [images, images]")).toThrow(/twice/);
+    expect(() => st(", allow_commands: [images], skill_role: reviewer, permission_mode: plan")).toThrow(/allow_commands/);
+    expect(() => st(", allow_commands: [images], permission_mode: dontAsk, allowed_tools: [Read]")).toThrow(/allow_commands/);
+    expect(() => st(", allow_commands: [images], permission_mode: plan")).toThrow(/allow_commands/);
+  });
+});
