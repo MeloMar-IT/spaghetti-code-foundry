@@ -12,7 +12,7 @@ import { isWatcherReleaseBuild } from "../release/auto-build.js";
 import { nextStep, releaseWatchersFor, trackingWatcher, type NextStep } from "../next-step.js";
 import { buildTurn, runOrigin, soonest, type ReleaseTime, type TurnSource, type YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
-import { collectNext, knownRuns, ownerInfo, runSince, type Entry } from "./next.js";
+import { collectNext, indexReady, knownRuns, ownerInfo, runSince, type Entry } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 
 const DAY = 86_400_000;
@@ -271,15 +271,22 @@ export function restoreTurn(key?: string): void {
 
 export const yourTurnRoutes: Route = async (ctx, req, res, seg, method) => {
   if (seg[0] !== "your-turn") return false;
-  if (!seg[1] && method === "GET") return send(res, 200, yourTurn(ctx)), true;
+  if (!seg[1] && method === "GET") {
+    if (!(await indexReady(ctx, res))) return true;
+    return send(res, 200, yourTurn(ctx)), true;
+  }
   if (seg[1] === "dismiss" && !seg[2] && method === "POST") {
-    dismissTurn(ctx, str(await readJson(req), "key"));
+    const key = str(await readJson(req), "key");
+    if (!(await indexReady(ctx, res))) return true;
+    dismissTurn(ctx, key);
     return send(res, 200, yourTurn(ctx)), true;
   }
   if (seg[1] === "restore" && !seg[2] && method === "POST") {
     const body = await readJson(req);
     // Only a missing "key" restores everything; null, an empty or a non-string key is refused.
-    restoreTurn("key" in body ? str(body, "key") : undefined);
+    const key = "key" in body ? str(body, "key") : undefined;
+    if (!(await indexReady(ctx, res))) return true;
+    restoreTurn(key);
     return send(res, 200, yourTurn(ctx)), true;
   }
   return false;

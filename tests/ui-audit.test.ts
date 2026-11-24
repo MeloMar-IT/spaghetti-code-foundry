@@ -250,7 +250,7 @@ describe("filters", () => {
   it("has the user and action choices", async () => {
     await show();
     expect(field("user").all("option").map((o) => o.textContent)).toEqual(["All users", "Ann (ann@example.com)", "Bob (bob@example.com)"]);
-    expect(field("action").all("option")).toHaveLength(56);
+    expect(field("action").all("option")).toHaveLength(59);
     expect(field("action").all("option")[0]!.textContent).toBe("All actions");
   });
   it("adds the service accounts to the user choices, and goes on without them when they cannot be read", async () => {

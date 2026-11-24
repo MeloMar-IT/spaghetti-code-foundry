@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
-import { runReadCount, saveRun, type RunSummary } from "../src/engine/state.js";
+import { runReadCount, runsArchiveDir, saveRun, type RunSummary } from "../src/engine/state.js";
 import { loadConfig, saveConfig } from "../src/config.js";
 import { saveIssueList, type IssueRecord } from "../src/queue/issue-list.js";
 import { statusTargets, type StatusView } from "../src/queue/status-comment.js";
+import { runsListFor } from "../src/server/api-runs.js";
+import { liveEvidence } from "../src/server/help-evidence.js";
+import { runWithNext } from "../src/server/help-context.js";
 import { forgetHistory, historyFor } from "../src/server/next.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
@@ -163,5 +166,105 @@ describe("readers take their runs from the run index", () => {
       ctx.scheduler.list = real;
       forgetHistory(ctx);
     }
+  });
+});
+
+describe("#930: the runs list, search, Your turn and help read the run index", () => {
+  beforeAll(() => {
+    plant("f930", 20, { status: "failed", reason: "boom" } as Partial<RunSummary>);
+    plant("w930", 21, { status: "waiting" } as Partial<RunSummary>);
+  });
+
+  /** Records the scheduler.get calls made while `fn` runs. */
+  async function withGets<T>(fn: () => Promise<T> | T): Promise<{ out: T; gets: string[] }> {
+    const real = ctx.scheduler.get.bind(ctx.scheduler);
+    const gets: string[] = [];
+    ctx.scheduler.get = ((id: string) => (gets.push(id), real(id))) as typeof ctx.scheduler.get;
+    try {
+      return { out: await fn(), gets };
+    } finally {
+      ctx.scheduler.get = real;
+    }
+  }
+
+  it("GET /api/runs: every row has next, and the liar is left out", async () => {
+    for (const who of [admin, ann]) {
+      const r = await counted(who, "/api/runs");
+      expect(r.status).toBe(200);
+      expect(r.parses).toBeLessThanOrEqual(1);
+      const rows = r.json() as any[];
+      expect(rows.length).toBeGreaterThanOrEqual(COUNT);
+      for (const row of rows) expect(row.next).toBeDefined();
+      expect(rows.map((x) => x.runId)).not.toContain("not-odd");
+      expect(rows.map((x) => x.runId)).not.toContain("odd");
+    }
+  });
+
+  it("runsListFor parses at most one run.json and keeps its filters", async () => {
+    await ctx.scheduler.whenIndexReady();
+    const before = runReadCount();
+    const all = runsListFor(ctx);
+    const mine = runsListFor(ctx, ann.user.id);
+    const archived = runsListFor(ctx, ann.user.id, true);
+    expect(runReadCount() - before).toBeLessThanOrEqual(1);
+    expect(all.map((x) => x.runId)).toContain("f930");
+    expect(mine.map((x) => x.runId)).toContain("r0");
+    expect(mine.map((x) => x.runId)).not.toContain("not-odd");
+    expect(archived).toEqual([]);
+  });
+
+  it("search: a query and an id lookup parse at most one run.json and never call get", async () => {
+    for (const who of [admin, ann]) {
+      const { out: r, gets } = await withGets(() => counted(who, "/api/search?q=acme"));
+      expect(r.status).toBe(200);
+      expect(r.parses).toBeLessThanOrEqual(1);
+      expect(gets).toEqual([]);
+      const group = (r.json().groups as any[]).find((g) => g.type === "run");
+      expect(group.hits.length).toBeGreaterThan(0);
+      for (const hit of group.hits) expect(hit.status).toBeDefined();
+    }
+    const one = await counted(admin, "/api/search?id=run:r0");
+    expect(one.status).toBe(200);
+    expect(one.parses).toBeLessThanOrEqual(1);
+    expect(JSON.stringify(one.json())).toContain("r0");
+  });
+
+  it("Your turn: parses at most one run.json", async () => {
+    const r = await counted(admin, "/api/your-turn");
+    expect(r.status).toBe(200);
+    expect(r.parses).toBeLessThanOrEqual(1);
+    const mine = await counted(ann, "/api/your-turn/mine");
+    expect(mine.parses).toBeLessThanOrEqual(1);
+  });
+
+  it("a run in runs-archive is in no index entry, but an admin still opens it by id (one run.json read)", () => {
+    const dir = join(runsArchiveDir(runs), "arch930");
+    mkdirSync(dir, { recursive: true });
+    saveRun({
+      runId: "arch930", flow: "issue-gitflow", task: "t", vars: {}, repo: "/x", status: "failed", reason: "boom", owner: ann.user.id, source: "ui",
+      runDir: dir, startedAt: ago(3), finishedAt: ago(3), flowDef: { name: "issue-gitflow", steps: [] }, state: { next: null, steps: {}, visits: {} }, history: [],
+    } as unknown as RunSummary);
+    expect(ctx.scheduler.slimOf("arch930")).toBeUndefined();
+    const before = runReadCount();
+    const asAdmin = runWithNext(ctx, admin.user as never, "arch930");
+    expect(asAdmin?.run.runId).toBe("arch930");
+    expect(asAdmin?.run.status).toBe("failed");
+    expect(runReadCount() - before).toBe(1);
+    expect(runWithNext(ctx, { id: "99999999-9999-4999-8999-999999999999", role: "user" } as never, "arch930")).toBeUndefined();
+  });
+
+  it("help evidence: parses at most one run.json and never calls get for a run", async () => {
+    await ctx.scheduler.whenIndexReady();
+    const input = { owner: ann.user.id, role: "user" as const, question: "why", history: [] };
+    const before = runReadCount();
+    const { out, gets } = await withGets(() => liveEvidence(ctx, input));
+    expect(runReadCount() - before).toBeLessThanOrEqual(1);
+    expect(gets).toEqual([]);
+    expect(out.some((s) => JSON.stringify(s).includes("f930") || JSON.stringify(s).includes("w930"))).toBe(true);
+    const named = { owner: admin.user.id, role: "admin" as const, question: "why", history: [], context: { page: "#/runs", entities: ["r0", "r1", "r2"].map((id) => ({ kind: "run" as const, id })) } };
+    const b2 = runReadCount();
+    const second = await withGets(() => liveEvidence(ctx, named as never));
+    expect(runReadCount() - b2).toBeLessThanOrEqual(1);
+    expect(second.gets).toEqual([]);
   });
 });

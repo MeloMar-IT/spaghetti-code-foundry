@@ -9,10 +9,10 @@ import { listFlows } from "../flow/load.js";
 import type { NextStep } from "../next-step.js";
 import { listSessions } from "../refinement/store.js";
 import { userFlowList } from "./api-flows.js";
-import { checkedRun, runsListFor } from "./api-runs.js";
+import { runsListFor, slimRow } from "./api-runs.js";
 import { boardFor } from "./board.js";
 import { HttpError, NAME_RE, send } from "./http.js";
-import { nextFor, ownRecord, queuedJobNext } from "./next.js";
+import { indexReady, nextFor, ownRecord, queuedJobNext } from "./next.js";
 import { hidePaths, userRecord } from "./user-view.js";
 import { briefInScope, callerWorkspaces, runInScope, scopedRepos, sessionInScope } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
@@ -24,6 +24,7 @@ export interface SearchAnswer { q: string; groups: SearchGroup[]; incomplete?: S
 
 export const SEARCH_LIMIT = 8;
 export const SEARCH_Q_MAX = 100;
+/** The most runs looked up in the index per search. */
 export const SEARCH_RUN_READS = 40;
 const TEXT_MAX = 200;
 const BOARD_TTL_MS = 5_000;
@@ -182,7 +183,7 @@ function runGroup(env: Env, sel: Sel): Out {
 
   const verified: { s: RunSummary; b: RunBrief; hit: SearchHit; text: unknown[]; numbers: unknown[] }[] = [];
   const build = (b: RunBrief): void => {
-    const s = checkedRun(ctx.scheduler, b.dirName, owner);
+    const s = slimRow(ctx.scheduler, b.dirName, owner);
     if (!s) return;
     const task = firstLine(s.task);
     const title = (task && shown(s, task)) || shown(s, ticketTitleOf(s.state?.steps?.pull_ticket?.output)) || `Run ${s.runId}`;
@@ -362,8 +363,13 @@ export const searchRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "search" || seg[1] || method !== "GET") return false;
   const params = new URL(req.url ?? "/", "http://x").searchParams;
   const ids = params.getAll("id");
-  if (ids.length) return send(res, 200, searchFor(ctx, user, { ids: parseIds(ids) })), true;
+  if (ids.length) {
+    const parsed = parseIds(ids);
+    if (!(await indexReady(ctx, res))) return true;
+    return send(res, 200, searchFor(ctx, user, { ids: parsed })), true;
+  }
   const q = params.get("q") ?? "";
   if ([...q].length > SEARCH_Q_MAX) throw new HttpError(400, `q can have at most ${SEARCH_Q_MAX} characters`);
+  if (!(await indexReady(ctx, res))) return true;
   return send(res, 200, searchFor(ctx, user, { q })), true;
 };

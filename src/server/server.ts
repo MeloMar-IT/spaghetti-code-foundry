@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, updateEveryMs, type Config } from "../config.js";
+import { loadConfig, parseConfigTextStrict, readConfigText, updateEveryMs, type Config } from "../config.js";
 import { metricsPusher, type MetricsPusher } from "../metrics-share/pusher.js";
 import { buildShareReport, defaultShareDeps, foundryVersion, sharingAccounts } from "../metrics-share/sources.js";
 import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.js";
@@ -85,7 +85,7 @@ import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
 import { serviceAccountRoutes, checkServiceScope } from "./api-service-accounts.js";
 import { ServiceSupervisor, type ServicesHandle } from "../services/supervisor.js";
-import { hasServiceState } from "../services/setup.js";
+import { watchServiceConfig } from "../services/watch.js";
 import { auditNetworkRefusal, auditRefused, checkServiceRepos, clientLabel, newServiceCall, serviceBearer, serviceCaller, serviceOk, serviceStillAllowed, type ServiceCall } from "./service-requests.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
@@ -120,6 +120,8 @@ export interface ServerOptions {
   sessionRecheckMs?: number;
   /** How often runs without an owner are given to the first admin, in ms (default 60000). */
   adoptEveryMs?: number;
+  /** How often config.yaml is checked for a change to `services:` (#941). Default 1000. */
+  servicesWatchMs?: number;
   /** How often blocked and deleted accounts are checked, in ms (default 2000). */
   accountSweepMs?: number;
   /** How often dropped refinement sessions past their 30 days are removed, in ms (default 600000). */
@@ -554,7 +556,9 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
   breakGlassTimer.unref();
   if (opts.watchers !== false) watchers.sync();
   // Managed services (#867): after the server listens and the watchers are in place; config.yaml as it was at start
-  if (config.services.length || hasServiceState()) {
+  // always made, so services added to config.yaml later can start (#941); an empty supervisor creates no files
+  let servicesWatch: ReturnType<typeof watchServiceConfig> | undefined;
+  {
     const supervisor = new ServiceSupervisor({
       services: ctx.started?.services ?? config.services,
       home: process.env.FACTORY_HOME ?? FACTORY_HOME,
@@ -572,6 +576,15 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     });
     ctx.services = supervisor;
     supervisor.start();
+    servicesWatch = watchServiceConfig({
+      read: () => readConfigText(),
+      parse: (t) => parseConfigTextStrict(t).services,
+      initial: ctx.started?.services ?? config.services,
+      apply: (l) => void supervisor.update(l),
+      log,
+      everyMs: opts.servicesWatchMs,
+    });
+    servicesWatch.start();
   }
   // What the sweeps freed goes to the log and the monitor's activity; the monitor closes the orphan-lock finding at its next check.
   const reportFreed = (s: StaleSweep) => {
@@ -632,6 +645,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
       clearInterval(helpTimer);
       helpTurnsOf(ctx).stopAll();
       void previewsOf(ctx).stopAll();
+      servicesWatch?.stop();
       void ctx.services?.stop();
       clearInterval(auditTimer);
       clearInterval(skillTimer);

@@ -5,7 +5,7 @@
 /* ── top bar ── */
 .top { display: flex; align-items: center; gap: 24px; height: var(--size-bar); padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: var(--layer-sticky); }
 .brand { font-weight: 650; text-decoration: none; display: flex; gap: 8px; align-items: center; white-space: nowrap; }
-.logo { color: var(--accent); }
+.logo { color: var(--accent); display: inline-flex; }
 .brand-short { display: none; }
 .repo { color: var(--muted); font-family: var(--mono); font-size: var(--text-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .health { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }

@@ -5,7 +5,7 @@ import { guardExcerpt, type GuardOptions } from "../help/guard.js";
 import { readFindings } from "../monitor/findings.js";
 import { markerHash } from "../monitor/story.js";
 import { sessionFor } from "./api-refinement.js";
-import { checkedRun } from "./api-runs.js";
+import { checkedRun, slimRow } from "./api-runs.js";
 import { boardFor } from "./board.js";
 import { health } from "./health.js";
 import type { RunSummary } from "../engine/state.js";
@@ -120,13 +120,15 @@ const DAY_MS = 86_400_000;
 const old = (iso: string | undefined, ms = DAY_MS) => iso !== undefined && Date.now() - Date.parse(iso) > ms;
 
 /**
- * A run and its next-step record, as `GET /api/runs/:id` gives them to this account: every run for an admin, their
+ * A run (a slim run from the run index) and its next-step record, as `GET /api/runs/:id` gives them to this account: every run for an admin, their
  * own for a user, and for a user the record without another account's run and without a folder. Undefined for a run
  * that does not exist or is not theirs. `user` is the account as it is now (`currentAccount`).
  */
 export function runWithNext(ctx: ApiContext, user: User, id: string): { run: RunSummary; next?: NextStep } | undefined {
   if (!RUN_ID.test(id) || !allowed(ctx, user, ["runs", id])) return undefined;
-  const s = checkedRun(ctx.scheduler, id, user.role === "admin" ? undefined : user.id);
+  // A run moved to runs-archive has no index entry but still opens by id: that one requested run is read as a file.
+  const owner = user.role === "admin" ? undefined : user.id;
+  const s = slimRow(ctx.scheduler, id, owner) ?? checkedRun(ctx.scheduler, id, owner);
   if (!s) return undefined;
   let next: NextStep | undefined;
   try {

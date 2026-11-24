@@ -10,7 +10,7 @@ export const PHASES = Object.freeze([
 ]);
 
 const LISTS = {
-  understand: "pull_ticket clone feature_branch daily_branch plan_check baseline_tests baseline_failed fetch_main baseline_main hotfix_branch read_issues read_issue list_issues lock resolve find_branch changes check_repo pull_repo checks audit",
+  understand: "pull_ticket clone actions feature_branch daily_branch plan_check baseline_tests baseline_failed fetch_main baseline_main hotfix_branch read_issues read_issue list_issues lock resolve find_branch changes check_repo pull_repo checks audit",
   plan: "plan plan_review revise_gate revise_plan wait_for_story send_back split_gate approve_split create_split size_gate force_split risk_gate approve_plan close_parts claim_areas wait_for_area wait_for_merge ask ask_for_info brief round pick triage split_ticket",
   build: "implement guard fix_guard write build",
   check: "run_tests fix_tests review_1 address_review_1 run_tests_1 fix_tests_1 review_gate review_2 address_review_2 run_tests_2 fix_tests_2 verify check screen measure review after_review check_brief check_round check_verify fix_verify plan_stories",

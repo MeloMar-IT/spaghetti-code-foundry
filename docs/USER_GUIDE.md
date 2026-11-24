@@ -787,6 +787,99 @@ Text from the agents is redacted before it is filed: a token-like string is remo
 
 **What it never writes.** The review writes only issues and labels. It does not push, open pull requests or change the repository.
 
+### Check dependencies weekly
+
+`deps-weekly` lists the dependencies of a repository that have a newer version, and the ones with a known vulnerability, and files them as stories on the repository, so each update is built and tested on `develop` before it reaches `main`. It uses no agent. It writes only issues and labels: it opens no pull request and changes nothing in the repository.
+
+Start it by hand, or let a schedule watcher start it every 7 days:
+
+```bash
+scf run deps-weekly --var github_repo=owner/name [--var develop_branch=develop]
+```
+
+```yaml
+watchers:
+  - id: webshop-deps
+    source: schedule
+    flow: deps-weekly              # lists the outdated dependencies of develop
+    github_repo: acme/webshop
+    every: 7d                      # a schedule without "at": one run every 7 days
+    task: Weekly dependency check
+```
+
+What it does, in order:
+
+1. **Clone.** It clones the branch `develop_branch`, else `develop`, else the default branch, the same way as [Review a whole repository](#review-a-whole-repository). The clone has no remote.
+2. **Actions.** It finds the GitHub Actions pinned in `.github/workflows/*.yml` (the `uses:` of each step and of each reusable job) and asks GitHub, with `gh`, for the newest release of each one. This step and the File step are the only ones that talk to GitHub, and this one runs no code from the repository. A pin is compared at its own precision: `@v4` is not an update while the newest release is `v4.2.0`. A pin to a full commit SHA is compared by the version in its comment (for example `# v4.2.0`). Without such a comment, the SHA is compared with the commit of the newest release, and a different commit is listed as "not compared".
+3. **Check.** Without any agent, it checks each project it finds at the top of the repository, and the whole repository with the OSV scanner. The tools are:
+
+| Tool | Finds | Runs | Override variable |
+|---|---|---|---|
+| Maven | `pom.xml` | `versions:display-dependency-updates`, `versions:display-plugin-updates` and `versions:display-parent-updates`, with `./mvnw` when the repository has it, else `mvn` | `FACTORY_MVN_BIN` |
+| npm | `package.json` | `npm ci` in the clone (scripts are not run), then `npm outdated --json` and `npm audit --json` of the `package-lock.json`. Without a lock file, `npm outdated` alone and no audit. The project's own `.npmrc` and your npm credentials are not used. | `FACTORY_NPM_BIN` |
+| Gradle | `build.gradle`, `build.gradle.kts`, `settings.gradle` or `settings.gradle.kts` | `dependencyUpdates` of the Gradle versions plugin (`com.github.ben-manes.versions`), with `./gradlew` when the repository has it, else `gradle`. Only stable releases count. Without the plugin, Gradle is skipped with a note. | `FACTORY_GRADLE_BIN` |
+| pip | `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg` or `Pipfile` | `pip list --outdated --format json` against PyPI. It runs only when `FACTORY_PIP_BIN` names the pip of the project's Python environment. Unset, pip is not run and a note says so. | `FACTORY_PIP_BIN` |
+| Go | `go.mod` | `go list -m -u -json all`, without downloading a toolchain | `FACTORY_GO_BIN` |
+| GitHub Actions | `.github/workflows/*.yml` | `gh` looks up the newest release of each pinned action (step 2) | `FACTORY_GH_BIN` |
+| OSV scanner | the whole repository | `osv-scanner --format json --recursive .`. Its findings mark the matching updates as security. Without it, a note says so. | `FACTORY_OSV_BIN` |
+
+Each override names the program to run. Without one, the command name in the Runs column is looked up on the `PATH`; pip has no default, as above. The overrides are set in the environment that runs the Foundry.
+4. **File.** It files the updates as stories on the repository (`github_repo`), with the labels set below. This step has `repo_access`, so it writes to GitHub; the check step does not.
+
+Each update is marked:
+
+- **Class:** `patch`, `minor` or `major`, from the change in the version number. For a pinned action, the class is the change from the pinned version to the newest release.
+- **Security:** when `npm audit` or the OSV scanner lists the current version of the package.
+
+The result is written to `deps.json` in the run folder. The output of the check step shows the same table as plain text. An example (the names are made up):
+
+```
+TOOL     KIND        NAME                   CURRENT  LATEST  CLASS  SECURITY
+npm      dependency  lodash                 4.17.20  4.17.21 patch  security
+gradle   dependency  org.example:core       1.2.0    1.4.0   minor
+maven    dependency  com.example:core       1.2.0    1.4.0   minor
+pip      dependency  requests               2.28.0   2.32.3  minor
+actions  action      actions/checkout       v3       v4.2.0  major
+go       dependency  example.com/lib/json   1.0.2    2.0.0   major
+```
+
+The table shows at most 100 rows; `deps.json` has all of them. A vulnerable package with no newer version is listed below the table, with "no update available".
+
+**Stories.** The file step turns the updates into stories:
+
+- **Patch and minor** updates go in one story, with the trigger labels and `enhancement`.
+- **Each major** update gets its own story, with `enhancement`. It gets the trigger labels too only when `deps_majors_go` is `yes`, so by default a major update waits for you to add the label.
+- **Security** updates, of any size, go in one story with the trigger labels and `bug`. The watcher starts `bug` stories first.
+
+Each story lists the name, the current and the new version, the type, and a release-notes link when one is known. It also gives the build command and the acceptance criteria. Each update carries the marker `<!-- deps-weekly: <name>@<version> -->`, which is how the next run knows it is already filed.
+
+The variables of the flow:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `deps_labels` | `Factory_go` | The trigger labels, separated by commas. They replace `Factory_go` on every story. |
+| `deps_majors_go` | `no` | `yes` gives the major stories the trigger labels, so they start by themselves. |
+| `deps_ignore` | empty | Names that are never reported, or `group:*` for a whole group, such as `org.springframework:*`. Separate them with commas. |
+
+Any other value of `deps_labels` or `deps_majors_go` stops the step before it writes to GitHub.
+
+Filing does not repeat itself:
+
+- Run it twice with the same updates, and the second run files nothing.
+- An update already in an open story is skipped. When a newer version appears, the open story's line and marker are edited, and no new story is filed.
+- An update whose story was closed as not planned is not filed again for that version. A newer version is filed.
+- The filed stories are saved in `filed.json` after each create and edit, so a run that stops can run again without duplicates.
+- A repository with more than 1,000 open or closed issues is not filed: the step stops before it writes, and says so.
+- Two runs for the same repository wait for each other. The wait is up to 10 minutes (`FACTORY_DEPS_LOCK_WAIT_MS`).
+
+**Results.**
+
+- **Nothing outdated:** the run succeeds and says "All dependencies are up to date.".
+- **A tool is missing or fails** (for example `mvn` is not installed, `npm` cannot reach the registry, or a check takes longer than its time limit): the failure is a note in the output and in `deps.json`, and the run still succeeds. A note also says when the result is incomplete.
+- **The summary line** is the last line of the output, for example: `Updates found: 12. Filed: 3 in 2 stories. Updated in open stories: 1. Skipped as already filed: 8. Tools not available: 1.`
+
+Each tool has its own time limit (Gradle 20 minutes, Go 10, pip and the OSV scanner 5). The check step as a whole can take up to 90 minutes, and the actions step up to 10 minutes.
+
 ---
 
 ## 3. Follow, approve and resume runs
@@ -8218,6 +8311,21 @@ services:
 ```
 
 - **When they start.** After the server listens and the watchers have started. Up to 10 services.
+- **Changes while the server runs.** The server reads `config.yaml` once a second. When the `services:` list
+  has changed in two reads in a row, the change is applied within about 2 seconds, with no restart:
+  - a new entry starts;
+  - a removed entry stops (its token is revoked), and `services: []` removes every service;
+  - an entry whose `command`, `args`, `env`, `public_key`, `scope` or `acts_for` changed is stopped and started
+    again. Other services keep running untouched.
+  
+  Before a running entry is replaced, the same checks as a start run: the program, the signature (with
+  `public_key`), the scope and the `acts_for` person. If one fails, the change is refused for that entry only,
+  the running program keeps running, and the Health page says `the change in config.yaml is not applied:` with
+  the reason. The change is tried again with the usual backoff, so fix the cause and it applies by itself.
+  A file that is half-written, empty, not valid settings or unreadable changes nothing: the last valid list stays
+  in force, and the problem is logged once for that version of the file. Each start, stop and refusal caused by
+  a change is a line in the service log and in the audit log (`service-start`, `service-stop`,
+  `service-refuse`).
 - **What they get.** Their environment holds a few system variables (`PATH`, `HOME`, `USER`, `LANG`,
   `TMPDIR` and others), your `env` values, `SCF_URL` (the server's address on this computer) and
   `SCF_SERVICE_TOKEN`. The token is a new token of the service's own account on every start, and the
@@ -8229,8 +8337,8 @@ services:
 - **Signed programs.** With `public_key`, the Foundry checks `<command>.sig` (a detached Ed25519
   signature of the program file) before every start. A program that does not match is not started, and
   the Health page says why: the signature file is missing or is not a valid signature, or the signature
-  does not match the program. Fix the file or the signature, then restart the server; the check runs again
-  at each start.
+  does not match the program. Fix the file or the signature; the check runs again before each start and
+  each retry, so the program starts by itself.
 - **Restarts.** A program that exits is started again after 1 second, then 2, 4, 8 and so on, at most
   5 minutes apart. A run that lasted 5 minutes or more starts the count again at 1 second.
 - **Stopping.** On shutdown, and before a self-update restart, each program gets a stop signal and is
@@ -8242,7 +8350,7 @@ services:
   restart, last exit code 1". A refused or waiting service counts as a problem on the health line.
   `scf services` (or `scf services list`) prints the same: state, restarts, last exit and the problem. It
   needs a running, signed-in server (admin).
-- **Where they are set.** In `config.yaml` only, and a change needs a restart. `PUT /api/config` refuses a
+- **Where they are set.** In `config.yaml` only; a change applies while the server runs (see above). `PUT /api/config` refuses a
   `services` key, and a save from the Settings page keeps the stored list. There is no control on the
   Settings page, by choice: a program started with the Foundry's rights should be changed by the owner of
   the file, not from a browser.

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { MonitorConfig } from "../config.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
@@ -221,8 +221,15 @@ export interface EvidenceFiles { stream: boolean; manifest: boolean; incomplete:
 
 /** Whether each evidence file is there (lstat; a file that cannot be looked at counts as there). Never throws. */
 export async function evidenceFiles(runDir: string): Promise<EvidenceFiles> {
-  const [stream, manifest, incomplete] = await Promise.all([present(join(runDir, EVIDENCE_EVENTS_FILE)), present(join(runDir, EVIDENCE_MANIFEST_FILE)), present(join(runDir, EVIDENCE_INCOMPLETE_FILE))]);
-  return { stream, manifest, incomplete };
+  // One directory read instead of three lstat calls: outcomes and autonomy call this for every run on every request (#934).
+  try {
+    const names = new Set(await readdir(runDir));
+    return { stream: names.has(EVIDENCE_EVENTS_FILE), manifest: names.has(EVIDENCE_MANIFEST_FILE), incomplete: names.has(EVIDENCE_INCOMPLETE_FILE) };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { stream: false, manifest: false, incomplete: false };
+    const [stream, manifest, incomplete] = await Promise.all([present(join(runDir, EVIDENCE_EVENTS_FILE)), present(join(runDir, EVIDENCE_MANIFEST_FILE)), present(join(runDir, EVIDENCE_INCOMPLETE_FILE))]);
+    return { stream, manifest, incomplete };
+  }
 }
 
 /** Builds the input once per check. Measures are cached per run folder and `updatedAt`; the file checks are made again every time. */

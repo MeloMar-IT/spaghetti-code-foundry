@@ -302,7 +302,7 @@ export function npmAuditEnv(src: Record<string, string | undefined>, userConfig:
   e.npm_config_globalconfig = globalConfig;
   return e;
 }
-const NPM_NAME = /^(?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*$/i;
+export const NPM_NAME = /^(?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*$/i;
 const ADVISORY_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._~/?=&%#:+-]*$/;
 const urlOf = (u: unknown) => (typeof u === "string" && u.length <= 300 && ADVISORY_URL.test(u) ? u : "");
 
