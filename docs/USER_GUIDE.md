@@ -9726,28 +9726,53 @@ the **Safety** section.
 These are the names as they appear in the log and in mutes. The thresholds are in the
 [table in chapter 6](#the-monitor-the-foundry-checks-itself).
 
-- `restart-loop` (critical): the same run is resumed again and again.
-- `watcher-error` (major): a watcher's checks fail one after the other.
-- `github-limit` (critical or major): GitHub's request limit is hit or nearly used up.
-- `watcher-silent` (critical): an enabled watcher finished no check.
-- `unexplained-failure` (minor): a run failed with an error no rule explains.
-- `stuck-run` (major): a running run wrote nothing to its log for too long.
-- `same-step-failing` (major): the same step ended runs as failed for different issues.
-- `label-mismatch` (major): an issue's status label does not match its newest run.
-- `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
-- `dead-chain` (minor): open stories with the trigger label wait, directly or through other issues, for an issue that will never be built: one closed as not planned, a parked one, or an open one without the trigger label. One finding per such issue; the evidence shows up to five chains like `#120 → #118 → #7`.
-- `orphan-lock` (major): a lock is held by a run that is not running. The server frees such markers and locks itself, at start and every minute (only those whose run is gone or has a dead process). Each one is named in the server log and the monitor's activity, and the finding clears at the next check.
-- `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
-- `restart-overdue` (major): a new version is installed and the server has not restarted.
-- `develop-red` (critical): the tests after a merge into `develop` fail one after the other.
-- `slow-step` (minor): a step took much longer than usual.
-- `policy-service-failure` (major): policy decisions said the policy was unavailable or invalid.
-- `evidence-finalization` (major): a run ended but its evidence has no `evidence.json`, or its stream stopped.
-- `step-latency-p95` (minor): the p95 of a step's durations is above the limit.
-- `repeated-tool-denial` (minor): the same tool was refused again and again in one repository.
-- `abnormal-output` (minor): a step wrote far more output than is usual for that step.
-- `self-update` (major or critical): an update failed.
-- `detector-failed`: a detector crashed, so its problem is not checked.
+Each detector and each automatic repair has a class: **fixes alone** (the Foundry does it by itself)
+or **asks you first** (it shows the problem and waits for you). The Problems page shows the class in
+its detectors table and lists the automatic repairs above it.
+
+The rule, in two sentences: the Foundry fixes a problem alone when the fix can be undone and touches
+only its own work. It asks you first for governance, security, secrets, force pushes, deleting data,
+merging or releasing to `main`, spending limits and turning a check off, except where you already
+agreed by turning on Hotfixes, the daily release or automatic demotion.
+
+| Detector | Class | What it finds |
+|---|---|---|
+| `restart-loop` | fixes alone | the same run is resumed again and again (critical) |
+| `watcher-error` | fixes alone | a watcher's checks fail one after the other (major) |
+| `github-limit` | fixes alone | GitHub's request limit is hit or nearly used up (critical or major) |
+| `watcher-silent` | fixes alone | an enabled watcher finished no check (critical) |
+| `unexplained-failure` | fixes alone | a run failed with an error no rule explains (minor) |
+| `stuck-run` | fixes alone | a running run wrote nothing to its log for too long (major) |
+| `same-step-failing` | fixes alone | the same step ended runs as failed for different issues (major) |
+| `label-mismatch` | fixes alone | an issue's status label does not match its newest run (major) |
+| `waiting-unlisted` | fixes alone | an open issue has a waiting label, but Needs you does not list it (minor) |
+| `dead-chain` | asks you first | open stories wait for an issue that will never be built; the owner decides (minor) |
+| `orphan-lock` | fixes alone | a lock is held by a run that is not running (major). The server frees such markers and locks itself, at start and every minute |
+| `queue-stalled` | fixes alone | jobs are queued, slots are free, and nothing starts (critical) |
+| `restart-overdue` | fixes alone | a new version is installed and the server has not restarted (major) |
+| `develop-red` | fixes alone | the tests after a merge into `develop` fail one after the other (critical) |
+| `slow-step` | fixes alone | a step took much longer than usual (minor) |
+| `policy-service-failure` | fixes alone | policy decisions said the policy was unavailable or invalid (major) |
+| `evidence-finalization` | fixes alone | a run ended but its evidence has no `evidence.json`, or its stream stopped (major) |
+| `step-latency-p95` | fixes alone | the p95 of a step's durations is above the limit (minor) |
+| `repeated-tool-denial` | asks you first | the same tool was refused again and again; the fix is a change to `allowed_tools` (minor) |
+| `abnormal-output` | fixes alone | a step wrote far more output than is usual for that step (minor) |
+| `self-update` | asks you first | an update failed; the checkout may need repairing by hand (major or critical) |
+| `skill-source-check` | asks you first | a scheduled check of a skill source ended with PROBLEM. It is dormant until that check is switched on |
+| `detector-failed` | fixes alone | a detector crashed, so its problem is not checked (the monitor needs a fix) |
+
+The automatic repairs the Foundry does today:
+
+| Repair | Class | What it does |
+|---|---|---|
+| `retry-after-time-limit` | fixes alone | a story run that ran out of time stops instead of failing, and the watcher starts it again |
+| `bug-story` | fixes alone | a problem that lasts gets one bug story on GitHub, which the watcher builds first |
+| `lower-autonomy` | fixes alone | with automatic demotion on, a new qualifying serious finding lowers the named component by one autonomy level |
+| `start-service` | fixes alone | a managed service that is not running is started again |
+| `safe-restart` | fixes alone | after a new version, a moved data folder or a changed setting, the server restarts once no run is active |
+| `correct-labels` | fixes alone | an issue's status label that does not match its newest run is corrected |
+| `completed-dependency` | fixes alone | a dependency on an issue closed as completed counts as done |
+| `hotfix-merge` | fixes alone | with Hotfixes on, a bug story is merged into `main` and then into `develop`. Any other merge to `main` asks you first |
 
 ### What a bug story looks like
 
