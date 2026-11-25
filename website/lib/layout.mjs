@@ -156,6 +156,7 @@ export function page(p) {
 <meta name="twitter:description" content="${e(p.description)}">
 <meta name="twitter:image" content="${e(abs(SITE.image))}">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="sitemap" type="application/xml" href="/sitemap.xml">
 <link rel="stylesheet" href="/assets/style.css">
 <script>try{var t=localStorage.getItem("scf-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
