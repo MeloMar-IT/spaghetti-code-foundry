@@ -51,7 +51,7 @@ import { contextBeforeStep } from "./run-context.js";
 import { checkedReferences, prepareReferences, referenceHold, removeReferences } from "./reference-repos.js";
 import type { Actor } from "../evidence/identity.js";
 import { logAutonomyProblems, recordRunAutonomy, runAutonomyAtStart, runAutonomyOnResume } from "../governance/run-autonomy.js";
-import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
+import { AutonomyLevelSchema, autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
 import { flowFileId } from "../promotion/flow-id.js";
@@ -110,6 +110,8 @@ export interface RunOptions extends CommonOptions {
   vars?: Record<string, string>;
   /** `vars` is the final set: the folder's own settings are not read (they were applied when the run was queued). */
   frozenVars?: boolean;
+  /** The run's level when its job was queued (#968), read from the queue file: checked here, used only for the start line. */
+  queuedAutonomy?: unknown;
   /** Files copied into the workspace right after it is made (only server code sets this; a failure ends the run with INPUT_FILES_MISSING). */
   files?: RunInputFile[];
   /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
@@ -261,7 +263,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
   const log = liveLog(summary, opts);
-  recordRunAutonomy(autonomy, log, evidence);
+  const queued = AutonomyLevelSchema.safeParse(opts.queuedAutonomy);
+  recordRunAutonomy(autonomy, log, evidence, queued.success ? { queued: queued.data } : {});
   if (opts.localTest) log(LOCAL_TEST_LINE);
   // the packs are read once: the run and the promotion check below use the same list
   const packs = loadRunPacks(summary, config);
