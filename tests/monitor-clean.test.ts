@@ -6,7 +6,7 @@ import { reposPath } from "../src/auth/repos.js";
 import { usersPath } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import { BLOCKED, makeRedactor } from "../src/credentials/redact.js";
-import { blockedWords, cleanLines, cleanText, collectNames, cutLine, safeWords, type Names } from "../src/monitor/clean.js";
+import { blockedWords, cleanLines, cleanTestNames, cleanText, collectNames, cutLine, safeWords, type Names } from "../src/monitor/clean.js";
 
 // Built at run time so this file never holds a key-shaped string.
 const TOKEN = "ghp_" + "a1B2c3D4e5".repeat(4);
@@ -108,6 +108,64 @@ describe("cleanLines", () => {
   it("works with the real secret scan", async () => {
     const out = await cleanLines([`token ${TOKEN} denied`], names, { redactor: () => makeRedactor([]) });
     expect(out?.join(" ")).not.toContain("ghp_");
+  });
+});
+
+describe("cleanTestNames", () => {
+  const ok = { redactor: () => makeRedactor([]), scan };
+  const NPM = "npm_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+
+  it("keeps a plain test name and removes or drops private data", async () => {
+    const out = await cleanTestNames(
+      [
+        "tests/a.test.ts > adds numbers",
+        "tests/b.test.ts > mails jane@acme.example",
+        "reads /Users/jane/x.json",
+        "asks @someone",
+        "Jane Doe fails",
+        "uses acme/secret-app",
+        "C:\\private-project\\customer-data.json",
+        "\\\\server\\share\\a.txt",
+        "reads /etc/passwd",
+        `token ${TOKEN}`,
+        "hash " + "ab".repeat(16),
+        "visit https://evil.example/x",
+        "with jane-issues",
+        "back `tick` name",
+      ],
+      names,
+      ok,
+    );
+    const text = out!.join("\n");
+    expect(out).toContain("tests/a.test.ts > adds numbers");
+    for (const bad of ["jane", "Jane", "acme.example", "/Users", "someone", "secret-app", "private-project", "customer-data", "C:", "server", "/etc", "ghp_", "ab".repeat(16), "evil.example", "`"]) expect(text).not.toContain(bad);
+    expect(out).toContain("back 'tick' name");
+  });
+
+  it("drops a stored secret and a name that is too long, instead of cutting it", async () => {
+    const r = makeRedactor(["hunter2hunter2"]);
+    const long = "x".repeat(190) + " " + NPM;
+    expect(long.length).toBeGreaterThan(200);
+    const out = await cleanTestNames(["uses hunter2hunter2", long, "fine name"], names, { redactor: () => r, scan });
+    expect(out).toEqual(["uses [redacted]", "fine name"]);
+    expect(await cleanTestNames([NPM, "ok"], names, ok)).toEqual(["ok"]);
+  });
+
+  it("takes the first line only and at most 20 names", async () => {
+    expect(await cleanTestNames(["first line\nsecond line"], names, ok)).toEqual(["first line"]);
+    const out = await cleanTestNames(Array.from({ length: 25 }, (_, i) => `test number ${i}`), names, ok);
+    expect(out).toHaveLength(20);
+  });
+
+  it("is not certain when the names are incomplete, the redactor is blocked, the scan fails or misleads, or nothing is left", async () => {
+    expect(await cleanTestNames(["a"], { ...names, complete: false }, ok)).toBeUndefined();
+    expect(await cleanTestNames(undefined, names, ok)).toBeUndefined();
+    expect(await cleanTestNames(["a"], names, { ...ok, redactor: () => BLOCKED })).toBeUndefined();
+    expect(await cleanTestNames(["a"], names, { ...ok, scan: () => Promise.reject(new Error("no")) })).toBeUndefined();
+    expect(await cleanTestNames(["a"], names, { ...ok, scan: async () => "a\nb" })).toBeUndefined();
+    expect(await cleanTestNames(["a"], names, { ...ok, scan: async () => "bob@x.example" })).toBeUndefined();
+    expect(await cleanTestNames(["C:\\x\\y"], names, ok)).toBeUndefined();
+    expect(await cleanTestNames([], names, ok)).toBeUndefined();
   });
 });
 
