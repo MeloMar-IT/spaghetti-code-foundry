@@ -3,14 +3,14 @@ import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, re
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config.js";
-import { listRunIds, loadRun, pidAlive, type RunSummary } from "../engine/state.js";
+import { listAllRunIds, listRunIds, loadRun, pidAlive, runsArchiveDir, type RunSummary } from "../engine/state.js";
 import { sendDesktop } from "../notify.js";
 import { storeFor } from "../stories/store.js";
 import type { ServiceHost } from "../service.js";
 import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } from "./blockage.js";
 import { governorBusyApps } from "./busy.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
-import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
+import { digestFacts, digestLine, digestReport, localDay, supersededLines } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
 import { changesToday, clearGovernor, DEFAULTS, fitsText, freeCores, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
 import { belowLine, capHistory, heldCap, logSince } from "./governor-history.js";
@@ -236,7 +236,20 @@ export function logTail(path = join(dataDir(), "service.log"), bytes = 512_000):
 /** A result of another helper counts for a day and a bit; older than that it says nothing about now. */
 const RESULT_MAX_AGE_MS = 26 * 3_600_000;
 
-export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; alive?: (pid: unknown) => boolean; /** The configured runs at once: with it the digest says how long the governor held them below. */ configured?: number }): { text: string; line: string } {
+/** Every run of a data folder: the default runs folder, the workspace folders and runs-archive (a run archived today may be moved by housekeeping before the digest). */
+export function loadAllRuns(runsDir: string): RunSummary[] {
+  const ids = [...listAllRunIds(runsDir).map((e) => e.id), ...listRunIds(runsArchiveDir(runsDir))];
+  return [...new Set(ids)].flatMap((id) => {
+    try {
+      const r = loadRun(runsDir, id);
+      return r ? [r] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function runDigest(o: { runs: RunSummary[]; /** Runs of every folder; only the "Archived by itself" section reads them (default: `runs`). */ allRuns?: RunSummary[]; home: string; now: Date; alive?: (pid: unknown) => boolean; /** The configured runs at once: with it the digest says how long the governor held them below. */ configured?: number }): { text: string; line: string } {
   const facts = digestFacts(o.runs, o.now, 24, o.alive);
   const since = new Date(o.now.getTime() - 86_400_000).toISOString();
   /** The last result of a helper, or nothing when it is old (the helper is not installed any more, or stopped). */
@@ -275,6 +288,7 @@ export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; aliv
       ];
     }),
     part("Unreliable tests", () => (latest<{ suspects: { test: string; failedIn: string[]; retriedIn?: string[] }[] }>("flaky").suspects ?? []).slice(0, 3).map((s) => `${s.test} — failed in ${s.failedIn.length} stories${s.retriedIn?.length ? `, passed only on a retry in ${s.retriedIn.length}` : ""}`)),
+    part("Archived by itself", () => supersededLines(o.allRuns ?? o.runs, o.now)),
   ];
   const text = digestReport({ ...facts, extra }, o.now);
   const dir = join(o.home, "digest");
@@ -341,7 +355,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
         out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       } else if (name === "blockage") runBlockage({ runs: loadRuns(), dir, serviceLog: logTail(), repos: knownWatcherRepos(), limit: runLimit(configured(), now, capsPath(dataDir())), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       else {
-        const r = runDigest({ runs: loadRuns(), home: dataDir(), now, configured: configured() });
+        const r = runDigest({ runs: loadRuns(), allRuns: loadAllRuns(join(dataDir(), "runs")), home: dataDir(), now, configured: configured() });
         await sendDesktop({ title: "Foundry digest", message: r.line });
         out(`${now.toISOString()} ${r.line} — ${join(dir, "report.md")}`);
       }

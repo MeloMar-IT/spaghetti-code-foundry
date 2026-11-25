@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { missing, newerClarity, parseClarity, sampleState, summarize, emptyClarity, type Candidate, type ClarityState, type ClaritySummary, type SampleItem } from "../clarity.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { trackingWatcher } from "../next-step.js";
+import { hiddenRuns } from "../release/superseded.js";
 import { runOrigin } from "../your-turn.js";
 import { boardFor } from "./board.js";
 import { send } from "./http.js";
@@ -67,7 +68,8 @@ export function candidatesFor(ctx: ApiContext, now = new Date()): Candidate[] {
   const list = knownRuns(ctx);
   const next = nextFor(ctx, list);
   let evalIds: Set<string> | undefined;
-  for (const b of ctx.scheduler.briefs()) {
+  const briefs = ctx.scheduler.briefs();
+  for (const b of briefs) {
     const recent = now.getTime() - Date.parse(b.finishedAt ?? b.startedAt) <= CANDIDATE_RECENT_MS;
     if (!(b.status === "waiting" || ((b.status === "failed" || b.status === "stopped") && recent))) continue;
     const origin = runOrigin(b.source);
@@ -80,7 +82,8 @@ export function candidatesFor(ctx: ApiContext, now = new Date()): Candidate[] {
     if (w && !tracked.find((t) => t.watcher.id === w.id)?.status.lastOk) continue;
     out.push({ next: next(run), watcher: w?.id });
   }
-  return out;
+  const hidden = hiddenRuns(briefs);
+  return out.filter((c) => !c.next.runId || !hidden.has(c.next.runId));
 }
 
 /** Takes one sample and saves it. Returns the new state; undefined when the file is from a newer version (not touched). */

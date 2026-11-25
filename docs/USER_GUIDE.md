@@ -971,6 +971,7 @@ Today asks again every 30 seconds; Your turn on the admin page every 5 seconds.
 - **Something to do:** a question that needs something only you can do (a file, an account, access) is listed as "waiting for you — something to do". The action is the question's title, as one line. **Show question** opens the question and **Answer…** sends your answer as a comment on the issue. When the question names a file (`**Needs:** file <path>`), the story goes on by itself once that file is on the develop branch (the default branch without gitflow); the item says so, and no answer is needed. `/defaults` does not answer such a question. **Answer…** offers no **Use recommendation** for it, and an answer that only takes the recommendation is refused while every open question waits for a file: committing the file is what helps.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the change's page).
 - **Runs you started yourself** (with **+ New change** or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
+- **Archived and replaced runs:** an archived run is never listed here, whoever started it. A failed, stopped or interrupted `release-daily` or `daily-pr` run is not listed once a later run of the same flow and repository succeeded. The server then archives it by itself, with no age limit: when the release finishes, and at start-up for the older ones. Its change page and the Runs list still show it. **Take out of the archive** lists it again until the next release finish or server start archives it again.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
 - **Who may act:** an admin acts on every item. A user acts only on an item of a project they own (the watcher's owner is their account), and on GitHub only when the watcher does not use the server's own GitHub login. For any other item the answer is "no such item", as for an unknown one. On a **local project** the answer, approval, rejection and retry are written on the story with no GitHub call, and the owner of the machine may approve or reject. Each action is written to the audit log with your own account.
 - **Dismiss** hides an item. It stays hidden until its situation changes (a new question, a new approval, a new failure). **Show again** at the bottom brings all dismissed items back. Watcher errors cannot be dismissed. Dismissals are kept in `your-turn.json` in the data folder.
@@ -1802,8 +1803,8 @@ content, or ask for approval. It never gives access that a rule denied.
   You can archive or take out several at once (see [The runs list](#the-runs-list)). A run that
   is queued, running or waiting cannot be archived (409). You can archive your own runs; an admin
   can archive any run. The mark is shared: it hides the run from everyone's default list. Resuming,
-  retrying, approving or answering an archived run removes the mark. Board, Your turn, statistics
-  and the monitor still count it.
+  retrying, approving or answering an archived run removes the mark. Board, statistics and the
+  monitor still count it; Your turn does not list it.
 
 Runs survive restarts: if the Foundry stops mid-run, the run is marked *interrupted* and can be
 resumed (watchers do this automatically).
@@ -5182,7 +5183,7 @@ The digest and `housekeeping/memory.log` name the number of runs moved.
 
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
 stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
-and so are runs that were interrupted (they say "running", but their process is gone). Below that
+and so are runs that were interrupted (they say "running", but their process is gone). Runs the server archived by itself because a later release of the same repository succeeded are listed under **Archived by itself**, newest first, with no limit; that section covers the last 24 hours and reads every runs folder. Below that
 come a few lines from the other helpers and the analyst; a result of a helper that is older than
 26 hours is left out. When a story had automatic retries after a time limit, the digest adds a section
 **Automatic retries after a time limit**: how many stories, how many retries started, and how many of
