@@ -403,7 +403,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
   for (const p of pages) {
     for (const m of p.html.matchAll(/\shref="(\/[^"]*)"/g)) {
       const [path, hash] = m[1].replace(/&amp;/g, "&").split("#");
-      if (/^\/(assets|images)\//.test(path) || ["/favicon.svg", "/sitemap.xml", "/metrics.json"].includes(path)) continue;
+      if (/^\/(assets|images)\//.test(path) || ["/favicon.svg", "/apple-touch-icon.png", "/sitemap.xml", "/metrics.json"].includes(path)) continue;
       if (!urls.has(path)) problems.push(`${p.url}: link to a page that does not exist: ${m[1]}`);
       else if (hash && !idsOf.get(path).has(hash)) problems.push(`${p.url}: link to a missing anchor: ${m[1]}`);
     }
@@ -419,7 +419,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
   }
   cpSync(join(HERE, "assets"), join(out, "assets"), { recursive: true });
   cpSync(join(DOCS, "images"), join(out, "images"), { recursive: true });
-  for (const f of ["favicon.svg", "CNAME"]) cpSync(join(HERE, "static", f), join(out, f));
+  for (const f of ["favicon.svg", "apple-touch-icon.png", "CNAME"]) cpSync(join(HERE, "static", f), join(out, f));
 
   if (metrics) {
     let sample = null;

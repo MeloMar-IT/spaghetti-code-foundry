@@ -114,11 +114,17 @@ describe("website build", () => {
       expect(desc.length, p.url).toBeLessThanOrEqual(160);
       expect(p.html).toContain(`<link rel="canonical" href="https://spaghetti-code-foundry.com${p.url}">`);
       expect(p.html).toContain('<meta property="og:image"');
+      expect(p.html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
       expect(p.html.match(/<h1[\s>]/g)?.length, `${p.url} has one h1`).toBe(1);
     }
   });
 
-  it("writes valid structured data: HowTo steps for the how-to guides, FAQ and software on the home page", () => {
+  it("copies the Apple touch icon into the built site", () => {
+    const icon = readFileSync(join(out, "apple-touch-icon.png"));
+    expect(icon.equals(readFileSync(join(process.cwd(), "website/static/apple-touch-icon.png")))).toBe(true);
+  });
+
+  it("writes valid structured data:HowTo steps for the how-to guides, FAQ and software on the home page", () => {
     const ld = (p: Page) => [...p.html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
     const home = ld(pages.find((p) => p.url === "/")!);
     expect(home.map((o) => o["@type"])).toEqual(expect.arrayContaining(["WebSite", "SoftwareApplication", "FAQPage"]));
