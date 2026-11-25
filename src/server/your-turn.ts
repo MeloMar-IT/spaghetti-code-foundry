@@ -9,6 +9,7 @@ import { breakerNow, breakerWhy, loadGuard } from "../monitor/guard.js";
 import { activeMutes, muteFor } from "../monitor/mutes.js";
 import { markerHash } from "../monitor/story.js";
 import { isWatcherReleaseBuild } from "../release/auto-build.js";
+import { hiddenRuns } from "../release/superseded.js";
 import { nextStep, releaseWatchersFor, trackingWatcher, type NextStep } from "../next-step.js";
 import { buildTurn, runOrigin, soonest, type ReleaseTime, type TurnSource, type YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
@@ -185,8 +186,9 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     .filter((i) => i.extra || (t.status.holds ?? []).some((h) => h.issue === i.issue && h.byLabel))
     .map((i) => `${t.watcher.github_repo}#${i.issue}`.toLowerCase())));
   const cutoff = now.getTime() - RECENT_MS;
+  const briefs = ctx.scheduler.briefs();
   let evalIds: Set<string> | undefined;
-  for (const b of ctx.scheduler.briefs()) {
+  for (const b of briefs) {
     const recent = Date.parse(b.finishedAt ?? b.startedAt) >= cutoff;
     if (!(b.status === "waiting" || ((b.status === "failed" || b.status === "stopped") && recent))) continue;
     if (covered.has(b.runId)) continue;
@@ -217,9 +219,12 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
   }
 
   const release = soonest(times, now);
+  // An archived run, or a release run that a later success replaced, is not an item, whatever its source.
+  const hidden = hiddenRuns(briefs);
+  const shown = sources.filter((s) => !s.next.runId || !hidden.has(s.next.runId));
   const who = ownerInfo(ctx, list);
-  for (const s of sources) Object.assign(s, who(s.next.runId));
-  return { ...buildTurn(sources, { dismissed: readStore(), acted: actedNow(ctx, now), building: stories.size, releaseAt: release?.at }), building: stories.size, release };
+  for (const s of shown) Object.assign(s, who(s.next.runId));
+  return { ...buildTurn(shown, { dismissed: readStore(), acted: actedNow(ctx, now), building: stories.size, releaseAt: release?.at }), building: stories.size, release };
 }
 
 export function yourTurn(ctx: ApiContext): YourTurn {

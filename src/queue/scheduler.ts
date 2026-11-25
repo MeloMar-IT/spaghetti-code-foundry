@@ -139,6 +139,8 @@ export interface SchedulerOptions {
   /** New runs of an account that started today. Default: counted from the run files. */
   startedToday?: (accountId: string) => number;
   onFinished?: (summary: RunSummary, job: QueuedJob) => void;
+  /** Called once the finished run has left the active list (after onFinished); errors are ignored. */
+  onSettled?: (summary: RunSummary, job: QueuedJob) => void;
   /** Makes a run id (default: newRunId). Tests use it to force a clash. */
   newId?: () => string;
 }
@@ -1324,5 +1326,16 @@ export class Scheduler {
         setTimeout(() => this.recent.delete(q.runId), 10 * 60_000).unref();
         this.pump();
       });
+    // After the cleanup above: the run is no longer active, so it can be archived. Neither a throwing hook nor a rejected `done` breaks anything.
+    void a.done
+      .then((s) => {
+        if (!s) return;
+        try {
+          this.o.onSettled?.(s, q);
+        } catch {
+          // a hook never breaks the queue
+        }
+      })
+      .catch(() => {});
   }
 }

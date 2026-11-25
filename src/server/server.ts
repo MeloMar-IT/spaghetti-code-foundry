@@ -21,6 +21,7 @@ import { RUNNING_SWEEP_MS, sweepStaleRunning, type StaleSweep } from "../engine/
 import { cleanLine } from "../errors.js";
 import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-glass.js";
 import { Scheduler } from "../queue/scheduler.js";
+import { reconcileSupersededInBatches, releaseSettled, retainedSuccesses } from "../release/superseded.js";
 import { RunIndex } from "../engine/run-index.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
@@ -289,6 +290,8 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     queueFile: join(process.env.FACTORY_HOME ?? FACTORY_HOME, "queue.json"),
     accountActive,
     userLimits: (id) => effectiveLimits(id, log),
+    // The run has left the active list: a release run can be archived (a later success replaces older failures).
+    onSettled: (s) => void releaseSettled(scheduler, s, log),
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
@@ -534,8 +537,19 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     }
   };
   // The first look at every run waits for the run index, so the server answers (health, login) while a big folder is read.
-  if (runIndex.ready) adopt();
-  else void runIndex.build().then(() => adopt());
+  // Release runs that a later success replaced are archived once, in small batches, so a big backlog does not hold up the server.
+  const tidyReleases = () => {
+    reconcileSupersededInBatches(scheduler, { log, retained: () => retainedSuccesses(opts.runsDir) }).catch((e: Error) => log(`! could not archive old release runs: ${e.message}`));
+  };
+  if (runIndex.ready) {
+    adopt();
+    tidyReleases();
+  } else {
+    void runIndex.build().then(() => {
+      adopt();
+      tidyReleases();
+    });
+  }
   const adoptTimer = setInterval(adopt, opts.adoptEveryMs ?? 60_000);
   adoptTimer.unref();
   const sweepTimer = setInterval(sweep, opts.accountSweepMs ?? ACCOUNT_SWEEP_MS);
