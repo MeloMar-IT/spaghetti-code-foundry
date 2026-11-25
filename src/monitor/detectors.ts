@@ -10,6 +10,7 @@ import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/w
 import { TEST_TRIES, type UpdateState } from "../self-update-state.js";
 import type { Evidence, FindingInput, Severity } from "./findings.js";
 import type { MeasureOwner } from "./measures.js";
+import type { RepairClass } from "./repairs.js";
 import type { EvidenceState, MeasuredRun } from "./slo-input.js";
 
 export interface LogLine { at: string; text: string }
@@ -91,9 +92,14 @@ export interface Detector {
   name: string;
   /** What it looks for and why it matters: two short sentences the app can show. */
   description: string;
+  /** auto: the Foundry fixes it alone; ask: it asks the owner first. */
+  repair: RepairClass;
   run(input: DetectorInput): FindingInput[];
   slo?: Slo;
 }
+
+/** A detector without a class, as the monitor also takes it (tests inject such detectors). */
+export type DetectorLike = Omit<Detector, "repair"> & { repair?: RepairClass };
 
 export const HOUR = 3_600_000;
 const RANK: Record<Severity, number> = { critical: 0, major: 1, minor: 2 };
@@ -120,6 +126,7 @@ export const ownerRepo = (r: RunSummary): string | undefined => {
 /** Same run resumed more than N times in M minutes. */
 const restartLoop: Detector = {
   name: "restart-loop",
+  repair: "auto",
   description: "The same run is resumed again and again within a few minutes. It keeps a slot busy and never gets further.",
   run({ now, config, runs }) {
     const { resumes, within_minutes } = config.restart_loop;
@@ -154,6 +161,7 @@ const restartLoop: Detector = {
 /** A watcher's check failed more than N checks in a row; grouped by kind of error. */
 const watcherError: Detector = {
   name: "watcher-error",
+  repair: "auto",
   description: "A watcher's check failed many times in a row. It finds no new work until the cause is fixed.",
   run({ config, watchers }) {
     const groups = new Map<string, { kind: string; ids: string[]; checks: number; since: number[]; lines: string[] }>();
@@ -183,6 +191,7 @@ const watcherError: Detector = {
 /** GitHub's request limit was hit, or more than N% of it was used. */
 const githubLimit: Detector = {
   name: "github-limit",
+  repair: "auto",
   description: "GitHub's request limit is used up or nearly used up. Every call of the Foundry is refused until it resets.",
   run({ now, config, watchers, log, rate, monitorId, runs }) {
     const t = now.getTime();
@@ -252,6 +261,7 @@ const githubLimit: Detector = {
 /** An enabled watcher finished no check for N times its interval. */
 const watcherSilent: Detector = {
   name: "watcher-silent",
+  repair: "auto",
   description: "An enabled watcher finished no check for many times its interval. It may be stuck, so no new work arrives.",
   run({ now, asleep, config, watchers, restart }) {
     if (asleep || restart) return [];
@@ -285,6 +295,7 @@ const watcherSilent: Detector = {
 /** A run failed with an error that no rule of the Foundry explains. */
 const unexplainedFailure: Detector = {
   name: "unexplained-failure",
+  repair: "auto",
   description: "A run failed with an error that no rule of the Foundry explains. It may be a bug that needs a fix.",
   run({ now, config, runs }) {
     const from = now.getTime() - config.unexplained_failure.within_hours * HOUR;
@@ -317,6 +328,7 @@ const unexplainedFailure: Detector = {
 /** The self-update failed (the old version keeps running), or it could not go back, or its record is broken. */
 const selfUpdate: Detector = {
   name: "self-update",
+  repair: "ask",
   description: "A self-update failed, could not go back, or its record cannot be read. The Foundry then keeps running an old version, or self-update is stopped until a person checks the checkout.",
   run({ update }) {
     if (!update) return [];
@@ -368,7 +380,7 @@ export const DETECTORS: Detector[] = [restartLoop, watcherError, githubLimit, wa
 const safeMessage = (e: unknown) => cleanLine(String((e as Error)?.message ?? e)).slice(0, 200);
 
 /** Runs every detector. One that throws becomes a finding of its own and does not stop the others. */
-export function runDetectors(detectors: Detector[], input: DetectorInput): FindingInput[] {
+export function runDetectors(detectors: readonly DetectorLike[], input: DetectorInput): FindingInput[] {
   const out: FindingInput[] = [];
   for (const d of detectors) {
     try {

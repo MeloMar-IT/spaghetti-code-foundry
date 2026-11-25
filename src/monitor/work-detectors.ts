@@ -1,4 +1,5 @@
 import type { MonitorConfig } from "../config.js";
+import type { RepairClass } from "./repairs.js";
 import { cleanLine } from "../errors.js";
 import { slowVisits } from "../estimate.js";
 import { failedIndex } from "../failure.js";
@@ -67,6 +68,7 @@ const repoOf = (run: RunSummary) => ownerRepo(run) ?? "";
 /** A running run wrote nothing to its log for longer than the timeout of its step plus a margin. */
 const stuckRun: Detector = {
   name: "stuck-run",
+  repair: "auto",
   description: "A running run wrote nothing to its log for longer than its step may take. It holds a slot and its story stands still until someone notices.",
   run({ now, asleep, config, active, wokeAt }) {
     if (asleep) return [];
@@ -105,6 +107,7 @@ const stuckRun: Detector = {
 /** The same step of the same flow ended runs as failed for several different issues. */
 const sameStepFailing: Detector = {
   name: "same-step-failing",
+  repair: "auto",
   description: "The same step of a flow failed the run for several different issues in a short time. The cause is probably not the issues but the step or the project.",
   run({ now, config, runs }) {
     const { issues, within_hours } = config.same_step_failing;
@@ -148,6 +151,7 @@ const LABEL_WORDS: Record<string, string> = { working: "working", done: "done", 
 /** An issue's status label did not fit its newest run for several checks in a row. */
 const labelMismatch: Detector = {
   name: "label-mismatch",
+  repair: "auto",
   description: "An issue carries a status label that does not match its newest run, check after check. People then look at the wrong story and the watcher may not move it on.",
   run({ config, watchers, restart }) {
     if (restart) return [];
@@ -174,6 +178,7 @@ const labelMismatch: Detector = {
 /** An open issue has a waiting label, but Needs you does not list it (#653/#654 came back). */
 const waitingUnlisted: Detector = {
   name: "waiting-unlisted",
+  repair: "auto",
   description: "An open issue carries a waiting label, but Needs you has not listed it for longer than two checks of its watcher. Nobody is asked, so the story waits for nobody.",
   slo: {
     owner: "admin",
@@ -221,6 +226,7 @@ const waitingUnlisted: Detector = {
 /** A code-area lock or a run lock is held by a run that is not running. */
 const orphanLock: Detector = {
   name: "orphan-lock",
+  repair: "auto",
   description: "A lock is held by a run that is not running any more. Other runs wait for it and nothing frees it by itself.",
   run({ now, asleep, config, areaLocks, active, queue, wokeAt }) {
     if (asleep) return [];
@@ -277,6 +283,7 @@ const orphanLock: Detector = {
 /** Jobs are queued, slots are free, and nothing started. */
 const queueStalled: Detector = {
   name: "queue-stalled",
+  repair: "auto",
   description: "Jobs wait in the queue while a slot is free, and nothing starts. All new work stands still.",
   run({ now, asleep, config, queue, lastStart, wokeAt, restart }) {
     // While the server waits to restart nothing queued starts, on purpose.
@@ -304,6 +311,7 @@ const queueStalled: Detector = {
 /** A new version is installed and the server has waited too long to restart. */
 const restartOverdue: Detector = {
   name: "restart-overdue",
+  repair: "auto",
   description: "A new version is installed, but the server has waited too long to restart. Fixes stay out of use and new work is held back meanwhile.",
   run({ now, config, restart, wokeAt }) {
     if (restart?.why !== "new_version") return [];
@@ -324,6 +332,7 @@ const restartOverdue: Detector = {
 /** The tests after a merge into develop failed several times in a row. */
 const developRed: Detector = {
   name: "develop-red",
+  repair: "auto",
   description: "The tests after a merge into the develop branch failed several times in a row. Every new story starts from a broken branch until it is fixed.",
   run({ now, config, runs }) {
     const { failures, within_hours } = config.develop_red;
@@ -363,6 +372,7 @@ const developRed: Detector = {
 /** A step took much longer than usual, several times. */
 const slowStep: Detector = {
   name: "slow-step",
+  repair: "auto",
   description: "A step took much longer than its usual time, several times in a day. Something may have slowed down, such as a tool, the network or the machine.",
   run({ now, config, runs, history }) {
     if (!history?.size) return [];
@@ -401,6 +411,7 @@ function chainLine(c: number[]): string {
 /** Open stories wait for an issue that will never be built: the chain behind it stands still. */
 const deadChain: Detector = {
   name: "dead-chain",
+  repair: "ask",
   description: "Open stories with the trigger label wait, directly or through other issues, for an issue that will never be built. The whole chain stands still until someone builds, labels or closes that issue.",
   run({ issueLists }) {
     const out: FindingInput[] = [];
@@ -427,13 +438,13 @@ export const WORK_DETECTORS: Detector[] = [stuckRun, sameStepFailing, labelMisma
 
 export const ALL_DETECTORS: Detector[] = [...DETECTORS, ...WORK_DETECTORS, ...SLO_DETECTORS];
 
-export interface DetectorInfo { name: string; description: string; slo?: { owner: MeasureOwner; threshold: string; window: string; action: string } }
+export interface DetectorInfo { name: string; description: string; repair: RepairClass; slo?: { owner: MeasureOwner; threshold: string; window: string; action: string } }
 
 /** Name and description of every finding the monitor can make, for the app. With `config`, a detector with an SLO also gives its owner, threshold, window and next action as texts. */
 export function detectorInfo(config?: MonitorConfig): DetectorInfo[] {
   return [
-    ...ALL_DETECTORS.map(({ name, description, slo }): DetectorInfo => ({ name, description, ...(slo && config ? { slo: { owner: slo.owner, threshold: slo.threshold(config), window: slo.window(config), action: slo.action } } : {}) })),
-    { name: SKILL_SOURCE_DETECTOR, description: "A scheduled check of a skill source of the catalogue ended with PROBLEM. Check the reported problem before continuing with the source update." },
-    { name: "detector-failed", description: "A detector of the monitor crashed, so the problems it looks for are not checked. The monitor itself needs a fix." },
+    ...ALL_DETECTORS.map(({ name, description, repair, slo }): DetectorInfo => ({ name, description, repair, ...(slo && config ? { slo: { owner: slo.owner, threshold: slo.threshold(config), window: slo.window(config), action: slo.action } } : {}) })),
+    { name: SKILL_SOURCE_DETECTOR, repair: "ask", description: "A scheduled check of a skill source of the catalogue ended with PROBLEM. Check the reported problem before continuing with the source update." },
+    { name: "detector-failed", repair: "auto", description: "A detector of the monitor crashed, so the problems it looks for are not checked. The monitor itself needs a fix." },
   ];
 }

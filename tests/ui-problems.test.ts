@@ -48,10 +48,11 @@ const base = () => ({
   state: "on", reportTo: true, running: true, lastCheck: iso(11), perDay: 3, madeToday: 1, breaker: { open: false },
   findings: [], mutes: [],
   detectors: [
-    { name: "restart-loop", key: "restart_loop", description: "Runs restart again and again.", thresholds: { resumes: 5, within_minutes: 10 }, lastFound: iso(8) },
-    { name: "self-update", key: "self_update", description: "A self-update failed." },
+    { name: "restart-loop", repair: "auto", key: "restart_loop", description: "Runs restart again and again.", thresholds: { resumes: 5, within_minutes: 10 }, lastFound: iso(8) },
+    { name: "self-update", repair: "ask", key: "self_update", description: "A self-update failed." },
     { name: "repeated-tool-denial", key: "repeated_tool_denial", description: "A tool was refused again and again.", slo: { owner: "repository owner", threshold: "the same tool refused 3 times in one repository", window: "last 24 hours", action: "Add the tool to allowed_tools of the step." } },
   ],
+  repairs: [{ name: "correct-labels", repair: "auto", description: "Fixes labels.", where: "src/queue/watcher.ts" }],
   settings: settings(),
 });
 
@@ -329,6 +330,26 @@ describe("the page", () => {
     button(modalRoot(), "Mute")!.click();
     await wait();
     expect(sent.find((s) => s.method === "POST")).toEqual({ method: "POST", url: "/api/monitor/mutes" });
+  });
+
+  it("the detectors table shows the repair class, and nothing for an older server", async () => {
+    const main = await draw();
+    const d = main.all("table").at(-1)!;
+    expect(d.all("th").map((x) => x.textContent)).toContain("Repair");
+    expect(rowOf(d, "restart-loop").textContent).toContain("fixes alone");
+    expect(rowOf(d, "self-update").textContent).toContain("asks you first");
+    expect(rowOf(d, "repeated-tool-denial").textContent).not.toContain("undefined");
+  });
+
+  it("the page lists the automatic repairs, and leaves them out when there are none", async () => {
+    const main = await draw();
+    const t = main.all("table").find((x) => x.textContent.includes("correct-labels"))!;
+    expect(t.textContent).toContain("Fixes labels.");
+    expect(t.textContent).toContain("fixes alone");
+    state.repairs = [];
+    const none = await draw();
+    expect(none.textContent).not.toContain("Automatic repairs");
+    expect(none.textContent).not.toContain("null");
   });
 
   it("the detectors table shows description, inputs with values, none and the last found", async () => {

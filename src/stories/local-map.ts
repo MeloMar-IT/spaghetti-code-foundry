@@ -115,7 +115,7 @@ export function toRest(e: Entry): RestIssue {
 
 export function toIssue(e: Entry): Issue {
   const r = toRest(e);
-  return { number: r.number, title: r.title, labels: r.labels as { name: string }[], body: r.body ?? "", state: r.state.toUpperCase(), createdAt: r.created_at, updatedAt: r.updated_at };
+  return { number: r.number, title: r.title, labels: r.labels as { name: string }[], body: r.body ?? "", state: r.state.toUpperCase(), ...(r.state_reason ? { stateReason: r.state_reason } : {}), createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 export function toComments(e: Entry & { ok: true }, author: string): Comment[] {

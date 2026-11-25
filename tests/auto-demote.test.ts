@@ -8,7 +8,7 @@ import { WatcherSchema } from "../src/config.js";
 import { AUTO_DEMOTE_DETECTORS, autoDemoteReason, componentsOf, demotesOn, markAutoDemotions, runAutoDemotions } from "../src/governance/auto-demote.js";
 import { autonomyFile, levelIn, readAutonomy, setLevel } from "../src/governance/autonomy-store.js";
 import type { AutonomyLevel } from "../src/governance/autonomy.js";
-import type { Detector } from "../src/monitor/detectors.js";
+import type { DetectorLike } from "../src/monitor/detectors.js";
 import { loadFindings, saveFindings, type Finding, type FindingInput } from "../src/monitor/findings.js";
 import { Monitor } from "../src/monitor/monitor.js";
 import { ALL_DETECTORS } from "../src/monitor/work-detectors.js";
@@ -191,7 +191,7 @@ describe("auto demotion", () => {
     let lines: string[];
     let file: string;
     let live: string;
-    const detector: Detector = { name: "fake", description: "d", run: () => found };
+    const detector: DetectorLike ={ name: "fake", description: "d", run: () => found };
     const input = (over: Partial<FindingInput> = {}): FindingInput => ({ detector: "restart-loop", fingerprint: "fp|1", severity: "critical", summary: "s", evidence: { flows: ["f1"] }, about: "foundry", ...over });
     const mon = (active: string[] = []) => {
       const run = { runId: "r1", flow: "f1", runDir: live, vars: {} };

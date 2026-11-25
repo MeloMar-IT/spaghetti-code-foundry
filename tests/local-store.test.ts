@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { STATUS_MARKER } from "../src/github.js";
+import { openDependencies } from "../src/queue/deps.js";
 import { LocalStore, NO_CHANGES, UNREADABLE_TITLE } from "../src/stories/local-store.js";
 import { type FileStory, formatStoryFile, parseStoryFile } from "../src/stories/story-file.js";
 import { storyStoreContract } from "./story-store-contract.js";
@@ -296,6 +297,9 @@ describe("LocalStore shapes", () => {
     put(d, story(4, { labels: ["ready"], state: "closed", closedAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-06T00:00:00Z" }));
     const s = store(d);
     expect((await s.listWithBodies(10)).map((i) => [i.number, i.state])).toEqual([[4, "CLOSED"], [3, "CLOSED"], [2, "OPEN"], [1, "OPEN"]]);
+    const listed = await s.listWithBodies(10);
+    expect(listed.every((i) => !("stateReason" in i))).toBe(true);
+    expect(openDependencies([3], listed, [])).toEqual([]); // a closed local story is done
     expect(await s.stateAndLabels(3)).toEqual({ state: "CLOSED", labels: [{ name: "bug" }, { name: "ready" }] });
     expect(await s.isClosed(3)).toBe(true);
     expect(await s.isClosed(1)).toBe(false);
