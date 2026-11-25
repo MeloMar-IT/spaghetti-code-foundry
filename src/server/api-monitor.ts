@@ -8,6 +8,7 @@ import { buildingStories, byUrgency, findingState, madeToday } from "../monitor/
 import { breakerNow, breakerWhy, currentState, describeEntry, loadGuard, MAX_MUTE_HOURS, switchStories, validReason, writeLog, type Mute, type StoriesState } from "../monitor/guard.js";
 import { activeMutes, addMute, endMute, muteFor, MuteError } from "../monitor/mutes.js";
 import { markerHash } from "../monitor/story.js";
+import { REPAIRS } from "../monitor/repairs.js";
 import { detectorInfo } from "../monitor/work-detectors.js";
 import { HttpError, readJson, send, str } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -91,6 +92,7 @@ function lists(ctx: ApiContext, thresholdsFrom = ctx.config().monitor) {
       const last = findings.filter((f) => f.detector === d.name).map((f) => Date.parse(f.lastSeen)).filter((t) => !Number.isNaN(t));
       return { ...d, key, ...(thresholds ? { thresholds: { ...thresholds } } : {}), ...(last.length ? { lastFound: new Date(Math.max(...last)).toISOString() } : {}) };
     }),
+    repairs: REPAIRS.map((r) => ({ ...r })),
   };
 }
 
