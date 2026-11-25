@@ -148,6 +148,7 @@ case "$all" in
     # A real page= parameter (not the one inside per_page=): filter by state=open, sort by number (direction=desc: highest first), slice.
     # state=all: starts with the issues of $FAKE_GH_ISSUES_BY_REPO[owner/name] (from the path), else $FAKE_GH_ISSUES, in the REST shape,
     # labels=a,b does the same merge, keeps only issues that carry every label, then applies state=open.
+    # a stateReason in $FAKE_GH_ISSUES becomes the REST state_reason (lower case).
     # then adds the bug issues above whose number is not there yet, unchanged (so a test can plant a malformed one).
     case "$all" in *"?page="*|*"&page="*)
       node -e 'const fs=require("fs");const f=process.argv[1];const a=process.argv[2];const q=new URLSearchParams(a.slice(a.indexOf("?")+1));
@@ -155,7 +156,7 @@ let l=process.env.FAKE_GH_BUG_ISSUES?JSON.parse(process.env.FAKE_GH_BUG_ISSUES):
 if(q.get("state")==="all"||q.get("labels")){const repo=a.slice(6).split("/").slice(0,2).join("/");let base=[];
 try{const by=process.env.FAKE_GH_ISSUES_BY_REPO?JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO)[repo]:undefined;base=by!==undefined?by:JSON.parse(process.env.FAKE_GH_ISSUES||"[]")}catch(e){base=[]}
 if(!Array.isArray(base))base=[];
-base=base.map(x=>({number:x.number,title:x.title,body:x.body,labels:x.labels||[],state:String(x.state||"open").toLowerCase(),state_reason:null,closed_at:null,created_at:x.createdAt||"2026-01-01T00:00:00Z",html_url:"https://github.com/"+repo+"/issues/"+x.number}));
+base=base.map(x=>({number:x.number,title:x.title,body:x.body,labels:x.labels||[],state:String(x.state||"open").toLowerCase(),state_reason:x.state_reason??(x.stateReason?String(x.stateReason).toLowerCase():null),closed_at:null,created_at:x.createdAt||"2026-01-01T00:00:00Z",html_url:"https://github.com/"+repo+"/issues/"+x.number}));
 const have=new Set(base.map(x=>x.number));l=[...base,...l.filter(x=>!have.has(x&&x.number))]}
 if(q.get("labels")){const w=q.get("labels").split(",");l=l.filter(x=>w.every(n=>(x&&Array.isArray(x.labels)?x.labels:[]).some(y=>(typeof y==="string"?y:y&&y.name)===n)))}
 if(q.get("state")==="open")l=l.filter(x=>x.state==="open");
