@@ -17,6 +17,10 @@ export interface Evidence {
   flows?: string[];
   watchers?: string[];
   repos?: string[];
+  /** Names of failing tests (at most 20), as the test output printed them: cleaned before a story shows them. */
+  tests?: string[];
+  /** The commit (40 hex digits) the finding is about. */
+  commit?: string;
 }
 
 /** What a detector returns. */
@@ -118,7 +122,7 @@ export function evidenceLines(e: Evidence | undefined): string[] {
     const parts = Object.entries(e.counts).filter(([k, v]) => /^[\w.-]{1,40}$/.test(k) && typeof v === "number" && Number.isFinite(v)).slice(0, 6).map(([k, v]) => `${k} ${v}`);
     if (parts.length) out.push(cleanText(`Counts: ${parts.join(", ")}`));
   }
-  out.push(...list("Times", e.times, 5), ...list("Steps", e.steps, 5));
+  out.push(...list("Times", e.times, 5), ...list("Steps", e.steps, 5), ...list("Failing tests", e.tests, 5));
   if (Array.isArray(e.lines)) for (const l of e.lines.filter((x): x is string => typeof x === "string").slice(0, 5)) if (cleanText(l)) out.push(cleanText(l));
   return out.slice(0, MAX_EVIDENCE_LINES);
 }

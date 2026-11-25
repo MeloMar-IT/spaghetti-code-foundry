@@ -16,6 +16,8 @@ export interface StoryOptions {
   /** The issue number of an earlier story of the same problem that was closed. */
   previous?: number;
   builtinSteps: BuiltinSteps;
+  /** Cleaned names of failing tests; undefined when they could not be cleaned with certainty. */
+  tests?: string[];
 }
 
 interface Template {
@@ -76,6 +78,14 @@ const TEMPLATES: Record<string, Template> = {
     reproduce: ["Switch on self-update and publish a commit on main that fails in the stage named in the evidence.", "Wait for the check (every 5 minutes).", "The update fails and the old version keeps running."],
     where: ["`src/self-update.ts` (the check, staging and the install)", "`src/self-update-state.ts` (the record, going back)", "`src/supervise.ts` (the guard of the first start)"],
   },
+  "self-update-tests": {
+    title: "The tests of main fail, so the Foundry does not update itself",
+    happened: "The Foundry tried to update itself from main. The tests of one commit of main failed three times in a row, so the update was given up for that commit.",
+    effect: "The Foundry keeps running an old version, so a fix that reached main does not take effect until a newer commit passes its tests.",
+    expected: "The tests of main pass, and the Foundry installs the commit.",
+    reproduce: ["Check out the commit named in the evidence.", "Run `npm ci`, then `npm run build`.", "Run `npm test`: the tests named in the evidence fail."],
+    where: ["The tests named in the evidence, and the code they cover.", "`src/self-update.ts` (the test tries of an update)"],
+  },
   "detector-failed": {
     title: "A detector of the monitor crashes",
     happened: "A detector of the monitor threw an error, so the problems it looks for are not checked.",
@@ -127,7 +137,7 @@ function fenced(lines: string[]): string {
  * (a name, a count, a time) and left out when they are not what they should be; the raw summary and fingerprint never appear.
  */
 export function buildStory(f: Finding, o: StoryOptions): { title: string; body: string } {
-  const t = TEMPLATES[f.detector] ?? GENERIC;
+  const t = TEMPLATES[f.detector === "self-update" && f.fingerprint.startsWith("self-update|test|") ? "self-update-tests" : f.detector] ?? GENERIC;
   const ev = f.evidence ?? {};
   const flows = (Array.isArray(ev.flows) ? ev.flows : []).map((x) => safeId(x)).filter((x): x is string => !!x && x in o.builtinSteps);
   const customFlow = Array.isArray(ev.flows) && ev.flows.length > flows.length;
@@ -146,8 +156,14 @@ export function buildStory(f: Finding, o: StoryOptions): { title: string; body: 
   if (stepText) evidence.push(`Step: ${stepText}`);
   evidence.push(...counts);
   if (times.length) evidence.push(`Times: ${times.join("; ")}`);
+  if (typeof ev.commit === "string" && /^[0-9a-f]{40}$/.test(ev.commit)) evidence.push(`Commit: \`${ev.commit.slice(0, 7)}\``);
+  const rawTests = Array.isArray(ev.tests) ? ev.tests.length : 0;
+  const testsText = !rawTests ? ""
+    : o.tests === undefined ? "The names of the failing tests are left out: they could not be cleaned with certainty."
+    : `Failing tests:\n\n${fenced(o.tests)}${rawTests > o.tests.length ? `\n\n${rawTests - o.tests.length} more name${rawTests - o.tests.length === 1 ? " is" : "s are"} left out.` : ""}`;
   const evidenceText = [
     evidence.length ? list(evidence) : "No numbers were recorded.",
+    testsText,
     o.lines === undefined ? "The log lines are left out: they could not be cleaned with certainty." : o.lines.length ? fenced(o.lines) : "",
   ].filter(Boolean).join("\n\n");
 

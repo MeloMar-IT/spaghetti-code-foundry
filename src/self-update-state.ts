@@ -14,6 +14,9 @@ import type { PendingUpdate, StartGuard } from "./supervise.js";
  * git calls, the install steps, going back to the previous version and confirming a healthy start.
  */
 
+/** How many times the tests of one commit run before the update is given up (the monitor files a story after the last). */
+export const TEST_TRIES = 3;
+
 const Sha = z.string().regex(/^[0-9a-f]{40}$/);
 export const STAGES = ["install", "build", "test", "apply", "start"] as const;
 export type FailStage = (typeof STAGES)[number];

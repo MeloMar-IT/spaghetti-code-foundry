@@ -7,7 +7,7 @@ import type { RateReading } from "../github.js";
 import type { IssueRecord } from "../queue/issue-list.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/watcher.js";
-import type { UpdateState } from "../self-update-state.js";
+import { TEST_TRIES, type UpdateState } from "../self-update-state.js";
 import type { Evidence, FindingInput, Severity } from "./findings.js";
 import type { MeasureOwner } from "./measures.js";
 import type { RepairClass } from "./repairs.js";
@@ -345,6 +345,20 @@ const selfUpdate: Detector = {
     const f = update.state.failed;
     if (!f) return [];
     const sha = f.commit.slice(0, 7);
+    if (f.stage === "test" && (f.tries ?? 0) >= TEST_TRIES && f.backOk !== false) {
+      // The third failed try of one commit: one finding (and so one story) per commit.
+      return [{
+        detector: "self-update",
+        fingerprint: `self-update|test|${f.commit}`,
+        severity: "major",
+        summary: `The tests of ${sha} failed ${f.tries} times; the old version keeps running.`,
+        evidence: {
+          counts: { failed_tries: f.tries ?? TEST_TRIES }, times: [f.at], steps: ["test"], lines: f.lines ?? [], commit: f.commit,
+          ...(f.tests?.length ? { tests: f.tests.slice(0, 20) } : {}),
+        },
+        about: "foundry",
+      }];
+    }
     const [severity, summary]: [Severity, string] =
       f.backOk === false ? ["critical", `The update to ${sha} failed and the Foundry could not go back to the version before it; the checkout must be repaired by hand.`]
       : f.stage === "start" ? ["critical", `The update to ${sha} did not start healthy; the Foundry went back to the version before it.`]
