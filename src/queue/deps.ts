@@ -4,7 +4,14 @@ export interface DepIssue {
   number: number;
   title: string;
   state?: string;
+  /** Why it was closed, as gh (NOT_PLANNED) or REST (not_planned) gives it. */
+  stateReason?: string | null;
   labels?: { name: string }[];
+}
+
+/** Was it closed as "not planned"? Both spellings count; any other value, or none, does not. */
+export function closedNotPlanned(reason: string | null | undefined): boolean {
+  return /^not[\s_]?planned$/i.test(String(reason ?? "").trim());
 }
 
 const HEADER = /^[ \t]*(?:#{1,6}[ \t]*|\*\*)?(?:depends[ \t]+on|blocked[ \t]+by)\b[*:\s]*(.*)$/im;
@@ -243,10 +250,10 @@ export interface DoneRule {
   gitflow?: boolean;
 }
 
-/** Is this dependency done: closed, a done label, or (gitflow) the watcher's done label. An unknown issue counts as done. */
+/** Is this dependency done: closed (but not as "not planned"), a done label, or (gitflow) the watcher's done label. An unknown issue counts as done. */
 export function dependencyDone(issue: DepIssue | undefined, rule: DoneRule): boolean {
   if (!issue) return true; // unknown issue (other repo, typo): don't block on it
-  if (issue.state && issue.state.toUpperCase() !== "OPEN") return true;
+  if (issue.state && issue.state.toUpperCase() !== "OPEN") return !closedNotPlanned(issue.stateReason);
   return labelsDone((issue.labels ?? []).map((l) => l.name), rule);
 }
 

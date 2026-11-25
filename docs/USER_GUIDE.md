@@ -4126,7 +4126,7 @@ watchers:
 | `status_labels` | Your own names for the status labels above |
 | `remove_on_done` | Labels to remove when a run succeeds (e.g. the trigger label) |
 | `one_at_a_time` | Never run two of this watcher's runs at once |
-| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
+| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed (an issue closed as *not planned* is not done, so the story keeps waiting and Your turn shows it), a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
 | `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. Its question comments then say "Nothing needed from you", and the questions are not in **Your turn**: an issue that waits for other issues is answered when it can start, and you may answer first. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
@@ -4560,7 +4560,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
 - **It needs you:** a question (`Factory_needs_info`), a risky plan (`Factory_waiting`) or an
   error (`Factory_ERROR`).
 - **It waits for another issue.** If the issue has a **Depends on** (or **Blocked by**) line or
-  section, it starts only when those issues are done — closed, or `Factory_done` (in a gitflow
+  section, it starts only when those issues are done — closed (but not as *not planned*), or `Factory_done` (in a gitflow
   flow, where `develop_branch` is set; it is set after the merge into develop, but a hotfix can
   finish while develop is behind). You can name them as `#72` or by title (`Story 4 — Download the
   update safely`). An issue of another repository can be named as `owner/name#72`. It holds the story
