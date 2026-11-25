@@ -3019,8 +3019,13 @@ kept in three places:
 
 A stopped run is not stuck at the level it started with. On each resume the level is worked out again from the current
 settings, as at the start, and stored in `run.json`. So after you raise the level, resume the stopped run: it pushes and
-goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>` and the
-evidence gets `run.autonomy` with `resumed: true`. A resume with no change writes no new event.
+goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>, raised
+<from>→<to>` (or `lowered <from>→<to>`) and the evidence gets `run.autonomy` with `resumed: true`. A resume with no change
+writes no new event and adds nothing to the log.
+
+A run that is queued when you raise the level also uses the new level. The job keeps the level it had when it was queued,
+and when the run starts at another level, the start line says so: `…; raised <from>→<to> while queued` (or `lowered …`).
+The level a run starts with is always worked out from the current settings, so a lowered level is used by a queued run too.
 
 Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
 routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion
