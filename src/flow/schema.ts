@@ -164,6 +164,10 @@ export function reviewerStepProblem(
   return bad === undefined ? undefined : "a reviewer step may allow only the tools Read, Glob, Grep and LS";
 }
 
+/** The named command sets a step may ask for with `allow_commands` (see src/agents/command-allow.ts). */
+export const ALLOW_COMMAND_SETS = ["images", "project_scripts"] as const;
+export type AllowCommandSet = (typeof ALLOW_COMMAND_SETS)[number];
+
 export const ClaudeStepSchema = z
   .object({
     ...baseStep,
@@ -179,6 +183,12 @@ export const ClaudeStepSchema = z
     system_prompt: z.string().optional(),
     permission_mode: z.enum(PERMISSION_MODES).optional(),
     allowed_tools: z.array(z.string()).optional(),
+    /** Extra commands the step may run: images (image tools on workspace paths) and project_scripts (the repository's build and test scripts). Write steps only. */
+    allow_commands: z
+      .array(z.enum(ALLOW_COMMAND_SETS))
+      .min(1)
+      .refine((a) => new Set(a).size === a.length, "must not list a set twice")
+      .optional(),
     /** Continue the Claude session of an earlier claude step (by id). */
     resume: z.string().optional(),
     max_budget_usd: z.number().positive().optional(),
@@ -399,6 +409,9 @@ export const FlowSchema = z
       if (s.type === "claude" && s.skill_role === "reviewer") {
         const problem = reviewerStepProblem(s, flow.defaults);
         if (problem) ctx.addIssue({ code: "custom", path: ["steps", i, "skill_role"], message: problem });
+      }
+      if (s.type === "claude" && s.allow_commands && (s.skill_role === "reviewer" || readOnlyStep(s, flow.defaults))) {
+        ctx.addIssue({ code: "custom", path: ["steps", i, "allow_commands"], message: "allow_commands needs a step that can write (not a reviewer or read-only step)" });
       }
       if (s.type === "claude" && s.skills !== undefined) {
         const path = ["steps", i, "skills"];

@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProbe, doctorCommand, hasAuthCommand, parseNeeds, setupCheck, setupText, sharedSetupCheck, type Probe, type ProbeResult } from "../src/setup-check.js";
 
@@ -259,5 +262,45 @@ describe("setupText and doctorCommand", () => {
     expect(JSON.parse(out[0]!)).toMatchObject({ ready: true, platform: "macos" });
     expect(await doctorCommand({ need: ["python"] }, io, async () => good)).toBe(1);
     expect(err).toEqual(["need must be one of: node"]);
+  });
+});
+
+describe("image tools", () => {
+  let dir: string;
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const withTools = (names: string[]) => {
+    dir = mkdtempSync(join(tmpdir(), "doctor-img-"));
+    for (const n of names) {
+      writeFileSync(join(dir, n), "#!/bin/sh\n");
+      chmodSync(join(dir, n), 0o755);
+    }
+    return dir;
+  };
+
+  it("lists which tools are installed, and keeps ready and the exit code as they are", async () => {
+    const { r } = await run(GOOD, { path: withTools(["magick", "cwebp"]) });
+    expect(r.imageTools).toEqual([
+      { name: "magick", installed: true }, { name: "sips", installed: false }, { name: "cwebp", installed: true },
+      { name: "dwebp", installed: false }, { name: "pngquant", installed: false }, { name: "qlmanage", installed: false },
+    ]);
+    expect(r.ready).toBe(true);
+    const out: string[] = [];
+    expect(await doctorCommand({ json: true }, { out: (s) => void out.push(s), err: () => {} }, async () => r)).toBe(0);
+    expect(JSON.parse(out[0]!).imageTools).toHaveLength(6);
+  });
+
+  it("prints the install line for the platform; linux leaves out sips and qlmanage", async () => {
+    const mac = await run(GOOD, { path: withTools([]) });
+    const text = setupText(mac.r, { simple: true });
+    expect(text).toContain("Image tools for agent steps");
+    expect(text).toContain("✘ magick");
+    expect(text).toContain("brew install imagemagick webp pngquant");
+    const linux = await run(GOOD, { path: withTools(["magick", "cwebp", "dwebp", "pngquant"]), platform: "linux" });
+    expect(linux.r.imageTools!.map((t) => t.name)).toEqual(["magick", "cwebp", "dwebp", "pngquant"]);
+    const linuxText = setupText(linux.r, { simple: true });
+    expect(linuxText).not.toContain("sips");
+    expect(linuxText).not.toContain("Run: sudo apt");
+    const missing = await run(GOOD, { path: withTools([]), platform: "linux" });
+    expect(setupText(missing.r, { simple: true })).toContain("sudo apt install imagemagick webp pngquant");
   });
 });

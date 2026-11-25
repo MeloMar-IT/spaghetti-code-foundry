@@ -183,8 +183,8 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     mount(slots.filter.el, filterBar({}, { onClear: clear, row: vp.row, onSave: vp.onSave }));
     patch(slots.queue, JSON.stringify(queue.ok ? 1 : queue), () => (queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." })));
     patch(slots.cap, JSON.stringify([found, note]), () => (found && note ? h("p", { class: "muted" }, note) : null));
-    patch(slots.empty, JSON.stringify([f, vp.stale, found, note]), () => (vp.stale ? filterEmpty("runs", vf, { onClear: clear, onDelete: vp.onDelete })
-      : found ? null : isActive(f) ? noMatch({ onClear: clear, note }) : noRuns()));
+    patch(slots.empty, JSON.stringify([f, vp.stale, found, note, queue.ok]), () => (vp.stale ? filterEmpty("runs", vf, { onClear: clear, onDelete: vp.onDelete })
+      : found ? null : isActive(f) ? noMatch({ onClear: clear, note }) : noRuns({ character: queue.ok })));
     sections.hidden = !found;
     const can = new Set(renderSections(sections, secs, { onRemove: readOnly ? null : remove, select: readOnly ? null : select, density }));
     for (const id of [...selected]) if (!can.has(id)) selected.delete(id); // a run that is no longer in a selectable section

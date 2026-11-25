@@ -209,7 +209,7 @@ describe("failure paths with a credential", () => {
   });
 
   it("a fetch that hangs ends with a timeout and leaves nothing", async () => {
-    await expect(openGitTree(source, commit, { env: { ...env, STUB_HANG: "1" }, credential: CRED, timeoutMs: 400 })).rejects.toMatchObject({ code: "timeout" });
+    await expect(openGitTree(source, commit, { env: { ...env, STUB_HANG: "1" }, credential: CRED, timeoutMs: 2000 })).rejects.toMatchObject({ code: "timeout" });
     const [pid, sleeper] = pidsOf() as [number, number];
     await until(() => !alive(pid) && !alive(sleeper));
     expect(readdirSync(root)).toEqual([]);
@@ -217,7 +217,7 @@ describe("failure paths with a credential", () => {
 
   it("an ls-remote that hangs ends with a timeout or an abort and leaves nothing", async () => {
     const hang = { ...env, STUB_HANG: "1" };
-    await expect(resolveTrack(URL, "main", { env: hang, credential: CRED, timeoutMs: 400 })).rejects.toEqual(expect.objectContaining({ code: "timeout" }));
+    await expect(resolveTrack(URL, "main", { env: hang, credential: CRED, timeoutMs: 2000 })).rejects.toEqual(expect.objectContaining({ code: "timeout" }));
     await until(() => !alive(pidsOf()[1]!));
     expect(readdirSync(root)).toEqual([]);
 

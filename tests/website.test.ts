@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -81,6 +81,50 @@ describe("website build", () => {
     expect(problems).toEqual([]);
   });
 
+  it("shows the character only on the home page and the not-found page", () => {
+    const withCharacter = pages.filter((p) => p.html.includes("/brand/character"));
+    expect(withCharacter.map((p) => p.url).sort()).toEqual(["/", "/404.html"]);
+    for (const p of withCharacter) {
+      expect(p.html).toContain('<picture class="character">');
+      expect(p.html).toMatch(/<source type="image\/webp" srcset="\/brand\/character-1x\.webp 1x, \/brand\/character-2x\.webp 2x">/);
+      const img = p.html.match(/<img src="\/brand\/character-1x\.png"[^>]*>/)?.[0] ?? "";
+      expect(img).toMatch(/\swidth="\d+"/);
+      expect(img).toMatch(/\sheight="\d+"/);
+      expect(img).toMatch(/\salt="[^"]{20,}"/);
+    }
+  });
+
+  it("ships every character image it links to", () => {
+    for (const url of ["/", "/404.html"]) {
+      const html = pages.find((p) => p.url === url)!.html;
+      const files = [...html.matchAll(/\/brand\/[\w.-]+/g)].map((m) => m[0]);
+      expect(files.length).toBeGreaterThan(0);
+      for (const f of files) expect(existsSync(join(out, f)), f).toBe(true);
+    }
+  });
+
+  it("keeps every character image small and in the right format", () => {
+    const dir = join(import.meta.dirname, "..", "website", "static", "brand");
+    expect(readdirSync(dir).sort()).toEqual(["character-1x.png", "character-1x.webp", "character-2x.png", "character-2x.webp"]);
+    for (const name of readdirSync(dir)) {
+      const bytes = readFileSync(join(dir, name));
+      expect(bytes.length, name).toBeLessThanOrEqual(150 * 1024);
+      if (name.endsWith(".png")) expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+      else {
+        expect(bytes.subarray(0, 4).toString("latin1")).toBe("RIFF");
+        expect(bytes.subarray(8, 12).toString("latin1")).toBe("WEBP");
+      }
+    }
+    const size = (n: string) => {
+      const b = readFileSync(join(dir, n));
+      return [b.readUInt32BE(16), b.readUInt32BE(20)];
+    };
+    const [w1, h1] = size("character-1x.png");
+    expect(size("character-2x.png")).toEqual([w1 * 2, h1 * 2]);
+    const home = pages.find((p) => p.url === "/")!.html;
+    expect(home).toContain(`width="${w1}" height="${h1}"`);
+  });
+
   it("still builds the features page from its content file", () => {
     const page = pages.find((p) => p.url === "/features/")!;
     expect(page.html).toContain("<h1>Features</h1>");
@@ -114,11 +158,17 @@ describe("website build", () => {
       expect(desc.length, p.url).toBeLessThanOrEqual(160);
       expect(p.html).toContain(`<link rel="canonical" href="https://spaghetti-code-foundry.com${p.url}">`);
       expect(p.html).toContain('<meta property="og:image"');
+      expect(p.html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
       expect(p.html.match(/<h1[\s>]/g)?.length, `${p.url} has one h1`).toBe(1);
     }
   });
 
-  it("writes valid structured data: HowTo steps for the how-to guides, FAQ and software on the home page", () => {
+  it("copies the Apple touch icon into the built site", () => {
+    const icon = readFileSync(join(out, "apple-touch-icon.png"));
+    expect(icon.equals(readFileSync(join(process.cwd(), "website/static/apple-touch-icon.png")))).toBe(true);
+  });
+
+  it("writes valid structured data:HowTo steps for the how-to guides, FAQ and software on the home page", () => {
     const ld = (p: Page) => [...p.html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
     const home = ld(pages.find((p) => p.url === "/")!);
     expect(home.map((o) => o["@type"])).toEqual(expect.arrayContaining(["WebSite", "SoftwareApplication", "FAQPage"]));

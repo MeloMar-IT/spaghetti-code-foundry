@@ -517,6 +517,40 @@ that, open **Flows** in the sidebar (Admin view), choose a flow and press **Test
 
 When a run finishes, its branch stays in your repository. Review it, merge it, or delete it.
 
+### What agent steps may run
+
+An agent step (Claude Code or Codex) may run only the commands its tools allow. A step in a code flow can also ask for
+one of two named sets of extra commands in its flow file, with `allow_commands` (see
+[Flow authoring](FLOW_AUTHORING.md)). Only steps that can write may ask for them; a reviewer or read-only step may not.
+
+- **`images`**: the image tools `magick`, `sips`, `cwebp`, `dwebp`, `pngquant` and `qlmanage -t`. Only the tools that
+  are installed on the computer are allowed. Each call goes through a checked gate (`tools/image-gate.mjs`). The gate
+  allows a fixed list of options and paths that stay inside the run's workspace (links are followed). It refuses
+  paths outside the workspace, expressions and options that read other files (such as `-draw`, `-font`, `text:` or
+  `@list` arguments), URLs, and wildcards. A refused call prints the reason and changes nothing.
+- **`project_scripts`**: the build and test scripts of the repository's own `package.json` (`build`, `test`, `test:unit`
+  and the like), run with `npm run` and `npm test`; pnpm and yarn too when the repository has their lock file. Other
+  scripts, such as `lint` or `deploy`, are not allowed. The conflict and fix steps use this set to make generated files
+  again.
+
+The gate is defence in depth, not a sandbox. The operating-system sandbox and Claude's permission rules remain the
+real limit.
+
+**A refused command stops the run.** When a step needs a command it may not run, the run stops once, as needs you, and
+the reason names the command, for example `needs a command that is not allowed: magick photo.jpg photo.png`. The step is
+not retried by its `on_failure` branch. The agent is asked to end its answer with the line `REFUSED_COMMAND: <the command>`
+when it cannot finish a part of the issue without it. A refused image-tool call stops the run even when the agent does
+not write that line. A stop from a sub-flow stops the parent run too.
+
+To go on, first fix the cause: install the tool, or, in a custom flow, add the set the step needs to `allow_commands`
+and save the flow. Then **Retry from the failing step** on the run's page, or `scf resume <run>`. The step runs again
+from its first visit. A refused command that is not an image tool stops the run only when the same program is refused
+again on a later visit of the step (for example a fix loop).
+
+**Check the image tools.** `scf doctor` lists `magick`, `sips`, `cwebp`, `dwebp`, `pngquant` and `qlmanage` as installed
+or missing (`sips` and `qlmanage` only on macOS). On macOS install the missing ones with
+`brew install imagemagick webp pngquant`. A missing tool never makes the check fail.
+
 ### Review before start
 
 On **Start work**, when you choose a flow under **Advanced**, the main button is **Review**. It runs the same check for required fields as before. If all is filled in, it shows a review page instead of sending anything.
@@ -937,6 +971,7 @@ Today asks again every 30 seconds; Your turn on the admin page every 5 seconds.
 - **Something to do:** a question that needs something only you can do (a file, an account, access) is listed as "waiting for you — something to do". The action is the question's title, as one line. **Show question** opens the question and **Answer…** sends your answer as a comment on the issue. When the question names a file (`**Needs:** file <path>`), the story goes on by itself once that file is on the develop branch (the default branch without gitflow); the item says so, and no answer is needed. `/defaults` does not answer such a question. **Answer…** offers no **Use recommendation** for it, and an answer that only takes the recommendation is refused while every open question waits for a file: committing the file is what helps.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the change's page).
 - **Runs you started yourself** (with **+ New change** or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
+- **Archived and replaced runs:** an archived run is never listed here, whoever started it. A failed, stopped or interrupted `release-daily` or `daily-pr` run is not listed once a later run of the same flow and repository succeeded. The server then archives it by itself, with no age limit: when the release finishes, and at start-up for the older ones. Its change page and the Runs list still show it. **Take out of the archive** lists it again until the next release finish or server start archives it again.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
 - **Who may act:** an admin acts on every item. A user acts only on an item of a project they own (the watcher's owner is their account), and on GitHub only when the watcher does not use the server's own GitHub login. For any other item the answer is "no such item", as for an unknown one. On a **local project** the answer, approval, rejection and retry are written on the story with no GitHub call, and the owner of the machine may approve or reject. Each action is written to the audit log with your own account.
 - **Dismiss** hides an item. It stays hidden until its situation changes (a new question, a new approval, a new failure). **Show again** at the bottom brings all dismissed items back. Watcher errors cannot be dismissed. Dismissals are kept in `your-turn.json` in the data folder.
@@ -945,7 +980,7 @@ Today asks again every 30 seconds; Your turn on the admin page every 5 seconds.
 - **Closed issues:** a failed, stopped, waiting or cancelled run of an issue that is closed on GitHub is not listed, not counted, not a card on the Board and not in the failed list of "since", and nothing is sent for it. This holds for every run, whoever started it, except a run that closed its own issue (for example a hotfix that could not be merged back to `develop`). Its change page shows "Nothing — the issue is closed" and no Approve, Reject or Retry. If the last check of the issue on GitHub failed and nothing is stored, the item stays listed with the note "The state of the issue on GitHub could not be checked". If the issue is opened again, the run is listed again.
 - **Retired flow:** a run that a watcher started (or that has no source) and whose flow no longer exists in any flow folder cannot be resumed. Its change page shows "This run's flow is retired — it cannot be resumed." and no Approve, Reject or Retry; Your turn offers no Retry for it. The record says to start over (failed) or to start a new run (stopped, cancelled, interrupted). The three API routes answer 409 `The flow "<name>" is retired — this run cannot be resumed. Start the work again with a current flow.` and `scf resume|approve|reject` refuse without `--force`. A run you started by hand is never retired. If the issue is closed, the closed message comes first.
 - **Checked every minute:** the Foundry checks that the Board, the watchers, the runs and this list agree. The result is on the [Dashboard](#dashboard).
-- **Empty:** it says "Nothing needs you." and, when it can, how many stories are being built and when the next release pull request is expected.
+- **Empty:** it says "Nothing needs you." and, when it can, how many stories are being built and when the next release pull request is expected. The Foundry's character shows as a small picture next to that sentence, on its own page (the copy on Home has no picture).
 - **Badge:** the number of items shows on **Today** in the sidebar, on the **Menu** button of a narrow screen, and in the tab title, for example "(3) Foundry". When something waits, the app opens on Today.
 - **Notifications:** new items can also reach you as a macOS or Slack message; see **Notifications** under Settings.
 
@@ -1768,8 +1803,8 @@ content, or ask for approval. It never gives access that a rule denied.
   You can archive or take out several at once (see [The runs list](#the-runs-list)). A run that
   is queued, running or waiting cannot be archived (409). You can archive your own runs; an admin
   can archive any run. The mark is shared: it hides the run from everyone's default list. Resuming,
-  retrying, approving or answering an archived run removes the mark. Board, Your turn, statistics
-  and the monitor still count it.
+  retrying, approving or answering an archived run removes the mark. Board, statistics and the
+  monitor still count it; Your turn does not list it.
 
 Runs survive restarts: if the Foundry stops mid-run, the run is marked *interrupted* and can be
 resumed (watchers do this automatically).
@@ -5148,7 +5183,7 @@ The digest and `housekeeping/memory.log` name the number of runs moved.
 
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
 stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
-and so are runs that were interrupted (they say "running", but their process is gone). Below that
+and so are runs that were interrupted (they say "running", but their process is gone). Runs the server archived by itself because a later release of the same repository succeeded are listed under **Archived by itself**, newest first, with no limit; that section covers the last 24 hours and reads every runs folder. Below that
 come a few lines from the other helpers and the analyst; a result of a helper that is older than
 26 hours is left out. When a story had automatic retries after a time limit, the digest adds a section
 **Automatic retries after a time limit**: how many stories, how many retries started, and how many of
@@ -9890,6 +9925,12 @@ Following a link closes the panel and opens the page.
 The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no **Ask Foundry** button.
+
+**The Foundry's character.** The panel's header shows the Foundry's character, a small picture, as its
+avatar. It is hidden while the panel shows an error or a refused or failed reply, so the picture never sits
+next to a problem. The same character shows on **Today** when nothing needs you, and in the empty
+**Changes** list ("No runs yet."). It never shows in an error, a permission notice or an item that asks
+for your decision.
 
 ### What Ask Foundry knows, and how to check an answer
 

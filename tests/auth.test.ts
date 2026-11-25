@@ -135,11 +135,12 @@ describe("every route needs a session", () => {
   });
 
   it("serves static files without a session", async () => {
-    for (const p of ["/", "/app.js", "/auth.js", "/style.css", "/css/tokens.css", "/css/pages/shell.css", "/vendor/yaml/index.js", "/user", "/user/", "/user/app.js", "/favicon.svg"]) {
+    for (const p of ["/", "/app.js", "/auth.js", "/style.css", "/css/tokens.css", "/css/pages/shell.css", "/vendor/yaml/index.js", "/user", "/user/", "/user/app.js", "/favicon.svg", "/apple-touch-icon.png"]) {
       const r = await fetch(s.base + p);
       expect(r.status, p).toBe(200);
       if (p.endsWith(".css")) expect(r.headers.get("content-type"), p).toContain("text/css");
       if (p.endsWith(".svg")) expect(r.headers.get("content-type"), p).toContain("image/svg+xml");
+      if (p.endsWith(".png")) expect(r.headers.get("content-type"), p).toBe("image/png");
     }
   });
 

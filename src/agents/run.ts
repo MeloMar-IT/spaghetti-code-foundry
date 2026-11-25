@@ -23,6 +23,7 @@ import { lockRoot } from "../engine/running.js";
 import { runSandbox, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, workspaceCacheEnv, workspaceJavaDir, workspaceSlotsDir } from "../engine/os-sandbox.js";
 import { modelHosts, proxyEnv, startEgress, type Egress } from "../engine/egress.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
+import { type StepCommands, readGateRefusals, refusedCommandStop, stepCommands } from "./command-allow.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
 import { stepContextIndex } from "../engine/context-index.js";
@@ -100,6 +101,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
   if (pushLog) base.FACTORY_PUSH_LOG = pushLog;
   const ghDir = ghConfigDir();
   let egress: Egress | undefined;
+  let commands: StepCommands | undefined;
   try {
     const held = heldWorkspace(engine.summary.workspace);
     const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
@@ -122,12 +124,17 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder, except a team's step: its profile opens the slots.
     let slotWaits: SlotWaitWatch | undefined;
     if (!boxed || held) {
+      // allow_commands: image wrappers first on the PATH (they are made for this try only), and extra permission rules
+      commands = stepCommands(step, { runDir: engine.summary.runDir, workdir: engine.summary.workdir!, path: env.PATH ?? process.env.PATH, declaredProfile: engine.toolProfile !== undefined, attempt: scope.visits[step.id] ?? 1 });
+      if (commands.log) engine.log(commands.log);
       // the Java stand-in of a team's run is made by the server in a folder the step only reads
       env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME, held ? workspaceJavaDir(engine.summary.workspace!) : undefined) };
+      if (commands.binDir) env.PATH = [commands.binDir, ...(env.PATH ?? "").split(delimiter).filter((p) => p && p !== commands!.binDir)].join(delimiter);
       // The waits for a slot are recorded in a folder of this try, so the time limit can leave them out. A read-only Codex session cannot write it.
       slotWaits = slotWaitsRecordable(t.agent, gate.mapping.codexSandbox) ? slotWaitsFor(engine, logFile) : undefined;
       if (slotWaits) env.FACTORY_TEST_SLOT_WAIT_DIR = slotWaits.dir;
     }
+    else if (step.allow_commands) engine.log("    · allow_commands: no extra commands — a step held by the sandbox profile has none");
     let profile: string | undefined;
     let bin: string | undefined;
     if (boxed) {
@@ -177,8 +184,14 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, slotWaits, records, ...gate });
+    const ran = await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, slotWaits, records, extraAllowed: commands?.rules, extraWritable: commands?.logDir ? [commands.logDir] : undefined, ...gate });
+    // what the image gate refused in this try counts as denied (it is a refusal like a permission denial)
+    const refused = readGateRefusals(commands?.refusalLog);
+    if (!refused.length) return ran;
+    for (const d of refused) engine.log(`    ⚠ blocked: ${d}`);
+    return { ...ran, denied: [...new Set([...refused, ...(ran.denied ?? [])])].slice(0, 5) };
   } finally {
+    commands?.cleanup();
     if (egress) {
       const refusedHosts = egress.refused();
       await egress.close();
@@ -209,6 +222,10 @@ interface Gate {
 }
 
 interface WithOptions extends Gate {
+  /** Permission rules added by `allow_commands` (Claude only; Codex has no rule list). */
+  extraAllowed?: string[];
+  /** Folders the session may write besides the workspace (the image gate's refusal log). */
+  extraWritable?: string[];
   /** The records `resume:` and the time-out note are read from (see sessionRecords). */
   records: Records;
   /** Filled by the process of this attempt (see ProcessMeter). */
@@ -235,9 +252,15 @@ interface WithOptions extends Gate {
 }
 
 /** The folders outside the workspace a session may write: the request folder of a repo_ops step, the folder of slot waits and the push-log folder (a refused push must always be recorded). Undefined when there are none. */
-export function writable(env: Record<string, string | undefined>, slotWaits?: SlotWaitWatch): string[] | undefined {
-  const dirs = [...(env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : []), ...(slotWaits ? [slotWaits.dir] : []), ...(env.FACTORY_PUSH_LOG ? [dirname(env.FACTORY_PUSH_LOG)] : [])];
+export function writable(env: Record<string, string | undefined>, slotWaits?: SlotWaitWatch, extra?: string[]): string[] | undefined {
+  const dirs = [...(env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : []), ...(slotWaits ? [slotWaits.dir] : []), ...(env.FACTORY_PUSH_LOG ? [dirname(env.FACTORY_PUSH_LOG)] : []), ...(extra ?? [])];
   return dirs.length ? dirs : undefined;
+}
+
+/** The step's permission rules plus the extra ones of `allow_commands`, without repeats. Undefined when there are none (as before). */
+export function mergeRules(base: string[] | undefined, extra: string[] | undefined): string[] | undefined {
+  if (!extra?.length) return base;
+  return [...new Set([...(base ?? []), ...extra])];
 }
 
 /** Which session a step with `resume:` asks to continue, and the digest of the skill block that session received. */
@@ -414,7 +437,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
         ignoreUserConfig: mode === "off" ? undefined : false,
         clean: Boolean(clean),
         noNetwork: Boolean(clean && !clean.push),
-        writableRoots: writable(env, o.slotWaits),
+        writableRoots: writable(env, o.slotWaits, o.extraWritable),
         effort,
       });
     } finally {
@@ -457,10 +480,10 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     claudeBin: bin ?? engine.claudeBin,
     model: t.model,
     permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,
-    allowedTools: step.allowed_tools ?? d.allowed_tools,
+    allowedTools: mergeRules(step.allowed_tools ?? d.allowed_tools, o.extraAllowed),
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
-    writableDirs: writable(env, sandboxed ? o.slotWaits : undefined),
+    writableDirs: writable(env, sandboxed ? o.slotWaits : undefined, o.extraWritable),
     readOnlyDirs: o.readOnlyDirs,
     noMcp: local,
     isolated: isolatedSession,
@@ -666,6 +689,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     const { final, lostSession, ...r } = await runOn(target, own, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0 || lost, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified, readOnlyDirs }, records, meter);
     seen(r);
+    // A step that still needs a refused command stops here, before any repository request (commit, push, pull request) is applied.
+    if (r.ok || final) {
+      const stop = refusedCommandStop(step, scope, engine, { ...r, ...tries() });
+      if (stop.refusedCommand) return stop;
+    }
     if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
     // The session this step would continue is gone: a new session, in this same try. Never for a flow's own `resume:`.
     if (lostSession && own !== step) {
@@ -698,7 +726,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       return { ...r, ...tries(), limited: true, error: `signed out — the ${target.agent === "codex" ? "Codex" : "Claude Code"} login has expired. Sign in again: ${cli}. The run continues by itself after that.` };
     }
     // Still unavailable after the retries: pause the run like a limit (it is tried again later).
-    if (!isLimitError(r.error, r.output) && !isTransientError(r.error, r.output)) return { ...r, ...tries() };
+    if (!isLimitError(r.error, r.output) && !isTransientError(r.error, r.output)) return refusedCommandStop(step, scope, engine, { ...r, ...tries() });
     const next = fallbacks.find((t) => !tried.has(t.label));
     // No model left to try: the loop pauses the run until the limit resets.
     if (!next) return { ...r, ...tries(), limited: true, ...(isTransientError(r.error, r.output) && !isQuotaError(r.error, r.output) ? { unreachable: true } : {}), error: `usage limit reached: ${r.output.trim().split("\n")[0] || r.error}` };

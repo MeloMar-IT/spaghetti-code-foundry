@@ -100,7 +100,7 @@ export async function renderAdminHome(main, { a = api, since = null } = {}) {
     model.needsUnknown = (turn === null || turnFailed) && model.attention.length + items.length === 0;
     // No page-wide "empty" claim without a health answer.
     const empty = model.total === 0 && (turn?.count ?? 0) === 0 && problemCount() === 0 && health !== null && !model.needsUnknown;
-    mount(todayBox, ...todayView(model, { focus: "home", onboarding: empty }));
+    mount(todayBox, ...todayView(model, { focus: "home", onboarding: empty, character: health !== null && !healthFailed && problemCount() === 0 }));
     const records = problemRecords();
     const f = health?.monitorFindings;
     // Two records can share a key (one usage limit per agent): the focus name still has to be unique.

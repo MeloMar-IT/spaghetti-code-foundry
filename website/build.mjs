@@ -393,7 +393,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
       noindex: true,
       title: "Page not found",
       description: "This page does not exist. Search the documentation or start from the home page.",
-      body: `<div class="wrap narrow"><h1>Page not found</h1><p>This page does not exist, or it moved. Try the search above, or go to the <a href="/">home page</a>, the <a href="/how-to/">how-to guides</a> or the <a href="/guide/">user guide</a>.</p></div>`,
+      body: `<div class="wrap narrow not-found"><picture class="character"><source type="image/webp" srcset="/brand/character-1x.webp 1x, /brand/character-2x.webp 2x"><img src="/brand/character-1x.png" srcset="/brand/character-1x.png 1x, /brand/character-2x.png 2x" width="140" height="226" alt="The Foundry's forge hand, a friendly figure made of spaghetti, smiling at you" loading="lazy" decoding="async"></picture><div><h1>Page not found</h1><p>This page does not exist, or it moved. Try the search above, or go to the <a href="/">home page</a>, the <a href="/how-to/">how-to guides</a> or the <a href="/guide/">user guide</a>.</p></div></div>`,
     }),
   });
 
@@ -403,7 +403,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
   for (const p of pages) {
     for (const m of p.html.matchAll(/\shref="(\/[^"]*)"/g)) {
       const [path, hash] = m[1].replace(/&amp;/g, "&").split("#");
-      if (/^\/(assets|images)\//.test(path) || ["/favicon.svg", "/sitemap.xml", "/metrics.json"].includes(path)) continue;
+      if (/^\/(assets|images)\//.test(path) || ["/favicon.svg", "/apple-touch-icon.png", "/sitemap.xml", "/metrics.json"].includes(path)) continue;
       if (!urls.has(path)) problems.push(`${p.url}: link to a page that does not exist: ${m[1]}`);
       else if (hash && !idsOf.get(path).has(hash)) problems.push(`${p.url}: link to a missing anchor: ${m[1]}`);
     }
@@ -419,7 +419,8 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
   }
   cpSync(join(HERE, "assets"), join(out, "assets"), { recursive: true });
   cpSync(join(DOCS, "images"), join(out, "images"), { recursive: true });
-  for (const f of ["favicon.svg", "CNAME"]) cpSync(join(HERE, "static", f), join(out, f));
+  cpSync(join(HERE, "static", "brand"), join(out, "brand"), { recursive: true });
+  for (const f of ["favicon.svg", "apple-touch-icon.png", "CNAME"]) cpSync(join(HERE, "static", f), join(out, f));
 
   if (metrics) {
     let sample = null;

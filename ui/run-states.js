@@ -1,4 +1,5 @@
 import { h, mount } from "./dom.js";
+import { character } from "./character.js";
 import { liveStates } from "./live.js";
 import { banner, errorState, explainError, loadingState, permissionState } from "./states.js";
 
@@ -7,8 +8,11 @@ import { banner, errorState, explainError, loadingState, permissionState } from 
 
 export const NO_RUNS = "No runs yet.";
 
-/** The empty state of a list with no runs and no filter: the sentence and a link to Start work. */
-export const noRuns = () => h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", "data-focus": "start", href: "#/start" }, "Start work"));
+/**
+ * The empty state of a list with no runs and no filter: the character, the sentence and a link to Start work.
+ * `character: false` leaves the picture out (a part of the page failed to load: no character next to a failure).
+ */
+export const noRuns = ({ character: show = true } = {}) => h("div", { class: "empty" }, show ? character() : null, h("p", {}, NO_RUNS), h("a", { class: "btn primary", "data-focus": "start", href: "#/start" }, "Start work"));
 
 /**
  * Waits for a call and turns the answer into plain data, so a failed part never rejects and compares the same way in the poller:

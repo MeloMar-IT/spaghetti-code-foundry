@@ -1063,6 +1063,11 @@ steps:
       {{learnings}}
 
       Finish with a short summary of what you changed (files and why).
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+    allow_commands:
+      - images
+      - project_scripts
   - id: guard
     type: shell
     description: No forbidden paths, no disabled or deleted tests, something changed
@@ -1094,7 +1099,14 @@ steps:
       Your changes broke a rule of this factory. Fix that (restore removed/disabled tests, revert changes in forbidden paths, or make the missing change):
 
       {{steps.guard.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: guard
+    allow_commands:
+      - images
+      - project_scripts
   - id: run_tests
     type: shell
     timeout_sec: 7200
@@ -1123,7 +1135,14 @@ steps:
       You may run the build and the tests yourself (e.g. `./gradlew test --tests <Class>`, `npm test`); after you, the flow runs: {{vars.test_cmd}}
 
       {{steps.run_tests.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: run_tests
+    allow_commands:
+      - images
+      - project_scripts
   - id: review_1
     type: claude
     skill_role: reviewer
@@ -1157,6 +1176,13 @@ steps:
       disagree with, explain why in one line each. Keep tests passing; don't write docs yet.
 
       {{steps.review_1.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+    allow_commands:
+      - images
+      - project_scripts
   - id: run_tests_1
     type: shell
     timeout_sec: 7200
@@ -1185,7 +1211,14 @@ steps:
       You may run the build and the tests yourself (e.g. `./gradlew test --tests <Class>`, `npm test`); after you, the flow runs: {{vars.test_cmd}}
 
       {{steps.run_tests_1.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: run_tests_1
+    allow_commands:
+      - images
+      - project_scripts
   - id: review_gate
     type: shell
     description: One review per change; a second round only when review_twice_above_risk is set (then after a [high] finding or for riskier stories)
@@ -1232,6 +1265,13 @@ steps:
       disagree with, explain why in one line each. Keep tests passing; don't write docs yet.
 
       {{steps.review_2.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+    allow_commands:
+      - images
+      - project_scripts
   - id: run_tests_2
     type: shell
     timeout_sec: 7200
@@ -1260,7 +1300,14 @@ steps:
       You may run the build and the tests yourself (e.g. `./gradlew test --tests <Class>`, `npm test`); after you, the flow runs: {{vars.test_cmd}}
 
       {{steps.run_tests_2.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: run_tests_2
+    allow_commands:
+      - images
+      - project_scripts
   - id: docs
     type: claude
     prompt: |-
@@ -1342,7 +1389,14 @@ steps:
       You may run the build and the tests yourself (e.g. `./gradlew test --tests <Class>`, `npm test`); after you, the flow runs: {{vars.test_cmd}}
 
       {{steps.fixed_tests.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: final_guard
+    allow_commands:
+      - images
+      - project_scripts
   - id: commit
     type: shell
     repo_access: true
@@ -1471,7 +1525,10 @@ steps:
 
       Resolve every conflict so that BOTH changes keep working: keep the other work and fit this change in.
       Remove all conflict markers, then `git add` the resolved files. Do not commit and do not run
-      git merge, rebase or reset. Finish with one line per file saying how you resolved it.
+      git merge, rebase or reset. You may run the repository's own build and test scripts (for example `npm run build` to make a generated file again).
+      Finish with one line per file saying how you resolved it.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     allowed_tools:
       - Read
       - Edit
@@ -1484,6 +1541,9 @@ steps:
       - Bash(git log*)
       - Bash(git show*)
     on_success: finish_merge
+    allow_commands:
+      - images
+      - project_scripts
   - id: finish_merge
     type: shell
     jump_only: true
@@ -1604,7 +1664,12 @@ steps:
 
       The end of the test output:
       {{steps.test_develop.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: commit_develop_fix
+    allow_commands:
+      - images
+      - project_scripts
   - id: commit_develop_fix
     type: shell
     repo_access: true
@@ -1825,7 +1890,10 @@ steps:
 
       Resolve every conflict so that BOTH changes keep working: keep the other work and fit this change in.
       Remove all conflict markers, then `git add` the resolved files. Do not commit and do not run
-      git merge, rebase or reset. Finish with one line per file saying how you resolved it.
+      git merge, rebase or reset. You may run the repository's own build and test scripts (for example `npm run build` to make a generated file again).
+      Finish with one line per file saying how you resolved it.
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     allowed_tools:
       - Read
       - Edit
@@ -1838,6 +1906,9 @@ steps:
       - Bash(git log*)
       - Bash(git show*)
     on_success: finish_back
+    allow_commands:
+      - images
+      - project_scripts
   - id: finish_back
     type: shell
     jump_only: true
@@ -1900,7 +1971,12 @@ steps:
 
       The end of the test output:
       {{steps.test_back.output}}
+
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
     on_success: commit_back_fix
+    allow_commands:
+      - images
+      - project_scripts
   - id: commit_back_fix
     type: shell
     jump_only: true

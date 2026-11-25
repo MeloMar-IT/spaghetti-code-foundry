@@ -7,6 +7,14 @@ import { page } from "../website/lib/layout.mjs";
 const ROOT = join(import.meta.dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 const DIAMOND = "◆";
+const TOUCH_LINK = '<link rel="apple-touch-icon" href="/apple-touch-icon.png">';
+
+/** Width, height and colour type from the PNG header bytes; undefined when it is not a PNG with an IHDR chunk first. */
+export function pngSize(buf: Buffer): { width: number; height: number; colourType: number } | undefined {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (buf.length < 26 || sig.some((b, i) => buf[i] !== b) || buf.toString("ascii", 12, 16) !== "IHDR") return undefined;
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20), colourType: buf[25] };
+}
 
 /** The text of every element whose class list has the token `logo` (HTML or h("span", {class}, …) calls). */
 export function logoGlyphProblems(text: string): string[] {
@@ -134,9 +142,11 @@ describe("brand files", () => {
     for (const html of [a, b]) {
       expect(html).toContain(`<span class="logo" aria-hidden="true">${mark}</span>`);
       expect(html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+      expect(html).toContain(TOUCH_LINK);
       expect(html).toContain('<span class="brand-full">Spaghetti Code Foundry</span>');
     }
     const site: string = page({ url: "/", title: "T", description: "d", kind: "plain", body: "" });
+    expect(site.slice(0, site.indexOf("</head>"))).toContain(TOUCH_LINK);
     const header = site.slice(site.indexOf("<header"), site.indexOf("</header>"));
     const footer = site.slice(site.indexOf("<footer"), site.indexOf("</footer>"));
     for (const part of [header, footer]) {
@@ -150,6 +160,46 @@ describe("brand files", () => {
     expect(read("ui/favicon.svg")).toBe(w);
     expect(w).not.toContain("<text");
     expect(w).toContain("#f08a50");
+  });
+
+  it("has the four web versions of the character in the app, equal to the website's", () => {
+    const names = ["character-1x.png", "character-2x.png", "character-1x.webp", "character-2x.webp"];
+    expect(readdirSync(join(ROOT, "ui/brand")).sort()).toEqual([...names].sort());
+    for (const f of names) {
+      const app = readFileSync(join(ROOT, "ui/brand", f));
+      expect(app.equals(readFileSync(join(ROOT, "website/static/brand", f))), f).toBe(true);
+      expect(app.length, f).toBeLessThanOrEqual(150 * 1024);
+      const magic = f.endsWith(".png") ? [0x89, 0x50, 0x4e, 0x47] : [0x52, 0x49, 0x46, 0x46];
+      expect([...app.subarray(0, 4)], f).toEqual(magic);
+    }
+  });
+
+  it("has the Apple touch icon for the website and the app", () => {
+    const file = readFileSync(join(ROOT, "website/static/apple-touch-icon.png"));
+    expect(pngSize(file)).toEqual({ width: 180, height: 180, colourType: 2 });
+    expect(file.length).toBeLessThanOrEqual(150 * 1024);
+    expect(readFileSync(join(ROOT, "ui/apple-touch-icon.png")).equals(file)).toBe(true);
+  });
+
+  it("links the Apple touch icon from every shipped app page", () => {
+    for (const f of ["ui/index.html", "ui/user/index.html", "ui/privacy.html", "ui/accessibility.html"]) {
+      expect(read(f), f).toContain(TOUCH_LINK);
+    }
+  });
+
+  it("reads the size of a PNG from its header only", () => {
+    const png = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+    png.write("IHDR", 12, "ascii");
+    png.writeUInt32BE(180, 16);
+    png.writeUInt32BE(120, 20);
+    png[25] = 2;
+    expect(pngSize(png)).toEqual({ width: 180, height: 120, colourType: 2 });
+    expect(pngSize(Buffer.from([0xff, 0xd8, 0xff, ...Array(30).fill(0)]))).toBeUndefined();
+    expect(pngSize(png.subarray(0, 10))).toBeUndefined();
+    const other = Buffer.from(png);
+    other.write("IDAT", 12, "ascii");
+    expect(pngSize(other)).toBeUndefined();
   });
 
   it("has the source images", () => {

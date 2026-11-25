@@ -1,5 +1,6 @@
 import { pidAlive, type RunSummary } from "../engine/state.js";
 import { retriesOf, retryOutcome } from "../engine/auto-retry.js";
+import { SUPERSEDED_BY } from "../release/superseded.js";
 import { newestRuns, storyOf } from "./blockage.js";
 
 export interface DigestFacts {
@@ -24,7 +25,17 @@ const titleOf = (r: RunSummary) => {
   return (m ? m[1]! : r.vars?.issue ? `#${r.vars.issue}` : r.task?.split("\n")[0] ?? r.runId).slice(0, 110);
 };
 
-const endedAt = (r: RunSummary) => Date.parse(r.finishedAt ?? r.history?.at(-1)?.startedAt ?? r.startedAt);
+/** One line for each run the server archived by itself in the last `hours` hours (a later release succeeded), newest first. No cap. */
+export function supersededLines(runs: RunSummary[], now: Date, hours = 24): string[] {
+  const from = now.getTime() - hours * 3_600_000;
+  return runs
+    .map((r) => ({ r, at: Date.parse(String(r.archivedAt)) }))
+    .filter(({ r, at }) => r.archivedBy === SUPERSEDED_BY && at >= from && at <= now.getTime())
+    .sort((a, b) => b.at - a.at)
+    .map(({ r }) => `${r.flow} of ${r.vars?.github_repo ?? "?"} (run ${r.runId}, ${r.status === "running" ? "interrupted" : r.status}) — a later release succeeded`);
+}
+
+const endedAt =(r: RunSummary) => Date.parse(r.finishedAt ?? r.history?.at(-1)?.startedAt ?? r.startedAt);
 
 /**
  * Automatic retries by story. The newest run gives the outcome. Its own retries count, and the retries of older runs of the
