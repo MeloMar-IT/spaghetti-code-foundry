@@ -405,6 +405,20 @@ describe("Runs list page frame", () => {
     stop();
   });
 
+  it("shows the character with no runs, and not next to a failed queue", async () => {
+    const pics = (el: FakeElement) => el.all("img").filter((i) => (i.attrs.src ?? "").startsWith("/brand/character"));
+    good([]);
+    const a = await open();
+    expect(pics(a.main)).toHaveLength(1);
+    a.stop();
+    good([]);
+    fails["/api/queue"] = 500;
+    const b = await open();
+    expect(b.main.textContent).toContain("No runs yet.");
+    expect(pics(b.main)).toHaveLength(0);
+    b.stop();
+  });
+
   it("puts the no-runs state in the empty region", async () => {
     good([]);
     const { main, stop } = await open();

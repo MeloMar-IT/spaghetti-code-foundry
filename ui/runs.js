@@ -291,8 +291,9 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     patch(slots.owners, JSON.stringify(admin && data.owners && !data.owners.ok ? data.owners : 0), () => (admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null));
     patch(slots.cap, JSON.stringify([found, note]), () => (note && found ? h("p", { class: "muted" }, note) : null));
     patch(slots.queue, JSON.stringify(data.queue.ok ? 0 : data.queue), () => (data.queue.ok ? null : partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })));
-    patch(slots.empty, JSON.stringify([f, labels, stale, found, note]), () => (stale ? filterEmpty("runs", vf, { labels, onClear: clear, onDelete: vp.onDelete })
-      : found ? null : admin && isActive(f) ? noMatch({ onClear: clear, note }) : !admin && f.repo ? filterEmpty("runs", vf, { labels, note, onClear: clear }) : noRuns()));
+    const ownersFailed = !!(admin && data.owners && !data.owners.ok);
+    patch(slots.empty, JSON.stringify([f, labels, stale, found, note, data.queue.ok, ownersFailed]), () => (stale ? filterEmpty("runs", vf, { labels, onClear: clear, onDelete: vp.onDelete })
+      : found ? null : admin && isActive(f) ? noMatch({ onClear: clear, note }) : !admin && f.repo ? filterEmpty("runs", vf, { labels, note, onClear: clear }) : noRuns({ character: data.queue.ok && !ownersFailed })));
     sections.hidden = !found;
     const can = new Set(renderSections(sections, secs, { admin, onRemove, select, density, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } }));
     for (const id of [...selected]) if (!can.has(id)) selected.delete(id); // a run that is no longer in a selectable section

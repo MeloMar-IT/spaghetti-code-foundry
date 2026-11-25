@@ -1,3 +1,4 @@
+import { character } from "./character.js";
 import { h } from "./dom.js";
 import { phaseStrip } from "./kit/product.js";
 import { PHASES } from "./phases.js";
@@ -38,6 +39,8 @@ const listItems = (model, focus) => (model.lists[model.list].length
 
 const backLink = (focus) => h("p", {}, h("a", { href: "#/home", "data-focus": `${focus}-list-back` }, HOME.back));
 
+/** The character, only when nothing needs the person. */
+const clear = (model) => (model.attention.length ? null : character());
 const needsCards = (model, focus) => h("ul", { class: "today-cards" }, model.attention.slice(0, SHOWN).map((c) => attentionCard(c, focus)));
 
 const runningItems = (model, focus) => (model.building.length
@@ -73,6 +76,7 @@ export function cardsLayout(model, { focus = "simple-today" } = {}) {
   return [
     h("h1", { class: "today-greeting" }, model.greeting),
     h("p", { class: "today-summary" }, model.summary),
+    clear(model),
     buildBox(focus),
     countersNav(model, focus),
     openList(model, focus),
@@ -111,6 +115,7 @@ export function listLayout(model, { focus = "simple-today" } = {}) {
   const [check, building] = model.counters;
   return [
     h("h1", { class: "simple-home-headline" }, summaryLine({ check: model.attention.length })),
+    clear(model),
     model.attention.length
       ? h("section", { class: "simple-home-rows" },
         h("h2", { class: "scf-visually-hidden" }, HOME.needsTitle),
@@ -145,7 +150,7 @@ export function tilesLayout(model, { focus = "simple-today" } = {}) {
     h("section", { class: "simple-tile simple-tile-large simple-tile-needs" },
       h("h2", {}, HOME.needsTitle),
       h("p", { class: "simple-tile-counts" }, link("check"), link("ready")),
-      model.attention.length ? needsCards(model, focus) : h("p", { class: "muted" }, HOME.needsNone),
+      model.attention.length ? needsCards(model, focus) : [clear(model), h("p", { class: "muted" }, HOME.needsNone)],
       more(model.attention.length - SHOWN, byKey.check.href, `${focus}-more-needs`)),
     h("div", { class: "simple-tile simple-tile-small" }, link("building")),
     h("div", { class: "simple-tile simple-tile-small" }, link("published-week")),
