@@ -2,6 +2,27 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { SHOTS, imageLinks } from "../scripts/screenshots/shots.js";
 import { code, tableRows } from "./helpers/md-table.js";
+// @ts-expect-error plain ES module of the website, without types
+import { SITE } from "../website/lib/layout.mjs";
+
+function pngSize(file: string): { width: number; height: number } {
+  const b = readFileSync(file);
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (b.length < 24 || !b.subarray(0, 8).equals(sig) || b.subarray(12, 16).toString("latin1") !== "IHDR") {
+    throw new Error(`not a PNG: ${file}`);
+  }
+  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+}
+
+describe("social image", () => {
+  it("the social image has the size the website gives", () => {
+    expect(SITE.image).toBe("/images/home.png");
+    expect(pngSize("docs/images/home.png")).toEqual({ width: SITE.imageWidth, height: SITE.imageHeight });
+  });
+  it("pngSize rejects a file that is not a PNG", () => {
+    expect(() => pngSize("docs/CHANGELOG.md")).toThrow(/not a PNG/);
+  });
+});
 
 const GUIDES = ["docs/USER_GUIDE.md", "README.md", "docs/DESIGN.md"];
 const names = SHOTS.map((s) => `${s.name}.png`).sort();

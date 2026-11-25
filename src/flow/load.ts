@@ -88,6 +88,10 @@ export interface FlowListing {
   error?: string;
 }
 
+type ListingFields = Pick<FlowListing, "description" | "published" | "error">;
+/** The parsed listing of each flow file, kept with the exact file text it came from, so a changed file is parsed again. */
+const listed = new Map<string, { text: string; listing: ListingFields }>();
+
 /** List flows; a name found in a more specific dir shadows later ones. */
 export function listFlows(repo: string): FlowListing[] {
   const seen = new Map<string, FlowListing>();
@@ -99,11 +103,23 @@ export function listFlows(repo: string): FlowListing[] {
       const name = basename(file, extname(file));
       if (seen.has(name)) continue;
       const path = join(dir, file);
+      let text: string | undefined;
       try {
-        const flow = parseFlow(readFileSync(path, "utf8"), path);
-        seen.set(name, { name, path, scope, description: flow.description, ...(flow.publish?.enabled ? { published: true } : {}) });
+        text = readFileSync(path, "utf8");
+        const hit = listed.get(path);
+        let listing: ListingFields;
+        if (hit && hit.text === text) listing = hit.listing;
+        else {
+          const flow = parseFlow(text, path);
+          listing = { description: flow.description, ...(flow.publish?.enabled ? { published: true } : {}) };
+          listed.set(path, { text, listing });
+        }
+        seen.set(name, { name, path, scope, ...listing });
       } catch (e) {
-        seen.set(name, { name, path, scope, error: (e as Error).message });
+        const error = (e as Error).message;
+        if (text !== undefined) listed.set(path, { text, listing: { error } });
+        else listed.delete(path);
+        seen.set(name, { name, path, scope, error });
       }
     }
   }

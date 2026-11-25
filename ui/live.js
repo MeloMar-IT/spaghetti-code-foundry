@@ -210,6 +210,8 @@ export function liveStates({ body, heading, label, rows, shape, what, quiet = fa
   mount(body, heading?.(), loadingState(label, { rows, shape }));
 
   const onState = ({ at, failed, error } = {}) => {
+    // A failed refresh keeps the old view: no character next to the failure (ui/css/components.css hides it).
+    if (at != null) { if (failed) body?.setAttribute?.("data-refresh-failed", ""); else body?.removeAttribute?.("data-refresh-failed"); }
     if (!failed) {
       errorUp = false;
       if (bannerUp) {

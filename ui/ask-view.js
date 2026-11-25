@@ -1,4 +1,5 @@
 import { previewOf } from "./ask-handoff.js";
+import { character } from "./character.js";
 import { glyph, h, modal, mount, timeAgo } from "./dom.js";
 
 // The nodes of the Ask Foundry drawer. No decisions here (those are in ui/ask-model.js) and no calls (ui/ask.js).
@@ -14,6 +15,7 @@ export function askButton(onClick) {
  * `on`: close(), submit(), attach(checked), key(event) for the question box, fresh(), history(), archived().
  */
 export function askFrame(on, { questionMax, hints = {} }) {
+  const avatar = character("avatar");
   const thread = h("section", { class: "ask-thread", "aria-label": "Conversation" });
   const actions = h("div", { class: "ask-actions", role: "group", "aria-label": "This conversation" });
   const suggest = h("div", { class: "ask-suggest" });
@@ -43,8 +45,15 @@ export function askFrame(on, { questionMax, hints = {} }) {
     h("div", { class: "ask-head" }, h("h3", { id: "ask-history-title" }, "Your conversations"), archivedBtn),
     list);
   history.hidden = true;
+  // The avatar is not drawn next to an error or a refusal. Two sources hide it: the error line has text, or the thread
+  // shows a failed or limit reply (`setThreadNotice`, called by ui/ask.js on every redraw). Each is kept on its own.
+  const notice = { line: false, thread: false };
+  const syncAvatar = () => { avatar.hidden = notice.line || notice.thread; };
+  const proto = (() => { for (let o = error; o; o = Object.getPrototypeOf(o)) { const d = Object.getOwnPropertyDescriptor(o, "textContent"); if (d) return d; } })();
+  if (proto?.set) Object.defineProperty(error, "textContent", { configurable: true, get() { return proto.get.call(this); }, set(v) { proto.set.call(this, v); notice.line = !!String(v ?? ""); syncAvatar(); } });
+  const setThreadNotice = (on) => { notice.thread = !!on; syncAvatar(); };
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
-    h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask Foundry"), fresh, historyBtn, close),
+    h("div", { class: "ask-head" }, avatar, h("h2", { id: "ask-title" }, "Ask Foundry"), fresh, historyBtn, close),
     h("p", { class: "muted text-sm" }, "Ask Foundry explains how the Foundry works. It reads and explains. Nothing changes unless you review and confirm an action."),
     paused,
     status,
@@ -53,7 +62,7 @@ export function askFrame(on, { questionMax, hints = {} }) {
   drawer.hidden = true;
   const scrim = h("div", { class: "ask-scrim", onMousedown: () => on.close() });
   scrim.hidden = true;
-  return { drawer, scrim, talk, paused, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
+  return { avatar, setThreadNotice, drawer, scrim, talk, paused, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
 }
 
 const sourceLine = (src, { now, onNavigate }) => [

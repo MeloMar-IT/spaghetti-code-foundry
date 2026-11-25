@@ -51,6 +51,11 @@ pre .copy { position: absolute; top: 8px; right: 8px; font: 12px var(--font); pa
 /* home */
 .hero { padding: 56px 0 40px; }
 .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; }
+.hero-intro, .not-found { display: flex; gap: 20px; align-items: flex-start; }
+.not-found { align-items: center; }
+.hero-intro > div, .not-found > div { min-width: 0; }
+.character { flex: none; }
+.character img { display: block; width: 140px; height: auto; border-radius: var(--radius); box-shadow: var(--shadow); }
 .hero-grid > *, .split > *, .doc-layout > * { min-width: 0; }
 .eyebrow { color: var(--accent-strong); font-weight: 600; font-size: 14px; letter-spacing: .02em; margin: 0 0 10px; }
 .hero h1 { font-size: clamp(30px, 4.4vw, 50px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -.02em; }
@@ -169,6 +174,7 @@ td:first-child { min-width: 9em; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 560px) {
+  .character img { width: 96px; }
   body { font-size: 15.5px; }
   .brand-full { display: none; }
   .brand-short { display: inline; }
