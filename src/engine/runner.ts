@@ -961,7 +961,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     // after a retry: once the areas are claimed again, go on at the step that ran out of time (a WAIT_AREA route keeps it)
     const retryStep = top && res.ok && !routed && step.id === "claim_areas" && summary.retryStep && indexOf.has(summary.retryStep) ? summary.retryStep : undefined;
     if (retryStep) summary.retryStep = undefined;
-    const target = res.ok ? (routed ?? retryStep ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
+    // a step that could not sign in, or whose test environment could not be used, ends the run: `on_failure` is not followed
+    const target = res.ok ? (routed ?? retryStep ?? step.on_success ?? "next") : engine.accessFailed || res.envFailed ? "fail" : (step.on_failure ?? "fail");
     if (skillStop && target === "end") {
       // the gate ends the flow: stop at the gate itself, so a resume runs it again and checks the skills again
       setNext(step.id);
@@ -1001,7 +1002,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
         engine.save();
         continue;
       }
-      return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity };
+      return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity, ...(res.envFailed ? { envFailed: true } : {}) };
     }
     if (target === "stop") {
       if (top) summary.state.next = resumePoint(step, scope, engine);

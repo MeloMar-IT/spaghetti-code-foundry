@@ -22,6 +22,7 @@ import { cleanLine } from "../errors.js";
 import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-glass.js";
 import { Scheduler } from "../queue/scheduler.js";
 import { reconcileSupersededInBatches, releaseSettled, retainedSuccesses } from "../release/superseded.js";
+import { reportDockerApi } from "../test-env-report.js";
 import { RunIndex } from "../engine/run-index.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
@@ -291,7 +292,11 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     accountActive,
     userLimits: (id) => effectiveLimits(id, log),
     // The run has left the active list: a release run can be archived (a later success replaces older failures).
-    onSettled: (s) => void releaseSettled(scheduler, s, log),
+    // A refused Docker API version files a bug story in the repository, also when no watcher watches it.
+    onSettled: (s) => {
+      void releaseSettled(scheduler, s, log);
+      void reportDockerApi({ run: s, others: () => scheduler.list(1000), runsDir: opts.runsDir, config: () => effective, log });
+    },
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);

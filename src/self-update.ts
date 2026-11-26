@@ -4,7 +4,7 @@ import { githubKey, tryParseRepoUrl } from "./auth/repo-url.js";
 import type { SelfUpdateConfig } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import { cleanLine } from "./errors.js";
-import { detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
+import { TESTED_DIR, detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
 import {
   branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, updateFile, updateState,
   type FailStage, type UpdateStep,
@@ -471,7 +471,7 @@ export class SelfUpdater {
   private testedBefore(step: UpdateStep, k: { tree?: string; cmd?: string }): string | undefined {
     try {
       if (!k.tree || !k.cmd || !sameTests(step, k.cmd)) return undefined;
-      return passedBefore(join(dirname(this.file), "tested"), k.tree, k.cmd);
+      return passedBefore(join(dirname(this.file), TESTED_DIR), k.tree, k.cmd);
     } catch {
       return undefined;
     }

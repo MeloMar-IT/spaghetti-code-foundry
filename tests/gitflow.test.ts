@@ -573,7 +573,7 @@ describe("gitflow pipeline", () => {
     expect(log).toContain("Closes #5");
     expect(log).toContain("Spaghetti Code Foundry daily release check");
     // the green run left the checked record that self-update reads
-    const records = readdirSync(join(gh.tmp, "tested")).map((n) => readFileSync(join(gh.tmp, "tested", n), "utf8"));
+    const records = readdirSync(join(gh.tmp, "tested-v2")).map((n) => readFileSync(join(gh.tmp, "tested-v2", n), "utf8"));
     expect(records.some((c) => new RegExp(`^run ${r.runId}, \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\dZ, tree [0-9a-f]{40}\\n$`).test(c))).toBe(true);
     const red = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
     expect(red.status).toBe("succeeded");
@@ -636,7 +636,7 @@ describe("gitflow pipeline", () => {
       const check = gh.comments().find((c) => c.issue === 99 && c.body.includes("daily release check"))!;
       expect(check.body).toContain("did not finish in time");
       expect(check.body).not.toContain("⚠ **Checks failed**");
-      const tested = join(gh.tmp, "tested");
+      const tested = join(gh.tmp, "tested-v2");
       const records = existsSync(tested) ? readdirSync(tested).map((n) => readFileSync(join(tested, n), "utf8")) : [];
       expect(records.some((c) => c.includes(`run ${r.runId},`))).toBe(false);
     } finally {
