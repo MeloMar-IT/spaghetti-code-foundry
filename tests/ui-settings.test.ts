@@ -205,6 +205,22 @@ describe("Settings → Policy", () => {
   });
 });
 
+describe("Settings → Restarts", () => {
+  it("shows the longest wait for a restart and saves a change", async () => {
+    const { main, puts } = await render({});
+    const card = main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Restarts")!;
+    expect(card.textContent).toContain("Longest wait for a restart (minutes)");
+    const input = card.all("input")[0] as any;
+    expect(String(input.value)).toBe("60");
+    input.value = "15";
+    input.fire("input", { target: input });
+    input.fire("change", { target: input });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].restarts).toEqual({ drain_limit_minutes: 15 });
+  });
+});
+
 describe("Settings → Load governor", () => {
   const card = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Load governor")!;
 

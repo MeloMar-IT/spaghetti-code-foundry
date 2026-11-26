@@ -127,6 +127,11 @@ export class SelfUpdater {
     return (this.inflight ??= this.round(force).catch((e) => this.say(`self-update: stopped by an unexpected error (${cleanLine(String((e as Error)?.message ?? e)).slice(0, 120)})`)).finally(() => { this.inflight = undefined; }));
   }
 
+  /** An update drained the queue and the updater restarts the server once no run is active. */
+  waitsToInstall(): boolean {
+    return this.drained;
+  }
+
   private say(m: string) {
     try {
       this.o.log(m);

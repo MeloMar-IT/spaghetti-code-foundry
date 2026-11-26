@@ -912,6 +912,8 @@ export const ConfigSchema = z
      * runs of its issue). 0 turns it off. The retry waits for a free slot, and a step with its own failure path is not retried.
      */
     auto_retry: z.object({ timeouts: z.number().int().min(0).default(2) }).strict().prefault({}),
+    /** A restart that waits longer than this for active runs restarts at a safe moment instead (0: it waits for the runs). */
+    restarts: z.object({ drain_limit_minutes: z.number().int().min(0).max(10080).default(60) }).strict().prefault({}),
     /** Delivery contracts written at pull-request creation: the signing key and what a contract requires (installation-wide, then per repository). Read from issue 3 on. */
     delivery: z
       .object({
