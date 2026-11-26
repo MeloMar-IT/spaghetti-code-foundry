@@ -564,6 +564,11 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     /**
+     * Watchdog (`scf watchdog`, #961): how long, while a job could start, the queue (`pump_minutes`) or every watcher
+     * (`watcher_minutes`, at least three of the shortest watcher interval) may stand still before the server is restarted.
+     */
+    watchdog: z.object({ pump_minutes: z.number().int().min(5).max(1440).default(30), watcher_minutes: z.number().int().min(5).max(1440).default(30) }).strict().prefault({}),
+    /**
      * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
      * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.
      * `owner` (#646): the id of the admin account that approves promotions; not set (or no longer an active admin): the first active admin.

@@ -28,7 +28,7 @@ import { runAutonomyAtStart } from "../governance/run-autonomy.js";
 export const choreWatcherOf = (source?: string): string | undefined => /^watcher (\S+) schedule$/.exec(source ?? "")?.[1];
 export const isChoreRun =(source?: string): boolean => typeof source === "string" && /^watcher \S+ schedule$/.test(source);
 /** Runs that use no story slot: architect runs of a refinement session and schedule chores. */
-const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
+export const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
 import { runIdsStartedToday } from "./usage.js";
 import { MERGE_GUARD, mergeStarted } from "./overrule.js";
 import { stepIs } from "../next-step.js";
@@ -199,6 +199,9 @@ export class Scheduler {
   /** Stop requests of active runs: the reason they stop with before their next step. Memory only. */
   private stopRequests = new Map<string, string>();
   private lastStartAt = new Date().toISOString();
+  private pumpedAt?: string;
+  /** Publishes what must not be cut (the restart guard); a reason stops the run before its step. */
+  private stepGate?: () => string | undefined;
   private recent = new Map<string, Active>(); // finished, kept briefly for late subscribers
   /** Viewers of runs that are not running right now; attached when the run starts. */
   private pendingListeners = new Map<string, Set<(e: RunEvent) => void>>();
@@ -1262,6 +1265,7 @@ export class Scheduler {
         this.monthTimer.unref();
       }
     } else this.stopMonthTimer();
+    this.pumpedAt = new Date().toISOString();
     this.persist();
   }
 
@@ -1296,6 +1300,28 @@ export class Scheduler {
   /** Looks again at what can start, e.g. after a limit changed. */
   recheck(): void {
     this.pump();
+  }
+
+  /** When the queue was last pumped to the end (not while it drains or is closed). */
+  lastPump(): string | undefined {
+    return this.pumpedAt;
+  }
+
+  /**
+   * `gate` is called before every step, after every run that ends, and once now (for the runs already active).
+   * It is synchronous; a reason it returns stops the run before that step.
+   */
+  setStepGate(gate: () => string | undefined): void {
+    this.stepGate = gate;
+    this.passGate();
+  }
+
+  private passGate(): string | undefined {
+    try {
+      return this.stepGate?.();
+    } catch {
+      return "the restart guard failed";
+    }
   }
 
   /** When a job last started, or the scheduler was created. */
@@ -1356,6 +1382,8 @@ export class Scheduler {
       // a stop request (an overrule) ends the run before this step, never once a merge started
       stopBefore: (stepId: string) => {
         a.step = stepId;
+        const refused = this.passGate();
+        if (refused) return refused;
         const why = this.stopRequests.get(q.runId);
         this.stopRequests.delete(q.runId);
         if (stepIs(stepId, MERGE_GUARD) || (a.summary && mergeStarted(a.summary, 0))) {
@@ -1398,6 +1426,7 @@ export class Scheduler {
       .finally(() => {
         this.stopRequests.delete(q.runId);
         this.active.delete(q.runId);
+        this.passGate();
         // saved before `done` resolves, so a restart that waits for this run cannot exit without it
         if (a.requeue && ended?.status === "cancelled" && ended.reason === RESTART_INTERRUPTED) this.requeueInterrupted(q, common.log);
         this.recent.set(q.runId, a);

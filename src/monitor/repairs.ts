@@ -15,6 +15,7 @@ export const REPAIRS: readonly Repair[] = [
   { name: "bug-story", repair: "auto", where: "src/monitor/report.ts", description: "A problem that lasts gets one bug story on GitHub, which the watcher builds first." },
   { name: "lower-autonomy", repair: "auto", where: "src/governance/auto-demote.ts", description: "When automatic demotion is on, a new qualifying serious finding lowers the named component by one autonomy level." },
   { name: "start-service", repair: "auto", where: "src/services/supervisor.ts", description: "A managed service that is not running is started again." },
+  { name: "restart-wedged-server", repair: "auto", where: "src/ops/watchdog.ts", description: "When the queue or the watchers stand still while work is ready, the watchdog restarts the server, at most once in 24 hours." },
   { name: "safe-restart", repair: "auto", where: "src/server/api-restart.ts", description: "After a new version, a moved data folder or a changed setting, the server restarts once no run is active." },
   { name: "correct-labels", repair: "auto", where: "src/queue/watcher.ts", description: "An issue's status label that does not match its newest run is corrected." },
   { name: "completed-dependency", repair: "auto", where: "src/queue/deps.ts", description: "A dependency on an issue closed as completed counts as done." },

@@ -194,9 +194,10 @@ describe("GET /api/monitor for the Problems page", () => {
     expect(d("restart-loop").repair).toBe("auto");
     expect(d("detector-failed").repair).toBe("auto");
     expect(d("skill-source-check").repair).toBe("ask");
-    expect(m.repairs).toHaveLength(9);
+    expect(m.repairs).toHaveLength(10);
     expect(m.repairs.find((r: { name: string }) => r.name === "memory-restart")).toMatchObject({ repair: "auto" });
     expect(m.repairs.find((r: { name: string }) => r.name === "correct-labels")).toMatchObject({ repair: "auto", description: expect.any(String) });
+    expect(m.repairs.find((r: { name: string }) => r.name === "restart-wedged-server")).toMatchObject({ repair: "auto", where: "src/ops/watchdog.ts" });
   });
 
   it("shows a threshold saved through the config, and refuses one out of range", async () => {

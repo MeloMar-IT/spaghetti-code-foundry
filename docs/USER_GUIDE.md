@@ -4999,14 +4999,14 @@ ends; `scf api` refuses it too.
 
 #### Helper processes
 
-Five small processes that run beside the Foundry, each started by macOS by itself once installed.
+Six small processes that run beside the Foundry, each started by macOS by itself once installed.
 They read the data folder and write their results in their own folder there. Two of them also set
 something outside it: the governor and the limits helper each keep their cap on the runs at once in
 a file of their own in `governor/caps/`, and the governor writes `test-slots/cap`. None needs the
 server, and the server does not need them. Every one has the same commands:
 
 ```bash
-scf governor install    # also: flaky, limits, blockage, digest, housekeeping
+scf governor install    # also: flaky, limits, blockage, digest, housekeeping, watchdog
 scf governor run        # one check now
 scf governor report     # the last result
 scf governor status     # uninstall removes it and what it set
@@ -5023,8 +5023,17 @@ the file is there and nothing runs: run `install` again.
 | `blockage` | every hour | Finds the stories that hold up the most others, and says when run slots are empty. |
 | `digest` | daily at 07:30 | One short report: what was done, what failed, what waits for you. |
 | `housekeeping` | every 3 hours | Records the memory of the system's file-change tracker and of the Foundry server, and once a night removes the workspaces of old runs. |
+| `watchdog` | every 5 minutes | Restarts the server when its queue or its watchers stand still while work is ready (see "The watchdog" below). |
 
-**Caps on the runs at once.** The governor and the limits helper can each lower the number of runs
+**The watchdog (#961).** The server writes `heartbeat.json` in the data folder every 30 seconds: when the queue last moved, when a watcher last finished a check, when the log was last written, and whether work is ready. The watchdog reads that file from outside the server. It acts only when work is ready and one of these has stood still longer than its limit:
+
+- the queue has not moved (`watchdog.pump_minutes`, default 30 minutes);
+- no watcher has finished a check (`watchdog.watcher_minutes`, default 30 minutes, and never less than three times the shortest watcher interval);
+- the server has written no heartbeat for that long (also `watchdog.pump_minutes`).
+
+Then it restarts the server's login agent (`com.spaghetti-code-foundry.server`) with `launchctl kickstart -k`, as an automatic repair. It restarts at most once an hour. A second restart within 24 hours does not happen: the watchdog asks you instead, with a desktop notice that says to look at the server. The watchdog does not restart while a push, merge or release step runs (the same steps as a restart at a safe moment, see [Your turn](#your-turn)), or while the self-update runs. Then it asks you once, and the notice names the run and the step. The server and the watchdog hand over through two small files in the data folder, `restart-guard.json` and `restart-intent.json`. A process that is not the server's login agent is never restarted. The watchdog writes its last result to `watchdog/report.md`, and its events to `watchdog/events.log`. `scf watchdog report` shows the last result. The limits are in **System → Settings**, in the **Watchdog** card.
+
+**Caps on the runs at once.** The governor and the limits helper can each lower the number of runsThe governor and the limits helper can each lower the number of runs
 at once for a while. The lowest cap that still holds counts, never above the configured number. A cap
 of 0 lets no new run start, not even an architect run or a schedule chore; it is set only by the
 governor, when `governor.floor` is 0. A cap holds back new runs only: work that runs is never stopped, and a run that
@@ -9800,6 +9809,7 @@ The automatic repairs the Foundry does today:
 | `lower-autonomy` | fixes alone | with automatic demotion on, a new qualifying serious finding lowers the named component by one autonomy level |
 | `start-service` | fixes alone | a managed service that is not running is started again |
 | `safe-restart` | fixes alone | after a new version, a moved data folder or a changed setting, the server restarts once no run is active |
+| `restart-wedged-server` | fixes alone | when the queue or the watchers stand still while work is ready, the watchdog restarts the server, at most once an hour; a second restart within 24 hours asks you instead (see "The watchdog" under Helper processes) |
 | `correct-labels` | fixes alone | an issue's status label that does not match its newest run is corrected |
 | `completed-dependency` | fixes alone | a dependency on an issue closed as completed counts as done |
 | `memory-restart` | fixes alone | when the server's memory stays above its limit, it restarts at the next safe moment |

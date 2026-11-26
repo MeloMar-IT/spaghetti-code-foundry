@@ -17,6 +17,8 @@ vi.mock("../src/engine/runner.js", async (original) => {
       engine.runs.set(runId, {
         end,
         started: [] as string[],
+        /** What stopBefore answers for a step: a reason ends the run before it. */
+        refusal: (id: string): string | undefined => opts.stopBefore(id),
         /** The abort check and stopBefore in one turn; the step starts after an asynchronous gate. */
         async step(id: string, gate: Promise<unknown> = Promise.resolve()) {
           if (opts.signal.aborted) return;
@@ -82,6 +84,33 @@ describe("Scheduler: steps and interrupted runs", () => {
     expect(s.currentStep(id)).toBeUndefined();
     expect(s.currentStep("nope")).toBeUndefined();
     expect(saved()).toEqual([]); // without `resume` nothing is queued
+  });
+
+  it("calls the step gate before a step starts and after the run ends, and stops the run when it refuses", async () => {
+    const { s, submit } = setup();
+    const id = submit("ui");
+    const run = engine.runs.get(id);
+    const seen: string[] = [];
+    // active before the gate is set: setting it covers them
+    s.setStepGate(() => {
+      seen.push(`${s.queue().active.length}:${s.currentStep(id) ?? "-"}:${run.started.length}`);
+      return undefined;
+    });
+    await run.step("push_develop");
+    expect(seen).toEqual(["1:-:0", "1:push_develop:0"]);
+    s.drain();
+    await s.interrupt([id]);
+    expect(seen.at(-1)).toBe("0:-:1");
+
+    const next = setup();
+    const other = next.submit("ui");
+    let why: string | undefined;
+    next.s.setStepGate(() => why);
+    why = "no guard";
+    const opts = engine.runs.get(other);
+    expect(opts.refusal("push_main")).toBe("no guard");
+    next.s.drain();
+    await next.s.interrupt([other]);
   });
 
   it("saves one resume for an unwatched run, which the next server starts", async () => {

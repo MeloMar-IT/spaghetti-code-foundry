@@ -13,6 +13,24 @@ const FAILING = 'echo " FAIL  tests/a.test.ts > adds numbers"\nexit 1\n';
 const start = Date.parse("2026-01-01T00:00:00Z");
 const building = (logs: string[]) => logs.filter((l) => l.includes("building and testing"));
 
+describe("self-update: the busy hook", () => {
+  it("says busy before the first step of the work and again when it ends; a hook that throws stops nothing", async () => {
+    const f = fixture();
+    const v2 = f.publish({ "test.sh": "exit 0\n", "app.txt": "v2\n" });
+    const seen: [boolean, boolean][] = [];
+    const t = updater(f, {
+      busyChanged: () => {
+        // at the first call nothing is staged yet
+        seen.push([t.u.busy(), existsSync(f.stage)]);
+        throw new Error("hook");
+      },
+    });
+    await t.u.tick(true);
+    expect(seen).toEqual([[true, false], [false, false]]);
+    expect(f.state().tested?.commit).toBe(v2);
+  });
+});
+
 describe("self-update: the tests are tried again", () => {
   it("fails once, waits, and passes on the second try", async () => {
     const f = fixture();
