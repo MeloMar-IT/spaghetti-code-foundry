@@ -18,8 +18,8 @@ const publish = (f: Fx, extra: Record<string, string> = {}) =>
 const ran = (f: Fx) => existsSync(join(f.root, "ran"));
 const record = (f: Fx, commit: string, cmd: string, content = "run r1, 2026-01-01T00:00Z, tree TREE\n") => {
   const tree = git(f.seed, "rev-parse", `${commit}^{tree}`);
-  mkdirSync(join(f.root, "data", "tested"), { recursive: true });
-  const p = join(f.root, "data", "tested", testedKey(tree, cmd));
+  mkdirSync(join(f.root, "data", "tested-v2"), { recursive: true });
+  const p = join(f.root, "data", "tested-v2", testedKey(tree, cmd));
   writeFileSync(p, content.replace("TREE", tree));
   return p;
 };
@@ -49,7 +49,12 @@ describe("self-update: tests the release check already passed", () => {
     "a detection that rejects": (f, v2) => { record(f, v2, FULL); return { testCmd: () => Promise.reject(new Error("x")) }; },
     "a folder at the path": (f, v2) => {
       const tree = git(f.seed, "rev-parse", `${v2}^{tree}`);
-      mkdirSync(join(f.root, "data", "tested", testedKey(tree, FULL)), { recursive: true });
+      mkdirSync(join(f.root, "data", "tested-v2", testedKey(tree, FULL)), { recursive: true });
+    },
+    "a record from before skipped container tests were checked": (f, v2) => {
+      const tree = git(f.seed, "rev-parse", `${v2}^{tree}`);
+      mkdirSync(join(f.root, "data", "tested"), { recursive: true });
+      writeFileSync(join(f.root, "data", "tested", testedKey(tree, FULL)), `run r1, 2026-01-01T00:00Z, tree ${tree}\n`);
     },
     "no file": () => undefined,
     "other content": (f, v2) => void record(f, v2, FULL, "garbage $(secret)\n"),

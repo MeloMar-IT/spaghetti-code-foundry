@@ -29,7 +29,7 @@ function setup() {
   git(repo, "commit", "-q", "-am", "two");
   const runDir = join(root, "data", "runs", "r1");
   mkdirSync(runDir, { recursive: true });
-  const tested = join(root, "data", "tested");
+  const tested = join(root, "data", "tested-v2");
   /** A fake git first on PATH: `body` is shell text that sees "$@" and "$count" (calls so far, this one included) and can `exec` the real git. */
   const fakeGit = (body: string) => {
     const bin = join(root, "bin");
@@ -336,6 +336,27 @@ describe("release-daily verify: reuse of a test record", () => {
       expect(r.out, name).not.toContain("not run again");
       expect(ran(s), name).toBe(true);
     }
+  });
+
+  it("does not trust a cached pass from before skipped container tests were checked", () => {
+    const s = setup();
+    const old = join(s.root, "data", "tested");
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, testedKey(s.git("rev-parse", "HEAD^{tree}"), "touch ran-tests")), "run s1, 2026-10-26T10:00Z\n");
+    const r = s.verify({ test: "touch ran-tests" }, REUSE);
+    expect(r.out).not.toContain("not run again");
+    expect(ran(s)).toBe(true);
+  });
+
+  it("gives CHECKS: no and no record when the container tests did not run, without telling the engine to stop", () => {
+    const s = setup();
+    const stopFile = join(s.root, "engine-stop.txt");
+    const r = s.verify({ test: "echo 'Could not find a valid Docker environment'" }, { FACTORY_ENV_STOP_FILE: stopFile });
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("CHECKS: no");
+    expect(readFileSync(join(s.runDir, "checks.md"), "utf8")).toContain("not tested: the container tests did not run");
+    expect(r.files).toEqual([]);
+    expect(existsSync(stopFile)).toBe(false);
   });
 
   it("still runs the build, and a failing build gives CHECKS: no", () => {

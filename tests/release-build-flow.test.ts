@@ -12,6 +12,7 @@ import { TOOLCHAIN_VARS } from "../src/release/host.js";
 import { releaseMarker } from "../src/release/recipe.js";
 import { validatorFileName, validatorVersion } from "../src/release/validator.js";
 import { claudeBin, fakeGithub, fakeRelease } from "./helpers/fake-github.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 // The flow release-build end to end: a bare git repository as the remote, three recipes of different kinds.
 const MARKERS = { JAVA_HOME: "m-java", GH_TOKEN: "m-gh", GITHUB_TOKEN: "m-github", GH_ENTERPRISE_TOKEN: "m-ent", MY_BOT_TOKEN: "m-bot", FACTORY_VAR_SECRETISH: "m-factory" };
@@ -37,7 +38,9 @@ describe("release-build flow", () => {
     });
     writeFileSync(homeConfig(), "bot:\n  gh_token_env: JAVA_HOME\n");
   });
+  const watched = new Watched();
   afterEach(() => {
+    watched.kill(); // before the folders go: it reads the pid files
     rmSync(homeConfig(), { force: true });
     rmSync(reposPath(), { force: true });
     gh.restore();
@@ -378,6 +381,7 @@ describe("release-build flow", () => {
   it.skipIf(process.platform === "win32")("cancelling stops a build that ignores TERM, with its children, and removes the worktree", async () => {
     const pidFile = join(gh.tmp, "build.pid");
     rmSync(pidFile, { force: true });
+    watched.file(pidFile);
     commit(`builds:\n  - name: a\n    run: |\n      echo $$ > "${pidFile}"\n      trap '' TERM\n      sleep 60 &\n      wait\n    artifacts: [x]\n`);
     const stop = new AbortController();
     const running = go("main", stop.signal);

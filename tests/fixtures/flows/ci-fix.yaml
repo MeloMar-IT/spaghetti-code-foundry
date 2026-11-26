@@ -84,12 +84,30 @@ steps:
     type: shell
     description: "test_cmd: a command, or auto to detect it (npm/pnpm/yarn, pytest, go, cargo, gradle, maven, make)"
     sandbox: true
+    timeout_sec: 3600
     run: |
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "⚠ no test command found (set var test_cmd); skipping tests"; exit 0; fi
       echo "\$ $cmd"
-      sh -c "$cmd"
+      marker="{{run.dir}}/tests.marker"; touch "$marker"
+      if command -v node >/dev/null 2>&1 && [ -f "$FACTORY_TOOLS/test-env" ]; then
+        # Docker answers when the tests need it; container tests that did not run, or two hangs, are never green.
+        # The tools are mounted in a Docker sandbox too (at /factory-tools), so this path runs there as well.
+        node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+        FACTORY_VAR_TEST_SLOTS=0 FACTORY_TEST_NICE=0 node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        cat "{{run.dir}}/tests.log"
+        node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+        exit "$code"
+      fi
+      # Without node (no tools) the output and the reports written after the marker are read here with grep. No watchdog:
+      # the step's time limit still stops a hang.
+      sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+      tail -n 150 "{{run.dir}}/tests.log"
+      if grep -qE "Could not find a valid Docker environment|is too old\. Minimum supported API version" "{{run.dir}}/tests.log"; then echo "not tested: the container tests did not run"; exit 1; fi
+      hit=$(find . -name node_modules -prune -o \( -name 'TEST-*.xml' -o -name 'junit*.xml' \) -newer "$marker" -exec grep -qE '<skipped[^>]*Docker[^>]*(not available|unavailable)' {} \; -print 2>/dev/null)
+      if [ -n "$hit" ]; then echo "not tested: a container test was skipped because Docker is not available"; exit 1; fi
+      exit "$code"
     on_failure: fix_tests
   - id: fix_tests
     type: claude
