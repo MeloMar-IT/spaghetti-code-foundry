@@ -9,7 +9,7 @@ import { knownWorkspace, limitsOf as workspaceLimitsOf, workspaceForJob } from "
 import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../workspaces/list.js";
 import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
-import { RESTART_INTERRUPT } from "../engine/running.js";
+import { RESTART_INTERRUPT, RESTART_INTERRUPTED } from "../engine/running.js";
 import { RunIndex } from "../engine/run-index.js";
 import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, noteRunWritten, projectOfVars, readIndexSlot, slimRunOf, spentToday, type SlimRun, type RunIndexEntry, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
@@ -110,6 +110,10 @@ interface Active {
   cancelledBy?: Actor;
   /** Set once the run reached a merge: a stop request is not taken any more. */
   merging?: boolean;
+  /** The top-level step the run reached last in this process. */
+  step?: string;
+  /** Queue a resume when the run ends as interrupted by a restart. */
+  requeue?: boolean;
 }
 
 /** Which per-user limit holds a job back. */
@@ -207,6 +211,8 @@ export class Scheduler {
   private lastStartOfWorkspace = new Map<string, number>();
   /** New runs this scheduler started that are still active: they count before and after their run.json exists. */
   private started = new Map<string, { account: string; day: string }>();
+  /** Resumes of runs a restart stopped that are not saved in the queue file yet. Memory only. */
+  private unsavedResumes = new Map<string, QueuedJob>();
 
   private runIndex?: RunIndex;
 
@@ -470,6 +476,7 @@ export class Scheduler {
     // A run that stopped but is still finishing (its notification runs): the stop is saved, so cancel it like a stopped run.
     if (a.summary?.status === "stopped" && !a.controller.signal.aborted && this.cancelStopped(runId, by)) return true;
     a.cancelledBy ??= by;
+    a.requeue = false;
     a.controller.abort();
     return true;
   }
@@ -484,11 +491,29 @@ export class Scheduler {
     return true;
   }
 
-  /** Stops these active runs for a restart (they end as interrupted and the watchers resume them). True when none of them is active within timeoutMs. */
-  async interrupt(runIds: string[], timeoutMs = 60_000): Promise<boolean> {
+  /**
+   * The top-level step an active run is in, or undefined. It is recorded in `stopBefore`, in the same synchronous turn as the
+   * engine's abort check: an abort made right after this answer lands before any later step starts.
+   */
+  currentStep(runId: string): string | undefined {
+    const a = this.active.get(runId);
+    return a ? (a.step ?? a.summary?.state?.next ?? undefined) : undefined;
+  }
+
+  /**
+   * Stops these active runs for a restart (they end as interrupted and the watchers resume them). True when none of them is
+   * active within timeoutMs. `resume` picks the jobs no watcher resumes: when such a run has ended as interrupted (also after
+   * the timeout), a resume job with the same scheduling data is saved in the queue. Call drain() first, or it starts at once.
+   */
+  async interrupt(runIds: string[], timeoutMs = 60_000, o: { resume?: (job: QueuedJob) => boolean } = {}): Promise<boolean> {
     const list = runIds.map((id) => this.active.get(id)).filter((a): a is Active => a !== undefined);
     if (!list.length) return true;
-    for (const a of list) if (!a.controller.signal.aborted) a.controller.abort(RESTART_INTERRUPT);
+    for (const a of list) {
+      const resume = o.resume?.(a.queued) === true;
+      if (!a.controller.signal.aborted) a.controller.abort(RESTART_INTERRUPT);
+      // a run that was cancelled before keeps its own reason and is not resumed
+      if (resume && a.controller.signal.reason === RESTART_INTERRUPT) a.requeue = true;
+    }
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<boolean>((r) => {
       timer = setTimeout(() => r(false), timeoutMs);
@@ -497,6 +522,34 @@ export class Scheduler {
     const ok = await Promise.race([Promise.allSettled(list.map((a) => a.done)).then(() => true), timeout]);
     clearTimeout(timer);
     return ok && runIds.every((id) => !this.active.has(id));
+  }
+
+  /** Queues the resume of a run a restart stopped. Does nothing when one is queued already. A save that fails is kept and tried again by retryResumes(). */
+  private requeueInterrupted(q: QueuedJob, log: (line: string) => void): void {
+    if (this.isQueued(q.runId)) return;
+    this.unsavedResumes.set(q.runId, q);
+    if (!this.saveResumes()) log(`✘ the resume after the restart is not saved yet; the restart waits until it is`);
+  }
+
+  /** Saves the resumes of interrupted runs that could not be saved yet. True when none is left: only then may a restart go on. */
+  retryResumes(): boolean {
+    return this.saveResumes();
+  }
+
+  private saveResumes(): boolean {
+    for (const [runId, q] of this.unsavedResumes) {
+      try {
+        if (this.isQueued(runId)) this.persist(); // put() queues the job before it writes the file
+        else {
+          const { lockKey, source, owner, queuedBy, priority, storyAt, asNewRun, workspace } = q;
+          this.put({ kind: "resume", runId }, { lockKey, source, owner, queuedBy, priority, storyAt, asNewRun, workspace });
+        }
+      } catch {
+        return false;
+      }
+      this.unsavedResumes.delete(runId);
+    }
+    return true;
   }
 
   /** Sets or removes the archive mark of a finished run. Refuses a run that is queued, active, running or waiting. */
@@ -585,7 +638,9 @@ export class Scheduler {
     }
     if (!opts.stopWork) return counts;
     for (const [runId, a] of this.active) {
-      if (this.ownerOf(runId) !== accountId || a.controller.signal.aborted) continue;
+      if (this.ownerOf(runId) !== accountId) continue;
+      a.requeue = false; // also for a run that a restart is stopping right now
+      if (a.controller.signal.aborted) continue;
       if (a.summary !== undefined && a.summary.status !== "running") continue;
       a.controller.abort();
       counts.running++;
@@ -1300,6 +1355,7 @@ export class Scheduler {
       cancelledBy: () => a.cancelledBy,
       // a stop request (an overrule) ends the run before this step, never once a merge started
       stopBefore: (stepId: string) => {
+        a.step = stepId;
         const why = this.stopRequests.get(q.runId);
         this.stopRequests.delete(q.runId);
         if (stepIs(stepId, MERGE_GUARD) || (a.summary && mergeStarted(a.summary, 0))) {
@@ -1328,8 +1384,10 @@ export class Scheduler {
             ...(this.o.localTest ? { localTest: true } : { flowId: q.flowId ?? flowFileId(j.flow, j.repo) }),
           })
         : resumeRun({ ...common, runId: j.runId, from: j.from, decision: j.decision });
+    let ended: RunSummary | undefined;
     a.done = promise
       .then((summary) => {
+        ended = summary;
         this.o.onFinished?.(summary, q);
         return summary;
       })
@@ -1340,6 +1398,8 @@ export class Scheduler {
       .finally(() => {
         this.stopRequests.delete(q.runId);
         this.active.delete(q.runId);
+        // saved before `done` resolves, so a restart that waits for this run cannot exit without it
+        if (a.requeue && ended?.status === "cancelled" && ended.reason === RESTART_INTERRUPTED) this.requeueInterrupted(q, common.log);
         this.recent.set(q.runId, a);
         setTimeout(() => this.recent.delete(q.runId), 10 * 60_000).unref();
         this.pump();

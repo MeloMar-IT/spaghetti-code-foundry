@@ -18,6 +18,7 @@ import { startServer } from "./server/server.js";
 import { previewsOf } from "./server/api-preview.js";
 import { withServicesStopped } from "./services/supervisor.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
+import { safeRestartFor, type SafeRestart } from "./safe-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
 import { controlsReportText, runEval, runSafetyEvals } from "./evals.js";
@@ -522,7 +523,8 @@ async function main(argv: string[]): Promise<number> {
       const queueIdle = () => { const q = ctx.scheduler.queue(); return q.active.length === 0 && (ctx.scheduler.draining || q.pending.length === 0); };
       const log = (m: string) => process.stdout.write(`${new Date().toISOString()} ${m}\n`);
       const drain = () => {
-        ctx.restart = { why: "new_version", since: new Date().toISOString() };
+        // a health restart that waits keeps its reason: it is the one that stops runs
+        if (ctx.restart?.why !== "health") ctx.restart = { why: "new_version", since: new Date().toISOString() };
         ctx.scheduler.drain();
         // the watchers keep running (holds stay fresh, Retry works); nothing they queue starts before the restart
       };
@@ -565,6 +567,9 @@ async function main(argv: string[]): Promise<number> {
       ctx.selfUpdate = updater;
       const settingsRestart: SettingsRestart = settingsRestartFor(ctx, { idle, beforeExit: () => { settingsRestart.stop(); beforeExit(); }, log });
       ctx.settingsRestart = settingsRestart;
+      // waits only for push, merge and release steps (and the updater); the health checks ask for it
+      const safeRestart: SafeRestart = safeRestartFor(ctx, { busy: () => updater.busy(), beforeExit: () => { safeRestart.stop(); settingsRestart.stop(); beforeExit(); }, log });
+      ctx.safeRestart = safeRestart;
       void confirmStart(url, { stamp, log });
       updater.start();
       return new Promise<number>(() => {}); // run until killed

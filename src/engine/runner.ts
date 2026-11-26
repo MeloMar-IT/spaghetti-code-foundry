@@ -812,6 +812,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     setNext(step.id);
     const here = () => ({ next: summary.state.next, lastOutput });
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason("cancelled by user"), ...here() };
+    // no await between the abort check and stopBefore: a safe restart relies on it to never cut a push or merge step
     const stopNow = top ? engine.stopBefore?.(step.id) : undefined;
     if (stopNow) {
       engine.log(`■ stopped before "${step.id}": ${stopNow}`);
