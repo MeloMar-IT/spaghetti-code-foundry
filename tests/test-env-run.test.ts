@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { parseFlow } from "../src/flow/load.js";
+import { waitForFile } from "./helpers/gate-wait.js";
 
 // A test environment that cannot be used ends the run at the step: the engine side, and the real generated steps.
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
@@ -50,8 +51,8 @@ describe("a step whose test environment cannot be used", () => {
       [
         "  - {id: both, type: parallel, steps: [a, b], on_failure: fix}",
         // b starts after a has noted its reason, and ends before a does: neither removes or takes over the other's note
-        `  - {id: a, type: shell, jump_only: true, run: '${NOTE}; touch noted; while [ ! -f b-done ]; do sleep 0.05; done; exit 1'}`,
-        "  - {id: b, type: shell, jump_only: true, run: 'while [ ! -f noted ]; do sleep 0.05; done; touch b-done; exit 1', timeout_sec: 30}",
+        `  - {id: a, type: shell, jump_only: true, run: '${NOTE}; touch noted; ${waitForFile(repo, "b-done")}; exit 1'}`,
+        `  - {id: b, type: shell, jump_only: true, run: '${waitForFile(repo, "noted")}; touch b-done; exit 1', timeout_sec: 30}`,
         FIX,
       ].join("\n"),
     );
