@@ -558,8 +558,9 @@ describe("repair classes", () => {
   });
 
   it("the repair list has unique names, one-sentence descriptions and sources that exist", () => {
-    expect(REPAIRS).toHaveLength(8);
-    expect(new Set(REPAIRS.map((r) => r.name)).size).toBe(8);
+    expect(REPAIRS).toHaveLength(9);
+    expect(new Set(REPAIRS.map((r) => r.name)).size).toBe(9);
+    expect(REPAIRS.find((r) => r.name === "restart-wedged-server")!.repair).toBe("auto");
     const detectors = detectorInfo().map((d) => d.name);
     for (const r of REPAIRS) {
       expect(detectors, r.name).not.toContain(r.name);

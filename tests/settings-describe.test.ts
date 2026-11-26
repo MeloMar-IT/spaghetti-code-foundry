@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -136,7 +136,7 @@ describe("what is described", () => {
     expect(isCovered("simple.help_contact")).toBe(true);
     expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
-    expect(described).toHaveLength(157);
+    expect(described).toHaveLength(159);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
@@ -187,6 +187,17 @@ describe("what is described", () => {
     for (const v of [0, 101, 50.5]) expect(ConfigSchema.safeParse({ governor: { usage_percent: v } }).success).toBe(false);
     for (const v of [0, 101, 50.5]) expect(issuesAt("governor.usage_percent", v)).not.toHaveLength(0);
     expect(issuesAt("governor.usage_percent", 80)).toHaveLength(0);
+  });
+
+  it("has two watchdog limits: whole minutes from 5 to 1440, 30 by default, in a generated card", () => {
+    expect(ConfigSchema.parse({}).watchdog).toEqual({ pump_minutes: 30, watcher_minutes: 30 });
+    for (const key of ["pump_minutes", "watcher_minutes"]) {
+      expect(isCovered(`watchdog.${key}`)).toBe(true);
+      expect(describeSettings().find((d) => d.key === `watchdog.${key}`)).toMatchObject({ kind: "number", integer: true, min: 5, max: 1440, default: 30, effect: "now", control: "generated" });
+      for (const v of [5, 1440]) expect(ConfigSchema.safeParse({ watchdog: { [key]: v } }).success).toBe(true);
+      for (const v of [4, 1441, 5.5]) expect(ConfigSchema.safeParse({ watchdog: { [key]: v } }).success).toBe(false);
+    }
+    expect(readFileSync("ui/admin.js", "utf8")).toContain('generatedSection("Watchdog", "watchdog."');
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {
