@@ -50,6 +50,7 @@ import { busyRoutes } from "./api-busy.js";
 import { onboardingRoutes } from "./api-onboarding.js";
 import { stopSignIns } from "../onboarding.js";
 import { restartRoutes, type SettingsRestart } from "./api-restart.js";
+import type { SafeRestart } from "../safe-restart.js";
 import { BUSY_RENEW_MS, syncBusyCap } from "../ops/busy.js";
 import { loadPlugins, type PluginRegistry } from "../plugins/load.js";
 import { PLUGIN_PATH, servePluginFile } from "./plugin-files.js";
@@ -156,7 +157,7 @@ export interface ApiContext {
   /** Stored watchers that cannot run now, each with its `problem`. */
   blockedWatchers: () => BlockedWatcher[];
   reloadConfig: () => void;
-  /** Set while the server waits to restart (new version, moved data folder). */
+  /** Set while the server waits to restart (new version, moved data folder, changed setting, health). */
   restart?: RestartState;
   /** The self-updater of the running server: which version runs and whether an update waits. */
   selfUpdate?: { view(): UpdateView };
@@ -164,6 +165,8 @@ export interface ApiContext {
   listen: string;
   /** The restart an admin asked for after a settings change; only on a server started by the CLI. */
   settingsRestart?: SettingsRestart;
+  /** The restart at a safe moment, for the health checks; only on a server started by the CLI. */
+  safeRestart?: SafeRestart;
   /** config.yaml as it was when the server started (settings that apply after a restart). */
   started?: Config;
   /** The plugins, loaded once at start; absent on a context built without startServer. */

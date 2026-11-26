@@ -48,6 +48,7 @@ const WAIT_WHY = {
   settings: "The server waits to restart for a changed setting.",
   new_version: "The server waits to restart on a new version.",
   data_folder: "The server waits to restart onto a moved data folder.",
+  health: "The server waits to restart at a safe moment: running push, merge and release steps finish first, other runs are resumed after it.",
 };
 
 /**
