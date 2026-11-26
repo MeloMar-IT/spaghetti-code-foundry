@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeRedactor } from "../src/credentials/redact.js";
 import { killLiveGroups, runProcess } from "../src/steps/process.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 const dead = (pid: number) => {
   try {
@@ -43,7 +44,9 @@ const untilFile = async (f: string) => {
 
 describe("runProcess with groupKill", () => {
   const dirs: string[] = [];
+  const watched = new Watched();
   afterEach(() => {
+    watched.kill(); // before the folders go: it reads the pid files
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
   const dir = () => {
@@ -56,6 +59,7 @@ describe("runProcess with groupKill", () => {
   it("an abort stops the whole group, and the child is dead when the promise settles", async () => {
     const d = dir();
     const ctl = new AbortController();
+    watched.file(join(d, "child.pid"));
     const p = runProcess("/bin/sh", ["-c", stubborn(d, "sleep 60")], { cwd: d, logFile: join(d, "log"), groupKill: true, signal: ctl.signal, redactor: makeRedactor([]) });
     const pid = await untilFile(join(d, "child.pid"));
     ctl.abort();
@@ -66,6 +70,7 @@ describe("runProcess with groupKill", () => {
 
   it("a timeout stops the whole group too", async () => {
     const d = dir();
+    watched.file(join(d, "child.pid"));
     const p = runProcess("/bin/sh", ["-c", stubborn(d, "sleep 60")], { cwd: d, logFile: join(d, "log"), groupKill: true, timeoutMs: 2000, redactor: makeRedactor([]) });
     const res = await p;
     expect(res.timedOut).toBe(true);
@@ -85,14 +90,17 @@ describe("runProcess with groupKill", () => {
   const PARENT = `const {spawn}=require("child_process"),fs=require("fs");
 const c=spawn("/bin/sh",["-c",process.env.CHILD],{detached:true,stdio:"ignore"});c.unref();
 if(process.env.GO){const t=setInterval(()=>{if(fs.existsSync(process.env.GO)){clearInterval(t);process.exit(0)}},20)}else setInterval(()=>{},1000);`;
-  const detached = (d: string, trap: boolean, extraEnv: Record<string, string> = {}) => ({
-    cwd: d,
-    logFile: join(d, "log"),
-    groupKill: true,
-    trackEveryMs: 50,
-    redactor: makeRedactor([]),
-    env: { CHILD: `${trap ? 'trap "" TERM; ' : ""}echo $$ > "$READY"; exec sleep 60`, READY: join(d, "ready.pid"), ...extraEnv },
-  });
+  const detached = (d: string, trap: boolean, extraEnv: Record<string, string> = {}) => {
+    if (trap) watched.file(join(d, "ready.pid"));
+    return {
+      cwd: d,
+      logFile: join(d, "log"),
+      groupKill: true,
+      trackEveryMs: 50,
+      redactor: makeRedactor([]),
+      env: { CHILD: `${trap ? 'trap "" TERM; ' : ""}echo $$ > "$READY"; exec sleep 60`, READY: join(d, "ready.pid"), ...extraEnv },
+    };
+  };
   const spare: number[] = [];
   afterEach(() => {
     for (const p of spare.splice(0)) {

@@ -3,6 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { getPriority, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { Watched } from "./helpers/stray-procs.js";
+import { stubbornArgs } from "./helpers/stray-tag.js";
 
 const tool = resolve("tools/test-slot");
 const env = (extra: Record<string, string> = {}) => ({ ...process.env, FACTORY_TEST_SLOT_POLL_MS: "50", ...extra });
@@ -192,7 +194,7 @@ describe.concurrent("tools/test-slot time limit", () => {
     try { if (pid) process.kill(pid, "SIGKILL"); } catch { /* gone */ }
   };
   // A parent that starts $CHILD in its own process group, writes its pid and stays alive until $GO exists.
-  const parent = 'const {spawn}=require("child_process"),fs=require("fs");spawn("/bin/sh",["-c",process.env.CHILD],{detached:true,stdio:"ignore"}).unref();fs.writeFileSync(process.env.PIDF,String(process.pid));const t=setInterval(()=>{if(process.env.GO&&fs.existsSync(process.env.GO)){clearInterval(t);process.exit(0)}},50)';
+  const parent = 'const {spawn}=require("child_process"),fs=require("fs");spawn("/bin/sh",["-c",process.env.CHILD],{detached:true,stdio:"ignore"}).unref();fs.writeFileSync(process.env.PIDF,process.pid+"\\n");const t=setInterval(()=>{if(process.env.GO&&fs.existsSync(process.env.GO)){clearInterval(t);process.exit(0)}},50)';
   const stopLine = /^test-slot: stopped after \d+ s — the time limit is 1 s$/m;
   const tmp = () => mkdtempSync(join(tmpdir(), "tl-"));
 
@@ -254,27 +256,26 @@ describe.concurrent("tools/test-slot time limit", () => {
     }
   });
 
-  it("keeps stopping until a detached child that ignores TERM is confirmed and killed, when ps is slow and the group dies at once", { timeout: 30_000 }, async () => {
+  it("keeps stopping until a detached child that ignores TERM is confirmed and killed, when ps is slow and the group dies at once", { timeout: 30_000 }, async ({ onTestFinished }) => {
     const d = dir();
     const w = tmp();
     // a ps that answers after 0.5 s (under the 1.5 s and 2 s reads the tool makes)
     const slowPs = join(w, "ps");
     writeFileSync(slowPs, '#!/bin/sh\nsleep 0.5\nexec ps "$@"\n');
     chmodSync(slowPs, 0o755);
-    let gc: number | undefined;
-    let p: number | undefined;
-    try {
-      // the parent dies on TERM at once; the child keeps running in its own group and ignores TERM
-      const r = await run(d, ["node", "-e", parent], { FACTORY_TEST_SLOT_LIMIT_SEC: "1", FACTORY_TEST_SLOT_PS: slowPs, CHILD: `trap "" TERM; echo $$ > ${w}/gc; exec sleep 60`, PIDF: join(w, "p") });
-      gc = await pidOf(join(w, "gc"));
-      p = await pidOf(join(w, "p"));
-      expect(r.code).toBe(124);
-      expect(dead(p)).toBe(true);
-      expect(dead(gc)).toBe(true);
-    } finally {
-      kill(gc);
-      kill(p);
-    }
+    // a cleanup per test (these tests run at the same time): the whole groups, whatever the result
+    const procs = new Watched();
+    onTestFinished(() => procs.kill());
+    procs.file(join(w, "gc"));
+    procs.file(join(w, "p"));
+    // the parent dies on TERM at once; the child keeps running in its own group and ignores TERM. The limit leaves the
+    // child time to start on a busy machine: a child that only starts after the tool's last look can never be found.
+    const r = await run(d, ["node", "-e", parent], { FACTORY_TEST_SLOT_LIMIT_SEC: "3", FACTORY_TEST_SLOT_PS: slowPs, CHILD: `trap "" TERM; echo $$ > ${w}/gc; exec sleep 60`, PIDF: join(w, "p") });
+    const gc = await pidOf(join(w, "gc"));
+    const p = await pidOf(join(w, "p"));
+    expect(r.code).toBe(124);
+    expect(dead(p)).toBe(true);
+    expect(dead(gc)).toBe(true);
   });
 
   it("still stops the process group when ps does not work", async () => {
@@ -292,20 +293,18 @@ describe.concurrent("tools/test-slot time limit", () => {
     }
   });
 
-  it("kills a command that traps TERM after 5 s", async () => {
+  it("kills a command that traps TERM after 5 s", async ({ onTestFinished }) => {
     const d = dir();
     const w = tmp();
-    let p: number | undefined;
-    try {
-      const r = await run(d, ["sh", "-c", `trap "" TERM; echo $$ > ${w}/p; while :; do sleep 0.1; done`], { FACTORY_TEST_SLOT_LIMIT_SEC: "1" });
-      p = await pidOf(join(w, "p"));
-      expect(r.code).toBe(124);
-      expect(r.ms).toBeGreaterThan(5500);
-      expect(r.ms).toBeLessThan(9500);
-      expect(dead(p)).toBe(true);
-    } finally {
-      kill(p);
-    }
+    const procs = new Watched();
+    onTestFinished(() => procs.kill());
+    procs.file(join(w, "p"));
+    const r = await run(d, ["sh", ...stubbornArgs(join(w, "p"))], { FACTORY_TEST_SLOT_LIMIT_SEC: "1" });
+    const p = await pidOf(join(w, "p"));
+    expect(r.code).toBe(124);
+    expect(r.ms).toBeGreaterThan(5500);
+    expect(r.ms).toBeLessThan(9500);
+    expect(dead(p)).toBe(true);
   });
 
   it("does not count the slot wait against the limit", async () => {

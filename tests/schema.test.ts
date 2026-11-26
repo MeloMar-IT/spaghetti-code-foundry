@@ -189,7 +189,7 @@ describe("var_info", () => {
   it("describes every variable of the shipped flows", () => {
     const issueGitflow = [
       "risk_threshold", "auto_split_max_risk", "revise_above_risk", "review_twice_above_risk", "max_files", "max_code_lines", "test_cmd",
-      "quick_test_cmd", "test_slots", "reuse_test_results", "develop_branch", "main_branch", "feature_prefix", "hotfix_prefix", "hotfix_labels",
+      "quick_test_cmd", "test_slots", "test_silence_minutes", "reuse_test_results", "develop_branch", "main_branch", "feature_prefix", "hotfix_prefix", "hotfix_labels",
       "forbidden_paths", "docs_required", "union_merge_files", "agent_env", "review_plan_label", "trigger_label", "delete_merged_branches", "close_when_merged",
     ];
     for (const f of readdirSync("flows").filter((n) => n.endsWith(".yaml"))) {

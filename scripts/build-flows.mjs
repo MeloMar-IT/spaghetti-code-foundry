@@ -20,6 +20,8 @@ const swap = (text, from, to) => {
   if (!text.includes(from)) throw new Error(`build-flows: nothing to replace: ${from}`);
   return text.replace(from, () => to);
 };
+// How every test step runs the tests: in a test slot, under the silence watchdog (tools/test-env silence).
+const RUN_TESTS = 'node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?';
 
 // How each variable of a shipped flow shows in a form (see var_info in docs/FLOW_AUTHORING.md). Shared by name.
 const RUN_SET = { set_by_run: true };
@@ -36,6 +38,7 @@ const VAR_INFO = {
   test_cmd: { label: "Test command", help: "Use auto to find the command from the project files, or type the command that builds and tests the project.", kind: "text" },
   quick_test_cmd: { label: "Quick test command", help: "A faster command for the checks between steps. Empty: use the test command.", kind: "text" },
   build_cmd: { label: "Build command", help: "The command that builds the project. Empty: no build.", kind: "text" },
+  test_silence_minutes: { label: "Test silence limit (minutes)", help: "A test run with no output for this long is stopped and run once more; a second silence fails the step. 0 = off.", kind: "number", min: 0, max: 720 },
   test_slots: { label: "Parallel test runs", help: "How many test runs may run at the same time on this machine.", kind: "number", min: 0 },
   verify_timeout_min: { label: "Check time limit (minutes)", help: "How long the full tests and build of the daily check may work, in minutes. The wait for a test slot does not count. At the limit they are stopped and the pull request stays a draft. 1 to 720.", kind: "number", min: 1, max: 720 },
   reuse_test_results: { label: "Reuse test results", help: "Skip a test run when the same code was already tested.", kind: "yes_no" },
@@ -872,6 +875,10 @@ write("issue-plan", {
 });
 
 {
+  // Before the tests: Docker answers when they need it. After them: container tests that did not run, or a run that hung
+  // twice, end the run (tools/test-env writes the reason for the engine).
+  const DOCKER_UP = 'node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1';
+  const REALLY_RAN = 'node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1';
   const testsRunFull = [
     'git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers',
     'cmd="$FACTORY_VAR_TEST_CMD"',
@@ -879,10 +886,12 @@ write("issue-plan", {
     'if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi',
     'marker="{{run.dir}}/tests.marker"; touch "$marker"',
     'echo "\\$ $cmd"',
-    '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+    DOCKER_UP,
+    RUN_TESTS,
     'tail -150 "{{run.dir}}/tests.log"',
     'echo; echo "=== summary ==="',
     '{ "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"',
+    REALLY_RAN,
     'exit "$code"',
   ].join("\n");
   // Inside a story (after coding, after review fixes) a quicker command may run instead, for example only
@@ -896,13 +905,10 @@ write("issue-plan", {
   // fail: on a busy machine a timing-sensitive test can fail by chance. A real failure fails twice.
   // The log of the first run is kept as tests.first.log when the second run passes (and only then): it names the
   // tests that failed by chance, which `scf flaky` reads. Without it the second run's clean log is all that is left.
+  // Not after a hang (any "test-silence:" line): the watchdog has already run the tests a second time.
   const testsOnceMore =
-    'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi';
-  const testsRunRetry = testsRunFull.replace(
-    '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
-    '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?\n' +
-      testsOnceMore,
-  );
+    'if [ "$code" -ne 0 ] && ! grep -q "^test-silence: " "{{run.dir}}/tests.log"; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; ' + RUN_TESTS + '; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi';
+  const testsRunRetry = swap(testsRunFull, RUN_TESTS, RUN_TESTS + "\n" + testsOnceMore);
   // Also: when this exact code (a clean tree) already passed these tests in another run, they are not run
   // again — the tests before a change run on the develop the previous story just tested.
   const testsRunReuse = [
@@ -910,18 +916,21 @@ write("issue-plan", {
     'if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
     'if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi',
     'marker="{{run.dir}}/tests.marker"; touch "$marker"',
-    'passed_dir="{{run.dir}}/../../tested"; key=""',
+    // tested-v2: only runs that check the tests really ran write here (see TESTED_DIR in src/self-update-tests.ts)
+    'passed_dir="{{run.dir}}/../../tested-v2"; key=""',
     'if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then key=$(printf \'%s\\n%s\\n\' "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" "$cmd" | shasum | cut -c1-40); fi',
     'echo "\\$ $cmd"',
     'if [ -n "$key" ] && [ -f "$passed_dir/$key" ]; then',
     '  code=0; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"',
     '  echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"',
     'else',
-    '  "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+    '  ' + DOCKER_UP,
+    '  ' + RUN_TESTS,
     '  ' + testsOnceMore,
     '  tail -150 "{{run.dir}}/tests.log"',
     '  echo; echo "=== summary ==="',
     '  { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"',
+    '  ' + REALLY_RAN,
     '  # Remember a pass of a clean tree (it must still be clean: the tests may not have changed tracked files).',
     '  if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi',
     'fi',
@@ -2018,10 +2027,13 @@ write("issue-plan", {
     type: "shell",
     timeout_sec: 7200,
     description: "Test the merge with develop ahead of the merge turn (the turn then needs no test run when develop did not move)",
+    resume_from: "pretest_merge",
     run: [
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null)',
       'if [ ! -s "{{run.dir}}/trial-merge" ]; then echo "nothing to test ahead"; exit 0; fi',
       '( ' + testsRunReuse.split("\n").join("\n  ") + ' ); code=$?',
+      '# The test environment could not be used: back to the feature branch, then the run ends here (a resume makes the merge again).',
+      'if [ -s "$FACTORY_ENV_STOP_FILE" ]; then rm -f "{{run.dir}}/trial-merge"; git checkout -q -f "$f" || echo "cannot go back to $f"; exit 1; fi',
       '[ "$code" -eq 0 ] && echo "tested ahead: $f merged with $dev at $(cat "{{run.dir}}/trial-merge")" || echo "the tests fail on the merge with $dev — the merge step runs them again and the fix follows"',
       'rm -f "{{run.dir}}/trial-merge"',
       'git checkout -q -f "$f" || { echo "cannot go back to $f"; exit 1; }',
@@ -2463,7 +2475,7 @@ write("issue-plan", {
       forbidden_paths: "", docs_required: "", union_merge_files: "", agent_env: "",
       risk_threshold: "75", review_plan_label: "Factory_review_plan", auto_split_max_risk: "50", split_family_gate: "ask", trigger_label: "",
       max_files: "15", max_code_lines: "800", delete_merged_branches: "yes", close_when_merged: "yes",
-      revise_above_risk: "75", review_twice_above_risk: "off", reuse_test_results: "yes", quick_test_cmd: "", test_slots: "2",
+      revise_above_risk: "75", review_twice_above_risk: "off", reuse_test_results: "yes", quick_test_cmd: "", test_slots: "2", test_silence_minutes: "20",
       hotfix_labels: "bug", hotfix_prefix: "hotfix/",
     },
     steps: gitflowSteps,
@@ -2485,9 +2497,16 @@ const CHECK_LIMIT = [
   'track="{{run.dir}}/check.procs"; : > "$track"',
   'fmt() { if [ "$1" -lt 60 ]; then printf \'%d s\' "$1"; elif [ "$1" -lt 3600 ]; then printf \'%d min\' $(($1 / 60)); else printf \'%d h %d min\' $(($1 / 3600)) $(($1 % 3600 / 60)); fi; }',
 ].join("\n");
+// Tests that did not really run (Docker did not start, skipped container tests, two hangs) make the checks fail with that
+// reason. These flows report it, so the engine is not told to end the run (an empty FACTORY_ENV_STOP_FILE).
 const CHECK_TESTS = [
-  'started="{{run.dir}}/tests.started"; rm -f "$started"; before=$(date +%s); timed=""; bnote=""',
-  'FACTORY_TEST_SLOT_LIMIT_SEC="$limit" FACTORY_TEST_SLOT_STARTED_FILE="$started" FACTORY_TEST_SLOT_TRACK_FILE="$track" "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+  'started="{{run.dir}}/tests.started"; rm -f "$started"; before=$(date +%s); timed=""; bnote=""; envnote=""',
+  'if envout=$(FACTORY_ENV_STOP_FILE= node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd"); then',
+  '  [ -z "$envout" ] || printf \'%s\\n\' "$envout"',
+  '  FACTORY_TEST_SLOT_LIMIT_SEC="$limit" FACTORY_TEST_SLOT_STARTED_FILE="$started" FACTORY_TEST_SLOT_TRACK_FILE="$track" ' + RUN_TESTS,
+  '  if ! envout=$(FACTORY_ENV_STOP_FILE= node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}"); then envnote=$(printf \'%s\\n\' "$envout" | tail -n 1); ok=no; fi',
+  'else code=1; : > "{{run.dir}}/tests.log"; envnote=$(printf \'%s\\n\' "$envout" | tail -n 1); fi',
+  '[ -z "$envnote" ] || printf \'%s\\n\' "$envnote"',
   '[ "$code" -eq 0 ] || ok=no',
   'if [ "$code" -eq 124 ] && tail -n 1 "{{run.dir}}/tests.log" | grep -q "^test-slot: stopped after "; then timed=tests; fi',
   't0=$(head -n 1 "$started" 2>/dev/null); case "$t0" in ""|*[!0-9]*) t0=$before ;; esac',
@@ -2504,6 +2523,7 @@ const CHECK_BUILD = [
   'fi',
 ].join("\n");
 const CHECK_BUILD_LINE =
+  '  [ -n "$envnote" ] && printf \'%s\\n\' "$envnote"\n' +
   '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → ${bnote:-$(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")}"';
 const CHECK_TIMED_LINE =
   'if [ -n "$timed" ]; then if [ "$timed" = tests ]; then what="the tests"; else what="the build"; fi; echo "⏱ **Checks did not finish in time** — the time limit of $(fmt "$limit") (verify_timeout_min) ran out before $what finished, so they were stopped. The wait for a test slot does not count. Marked as draft; see the run log."; elif [ "$ok" != yes ]; then echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; fi';
@@ -2563,19 +2583,19 @@ write("release-daily", {
         'export FACTORY_TEST_SLOT_WAIT_SEC="${FACTORY_TEST_SLOT_WAIT_SEC:-300}"',
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
         CHECK_LIMIT,
-        // A green run on a clean tree is recorded in tested/ (the checked form, with the tree), so that self-update can skip
+        // A green run on a clean tree is recorded in tested-v2/ (the checked form, with the tree), so that self-update can skip
         // its own tests on the same code. Every git exit status is checked. The clean-tree checks run right after the tests, before
         // the build, so the build cannot hide what the tests left behind; the record itself is written after the build, and only
         // when no check timed out (a time-out writes no record). A record that fails changes nothing.
         'tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi',
         // The commit that is tested, taken before the tests (safe points, #863): TESTED is printed only for a clean tree.
         'sha0=""; if [ -n "$tree" ]; then sha0=$(git rev-parse HEAD 2>/dev/null) || sha0=""; fi',
-        // Reuse (reuse_test_results): a record in tested/ under the key of this clean tree and this command, from a story
+        // Reuse (reuse_test_results): a record in tested-v2/ under the key of this clean tree and this command, from a story
         // ("run <id>, <time>") or a release check ("run <id>, <time>, tree <sha>"), means these tests already passed on this
         // exact code. Only the matched "run <id>, <time>" text is shown, and a hit writes no record, so a story record never
         // becomes the release form that self-update trusts.
         'hit=""; if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -n "$tree" ] && [ -n "$cmd" ]; then',
-        '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40); f="{{run.dir}}/../../tested/$key"',
+        '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40); f="{{run.dir}}/../../tested-v2/$key"',
         '  if [ "${#key}" -eq 40 ] && [ -f "$f" ] && [ ! -L "$f" ]; then',
         '    line=$(head -c 200 "$f" 2>/dev/null | head -1)',
         '    hit=$(printf \'%s\\n\' "$line" | sed -nE \'s/^(run [A-Za-z0-9_-]{1,64}, [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z)(, tree [0-9a-f]{40})?$/\\1/p\')',
@@ -2592,7 +2612,7 @@ write("release-daily", {
         CHECK_BUILD,
         'if [ "$record" = yes ] && [ -z "$timed" ]; then',
         '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40)',
-        '  if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested" && printf \'run %s, %s, tree %s\\n\' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested/$key"; } 2>/dev/null || true; fi',
+        '  if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested-v2" && printf \'run %s, %s, tree %s\\n\' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested-v2/$key"; } 2>/dev/null || true; fi',
         'fi',
         '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; if [ -n "$hit" ]; then echo "not run again: this exact code already passed these tests ($hit)"; else "$FACTORY_TOOLS/test-summary" "$marker"; fi',
         CHECK_BUILD_LINE,

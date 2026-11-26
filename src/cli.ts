@@ -33,6 +33,7 @@ import { confirmStart, startGuard } from "./self-update-state.js";
 import { SelfUpdater } from "./self-update.js";
 import { stuckRuns } from "./server/stuck-runs.js";
 import { withSignal } from "./release/git.js";
+import { reportDockerApi } from "./test-env-report.js";
 import { configureTelemetry, exitAfterTelemetry } from "./telemetry/telemetry.js";
 import { dropEmptyHomeVars, prepareDataHome, watchDataHome } from "./home.js";
 
@@ -343,6 +344,7 @@ async function main(argv: string[]): Promise<number> {
           ...(values["local-test"] ? { localTest: true } : {}),
           log: (m) => process.stdout.write(m + "\n"),
         });
+        await reportDockerApi({ run: summary, runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")), config: () => loadConfig(), log: (m) => process.stdout.write(m + "\n") });
         return report(summary);
       });
     }
@@ -378,6 +380,7 @@ async function main(argv: string[]): Promise<number> {
           signal,
           log: (m) => process.stdout.write(m + "\n"),
         });
+        await reportDockerApi({ run: summary, runsDir, config: () => loadConfig(), log: (m) => process.stdout.write(m + "\n") });
         return report(summary);
       });
     }

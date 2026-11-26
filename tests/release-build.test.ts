@@ -8,6 +8,7 @@ import { KNOWN_KEY_VARS } from "../src/agents/targets.js";
 import { collectArtifacts, copyTree, globToRegExp, planBuilds, runCommand, writeSha256Sums } from "../src/release/build.js";
 import { buildEnv, deniedNames, findCommand, hostOf, killTree, matchBuild, TOOLCHAIN_VARS } from "../src/release/host.js";
 import { parseRecipe } from "../src/release/recipe.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 const roots: string[] = [];
 const tmp = () => {
@@ -15,7 +16,9 @@ const tmp = () => {
   roots.push(d);
   return d;
 };
+const watched = new Watched();
 afterEach(() => {
+  watched.kill(); // before the folders go: it reads the pid files
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
 });
 const put = (root: string, rel: string, text = "x") => {
@@ -130,6 +133,7 @@ describe("killTree", () => {
   it.skipIf(process.platform === "win32")("kills a whole group, also one that ignores TERM", async () => {
     const child = spawn("sh", ["-c", "trap '' TERM; sleep 30 & wait"], { detached: true, stdio: "ignore" });
     const pid = child.pid!;
+    watched.pid(pid, pid);
     const exited = new Promise((r) => child.on("close", r));
     killTree(pid, "SIGTERM");
     killTree(pid, "SIGKILL");
@@ -264,6 +268,7 @@ describe.skipIf(process.platform === "win32")("runCommand", () => {
     mkdirSync(join(slots, "slot-1"), { recursive: true });
     writeFileSync(join(slots, "slot-1", "pid"), String(process.pid)); // a live first run: ours is the second and is paused
     const stop = new AbortController();
+    watched.file(join(d, "pid"));
     const running = runCommand({
       cmd: `echo $$ > "${d}/pid"; trap '' TERM; sleep 60 & wait`, cwd: d, testSlot, slotsDir: slots, timeoutMs: 60_000, logFile: join(d, "log.txt"), signal: stop.signal,
       env: { PATH: process.env.PATH ?? "", FACTORY_VAR_TEST_SLOTS: "2", FACTORY_TEST_SLOT_POLL_MS: "50", FACTORY_TEST_NICE: "0" },
@@ -285,6 +290,7 @@ describe.skipIf(process.platform === "win32")("runCommand", () => {
   it("kills a command that ignores TERM when aborted, and its children", async () => {
     const d = tmp();
     const stop = new AbortController();
+    watched.file(join(d, "pid"));
     const running = run(d, `echo $$ > "${d}/pid"; trap '' TERM; sleep 60 & wait`, { signal: stop.signal });
     while (!existsSync(join(d, "pid"))) await new Promise((r) => setTimeout(r, 20));
     const started = Date.now();
