@@ -429,6 +429,7 @@ export class Watcher {
       owner: watcherAccount(this.cfg),
       rule: () => this.doneRule(),
       identity: (id) => this.otherIdentity(id),
+      selfIdentity: () => this.d.gh, // owned by the caller: not disposed with the others
       act: (m) => { if (!this.status.lastActions.some((a) => a.endsWith(m))) this.act(m); },
       warn: (m) => this.d.log(`[${this.cfg.id}] ! ${m}`),
     }));

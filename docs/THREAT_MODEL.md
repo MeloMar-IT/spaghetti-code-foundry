@@ -395,6 +395,18 @@ A watcher can give its runs read-only copies of other repositories of its owner 
 - A copy whose removal fails is kept, marked unavailable, and stays denied to Claude's write tools.
 - The privacy rule (a private reference only for a target known to be private, or `reference_private_ok`) is a separate guard and not covered here; see the USER_GUIDE.
 
+## Depends on across repositories (#976)
+
+**Protected by.** A watcher reads the issue of another repository named in **Depends on** only as follows (`src/queue/cross-deps.ts`, `src/queue/watcher.ts`).
+- Only a GitHub repository the watcher's account added counts. A repository another user added is never read, with any sign-in.
+- A non-admin's repository with no sign-in of its own (method `none`) is refused before any sign-in is chosen.
+- An admin's `none` repository is read with the server's own access. Otherwise its own sign-in is tried first.
+- When both repositories have the same GitHub account or organisation (case ignored), the sign-in of the watcher's own repository is tried next. The same sign-in is never asked twice for one read.
+- Only the state of the issue is read and kept. The first readable issue is the answer. A 403 or 404 is "cannot read", never "done".
+- Nothing is written to the other repository.
+
+**Limit.** The watcher's own sign-in can read the issues of another repository under the same GitHub owner, when it has access to them. This is the intended same-owner case; no other repository is reached with it.
+
 ## Shared metrics receiver (#890)
 
 The receiver is a separate Node.js process on the public site (`collector/`, see `collector/README.md`). It takes

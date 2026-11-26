@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RepoRecord } from "../src/auth/repos.js";
 import { currentGhSession, type RestIssue } from "../src/github.js";
-import { CrossDeps, type CrossDepOptions } from "../src/queue/cross-deps.js";
+import { CrossDeps, NOT_ALLOWED, type CrossDepOptions }from "../src/queue/cross-deps.js";
 import type { RepoGhIdentity } from "../src/queue/gh-identity.js";
 
 const rec = (name: string, owner = "ann", method: RepoRecord["method"] = "github-token"): RepoRecord =>
@@ -12,7 +12,7 @@ const issue = (number: number, state = "open", state_reason: string | null = nul
 
 const story = (deps: string, number = 7) => ({ number, body: `### Depends on\n${deps}` });
 
-function setup(o: { recs?: RepoRecord[]; issues?: Record<string, RestIssue[]>; extra?: Partial<CrossDepOptions> } = {}) {
+function setup(o: { recs?: RepoRecord[]; issues?: Record<string, RestIssue[]>; admin?: boolean; self?: RepoGhIdentity; extra?: Partial<CrossDepOptions> } = {}) {
   const acts: string[] = [];
   const warns: string[] = [];
   const reads: string[] = [];
@@ -23,6 +23,7 @@ function setup(o: { recs?: RepoRecord[]; issues?: Record<string, RestIssue[]>; e
   const cross = new CrossDeps({
     selfRepo: "acme/app", owner: "ann", rule: () => ({ doneLabels: ["Factory_done"] }),
     identity, act: (m) => acts.push(m), warn: (m) => warns.push(m),
+    isAdmin: () => o.admin ?? false, selfIdentity: () => o.self,
     find: (owner, name) => recs.find((r) => r.owner === owner && r.url.toLowerCase().endsWith(`/${name.toLowerCase()}`)),
     read: async (repo, n) => {
       reads.push(`${repo}#${n}`);
@@ -69,12 +70,12 @@ describe("CrossDeps", () => {
     expect(t.acts).toEqual(["#7: acme/lib#3 is not a repository of the Foundry; not waited for"]);
   });
 
-  it("a repository without a sign-in of its own (method none) holds and is never read", async () => {
+  it("a non-admin's repository without a sign-in of its own (method none) holds and is never read", async () => {
     const t = setup({ recs: [rec("acme/lib", "ann", "none")] });
     const s = story("- acme/lib#3");
     t.cross.startCheck([s]);
     expect(await t.cross.blockers(s, false)).toEqual([{ repo: "acme/lib", issue: 3, noSignIn: true }]);
-    expect(t.warns).toEqual(["#7: acme/lib#3 could not be read: the repository has no sign-in of its own"]);
+    expect(t.warns).toEqual([`#7: acme/lib#3 could not be read: ${NOT_ALLOWED}`]);
     expect(t.reads).toEqual([]);
   });
 
@@ -227,5 +228,164 @@ describe("CrossDeps", () => {
     await expect(v.cross.blockers(s, false, alive)).rejects.toThrow("this watcher was stopped");
     expect(read).toHaveBeenCalledOnce();
     expect(v.warns).toEqual([]);
+  });
+});
+
+describe("CrossDeps: the allowed ways to read an issue (#976)", () => {
+  const s = story("- acme/lib#3");
+  /** An identity that records in `order` when it is prepared. */
+  const signIn = (stamp: string, order: string[] = [], fail?: string): RepoGhIdentity => ({
+    prepare: async () => {
+      order.push(stamp);
+      if (fail) throw new Error(fail);
+      return { stamp };
+    },
+    usesHostLogin: () => false,
+    dispose: () => {},
+  });
+  /** Each session gets its own answer: an issue, undefined (404) or an error. */
+  const answers = (by: Record<string, RestIssue | Error | undefined>) => {
+    const asked: string[] = [];
+    const read = async () => {
+      const stamp = currentGhSession()!.stamp;
+      asked.push(stamp);
+      const a = by[stamp];
+      if (a instanceof Error) throw a;
+      return a;
+    };
+    return { asked, read };
+  };
+  const done = issue(3, "closed", "completed");
+  const forbidden = new Error("HTTP 403: Resource not accessible by integration");
+  type Case = { method?: RepoRecord["method"]; admin?: boolean; own?: RepoGhIdentity; self?: RepoGhIdentity; read: () => Promise<RestIssue | undefined>; selfRepo?: string };
+  const make = (c: Case) => {
+    const own = c.own ?? signIn("lib");
+    return setup({
+      recs: [rec("acme/lib", "ann", c.method)], admin: c.admin, self: c.self,
+      extra: { identity: () => own, read: c.read, ...(c.selfRepo ? { selfRepo: c.selfRepo } : {}) },
+    });
+  };
+  const check = async (t: ReturnType<typeof setup>) => {
+    t.cross.startCheck([s]);
+    return t.cross.blockers(s, false);
+  };
+
+  it("reads an admin's none repository with the server's own access: open holds, completed releases", async () => {
+    const by: Record<string, RestIssue> = { host: issue(3) };
+    const a = answers(by);
+    const t = make({ method: "none", admin: true, own: signIn("host"), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    by.host = done;
+    expect(await check(t)).toEqual([]);
+    expect(a.asked).toEqual(["host", "host"]);
+    expect(t.warns).toEqual([]);
+  });
+
+  it.each(["other/app", "acme/app"])("refuses a non-admin's none repository before any sign-in (story repository %s)", async (selfRepo) => {
+    const order: string[] = [];
+    const a = answers({ host: done, self: done });
+    const t = make({ method: "none", selfRepo, own: signIn("host", order), self: signIn("self", order), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3, noSignIn: true }]);
+    expect(t.warns).toEqual([`#7: acme/lib#3 could not be read: ${NOT_ALLOWED}`]);
+    expect(order).toEqual([]);
+    expect(a.asked).toEqual([]);
+  });
+
+  it("same GitHub owner (without case): after a 403 the story repository's sign-in reads the issue", async () => {
+    const order: string[] = [];
+    const a = answers({ lib: forbidden, self: done });
+    const t = make({ selfRepo: "ACME/app", own: signIn("lib", order), self: signIn("self", order), read: a.read });
+    expect(await check(t)).toEqual([]);
+    expect(a.asked).toEqual(["lib", "self"]);
+    expect(order).toEqual(["lib", "self"]);
+    expect(t.warns).toEqual([]);
+  });
+
+  it("uses the story repository's sign-in when the other sign-in cannot be prepared", async () => {
+    const a = answers({ self: done });
+    const t = make({ own: signIn("lib", [], "no token"), self: signIn("self"), read: a.read });
+    expect(await check(t)).toEqual([]);
+    expect(a.asked).toEqual(["self"]);
+  });
+
+  it.each([
+    ["open", issue(3), {}],
+    ["not planned", issue(3, "closed", "not_planned"), { notPlanned: true }],
+  ])("a first readable answer (%s) is final", async (_name, first, extra) => {
+    const order: string[] = [];
+    const a = answers({ lib: first, self: done });
+    const t = make({ own: signIn("lib", order), self: signIn("self", order), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3, ...extra }]);
+    expect(a.asked).toEqual(["lib"]);
+    expect(order).toEqual(["lib"]);
+  });
+
+  it("a 404 on the first way and an open answer on the second holds without noSignIn", async () => {
+    const a = answers({ host: undefined, self: issue(3) });
+    const t = make({ method: "none", admin: true, own: signIn("host"), self: signIn("self"), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(a.asked).toEqual(["host", "self"]);
+    expect(t.warns).toEqual([]);
+  });
+
+  it("403 and 404 on every way never release; the line names each way and its reason", async () => {
+    const a = answers({ lib: forbidden, self: undefined });
+    const t = make({ self: signIn("self"), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(t.warns).toEqual([
+      "#7: acme/lib#3 could not be read: no sign-in could read it; tried: its own sign-in: HTTP 403: Resource not accessible by integration; the sign-in of acme/app: GitHub does not know it",
+    ]);
+  });
+
+  it("an admin's none repository that no way can read has noSignIn, logged once across checks", async () => {
+    const a = answers({ host: undefined, self: forbidden });
+    const t = make({ method: "none", admin: true, own: signIn("host"), self: signIn("self"), read: a.read });
+    for (let i = 0; i < 3; i++) expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3, noSignIn: true }]);
+    expect(t.warns).toEqual([
+      "#7: acme/lib#3 could not be read: the repository has no sign-in of its own that works; tried: the server's own access: GitHub does not know it; the sign-in of acme/app: HTTP 403: Resource not accessible by integration",
+    ]);
+  });
+
+  it("a passing error on a none repository holds without noSignIn", async () => {
+    const a = answers({ host: new Error("timed out") });
+    const t = make({ method: "none", admin: true, own: signIn("host"), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(t.warns).toEqual(["#7: acme/lib#3 could not be read: the repository has no sign-in of its own that works; tried: the server's own access: timed out"]);
+  });
+
+  it("another GitHub owner: the story repository's sign-in is not used, and the failure text is the read's own", async () => {
+    const order: string[] = [];
+    const a = answers({ lib: new Error("HTTP 401: Bad credentials"), self: done });
+    const t = make({ selfRepo: "other/app", own: signIn("lib", order), self: signIn("self", order), read: a.read });
+    expect(await check(t)).toEqual([{ repo: "acme/lib", issue: 3 }]);
+    expect(order).toEqual(["lib"]);
+    expect(t.warns).toEqual(["#7: acme/lib#3 could not be read: HTTP 401: Bad credentials"]);
+  });
+
+  it("does not read twice with the same session", async () => {
+    const a = answers({ host: undefined });
+    const t = make({ method: "none", admin: true, own: signIn("host"), self: signIn("host"), read: a.read });
+    expect(await check(t)).toHaveLength(1);
+    expect(a.asked).toEqual(["host"]);
+  });
+
+  it("another account's repository is not read, also under the same GitHub owner", async () => {
+    const order: string[] = [];
+    const t = setup({ recs: [rec("acme/lib", "bob")], self: signIn("self", order) });
+    expect(await check(t)).toEqual([]);
+    expect(t.reads).toEqual([]);
+    expect(order).toEqual([]);
+  });
+
+  it("a check stopped during the first read tries no second way", async () => {
+    let stop = false;
+    const order: string[] = [];
+    const read = vi.fn(async (): Promise<RestIssue | undefined> => { stop = true; throw forbidden; });
+    const t = make({ self: signIn("self", order), read });
+    t.cross.startCheck([s]);
+    await expect(t.cross.blockers(s, false, () => { if (stop) throw new Error("this watcher was stopped"); })).rejects.toThrow("this watcher was stopped");
+    expect(read).toHaveBeenCalledOnce();
+    expect(order).toEqual([]);
+    expect(t.warns).toEqual([]);
   });
 });
