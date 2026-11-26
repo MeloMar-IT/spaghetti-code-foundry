@@ -112,7 +112,7 @@ export class GitHubStore implements StoryStore {
   }
   async listWithBodies(limit: number, timeoutMs?: number): Promise<Issue[]> {
     return ghJson<Issue[]>(
-      ["issue", "list", "--repo", this.repo, "--state", "all", "--limit", String(listSize(limit)), "--json", "number,title,labels,state,body"],
+      ["issue", "list", "--repo", this.repo, "--state", "all", "--limit", String(listSize(limit)), "--json", "number,title,labels,state,body,stateReason"],
       undefined,
       timeoutMs,
     );

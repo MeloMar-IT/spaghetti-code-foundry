@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
 import { setLevel } from "../src/governance/autonomy-store.js";
-import { raiseCommand, recordRunAutonomy, runAutonomyOnResume } from "../src/governance/run-autonomy.js";
+import { levelChange, raiseCommand, recordRunAutonomy, runAutonomyOnResume } from "../src/governance/run-autonomy.js";
 import { writable } from "../src/agents/run.js";
 import { autonomyStop, stepEnv, type Engine, type Scope } from "../src/engine/execute.js";
 import { dockerCommand, hookMounts, protectedBranchEnv } from "../src/engine/guards.js";
@@ -336,7 +336,36 @@ describe("recordRunAutonomy", () => {
     const lines: string[] = [];
     recordRunAutonomy(start, (l) => lines.push(l), { runAutonomy: (...a: unknown[]) => void got.push(a) } as never, { resumed: true, was: "guarded-write" });
     expect(got).toEqual([[start.autonomy, { resumed: true }]]);
-    expect(lines).toEqual(["! autonomy: x", "autonomy: plan-only (no repository, flow plan-only); resumed, was guarded-write"]);
+    expect(lines).toEqual(["! autonomy: x", "autonomy: plan-only (no repository, flow plan-only); resumed, was guarded-write, lowered guarded-write→plan-only"]);
+  });
+
+  it("says raised on a resume, and adds nothing when the level is the same", () => {
+    const up = { autonomy: { level: "delivery-handoff" as const, flow: "delivery-handoff" as const }, problems: [] };
+    const lines: string[] = [];
+    const ev = { runAutonomy: () => undefined } as never;
+    recordRunAutonomy(up, (l) => lines.push(l), ev, { resumed: true, was: "guarded-write" });
+    recordRunAutonomy(up, (l) => lines.push(l), ev, { resumed: true, was: "delivery-handoff" });
+    expect(lines[0]).toMatch(/; resumed, was guarded-write, raised guarded-write→delivery-handoff$/);
+    expect(lines[1]).toMatch(/; resumed, was delivery-handoff$/);
+  });
+
+  it("adds the queued clause to a start line only when the level changed", () => {
+    const up = { autonomy: { level: "delivery-handoff" as const, flow: "delivery-handoff" as const }, problems: [] };
+    const got: unknown[] = [];
+    const lines: string[] = [];
+    const ev = { runAutonomy: (...a: unknown[]) => void got.push(a) } as never;
+    recordRunAutonomy(up, (l) => lines.push(l), ev, { queued: "guarded-write" });
+    recordRunAutonomy(up, (l) => lines.push(l), ev, { queued: "delivery-handoff" });
+    recordRunAutonomy(up, (l) => lines.push(l), ev, { queued: "delivery-handoff" });
+    expect(lines[0]).toMatch(/; raised guarded-write→delivery-handoff while queued$/);
+    expect(lines[1]).not.toContain("while queued");
+    expect(got[0]).toEqual([up.autonomy, {}]);
+  });
+
+  it("levelChange names a raise, a lowering and no change", () => {
+    expect(levelChange("guarded-write", "delivery-handoff")).toBe("raised guarded-write→delivery-handoff");
+    expect(levelChange("delivery-handoff", "plan-only")).toBe("lowered delivery-handoff→plan-only");
+    expect(levelChange("observe", "observe")).toBeUndefined();
   });
 
   it("does not throw when the logger or the evidence writer fails", () => {

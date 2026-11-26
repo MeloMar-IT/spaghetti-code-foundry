@@ -255,6 +255,15 @@ function findingsTable(m, redraw) {
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
 
+const REPAIR_TEXT = { auto: "fixes alone", ask: "asks you first" };
+const repairText = (c) => REPAIR_TEXT[c] ?? "";
+
+/** The automatic repairs the Foundry does, with their class. */
+function repairsTable(m) {
+  const rows = m.repairs.map((r) => h("tr", {}, h("td", {}, r.name), h("td", {}, r.description), h("td", {}, repairText(r.repair))));
+  return table(["Repair", "What it does", "Class"], rows, { label: "Automatic repairs", class: "compact" });
+}
+
 function detectorsTable(m, reload) {
   const rows = (m.detectors ?? []).map((d) => {
     const mute = (m.mutes ?? []).find((x) => x.kind === "detector" && x.detector === d.name);
@@ -268,13 +277,14 @@ function detectorsTable(m, reload) {
         list.length ? settingsForm(list, m, reload, { saved: "Threshold saved" }) : h("span", { class: "muted" }, "none")),
       h("td", {}, d.slo?.window ?? ""),
       h("td", {}, d.slo?.action ?? ""),
+      h("td", {}, repairText(d.repair)),
       h("td", {}, d.lastFound ? when(d.lastFound) : "nothing in the last 30 days"),
       h("td", {}, mute ? `muted ${untilText(mute.until)}: ${mute.reason}` : ""),
       h("td", {}, mute
         ? h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(mute.id), () => "Mute ended", reload) }, "End mute")
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
-  return table(["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")],
+  return table(["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Repair", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")],
     rows, { label: "Detectors", class: "compact" });
 }
 
@@ -321,6 +331,11 @@ export async function renderProblems(main, { data } = {}) {
     list,
     h("details", {}, h("summary", {}, `Mutes (${(m.mutes ?? []).length})`), (m.mutes ?? []).length ? mutesTable(m, reload) : h("p", { class: "muted" }, "No mutes.")),
     monitorSettingsSection(m, reload),
+    ...((m.repairs ?? []).length ? [
+      h("h2", {}, "Automatic repairs"),
+      h("p", { class: "muted" }, "What the Foundry fixes alone and what it asks you first."),
+      repairsTable(m),
+    ] : []),
     h("h2", {}, "Detectors"),
     detectorsTable(m, reload));
 }

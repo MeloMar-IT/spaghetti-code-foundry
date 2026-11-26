@@ -28,6 +28,7 @@ const minutesOf = (ms: number) => Math.round((ms / MIN) * 10) / 10;
 
 const policyServiceFailure: Detector = {
   name: "policy-service-failure",
+  repair: "auto",
   description: "Policy decisions said the policy was unavailable or invalid. Runs go on without the checks that policy should make.",
   slo: {
     owner: "admin",
@@ -55,6 +56,7 @@ const policyServiceFailure: Detector = {
 
 const evidenceFinalization: Detector = {
   name: "evidence-finalization",
+  repair: "auto",
   description: "A run ended but its evidence was never finalized, or its evidence stream stopped. The run cannot be verified later.",
   slo: {
     owner: "admin",
@@ -102,6 +104,7 @@ function groupVisits(input: DetectorInput, hours: number, keep: (v: StepVisit) =
 
 const stepLatencyP95: Detector = {
   name: "step-latency-p95",
+  repair: "auto",
   description: "The slowest usual visits of a step take longer than the limit. Something may be slow, such as a tool, a model or the machine.",
   slo: {
     owner: "admin",
@@ -135,6 +138,7 @@ const stepLatencyP95: Detector = {
 
 const repeatedToolDenial: Detector = {
   name: "repeated-tool-denial",
+  repair: "ask",
   description: "The agent was refused the same tool again and again in one repository. Its steps may lack a tool they need, or ask for one they should not use.",
   slo: {
     owner: "repository owner",
@@ -171,6 +175,7 @@ const repeatedToolDenial: Detector = {
 
 const abnormalOutput: Detector = {
   name: "abnormal-output",
+  repair: "auto",
   description: "A step wrote far more output than is usual for that step. It may loop or have a task that is too wide.",
   slo: {
     owner: "repository owner",

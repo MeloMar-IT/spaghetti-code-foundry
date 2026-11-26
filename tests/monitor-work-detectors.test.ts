@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { invalidRepairClasses, isRepairClass, REPAIRS } from "../src/monitor/repairs.js";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
@@ -536,6 +537,38 @@ describe("a chain that can never start", () => {
   it("leaves out the monitor's own repair stories as waiting stories", () => {
     expect(go(L([issue(1, [7]), issue(2, [7]), bare(7)], { skip: [1] }))[0]!.evidence.counts).toEqual({ stories: 1 });
     expect(go(L([issue(1, [7]), bare(7)], { skip: [1] }))).toEqual([]);
+  });
+});
+
+describe("repair classes", () => {
+  it("every detector and every automatic repair has a valid class", () => {
+    expect(invalidRepairClasses(detectorInfo())).toEqual([]);
+    expect(invalidRepairClasses(REPAIRS)).toEqual([]);
+    for (const d of ALL_DETECTORS) expect(isRepairClass(d.repair), d.name).toBe(true);
+  });
+
+  it("invalidRepairClasses names an entry without a class or with a wrong one", () => {
+    expect(invalidRepairClasses([{ name: "a", repair: "auto" }, { name: "b" }, { name: "c", repair: "maybe" }])).toEqual(["b", "c"]);
+  });
+
+  it("the ask detectors are exactly the four of the rule", () => {
+    const info = detectorInfo();
+    expect(info.filter((d) => d.repair === "ask").map((d) => d.name).sort()).toEqual(["dead-chain", "repeated-tool-denial", "self-update", "skill-source-check"]);
+    expect(info.find((d) => d.name === "detector-failed")!.repair).toBe("auto");
+  });
+
+  it("the repair list has unique names, one-sentence descriptions and sources that exist", () => {
+    expect(REPAIRS).toHaveLength(8);
+    expect(new Set(REPAIRS.map((r) => r.name)).size).toBe(8);
+    const detectors = detectorInfo().map((d) => d.name);
+    for (const r of REPAIRS) {
+      expect(detectors, r.name).not.toContain(r.name);
+      expect(r.description.length, r.name).toBeLessThanOrEqual(160);
+      expect(r.description.match(/[.!?](?:\s|$)/g)?.length, r.name).toBe(1);
+      expect(existsSync(r.where), r.name).toBe(true);
+    }
+    expect(REPAIRS.find((r) => r.name === "hotfix-merge")!.repair).toBe("auto");
+    expect(REPAIRS.find((r) => r.name === "lower-autonomy")!.repair).toBe("auto");
   });
 });
 

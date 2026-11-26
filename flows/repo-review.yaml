@@ -117,8 +117,13 @@ steps:
       fmt() { if [ "$1" -lt 60 ]; then printf '%d s' "$1"; elif [ "$1" -lt 3600 ]; then printf '%d min' $(($1 / 60)); else printf '%d h %d min' $(($1 / 3600)) $(($1 % 3600 / 60)); fi; }
       marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes; timed=""; bnote=""; used=0
       if [ -n "$cmd" ]; then
-      started="{{run.dir}}/tests.started"; rm -f "$started"; before=$(date +%s); timed=""; bnote=""
-      FACTORY_TEST_SLOT_LIMIT_SEC="$limit" FACTORY_TEST_SLOT_STARTED_FILE="$started" FACTORY_TEST_SLOT_TRACK_FILE="$track" "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+      started="{{run.dir}}/tests.started"; rm -f "$started"; before=$(date +%s); timed=""; bnote=""; envnote=""
+      if envout=$(FACTORY_ENV_STOP_FILE= node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd"); then
+        [ -z "$envout" ] || printf '%s\n' "$envout"
+        FACTORY_TEST_SLOT_LIMIT_SEC="$limit" FACTORY_TEST_SLOT_STARTED_FILE="$started" FACTORY_TEST_SLOT_TRACK_FILE="$track" node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        if ! envout=$(FACTORY_ENV_STOP_FILE= node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}"); then envnote=$(printf '%s\n' "$envout" | tail -n 1); ok=no; fi
+      else code=1; : > "{{run.dir}}/tests.log"; envnote=$(printf '%s\n' "$envout" | tail -n 1); fi
+      [ -z "$envnote" ] || printf '%s\n' "$envnote"
       [ "$code" -eq 0 ] || ok=no
       if [ "$code" -eq 124 ] && tail -n 1 "{{run.dir}}/tests.log" | grep -q "^test-slot: stopped after "; then timed=tests; fi
       t0=$(head -n 1 "$started" 2>/dev/null); case "$t0" in ""|*[!0-9]*) t0=$before ;; esac

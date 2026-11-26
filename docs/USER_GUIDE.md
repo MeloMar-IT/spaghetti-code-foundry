@@ -1007,6 +1007,7 @@ Right after the server starts, it reads all run records in the background, and t
 The line has one entry for each problem: who has the next move, what to do, why, "Continues: …" when it continues by itself, and a link to the place to act. The sentences come from the server, so they read the same as on the other pages. It asks again on every page change and every 30 seconds while the tab is visible. A hidden tab does not refresh it; it asks once when you return. The count in the tab title keeps updating. When the server does not answer, the chip reads "No answer" and the line says so (once, not on every refresh).
 
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
+- **A restart at a safe moment:** "A health check asked for a restart" lists the runs it waits for. A restart at a safe moment waits only while a push, merge or release step runs (the steps `push`, `push_feature`, `merge_develop`, `push_develop`, `merge_main`, `push_main`, `merge_back`, `push_back`, `release_pr` and `publish`). It starts no new runs meanwhile. When no such step runs, it stops the other active runs and the server restarts; those runs are resumed after the restart. It needs the server to run under the supervisor; otherwise it does nothing.
 - **A usage limit:** one line per agent (Claude, Codex), not per run, with the time it continues. It shows for an hour after the run stopped; a watcher tries again every 30 minutes, so a limit that lasts keeps showing. A used-up daily budget is a problem too; the link goes to Settings.
 - **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. A short GitHub failure (HTTP 499 or 5xx, a timeout, a dropped connection) is read again up to 2 more times, and any "can't reach GitHub" error shows here only after 3 checks in a row failed; the next good check clears it. Error details and the log show every failed check. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
 - **A schedule run that is late:** a daily schedule run (the release, the daily report) that has not started an hour after its time shows as "The 17:00 release of acme/app is waiting: <why>". The reason names who has the next move: the server waits to restart, another run goes first, the owner's or the daily budget is used up (the link goes to Settings or Users), or the watcher has a problem (its link goes to Watchers). A run that is queued but not started links to its change page. A run that was never queued, because its watcher did not start it, stays until the next day's time. The line goes away when the run starts.
@@ -1998,7 +1999,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | starting soon | Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself. |
 | queued | It waits in the queue until a run finishes. Nothing to do — it starts by itself. |
 | working | The Foundry is working on it right now. Nothing to do — you can follow it on the run page. |
-| interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page. |
+| interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page. The exception: after a restart at a safe moment, the other runs it stopped are queued to resume by themselves. |
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
 | cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
 | parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |
@@ -3019,8 +3020,13 @@ kept in three places:
 
 A stopped run is not stuck at the level it started with. On each resume the level is worked out again from the current
 settings, as at the start, and stored in `run.json`. So after you raise the level, resume the stopped run: it pushes and
-goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>` and the
-evidence gets `run.autonomy` with `resumed: true`. A resume with no change writes no new event.
+goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>, raised
+<from>→<to>` (or `lowered <from>→<to>`) and the evidence gets `run.autonomy` with `resumed: true`. A resume with no change
+writes no new event and adds nothing to the log.
+
+A run that is queued when you raise the level also uses the new level. The job keeps the level it had when it was queued,
+and when the run starts at another level, the start line says so: `…; raised <from>→<to> while queued` (or `lowered …`).
+The level a run starts with is always worked out from the current settings, so a lowered level is used by a queued run too.
 
 Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
 routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion
@@ -3728,7 +3734,7 @@ log; none calls an AI or GitHub.
 | Step latency p95 | the p95 of a step's durations, per repository, flow and step, is above the limit (approval and flow steps are not counted) | minor | p95 above 60 minutes, from at least 5 visits, in the last 24 hours |
 | Repeated tool denial | the same tool was refused again and again in one repository | minor | 3 times in the last 24 hours |
 | Abnormal output | a step's output tokens are above 5 times the median of that flow and step, and above 20000 tokens (the median needs 5 visits) | minor | in the last 24 hours |
-| Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical) | major / critical | always (only when a self-update was tried) |
+| Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical). After the third failed test try of one commit, one finding per commit (major), which files a bug story naming the failing tests | major / critical | always (only when a self-update was tried) |
 
 *Critical* means work has stopped, *major* means work is slowed or wrong, *minor* means wrong but
 harmless. A detector that crashes shows up as a finding "Detector X failed"; the others still run.
@@ -4126,7 +4132,7 @@ watchers:
 | `status_labels` | Your own names for the status labels above |
 | `remove_on_done` | Labels to remove when a run succeeds (e.g. the trigger label) |
 | `one_at_a_time` | Never run two of this watcher's runs at once |
-| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
+| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed (an issue closed as *not planned* is not done, so the story keeps waiting and Your turn shows it), a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
 | `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. Its question comments then say "Nothing needed from you", and the questions are not in **Your turn**: an issue that waits for other issues is answered when it can start, and you may answer first. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
@@ -4560,7 +4566,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
 - **It needs you:** a question (`Factory_needs_info`), a risky plan (`Factory_waiting`) or an
   error (`Factory_ERROR`).
 - **It waits for another issue.** If the issue has a **Depends on** (or **Blocked by**) line or
-  section, it starts only when those issues are done — closed, or `Factory_done` (in a gitflow
+  section, it starts only when those issues are done — closed (but not as *not planned*), or `Factory_done` (in a gitflow
   flow, where `develop_branch` is set; it is set after the merge into develop, but a hotfix can
   finish while develop is behind). You can name them as `#72` or by title (`Story 4 — Download the
   update safely`). An issue of another repository can be named as `owner/name#72`. It holds the story
@@ -4695,6 +4701,26 @@ flowchart LR
   that left the command's process group, so a later call with a limit can stop them, and
   `FACTORY_TEST_SLOT_TRACK_MS` (default `2000`) sets how often they are noted while a limit or a track
   file is set.
+- **Tests that did not really run are never green.** A test step first checks Docker when its tests
+  need it: a Testcontainers or Docker Compose dependency in a build file (up to 3 folders deep), or a
+  `docker` command in `test_cmd`. If Docker does not answer, on macOS the Foundry starts Docker
+  Desktop and waits up to 3 minutes. If Docker still does not come up, the step fails with
+  `Docker did not start`. After the tests, the step reads the output and the JUnit reports: a
+  container test that was skipped because no Docker environment was found, or because Docker refused
+  the API version, counts as **not tested**, and so does a skip by `@Testcontainers(disabledWithoutDocker = true)`.
+  Such a step is not green. In both cases the run ends at that step, and the AI fix step is not
+  started, because an agent cannot repair the machine.
+  - **A refused API version** also files one bug story in that repository (class `auto`). It names
+    the Testcontainers version in use and the first version that works with the installed Engine,
+    from a built-in table (for API 1.44: 1.21.4 for Testcontainers 1.x, 2.0.2 for 2.x). The story is
+    is tried again by the watcher when filing fails, and a lost reply from GitHub does not file it twice. A run of a user or a team
+    files it with its own GitHub sign-in only, never with the server's.
+  - **A hung test run** has no output for `test_silence_minutes` (flow variable "Test silence limit
+    (minutes)", default `20`, `0` switches it off, up to 720). It is stopped and run once more. A
+    second silence fails the step with that reason. The retry starts only when every process of the
+    first run is gone. Time spent waiting for a test slot is not silence.
+  - **Limit.** Inside a Docker sandbox the step can only see the "no Docker environment" and
+    API-version messages; it cannot see other skipped tests or hangs there.
 - **A wait for a slot does not use up a step's time limit.** While a step waits for a test slot, its
   time limit stops: the wait is moved back, at most `FACTORY_TEST_SLOT_WAIT_SEC` seconds (default
   `5400`, 90 minutes). A step never runs longer than its limit plus that bound, so a step that waits
@@ -4720,7 +4746,7 @@ flowchart LR
   and opens (or updates) **one pull request `develop` → `main`** that lists and closes the day's
   issues — a draft while the checks fail. A red run opens a new pull request as a draft from the start; for an existing one it switches the pull request to a draft. If that switch fails, the run says `checks failed — could not mark PR #<n> as a draft` instead of hiding it. **You merge it once a day.** When the tests pass on a clean
   checkout, the run also records that pass in the data folder, so that [self-update](#self-update) can skip its own test run on the same code.
-- **The time limit of the daily checks.** The full tests and build of `release-daily` and `daily-pr` may work for `verify_timeout_min` minutes (flow variable, 1 to 720, default `180`). The wait for a test slot does not count: the limit starts when the tests start, and the build gets the time that is left. A check never fails just for waiting. `release-daily` waits at most 5 minutes for a slot by default (`FACTORY_TEST_SLOT_WAIT_SEC`) and then runs its tests anyway; the wait is capped at 6 hours in all. When the limit runs out, the processes are stopped, the run still succeeds, and the pull request is a draft with the line `⏱ **Checks did not finish in time** — the time limit of … (verify_timeout_min) ran out before …`. A time-out writes no `tested/` record, so [self-update](#self-update) runs its tests again. Set another limit in the watcher's `vars` (see the watcher examples in [6. Automate with watchers](#6-automate-with-watchers)). The server environment variable `FACTORY_CHECK_LIMIT_SEC` (1 to 43200 seconds) replaces the limit of these checks; a value that is not a whole number is ignored with a message.
+- **The time limit of the daily checks.** The full tests and build of `release-daily` and `daily-pr` may work for `verify_timeout_min` minutes (flow variable, 1 to 720, default `180`). The wait for a test slot does not count: the limit starts when the tests start, and the build gets the time that is left. A check never fails just for waiting. `release-daily` waits at most 5 minutes for a slot by default (`FACTORY_TEST_SLOT_WAIT_SEC`) and then runs its tests anyway; the wait is capped at 6 hours in all. When the limit runs out, the processes are stopped, the run still succeeds, and the pull request is a draft with the line `⏱ **Checks did not finish in time** — the time limit of … (verify_timeout_min) ran out before …`. A time-out writes no `tested-v2/` record, so [self-update](#self-update) runs its tests again. Set another limit in the watcher's `vars` (see the watcher examples in [6. Automate with watchers](#6-automate-with-watchers)). The server environment variable `FACTORY_CHECK_LIMIT_SEC` (1 to 43200 seconds) replaces the limit of these checks; a value that is not a whole number is ignored with a message.
 - **Reuse of test results.** `release-daily` skips the full tests when this exact code already passed them in a story run or in an earlier daily check: the same clean tree and the same test command. The log and the checks then say `not run again: this exact code already passed these tests (run <id>, <time>)`. The build still runs, and no new record is written. Set the flow variable `reuse_test_results` to `no` to run the tests every day. `daily-pr` always runs its tests. [Self-update](#self-update) still runs its own tests unless the daily check recorded them, as described there.
 - `develop` is created from `main` the first time, and kept up to date with `main` (for example
   after a hotfix) before new work starts. `develop` must not be in *Protected branches*
@@ -5206,11 +5232,11 @@ Every 5 minutes it checks, in this order, and stops at the first reason that app
 6. The same commit did not fail after its last try. It waits for a newer commit. (A failed test run is tried again 20 minutes later, up to 3 tries in all; the wait is shown in the health line.)
 7. The checkout can fast-forward to `main`.
 
-Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 30-minute limit starts when they start, and a run that hits it counts as a failed try (the log says the tests ran out of time). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the health line says which try it is. The log and the health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
+Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 30-minute limit starts when they start, and a run that hits it counts as a failed try (the log says the tests ran out of time). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the health line says which try it is. The log and the health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. After the third failed try of one commit, the monitor also files one bug story for that commit (see "The monitor: the Foundry checks itself"). The story names the failing tests (at most 20), with private data removed; a name that cannot be cleaned with certainty is left out, and the story says so. A further failure of the same commit files no second story; a new commit that fails three times files a new one. A commit whose tests fail once or twice files no story. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
 
 **Stuck runs.** While the update waits, the health line and **Today** name the runs that look stuck, and the server log lists them once per change. A run is stuck when it waits for a code area (a lock another run holds), or when nothing in its run folder or `logs/` has changed for 30 minutes and no step has started or resumed in that time. A test run that writes its `tests.log` is not stuck. When every active run is stuck, the update does not wait for them: it interrupts them, waits up to 60 seconds for them to end, and then installs. A run that is interrupted ends as *interrupted* ("interrupted by a restart of the server — resume it to continue"), and its watcher resumes it after the restart. If they have not ended after 60 seconds, nothing is installed and the update waits again. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
 
-**Skipped tests.** When the daily release check (`release-daily`) already passed the same tests on the same code, self-update does not run them again. The log then says `self-update: <sha> is not tested again: the release check passed these tests on this code (run <id>, <time>)`; install and build still run. It skips only when all of these hold: the test command is the updater's own test step (`npm test`, or `npm ci && npm test` when `node_modules` was missing), the release check recorded a green run of that command on the same tree in the data folder (`tested/`), and the record has exactly the form the check writes. Every other case runs the tests as usual: a story's record, another tree or command, no detected command, an unreadable record, or a `test_cmd` pinned in `.claude-factory/config.yaml` of the code, even when a record matches. A release check with its own `test_cmd` records under that command, so it matches only when that command is the updater's own test step. Only the release check's record counts. Anything that can write `tested/` in the data folder can make self-update skip its tests, so keep that folder as private as the rest of the Foundry.
+**Skipped tests.** When the daily release check (`release-daily`) already passed the same tests on the same code, self-update does not run them again. The log then says `self-update: <sha> is not tested again: the release check passed these tests on this code (run <id>, <time>)`; install and build still run. It skips only when all of these hold: the test command is the updater's own test step (`npm test`, or `npm ci && npm test` when `node_modules` was missing), the release check recorded a green run of that command on the same tree in the data folder (`tested-v2/`), and the record has exactly the form the check writes. Records in the older `tested/` folder are not read, so those tests run again once. Every other case runs the tests as usual: a story's record, another tree or command, no detected command, an unreadable record, or a `test_cmd` pinned in `.claude-factory/config.yaml` of the code, even when a record matches. A release check with its own `test_cmd` records under that command, so it matches only when that command is the updater's own test step. Only the release check's record counts. Anything that can write `tested/` in the data folder can make self-update skip its tests, so keep that folder as private as the rest of the Foundry.
 
 If the new server stops or does not answer within 3 minutes, the supervisor puts the previous version back once and reports it (the monitor finding is critical). An install that was cut off is finished or undone at the next start. If you switch the setting off while an update waits, the server restarts on the unchanged version when the runs are done.
 
@@ -9726,28 +9752,53 @@ the **Safety** section.
 These are the names as they appear in the log and in mutes. The thresholds are in the
 [table in chapter 6](#the-monitor-the-foundry-checks-itself).
 
-- `restart-loop` (critical): the same run is resumed again and again.
-- `watcher-error` (major): a watcher's checks fail one after the other.
-- `github-limit` (critical or major): GitHub's request limit is hit or nearly used up.
-- `watcher-silent` (critical): an enabled watcher finished no check.
-- `unexplained-failure` (minor): a run failed with an error no rule explains.
-- `stuck-run` (major): a running run wrote nothing to its log for too long.
-- `same-step-failing` (major): the same step ended runs as failed for different issues.
-- `label-mismatch` (major): an issue's status label does not match its newest run.
-- `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
-- `dead-chain` (minor): open stories with the trigger label wait, directly or through other issues, for an issue that will never be built: one closed as not planned, a parked one, or an open one without the trigger label. One finding per such issue; the evidence shows up to five chains like `#120 → #118 → #7`.
-- `orphan-lock` (major): a lock is held by a run that is not running. The server frees such markers and locks itself, at start and every minute (only those whose run is gone or has a dead process). Each one is named in the server log and the monitor's activity, and the finding clears at the next check.
-- `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
-- `restart-overdue` (major): a new version is installed and the server has not restarted.
-- `develop-red` (critical): the tests after a merge into `develop` fail one after the other.
-- `slow-step` (minor): a step took much longer than usual.
-- `policy-service-failure` (major): policy decisions said the policy was unavailable or invalid.
-- `evidence-finalization` (major): a run ended but its evidence has no `evidence.json`, or its stream stopped.
-- `step-latency-p95` (minor): the p95 of a step's durations is above the limit.
-- `repeated-tool-denial` (minor): the same tool was refused again and again in one repository.
-- `abnormal-output` (minor): a step wrote far more output than is usual for that step.
-- `self-update` (major or critical): an update failed.
-- `detector-failed`: a detector crashed, so its problem is not checked.
+Each detector and each automatic repair has a class: **fixes alone** (the Foundry does it by itself)
+or **asks you first** (it shows the problem and waits for you). The Problems page shows the class in
+its detectors table and lists the automatic repairs above it.
+
+The rule, in two sentences: the Foundry fixes a problem alone when the fix can be undone and touches
+only its own work. It asks you first for governance, security, secrets, force pushes, deleting data,
+merging or releasing to `main`, spending limits and turning a check off, except where you already
+agreed by turning on Hotfixes, the daily release or automatic demotion.
+
+| Detector | Class | What it finds |
+|---|---|---|
+| `restart-loop` | fixes alone | the same run is resumed again and again (critical) |
+| `watcher-error` | fixes alone | a watcher's checks fail one after the other (major) |
+| `github-limit` | fixes alone | GitHub's request limit is hit or nearly used up (critical or major) |
+| `watcher-silent` | fixes alone | an enabled watcher finished no check (critical) |
+| `unexplained-failure` | fixes alone | a run failed with an error no rule explains (minor) |
+| `stuck-run` | fixes alone | a running run wrote nothing to its log for too long (major) |
+| `same-step-failing` | fixes alone | the same step ended runs as failed for different issues (major) |
+| `label-mismatch` | fixes alone | an issue's status label does not match its newest run (major) |
+| `waiting-unlisted` | fixes alone | an open issue has a waiting label, but Needs you does not list it (minor) |
+| `dead-chain` | asks you first | open stories wait for an issue that will never be built; the owner decides (minor) |
+| `orphan-lock` | fixes alone | a lock is held by a run that is not running (major). The server frees such markers and locks itself, at start and every minute |
+| `queue-stalled` | fixes alone | jobs are queued, slots are free, and nothing starts (critical) |
+| `restart-overdue` | fixes alone | a new version is installed and the server has not restarted (major) |
+| `develop-red` | fixes alone | the tests after a merge into `develop` fail one after the other (critical) |
+| `slow-step` | fixes alone | a step took much longer than usual (minor) |
+| `policy-service-failure` | fixes alone | policy decisions said the policy was unavailable or invalid (major) |
+| `evidence-finalization` | fixes alone | a run ended but its evidence has no `evidence.json`, or its stream stopped (major) |
+| `step-latency-p95` | fixes alone | the p95 of a step's durations is above the limit (minor) |
+| `repeated-tool-denial` | asks you first | the same tool was refused again and again; the fix is a change to `allowed_tools` (minor) |
+| `abnormal-output` | fixes alone | a step wrote far more output than is usual for that step (minor) |
+| `self-update` | asks you first | an update failed; the checkout may need repairing by hand (major or critical). After the third failed test try of one commit, it files one bug story for that commit, naming the failing tests |
+| `skill-source-check` | asks you first | a scheduled check of a skill source ended with PROBLEM. It is dormant until that check is switched on |
+| `detector-failed` | fixes alone | a detector crashed, so its problem is not checked (the monitor needs a fix) |
+
+The automatic repairs the Foundry does today:
+
+| Repair | Class | What it does |
+|---|---|---|
+| `retry-after-time-limit` | fixes alone | a story run that ran out of time stops instead of failing, and the watcher starts it again |
+| `bug-story` | fixes alone | a problem that lasts gets one bug story on GitHub, which the watcher builds first |
+| `lower-autonomy` | fixes alone | with automatic demotion on, a new qualifying serious finding lowers the named component by one autonomy level |
+| `start-service` | fixes alone | a managed service that is not running is started again |
+| `safe-restart` | fixes alone | after a new version, a moved data folder or a changed setting, the server restarts once no run is active |
+| `correct-labels` | fixes alone | an issue's status label that does not match its newest run is corrected |
+| `completed-dependency` | fixes alone | a dependency on an issue closed as completed counts as done |
+| `hotfix-merge` | fixes alone | with Hotfixes on, a bug story is merged into `main` and then into `develop`. Any other merge to `main` asks you first |
 
 ### What a bug story looks like
 

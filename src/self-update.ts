@@ -4,9 +4,9 @@ import { githubKey, tryParseRepoUrl } from "./auth/repo-url.js";
 import type { SelfUpdateConfig } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import { cleanLine } from "./errors.js";
-import { detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
+import { TESTED_DIR, detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
 import {
-  branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, updateFile, updateState,
+  branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, TEST_TRIES, updateFile, updateState,
   type FailStage, type UpdateStep,
 } from "./self-update-state.js";
 import { buildStamp, RESTART_CODE } from "./supervise.js";
@@ -17,7 +17,6 @@ const spell = (ms: number) => {
   const [n, unit] = ms >= 60_000 ? [Math.round(ms / 60_000), "minute"] : [Math.max(1, Math.round(ms / 1000)), "second"];
   return `${n} ${unit}${n === 1 ? "" : "s"}`;
 };
-const TEST_TRIES = 3;
 const RETRY_WAIT_MS = 20 * 60_000;
 
 export type UpdateReason = "broken_state" | "needs_repair" | "not_git" | "unsupervised" | "wrong_repo" | "unreachable"
@@ -471,7 +470,7 @@ export class SelfUpdater {
   private testedBefore(step: UpdateStep, k: { tree?: string; cmd?: string }): string | undefined {
     try {
       if (!k.tree || !k.cmd || !sameTests(step, k.cmd)) return undefined;
-      return passedBefore(join(dirname(this.file), "tested"), k.tree, k.cmd);
+      return passedBefore(join(dirname(this.file), TESTED_DIR), k.tree, k.cmd);
     } catch {
       return undefined;
     }

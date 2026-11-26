@@ -169,6 +169,8 @@ export interface Issue {
   labels: { name: string }[];
   body?: string;
   state?: string;
+  /** Why it was closed: gh's COMPLETED / NOT_PLANNED / REOPENED, or REST lower case; only when asked for. */
+  stateReason?: string;
   createdAt?: string;
 }
 

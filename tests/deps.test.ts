@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
   DEPS_MARK, DEPS_MARK_END, DEP_REF_SOURCE, cleanReason, dependencies, dependencyDone, dependencyRange, dependencyText, foundryDependsOn,
-  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart, crossDependencies, crossState,
+  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart, crossDependencies, crossState, closedNotPlanned,
 } from "../src/queue/deps.js";
+
+describe("closed as not planned (#959)", () => {
+  const rule = { doneLabels: ["done-x"] };
+  it("is not done, also with a done label", () => {
+    for (const r of ["NOT_PLANNED", "not_planned", "Not Planned"]) expect(dependencyDone({ number: 1, title: "", state: "CLOSED", stateReason: r }, rule)).toBe(false);
+    expect(dependencyDone({ number: 1, title: "", state: "CLOSED", stateReason: "NOT_PLANNED", labels: [{ name: "done-x" }] }, rule)).toBe(false);
+  });
+  it("any other close is done", () => {
+    for (const r of ["COMPLETED", "completed", "", null, undefined, "DUPLICATE", "REOPENED"]) {
+      expect(dependencyDone({ number: 1, title: "", state: "CLOSED", stateReason: r }, rule)).toBe(true);
+    }
+  });
+  it("judges an open issue by its labels", () => {
+    expect(dependencyDone({ number: 1, title: "", state: "OPEN", stateReason: "REOPENED" }, rule)).toBe(false);
+    expect(dependencyDone({ number: 1, title: "", state: "OPEN", stateReason: "REOPENED", labels: [{ name: "done-x" }] }, rule)).toBe(true);
+  });
+  it("openDependencies keeps a not-planned dependency", () => {
+    const list = [{ number: 4, title: "", state: "CLOSED", stateReason: "NOT_PLANNED" }, { number: 6, title: "", state: "CLOSED", stateReason: "COMPLETED" }];
+    expect(openDependencies([4, 6], list, [])).toEqual([4]);
+  });
+  it("closedNotPlanned reads both spellings", () => {
+    for (const r of ["NOT_PLANNED", "not_planned", " not planned "]) expect(closedNotPlanned(r)).toBe(true);
+    for (const r of ["completed", "", undefined, null, "not_plannedx"]) expect(closedNotPlanned(r)).toBe(false);
+  });
+});
 
 const all = [
   { number: 1, title: "Story 1 — Publish update metadata", state: "CLOSED" },

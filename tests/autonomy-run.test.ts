@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
 import { ConfigSchema } from "../src/config.js";
-import { resumeRun, runFlow, type RunSummary } from "../src/engine/runner.js";
+import { resumeRun, runFlow } from "../src/engine/runner.js";
+import type { RunSummary } from "../src/engine/state.js";
 import { loadRun } from "../src/engine/state.js";
 import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import { verifyRunEvidence } from "../src/evidence/verify.js";
@@ -72,7 +73,43 @@ describe("the autonomy level of a run", { timeout: 60_000 }, () => {
     expect(autonomyEvents[1]).toMatchObject({ level: "observe", resumed: true });
     const types = events(s).map((e) => e.type);
     expect(types.lastIndexOf("run.autonomy")).toBeGreaterThan(types.lastIndexOf("run.resumed"));
-    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was plan-only");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was plan-only, lowered plan-only→observe");
     expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
+  });
+
+  it("a run stopped at guarded-write resumes at the raised level", async () => {
+    setLevel("flows", "au", "guarded-write", randomUUID());
+    const runsDir = join(home, "runs");
+    const s = await runFlow(flow(), { task: "t", repo, runsDir, claudeBin, config: config(), stopBefore: (id) => (id === "b" ? "held" : undefined) });
+    expect(s.status).toBe("stopped");
+    setLevel("flows", "au", "delivery-handoff", randomUUID());
+    const done = await resumeRun({ runsDir, runId: s.runId, claudeBin, config: config() });
+    expect(done.status).toBe("succeeded");
+    expect(loadRun(runsDir, s.runId)!.autonomy).toMatchObject({ level: "delivery-handoff" });
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was guarded-write, raised guarded-write→delivery-handoff");
+    const autonomyEvents = events(s).filter((e) => e.type === "run.autonomy");
+    expect(autonomyEvents).toHaveLength(2);
+    expect(autonomyEvents[1]).toMatchObject({ level: "delivery-handoff", resumed: true });
+    expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
+  });
+
+  it("a start says what changed since the job was queued, and ignores an invalid or equal level", async () => {
+    setLevel("flows", "au", "delivery-handoff", randomUUID());
+    const runsDir = join(home, "runs");
+    const log = (s: RunSummary) => readFileSync(join(s.runDir, "live.log"), "utf8");
+    const up = await runFlow(flow(), { task: "t", repo, runsDir, claudeBin, config: config(), queuedAutonomy: "guarded-write" });
+    expect(log(up)).toContain("raised guarded-write→delivery-handoff while queued");
+    const bad = await runFlow(flow(), { task: "t", repo, runsDir, claudeBin, config: config(), queuedAutonomy: "full" });
+    const same = await runFlow(flow(), { task: "t", repo, runsDir, claudeBin, config: config(), queuedAutonomy: "delivery-handoff" });
+    expect(bad.status).toBe("succeeded");
+    expect(log(bad)).not.toContain("while queued");
+    expect(log(same)).not.toContain("while queued");
+  });
+
+  it("lowered while queued is said at the start", async () => {
+    setLevel("flows", "au", "plan-only", randomUUID());
+    const runsDir = join(home, "runs");
+    const s = await runFlow(flow(), { task: "t", repo, runsDir, claudeBin, config: config(), queuedAutonomy: "delivery-handoff" });
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("lowered delivery-handoff→plan-only while queued");
   });
 });

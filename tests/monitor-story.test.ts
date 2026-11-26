@@ -96,6 +96,28 @@ describe("buildStory", () => {
     expect(isFixedComment({ body: seenAgainComment(finding({})) })).toBe(false);
   });
 
+  it("has its own story when the tests of a commit failed three times", () => {
+    const sha = "a1b2c3d".padEnd(40, "0");
+    const f = finding({
+      detector: "self-update", fingerprint: `self-update|test|${sha}`,
+      evidence: { counts: { failed_tries: 3 }, steps: ["test"], commit: sha, tests: ["a.test.ts > adds", "b.test.ts > subtracts", "c.test.ts > mul"] },
+    });
+    const { title, body } = buildStory(f, { lines: [], tests: ["a.test.ts > adds", "b.`test` > x"], builtinSteps: steps });
+    expect(title).toBe("The tests of main fail, so the Foundry does not update itself");
+    for (const h of HEADINGS) expect(body).toContain(`## ${h}`);
+    expect(body).toContain("Commit: `a1b2c3d`");
+    expect(body).not.toContain(sha);
+    expect(body).toContain("Failing tests:");
+    expect(body).toContain("a.test.ts > adds");
+    expect(body).toContain("b.'test' > x");
+    expect(body).toContain("1 more name is left out.");
+    expect(body).toContain("npm test");
+    expect(hashIn(body)).toBe(markerHash(`self-update|test|${sha}`));
+    expect(buildStory(f, { lines: [], tests: undefined, builtinSteps: steps }).body).toContain("The names of the failing tests are left out");
+    const old = buildStory(finding({ detector: "self-update", fingerprint: "self-update|test" }), { lines: [], builtinSteps: steps });
+    expect(old.title).toBe("A self-update of the Foundry fails");
+  });
+
   it("proves the cleaning: a private repository, an e-mail address, a path with a user name and a token do not get into a story", async () => {
     const names: Names = { target: "melo/foundry", users: ["Jane Doe"], emails: ["jane@acme.example"], repos: ["acme/secret-app"], watchers: [], complete: true };
     const raw = [`cannot push to acme/secret-app: jane@acme.example denied`, `cannot read /Users/jane/work/file with ${TOKEN}`];

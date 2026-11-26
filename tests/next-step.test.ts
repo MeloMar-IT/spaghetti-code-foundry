@@ -445,6 +445,9 @@ describe("next-step records, one per kind", () => {
     expect(nextStep("restart", {}, { restartWhy: "data_folder", runsLeft: 1 }).text).toBe("The data folder moved — it restarts after 1 run.");
     expect(nextStep("restart", {}, { restartWhy: "settings", runsLeft: 1 }).text).toBe("A changed setting needs a restart — it restarts after 1 run.");
     expect(nextStep("restart", {}, { restartWhy: "settings" }).text).toContain("for a changed setting");
+    expect(nextStep("restart", {}, { restartWhy: "health", runsLeft: 1 }).text).toBe("A health check asked for a restart — it restarts once no push, merge or release step runs; the other runs are resumed after it.");
+    expect(nextStep("restart", {}, { restartWhy: "health", runsLeft: 0 }).text).toBe("A health check asked for a restart — it restarts in a moment.");
+    expect(nextStep("restart", {}, { restartWhy: "health" }).text).toBe("The server waits to restart at a safe moment — nothing to do, it restarts once no push, merge or release step runs.");
     expect(nextStep("restart", {}, { runsLeft: 0 }).text).toMatch(/it restarts in a moment\.$/);
     expect(nextStep("restart", {}, { restartWhy: "new_version" }).text).toBe("The server waits to restart on a new version — nothing to do, it restarts when the active runs are done.");
   });
