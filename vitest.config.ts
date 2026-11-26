@@ -7,6 +7,8 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     setupFiles: ["tests/setup.ts"],
+    // Fails the run when a process the tests started is still alive at the end.
+    globalSetup: ["tests/global-setup.ts"],
     // End-to-end flow tests spawn many processes; keep parallelism modest so they stay fast.
     testTimeout: 60_000,
     // Several stories run this suite at the same time on one machine, and some tests depend on timing.
@@ -18,6 +20,6 @@ export default defineConfig({
     maxWorkers: Number(process.env.SCF_TEST_WORKERS) || Math.max(4, Math.floor(availableParallelism() / 2)),
     // `vitest run --changed` (the quick tests inside a story) picks the tests that import a changed file. A change
     // to one of these is read by many tests without being imported, so it runs all of them.
-    forceRerunTriggers: ["**/package.json/**", "**/vitest.config.*/**", "**/flows/**", "**/blocks/**", "**/tools/**", "**/scripts/**", "**/tests/fixtures/**", "**/tests/helpers/**", "**/tests/setup.ts"],
+    forceRerunTriggers: ["**/package.json/**", "**/vitest.config.*/**", "**/flows/**", "**/blocks/**", "**/tools/**", "**/scripts/**", "**/tests/fixtures/**", "**/tests/helpers/**", "**/tests/setup.ts", "**/tests/global-setup.ts"],
   },
 });

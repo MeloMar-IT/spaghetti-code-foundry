@@ -4,7 +4,7 @@
 //   --print-token           write the token to stdout
 //   --print-env <NAME>      write the value of that variable to stdout
 //   --exit <code>           exit with that code (after --after <ms>, default at once)
-//   --ignore-term           ignore SIGTERM
+//   --ignore-term           ignore SIGTERM (it then ends by itself after 2 minutes)
 //   --chatter <bytes>       write that many characters to stdout, in lines
 //   --fork-child            start a long-lived child in the same process group (its pid goes to <out>.child)
 //   --term-chatter <bytes>  write that many characters to stdout when SIGTERM comes
@@ -47,6 +47,7 @@ if (val("exit") !== undefined) {
 } else {
   setInterval(() => {}, 1000);
 }
+if (flag("ignore-term")) setTimeout(() => process.exit(1), 120_000);
 process.on("SIGTERM", () => {
   if (flag("ignore-term")) return;
   if (out) appendFileSync(out, "term\n");
