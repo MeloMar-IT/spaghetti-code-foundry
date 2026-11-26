@@ -48,7 +48,7 @@ export interface DetectorInput {
   /** Saved issue lists of watched repositories; undefined: not known (then nothing is judged). */
   issueLists?: IssueListInput[];
   /** Set while the server waits to restart. */
-  restart?: { why: "new_version" | "data_folder" | "settings"; since: string };
+  restart?: { why: "new_version" | "data_folder" | "settings" | "health"; since: string };
   /** Usual step times from older succeeded runs. */
   history?: DurationHistory;
   /** The record of the self-update (`broken`: it could not be read). */
