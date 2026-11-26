@@ -1999,7 +1999,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | starting soon | Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself. |
 | queued | It waits in the queue until a run finishes. Nothing to do — it starts by itself. |
 | working | The Foundry is working on it right now. Nothing to do — you can follow it on the run page. |
-| interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check. A run that a restart at a safe moment stopped is queued to resume after the restart. Any other run you resume on its page. |
+| interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page. The exception: after a restart at a safe moment, the other runs it stopped are queued to resume by themselves. |
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
 | cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
 | parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |
