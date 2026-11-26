@@ -86,6 +86,10 @@ describe("mergeFindings and the two fields", () => {
 });
 
 describe("evidenceLines", () => {
+  it("lists the failing tests", () => {
+    expect(evidenceLines({ tests: ["a > b", "c > d"] })).toEqual(["Failing tests: a > b, c > d"]);
+  });
+
   it("gives labelled lines in order, with one Counts line", () => {
     expect(evidenceLines({ flows: ["x"], counts: { a: 1, b: 2 }, times: [T], lines: ["one"] })).toEqual(["Flows: x", "Counts: a 1, b 2", `Times: ${T}`, "one"]);
   });

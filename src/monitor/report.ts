@@ -3,7 +3,7 @@ import { errorLine } from "../errors.js";
 import { ghLogin, type RateReading, type RestIssue } from "../github.js";
 import { storeFor } from "../stories/store.js";
 import { LABEL_WORDS } from "../words.js";
-import { cleanLines, type CleanDeps, type Names } from "./clean.js";
+import { cleanLines, cleanTestNames, type CleanDeps, type Names } from "./clean.js";
 import { dayOf, type Finding, type Severity, type StoryRef } from "./findings.js";
 import { cameBack as fixCameBack, fixState, forgetFix, MAX_TRIES, triesOf } from "./fix.js";
 import type { LogEntry, Mute, Verdict } from "./guard.js";
@@ -109,6 +109,17 @@ export interface ReportResult {
 }
 
 const same = (a: string | undefined, b: string | undefined) => (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
+
+/** The cleaned log lines and test names of a finding for its story; undefined when they cannot be cleaned (or the finding is about another repository). */
+async function storyEvidence(f: Finding, target: string, names: Names, deps?: CleanDeps): Promise<{ lines: string[] | undefined; tests: string[] | undefined }> {
+  const foreign = (f.repo !== undefined && !same(f.repo, target)) || (f.evidence?.repos ?? []).some((r) => !same(r, target));
+  const raw = f.evidence?.lines ?? [];
+  const tests = f.evidence?.tests ?? [];
+  return {
+    lines: raw.length === 0 ? [] : foreign ? undefined : await cleanLines(raw, names, deps),
+    tests: tests.length === 0 ? [] : foreign ? undefined : await cleanTestNames(tests, names, deps),
+  };
+}
 const plural = (n: number) => `${n} bug ${n === 1 ? "story waits" : "stories wait"}`;
 const stories = (n: number) => `${n} new bug ${n === 1 ? "story" : "stories"}`;
 // "at most 3 new bug stories a day" / "at most 1 new bug story per check"
@@ -165,10 +176,7 @@ export class Reporter {
         const afterLabel = stopped();
         if (afterLabel) return afterLabel;
       }
-      const foreign = (f.repo !== undefined && !same(f.repo, target)) || (f.evidence?.repos ?? []).some((r) => !same(r, target));
-      const raw = f.evidence?.lines ?? [];
-      const lines = raw.length === 0 ? [] : foreign ? undefined : await cleanLines(raw, this.d.names(target), this.d.clean);
-      const story = buildStory(f, { lines, builtinSteps: this.d.builtinSteps() });
+      const story = buildStory(f, { ...(await storyEvidence(f, target, this.d.names(target), this.d.clean)), builtinSteps: this.d.builtinSteps() });
       const late = stopped();
       if (late) return late;
       if (muteFor(this.d.mutes?.(now) ?? [], f)) return no(MUTED);
@@ -430,11 +438,8 @@ export class Reporter {
           this.labelsOk.add(`${target}|${l.name}`);
         }
         if (stopped) break;
-        const foreign = (f.repo !== undefined && !same(f.repo, target)) || (f.evidence?.repos ?? []).some((r) => !same(r, target));
-        const raw = f.evidence?.lines ?? [];
-        const lines = raw.length === 0 ? [] : foreign ? undefined : await cleanLines(raw, names!, this.d.clean);
         const previous = mine(f)?.issue;
-        const story = buildStory(f, { lines, previous, builtinSteps: this.d.builtinSteps() });
+        const story = buildStory(f, { ...(await storyEvidence(f, target, names!, this.d.clean)), previous, builtinSteps: this.d.builtinSteps() });
         if (!go()) break; // asked again right before the call, after the awaits and the building of the text
         // A mute may have come in during the check (another process): no story. The slot is not given to another finding.
         mutes = this.d.mutes?.(now) ?? mutes;

@@ -69,8 +69,20 @@ export function logAutonomyProblems(problems: string[], log: (l: string) => void
   }
 }
 
-/** Records the level: the evidence event first, then the log lines, each guarded. Never throws. */
-export function recordRunAutonomy(r: RunAutonomyStart, log: (l: string) => void, evidence: Pick<RunRecorder, "runAutonomy">, o: { resumed?: true; was?: AutonomyLevel } = {}): void {
+const rank = (l: AutonomyLevel): number => AUTONOMY_LEVELS.indexOf(l);
+
+/** `raised a→b` or `lowered a→b`; undefined when the level is the same (#968). */
+export function levelChange(from: AutonomyLevel, to: AutonomyLevel): string | undefined {
+  if (rank(to) > rank(from)) return `raised ${from}→${to}`;
+  if (rank(to) < rank(from)) return `lowered ${from}→${to}`;
+  return undefined;
+}
+
+/**
+ * Records the level: the evidence event first, then the log lines, each guarded. Never throws.
+ * `queued` is the level the job had when it was queued; it only adds a clause to the start line.
+ */
+export function recordRunAutonomy(r: RunAutonomyStart, log: (l: string) => void, evidence: Pick<RunRecorder, "runAutonomy">, o: { resumed?: true; was?: AutonomyLevel; queued?: AutonomyLevel } = {}): void {
   try {
     evidence.runAutonomy(r.autonomy, o.resumed ? { resumed: true } : {});
   } catch {
@@ -78,14 +90,21 @@ export function recordRunAutonomy(r: RunAutonomyStart, log: (l: string) => void,
   }
   logAutonomyProblems(r.problems, log);
   try {
-    log(o.resumed ? `${autonomyLine(r.autonomy)}; resumed, was ${o.was ?? "delivery-handoff"}` : autonomyLine(r.autonomy));
+    const line = autonomyLine(r.autonomy);
+    if (o.resumed) {
+      const was = o.was ?? "delivery-handoff";
+      const change = levelChange(was, r.autonomy.level);
+      log(`${line}; resumed, was ${was}${change ? `, ${change}` : ""}`);
+    } else {
+      const change = o.queued ? levelChange(o.queued, r.autonomy.level) : undefined;
+      log(change ? `${line}; ${change} while queued` : line);
+    }
   } catch {
     // a failing logger must not stop the run
   }
 }
 
 const SAFE_FLOW = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const rank = (l: AutonomyLevel): number => AUTONOMY_LEVELS.indexOf(l);
 
 /**
  * The command that raises the level that limits a run, as advice. Undefined when there is none to name: at the top, no id,

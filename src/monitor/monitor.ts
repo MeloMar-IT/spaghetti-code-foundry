@@ -12,7 +12,7 @@ import type { Scheduler } from "../queue/scheduler.js";
 import { markAutoDemotions, runAutoDemotions } from "../governance/auto-demote.js";
 import { appendLiveLog } from "../engine/state.js";
 import { allLockRoots } from "../engine/running.js";
-import { ownerRepo, runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
+import { ownerRepo, runDetectors, type ActiveRun, type AreaLock, type DetectorLike, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
 import { type Seen, decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
 import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
@@ -48,7 +48,7 @@ export interface MonitorDeps {
   reporter?: Pick<Reporter, "report"> & Partial<Pick<Reporter, "storyNow">>;
   /** For tests. */
   file?: string;
-  detectors?: Detector[];
+  detectors?: DetectorLike[];
   now?: () => Date;
   selfUpdate?: () => { state: UpdateState; broken: boolean };
   /** The guard rails: without it there is no circuit breaker and no counting of failed fixes. `beforeOpen` is for tests. */

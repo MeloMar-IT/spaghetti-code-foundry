@@ -167,6 +167,8 @@ describe("runs", () => {
     const own = await scf(["runs", "start", "walk", "Ann's walk"], { as: ann });
     expect(own.out).toMatch(/^run \S+ (started|is queued)$/);
     expect((await scf(["runs", "list", "--json"], { as: ann })).json<Run[]>()).toHaveLength(1);
+    // the board test below counts this run as newly waiting: wait for it, not for the time it usually takes
+    await until(own.out.split(" ")[1]!, "waiting");
     const hidden = await scf(["runs", "start", "slow"], { as: ann });
     expect([hidden.code, hidden.err]).toEqual([1, "error: flow not found"]);
   });

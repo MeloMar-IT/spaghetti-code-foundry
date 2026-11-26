@@ -1321,6 +1321,7 @@ export class Watcher {
     if (list.ok) {
       everyIssue = list.issues.map((i) => ({
         number: i.number, title: i.title, labels: i.labels.map((l) => ({ name: typeof l === "string" ? l : l.name ?? "" })), state: i.state, body: i.body ?? "",
+        ...(typeof i.state_reason === "string" && i.state_reason ? { stateReason: i.state_reason } : {}),
       }));
       if (list.saveError) this.d.log(`[${this.cfg.id}] ! issue list not saved: ${list.saveError}`);
     } else {

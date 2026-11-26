@@ -182,6 +182,47 @@ export interface CleanDeps {
   scan?: (text: string) => Promise<string>;
 }
 
+const MAX_TEST_NAMES = 20;
+const MAX_TEST_NAME = 200;
+/** Paths that `cleanText` does not cover: Windows drive and share paths, and system folders. */
+const EXTRA_PATHS = [/[A-Za-z]:\\/, /\\\\[\w.-]+\\/, /(?:^|[\s"'(=])\/(?:etc|var|tmp|opt|root|private|mnt|srv)\//];
+
+/**
+ * Cleans the names of failing tests for a bug story. Unlike `cleanLines` it keeps the words, so a name that still
+ * looks private after cleaning (or is too long to be cut safely) is dropped. Undefined when nothing can be said with
+ * certainty. Never throws.
+ */
+export async function cleanTestNames(tests: string[] | undefined, names: Names, deps: CleanDeps = {}): Promise<string[] | undefined> {
+  try {
+    if (!names.complete || !tests) return undefined;
+    const redactor = (deps.redactor ?? liveRedactor)();
+    if (redactor === BLOCKED) return undefined;
+    const cut = tests
+      .slice(0, MAX_TEST_NAMES)
+      .map((t) => (typeof t === "string" ? (t.split("\n").find((l) => l.trim()) ?? "").trim() : ""))
+      .filter((t) => t && t.length <= MAX_TEST_NAME)
+      .map((t) => cleanText(redactor.redact(t), names))
+      .filter(Boolean);
+    if (!cut.length) return undefined;
+    const scanned = (await (deps.scan ?? scanText)(cut.join("\n"))).split("\n");
+    if (scanned.length !== cut.length) return undefined;
+    const blocked = blockedWords(names);
+    const out: string[] = [];
+    for (const raw of scanned) {
+      const l = raw.replace(/\[removed\]/g, "<token>").trim();
+      if (!l) continue;
+      if (LEFTOVER.some((re) => re.test(l.replace(/<url>/g, "")))) continue;
+      if (EXTRA_PATHS.some((re) => re.test(l)) || /npm_[A-Za-z0-9]{8,}/.test(l)) continue;
+      if (cleanText(l, names) !== l || redactor.redact(l) !== l) continue;
+      if (l.toLowerCase().split(/[^a-z0-9]+/).some((w) => w && blocked.has(w))) continue;
+      out.push(l.replace(/`/g, "'"));
+    }
+    return out.length ? [...new Set(out)] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Looks like something that must not be published, after all cleaning. */
 const LEFTOVER = [/[\w.+-]+@[\w-]+\.[\w.-]+/, /\/(?:Users|home)\//, /\b(?:gh[pousr]_|github_pat_|sk-|AKIA|ASIA)[\w-]{8,}/, /-----BEGIN /, /https?:\/\//, /\b[0-9a-f]{32,}\b/i];
 
