@@ -25,11 +25,6 @@ workspace: empty
 steps:
   - {id: a, type: shell, run: "sleep 30"}
 `);
-export const STUBBORN = parseFlow(`name: stubborn
-workspace: empty
-steps:
-  - {id: a, type: shell, run: "trap '' TERM; sleep 3"}
-`);
 /** Works, then stops the run as "stopped" (it needs a person). */
 export const STOPS = parseFlow(`name: stops
 workspace: empty

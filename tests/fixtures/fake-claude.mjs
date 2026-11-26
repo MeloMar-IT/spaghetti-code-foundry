@@ -61,7 +61,7 @@ if (authFile) {
     if (process.env.FAKE_CLAUDE_LOGIN_FAIL) process.exit(1);
     if (process.env.FAKE_CLAUDE_LOGIN_HANG) {
       process.on("SIGTERM", () => {});
-      setInterval(() => {}, 1000);
+      setTimeout(() => process.exit(1), 120_000); // it never ends for a test, and not for hours when a cleanup is missed
       await new Promise(() => {});
     }
     writeFileSync(authFile, "signed in\n");

@@ -9,6 +9,7 @@ import type { ServiceConfig } from "../src/config.js";
 import { ServiceSupervisor, withServicesStopped, type SupervisorOptions } from "../src/services/supervisor.js";
 import { managedAccounts, serviceToken } from "../src/services/setup.js";
 import { rawPublicKey } from "../src/skills/release-signature.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 // Managed services (#867) with the real fixture program: start, exit, restart, signature, log, stop.
 
@@ -25,7 +26,14 @@ beforeEach(() => {
   process.env.FACTORY_HOME = home;
 });
 afterEach(async () => {
-  for (const s of sups) await s.stop();
+  const watched = new Watched();
+  try {
+    for (const s of sups) await s.stop();
+  } finally {
+    // a program that ignores SIGTERM leads a group of its own: it is killed whatever happened above
+    for (const r of starts()) if (r.argv.includes("--ignore-term")) watched.pid(r.pid, r.pid);
+    watched.kill();
+  }
   sups = [];
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
