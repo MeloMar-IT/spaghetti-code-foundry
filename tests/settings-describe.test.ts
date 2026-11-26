@@ -136,7 +136,11 @@ describe("what is described", () => {
     expect(isCovered("simple.help_contact")).toBe(true);
     expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
-    expect(described).toHaveLength(157);
+    expect(described).toHaveLength(158);
+  });
+
+  it("describes server.memory_limit_mb", () => {
+    expect(described.find((d) => d.key === "server.memory_limit_mb")).toMatchObject({ kind: "number", integer: true, min: 0, default: 2048, effect: "now", control: "admin.js" });
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {

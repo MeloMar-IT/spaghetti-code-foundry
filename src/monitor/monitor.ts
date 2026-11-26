@@ -14,6 +14,7 @@ import { appendLiveLog } from "../engine/state.js";
 import { allLockRoots } from "../engine/running.js";
 import { ownerRepo, runDetectors, type ActiveRun, type AreaLock, type DetectorLike, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
+import { loadMemoryRecord, markMemoryHanded, type MemoryRecord } from "../memory-watch.js";
 import { type Seen, decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
 import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
 import { findingsFile, loadFindings, readFindings, type Finding, mergeFindings, saveFindings } from "./findings.js";
@@ -51,6 +52,9 @@ export interface MonitorDeps {
   detectors?: DetectorLike[];
   now?: () => Date;
   selfUpdate?: () => { state: UpdateState; broken: boolean };
+  /** The saved memory growth, and marking it as taken over by the bug stories. */
+  memory?: () => MemoryRecord | undefined;
+  memoryHanded?: (at: string, now: Date) => void;
   /** The guard rails: without it there is no circuit breaker and no counting of failed fixes. `beforeOpen` is for tests. */
   guard?: { startedAt?: Date; onLogError?: (msg: string) => void; beforeOpen?: () => void };
   /** The running Foundry's own build: its GitHub repository and whether it contains a commit. Without it, the fix commit is not known. */
@@ -89,6 +93,18 @@ export function lastLogWrite(runDir: string): string | undefined {
   // a step that waits for a test slot is alive: test-slot touches its wait file at least every 5 s
   newest = Math.max(newest, newestSlotWait(runDir));
   return newest ? new Date(Math.round(newest)).toISOString() : undefined;
+}
+
+/**
+ * True when the bug stories took over the growth seen at `at`: a story is owed, a person decides, or a story covers it. A
+ * closed story does not cover a growth from after its fix started to run: that one waits until a new story is owed.
+ */
+export function memoryTakenOver(f: Pick<Finding, "due" | "needsYou" | "report">, at: string): boolean {
+  if (f.due || f.needsYou) return true;
+  const m = f.report;
+  if (!m) return false;
+  if (!m.closedAt || m.muted || !m.clockAt) return true;
+  return Date.parse(at) <= Date.parse(m.clockAt) || Date.parse(m.at) >= Date.parse(at);
 }
 
 /** Where the lock tool keeps its locks (a folder per repository). */
@@ -312,13 +328,14 @@ export class Monitor {
       storyRuns.flatMap((b) => [b.runId, b.dirName]),
     );
     const sloIn = await this.slo.build(seen.runs, new Map(briefs.map((b) => [b.runDir, b.updatedAt])), start, config);
+    const memory = (this.d.memory ?? loadMemoryRecord)();
     const found = runDetectors(this.d.detectors ?? ALL_DETECTORS, {
       now: start, asleep, config, runs: seen.runs, watchers: seen.watchers, log: this.d.serverLog?.() ?? [], rate: this.d.rateLimit?.(),
       // A queued story job is not looked at either; the active jobs stay, they fill the slots.
       queue: { ...queue, pending: queue.pending.filter((p) => !isStoryRun({ githubRepo: p.githubRepo, issue: p.issue }, stories)) }, monitorId: this.cfg.id,
       ...(this.wokeAt ? { wokeAt: this.wokeAt } : {}),
       active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), unlisted: this.waitingUnlisted(start, briefs, seen.watchers, stories), issueLists: this.issueLists(briefs, seen.watchers, stories), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
-      update: (this.d.selfUpdate ?? loadUpdateState)(), measures: sloIn.measures, evidence: sloIn.evidence,
+      update: (this.d.selfUpdate ?? loadUpdateState)(), memory, measures: sloIn.measures, evidence: sloIn.evidence,
     });
     const merged = mergeFindings(stored.findings, found, start, new Set([...freedNow.keys()].map((r) => `orphan-lock|area|${r}`)));
     let findings = merged.findings;
@@ -391,7 +408,18 @@ export class Monitor {
       this.noted = new Set(r.notes);
       this.status.notes = r.notes.length ? r.notes : undefined;
     }
+    if (memory && !memory.handed) this.handOverMemory(memory, file, start);
     return start.getTime();
+  }
+
+  /** Marks the memory growth once the saved findings show that a bug story is owed or covers it. Tried again at the next check. */
+  private handOverMemory(memory: MemoryRecord, file: string, now: Date): void {
+    try {
+      const f = readFindings(file).findings.find((x) => x.fingerprint === "memory-growth");
+      if (f && memoryTakenOver(f, memory.at)) (this.d.memoryHanded ?? markMemoryHanded)(memory.at, now);
+    } catch {
+      // not marked: the growth stays a finding
+    }
   }
 
   private autoDemoteOn(): boolean {

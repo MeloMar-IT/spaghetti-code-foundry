@@ -290,6 +290,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "server.allowed_hosts": A("Allowed host names", "Host names, besides localhost, that people may type to reach this page.", "now"),
   "server.public_url": A("Public address", "The https address of this server for links in notifications and in the Foundry's issue comments; empty uses this Mac's local address.", "now"),
   "server.allow_insecure_http": A("Allow plain HTTP", "Accept other computers over plain HTTP, which sends passwords and cookies unencrypted.", "now"),
+  "server.memory_limit_mb": A("Memory limit (MB)", "When the server's memory stays above this, it restarts at the next safe moment and the monitor files one bug story with the samples; 0 turns this off.", "now"),
   "audit.retention_days": A("Keep the audit log (days)", "Audit lines older than this are removed when the server starts and once a day.", "now"),
   protected_branches: A("Protected branches", "Pushes to these branches are refused during runs; glob patterns are allowed.", "new-runs"),
   hotfix_to_main: A("Hotfixes", "Build bug stories of the built-in issue-gitflow on a hotfix branch and merge them into main without a person.", "new-runs"),

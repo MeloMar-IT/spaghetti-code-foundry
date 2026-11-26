@@ -19,6 +19,7 @@ import { previewsOf } from "./server/api-preview.js";
 import { withServicesStopped } from "./services/supervisor.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { safeRestartFor, type SafeRestart } from "./safe-restart.js";
+import { memoryRestartGapMs, MemoryWatch, restartOnGrowth } from "./memory-watch.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
 import { controlsReportText, runEval, runSafetyEvals } from "./evals.js";
@@ -570,6 +571,12 @@ async function main(argv: string[]): Promise<number> {
       // waits only for push, merge and release steps (and the updater); the health checks ask for it
       const safeRestart: SafeRestart = safeRestartFor(ctx, { busy: () => updater.busy(), beforeExit: () => { safeRestart.stop(); settingsRestart.stop(); beforeExit(); }, log });
       ctx.safeRestart = safeRestart;
+      new MemoryWatch({
+        limitMb: () => ctx.config().server.memory_limit_mb,
+        gapMs: () => memoryRestartGapMs(ctx.config().monitor.cooldown_minutes),
+        onGrowth: restartOnGrowth(safeRestart, log),
+        log,
+      }).start();
       void confirmStart(url, { stamp, log });
       updater.start();
       return new Promise<number>(() => {}); // run until killed

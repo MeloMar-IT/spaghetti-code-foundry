@@ -27,6 +27,11 @@ describe("serverFrom", () => {
     expect(ui.serverFrom({ publicUrl: "  https://f.example.com " }).public_url).toBe("https://f.example.com");
     expect(ui.serverFrom({ publicUrl: "" }).public_url).toBeUndefined();
   });
+  it("reads the memory limit; an empty field is the default, and 0 stays 0", () => {
+    expect(ui.serverFrom({ memoryMb: "3000" }).memory_limit_mb).toBe(3000);
+    expect(ui.serverFrom({ memoryMb: "" }).memory_limit_mb).toBe(2048);
+    expect(ui.serverFrom({ memoryMb: "0" }).memory_limit_mb).toBe(0);
+  });
   it("makes insecure a boolean", () => {
     expect(ui.serverFrom({ insecure: undefined }).allow_insecure_http).toBe(false);
     expect(ui.serverFrom({ insecure: true }).allow_insecure_http).toBe(true);
@@ -98,9 +103,19 @@ describe("Settings → Network", () => {
     main.all("button").find((b) => b.textContent === "Save")!.click();
     await flush();
     expect(puts).toHaveLength(1);
-    expect(puts[0].server).toEqual({ listen: "0.0.0.0", allowed_hosts: ["mymac.local"], allow_insecure_http: true });
+    expect(puts[0].server).toEqual({ listen: "0.0.0.0", allowed_hosts: ["mymac.local"], allow_insecure_http: true, memory_limit_mb: 2048 });
     expect(puts[0].concurrency).toBe(2);
     expect(puts[0].protected_branches).toContain("main");
+  });
+
+  it("shows the memory limit, and saving another setting keeps it", async () => {
+    const { main, card, puts } = await render({ memory_limit_mb: 3000 });
+    expect(card.textContent).toContain("Memory limit (MB)");
+    expect(card.all("input").find((i) => i.attrs.type === "number")!.value).toBe("3000");
+    card.all("select")[0]!.value = "::1";
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].server.memory_limit_mb).toBe(3000);
   });
 
   it("shows the message of a failed save", async () => {
