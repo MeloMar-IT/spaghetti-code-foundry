@@ -291,6 +291,8 @@ const ServerSchema = z
     allow_insecure_http: z.boolean().default(false),
     /** The https address people use to reach this server, for links in notifications and issue comments. Not set: links use this Mac's local address. */
     public_url: z.string().max(2048).refine(isPublicUrl, PUBLIC_URL_MESSAGE).optional(),
+    /** When the server's memory stays above this many MB, it restarts at a safe moment and the monitor files one bug story (0: off). */
+    memory_limit_mb: z.number().int().min(0).max(1_048_576).default(2048),
   })
   .strict()
   .prefault({});

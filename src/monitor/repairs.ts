@@ -18,6 +18,7 @@ export const REPAIRS: readonly Repair[] = [
   { name: "safe-restart", repair: "auto", where: "src/server/api-restart.ts", description: "After a new version, a moved data folder or a changed setting, the server restarts once no run is active." },
   { name: "correct-labels", repair: "auto", where: "src/queue/watcher.ts", description: "An issue's status label that does not match its newest run is corrected." },
   { name: "completed-dependency", repair: "auto", where: "src/queue/deps.ts", description: "A dependency on an issue closed as completed counts as done." },
+  { name: "memory-restart", repair: "auto", where: "src/memory-watch.ts", description: "When the server's memory stays above its limit, it restarts at the next safe moment." },
   { name: "hotfix-merge", repair: "auto", where: "scripts/build-flows.mjs", description: "With Hotfixes on, a bug story is merged into main and then into develop." },
 ];
 

@@ -39,6 +39,7 @@ export function serverFrom(v) {
     allowed_hosts: String(v.hosts ?? "").split(/[\s,]+/).filter(Boolean),
     allow_insecure_http: !!v.insecure,
     public_url: String(v.publicUrl ?? "").trim() || undefined,
+    memory_limit_mb: String(v.memoryMb ?? "").trim() === "" ? 2048 : Number(v.memoryMb),
   };
 }
 
@@ -118,7 +119,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const sbxImage = input(c.sandbox.docker_image ?? "", { class: "mono", placeholder: "e.g. node:22" });
   const selfUpdate = check(c.self_update?.enabled === true, "Self-update: when main of the Foundry's own repository has new commits, build and test them and restart on the new version without a person");
   const selfRepo = input(c.self_update?.repo ?? "", { class: "mono", placeholder: "owner/name" });
-  const net = c.server ?? { listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false };
+  const net = c.server ?? { listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, memory_limit_mb: 2048 };
+  const memIn = input(String(net.memory_limit_mb ?? 2048), { type: "number", min: 0, step: 1 });
   const listenSel = h("select", {}, ["127.0.0.1", "::1", "0.0.0.0", "::"].map((a) => h("option", { value: a }, a)));
   listenSel.value = net.listen;
   const hostsIn = input(net.allowed_hosts.join(", "), { class: "mono", placeholder: "mymac.local" });
@@ -148,7 +150,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const saveBtn = h("button", { class: "primary", onClick: () => save() }, "Save");
   // the controls a server sentence can name, by the key of the setting
   const fields = {
-    allowed_hosts: hostsIn, public_url: publicIn, listen: listenSel, daily_budget_usd: budget, simple_project_daily_budget_usd: projectBudget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
+    allowed_hosts: hostsIn, public_url: publicIn, memory_limit_mb: memIn, listen: listenSel, daily_budget_usd: budget, simple_project_daily_budget_usd: projectBudget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
     slack_webhook: slack, command: cmd, throttle_minutes: throttle, quiet_hours: quietFrom, daily_summary_at: summaryAt, gh_token_env: botToken,
     app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
   };
@@ -192,7 +194,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       runs_archive_days: archiveDays.value.trim() === "" ? 30 : Number(archiveDays.value),
-      server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, publicUrl: publicIn.value, insecure: insecure.el.checked }),
+      server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, publicUrl: publicIn.value, memoryMb: memIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
       simple_project_daily_budget_usd: num(projectBudget) ?? 0,
       cost_limits: limits.el.checked,
@@ -312,7 +314,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       h("div", { class: "grid" },
         f("Listen on", listenSel, hint("server.listen", "0.0.0.0 and :: need an admin account.")),
         f("Allowed host names", hostsIn, hint("server.allowed_hosts", "Comma-separated, for example mymac.local.")),
-        f("Public address", publicIn, hint("server.public_url", "Used for links in notifications and GitHub comments."))),
+        f("Public address", publicIn, hint("server.public_url", "Used for links in notifications and GitHub comments.")),
+        f("Memory limit (MB)", memIn, hint("server.memory_limit_mb"))),
       hinted(insecure.row, insecure.el, hint("server.allow_insecure_http")),
       h("p", { class: "muted text-sm flush mt-4" }, "Warning: with plain HTTP, passwords and session cookies cross the network unencrypted. Use it only on a network you trust.")),
     section("Safety",

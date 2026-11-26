@@ -1008,6 +1008,7 @@ The line has one entry for each problem: who has the next move, what to do, why,
 
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
 - **A restart at a safe moment:** "A health check asked for a restart" lists the runs it waits for. A restart at a safe moment waits only while a push, merge or release step runs (the steps `push`, `push_feature`, `merge_develop`, `push_develop`, `merge_main`, `push_main`, `merge_back`, `push_back`, `release_pr` and `publish`). It starts no new runs meanwhile. When no such step runs, it stops the other active runs and the server restarts; those runs are resumed after the restart. It needs the server to run under the supervisor; otherwise it does nothing.
+- **Memory restarts are spaced out:** after a restart for memory, the next one waits at least 6 hours, also across restarts of the server. If `monitor.cooldown_minutes` plus one hour is longer than that, the longer wait applies instead, so the story still gets filed. While it waits, the server log says so once. If the record cannot be saved, the Foundry tries again every minute and does not restart until it works. The growth stays in the record until the monitor takes it over; after that it is kept for 24 hours. Without `monitor.report_to`, the finding can stay listed for good.
 - **A usage limit:** one line per agent (Claude, Codex), not per run, with the time it continues. It shows for an hour after the run stopped; a watcher tries again every 30 minutes, so a limit that lasts keeps showing. A used-up daily budget is a problem too; the link goes to Settings.
 - **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. A short GitHub failure (HTTP 499 or 5xx, a timeout, a dropped connection) is read again up to 2 more times, and any "can't reach GitHub" error shows here only after 3 checks in a row failed; the next good check clears it. Error details and the log show every failed check. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
 - **A schedule run that is late:** a daily schedule run (the release, the daily report) that has not started an hour after its time shows as "The 17:00 release of acme/app is waiting: <why>". The reason names who has the next move: the server waits to restart, another run goes first, the owner's or the daily budget is used up (the link goes to Settings or Users), or the watcher has a problem (its link goes to Watchers). A run that is queued but not started links to its change page. A run that was never queued, because its watcher did not start it, stays until the next day's time. The line goes away when the run starts.
@@ -8114,6 +8115,7 @@ server:
   allowed_hosts: [mymac.local]   # names people type; a port is optional
   allow_insecure_http: false     # true: also accept plain HTTP from other computers
   public_url: https://mymac.example.com  # optional; links in notifications and issue comments
+  memory_limit_mb: 2048          # restart at a safe moment when memory stays above this; 0 turns it off
 ```
 
 - `listen` is the address the server binds. `0.0.0.0` and `::` answer on every network; the other
@@ -8122,6 +8124,7 @@ server:
   the server port) always work. Any other `Host` header must be listed, else the answer is
   `403 forbidden host`. A change applies at once.
 - `allow_insecure_http` is off by default. A change applies at once.
+- `memory_limit_mb` (default 2048, 0 turns it off) is the server's memory limit in MB. The server samples its own memory every minute and keeps the last 60 samples. When three samples in a row are above the limit, it saves the newest 12 to `memory-growth.json` in the data folder, asks for a restart at a safe moment, and the monitor files one bug story with the samples (the `memory-growth` finding). The same growth files no second story. A change applies at once.
 - `public_url` is the https address people use to reach the Foundry, for example the one of your
   HTTPS proxy. It is optional and empty by default. The Foundry uses it for the links in macOS and
   Slack notifications and in its comments on issues (the **Where:** line of the status comment and
@@ -9764,6 +9767,7 @@ agreed by turning on Hotfixes, the daily release or automatic demotion.
 | `repeated-tool-denial` | asks you first | the same tool was refused again and again; the fix is a change to `allowed_tools` (minor) |
 | `abnormal-output` | fixes alone | a step wrote far more output than is usual for that step (minor) |
 | `self-update` | asks you first | an update failed; the checkout may need repairing by hand (major or critical). After the third failed test try of one commit, it files one bug story for that commit, naming the failing tests |
+| `memory-growth` | fixes alone | the server's memory stayed above `server.memory_limit_mb`; it restarts at the next safe moment (major) |
 | `skill-source-check` | asks you first | a scheduled check of a skill source ended with PROBLEM. It is dormant until that check is switched on |
 | `detector-failed` | fixes alone | a detector crashed, so its problem is not checked (the monitor needs a fix) |
 
@@ -9778,6 +9782,7 @@ The automatic repairs the Foundry does today:
 | `safe-restart` | fixes alone | after a new version, a moved data folder or a changed setting, the server restarts once no run is active |
 | `correct-labels` | fixes alone | an issue's status label that does not match its newest run is corrected |
 | `completed-dependency` | fixes alone | a dependency on an issue closed as completed counts as done |
+| `memory-restart` | fixes alone | when the server's memory stays above its limit, it restarts at the next safe moment |
 | `hotfix-merge` | fixes alone | with Hotfixes on, a bug story is merged into `main` and then into `develop`. Any other merge to `main` asks you first |
 
 ### What a bug story looks like
