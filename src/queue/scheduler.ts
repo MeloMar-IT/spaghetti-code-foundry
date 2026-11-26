@@ -17,6 +17,8 @@ import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { projectDailyBudget as storedProjectBudget } from "../auth/repos.js";
+import type { AutonomyLevel } from "../governance/autonomy.js";
+import { runAutonomyAtStart } from "../governance/run-autonomy.js";
 
 /**
  * A schedule chore of a watcher (the daily release, the daily report): `watcher <id> schedule`. Chores have their own lane:
@@ -65,6 +67,19 @@ export interface QueuedJob {
   asNewRun?: boolean;
   /** The workspace (#816), decided when the job was queued. Absent: "default". */
   workspace?: string;
+  /** The level the run had when the job was queued (#968), for its start line only; the run works its level out again when it starts. Absent: a resume, an older entry, or a store that could not be read. */
+  autonomy?: AutonomyLevel;
+}
+
+/** The level a run job has now, or undefined for a resume or when a store has a problem. Never throws. */
+function levelAtQueue(job: Job): AutonomyLevel | undefined {
+  if (job.kind !== "run") return undefined;
+  try {
+    const r = runAutonomyAtStart({ githubRepo: job.vars.github_repo ?? job.flow.vars?.github_repo, flow: job.flow.name });
+    return r.problems.length ? undefined : r.autonomy.level;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The workspace of a queued job; "default" when it has none (also older entries). */
@@ -366,10 +381,12 @@ export class Scheduler {
     if (!knownWorkspace(workspace)) throw new Error(WORKSPACE_REMOVED);
     // the id is looked up here, once, and never taken from the caller: a file edited while the job waits keeps its id
     const flowId = job.kind === "run" && !this.o.localTest ? flowFileId(job.flow, job.repo) : undefined;
+    const autonomy = levelAtQueue(job);
     const q: QueuedJob = {
       runId,
       job,
       ...rest,
+      ...(autonomy ? { autonomy } : {}),
       ...(repoLock ? { repoLock } : {}),
       ...(flowId ? { flowId } : {}),
       ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
@@ -1363,6 +1380,7 @@ export class Scheduler {
             workspace: queuedWorkspace(q),
             source: q.source,
             owner: q.owner,
+            ...(q.autonomy !== undefined ? { queuedAutonomy: q.autonomy } : {}),
             ...(this.o.localTest ? { localTest: true } : { flowId: q.flowId ?? flowFileId(j.flow, j.repo) }),
           })
         : resumeRun({ ...common, runId: j.runId, from: j.from, decision: j.decision });

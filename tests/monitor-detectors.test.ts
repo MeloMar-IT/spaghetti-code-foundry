@@ -310,4 +310,23 @@ describe("self-update", () => {
     const [b] = check({}, true);
     expect(b).toMatchObject({ severity: "critical", fingerprint: "self-update|state", summary: "The self-update record could not be read; self-update is stopped until a person checks the checkout." });
   });
+
+  it("names the commit once the tests failed three times, with the failing tests", () => {
+    const [f] = check({ failed: failed({ tries: 3, tests: ["a.test.ts > adds", "b.test.ts > subtracts"] }) });
+    expect(f).toMatchObject({
+      severity: "major", fingerprint: `self-update|test|${sha}`, about: "foundry",
+      evidence: { counts: { failed_tries: 3 }, steps: ["test"], commit: sha, tests: ["a.test.ts > adds", "b.test.ts > subtracts"] },
+    });
+    const other = check({ failed: failed({ commit: "b".repeat(40), tries: 3 }) })[0]!;
+    expect(other.fingerprint).toBe(`self-update|test|${"b".repeat(40)}`);
+    expect(other.evidence).not.toHaveProperty("tests");
+    expect(check({ failed: failed({ tries: 3, tests: Array.from({ length: 20 }, (_, i) => `t${i}`) }) })[0]!.evidence.tests).toHaveLength(20);
+  });
+
+  it("keeps the old fingerprint for a record without three tries, another stage, or a failed way back", () => {
+    expect(check({ failed: failed() })[0]!.fingerprint).toBe("self-update|test");
+    expect(check({ failed: failed({ tries: 2 }) })[0]!.fingerprint).toBe("self-update|test");
+    expect(check({ failed: failed({ stage: "build", tries: 3 }) })[0]!.fingerprint).toBe("self-update|build");
+    expect(check({ failed: failed({ tries: 3, backOk: false }) })[0]).toMatchObject({ severity: "critical", fingerprint: "self-update|test" });
+  });
 });

@@ -187,6 +187,17 @@ describe("GET /api/monitor for the Problems page", () => {
     expect(d("restart-loop").slo).toBeUndefined();
   });
 
+  it("returns the repair class of every detector and the list of automatic repairs", async () => {
+    const m = await get();
+    const d = (n: string) => m.detectors.find((x: { name: string }) => x.name === n);
+    expect(d("dead-chain").repair).toBe("ask");
+    expect(d("restart-loop").repair).toBe("auto");
+    expect(d("detector-failed").repair).toBe("auto");
+    expect(d("skill-source-check").repair).toBe("ask");
+    expect(m.repairs).toHaveLength(8);
+    expect(m.repairs.find((r: { name: string }) => r.name === "correct-labels")).toMatchObject({ repair: "auto", description: expect.any(String) });
+  });
+
   it("shows a threshold saved through the config, and refuses one out of range", async () => {
     expect((await setMonitor({ restart_loop: { resumes: 7, within_minutes: 10 } })).status).toBe(200);
     expect((await get()).detectors.find((x: { name: string }) => x.name === "restart-loop").thresholds).toEqual({ resumes: 7, within_minutes: 10 });

@@ -3020,8 +3020,13 @@ kept in three places:
 
 A stopped run is not stuck at the level it started with. On each resume the level is worked out again from the current
 settings, as at the start, and stored in `run.json`. So after you raise the level, resume the stopped run: it pushes and
-goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>` and the
-evidence gets `run.autonomy` with `resumed: true`. A resume with no change writes no new event.
+goes on, with no need to start the issue over. If the level changed, the live log says `resumed, was <level>, raised
+<from>→<to>` (or `lowered <from>→<to>`) and the evidence gets `run.autonomy` with `resumed: true`. A resume with no change
+writes no new event and adds nothing to the log.
+
+A run that is queued when you raise the level also uses the new level. The job keeps the level it had when it was queued,
+and when the run starts at another level, the start line says so: `…; raised <from>→<to> while queued` (or `lowered …`).
+The level a run starts with is always worked out from the current settings, so a lowered level is used by a queued run too.
 
 Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
 routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion
@@ -3729,7 +3734,7 @@ log; none calls an AI or GitHub.
 | Step latency p95 | the p95 of a step's durations, per repository, flow and step, is above the limit (approval and flow steps are not counted) | minor | p95 above 60 minutes, from at least 5 visits, in the last 24 hours |
 | Repeated tool denial | the same tool was refused again and again in one repository | minor | 3 times in the last 24 hours |
 | Abnormal output | a step's output tokens are above 5 times the median of that flow and step, and above 20000 tokens (the median needs 5 visits) | minor | in the last 24 hours |
-| Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical) | major / critical | always (only when a self-update was tried) |
+| Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical). After the third failed test try of one commit, one finding per commit (major), which files a bug story naming the failing tests | major / critical | always (only when a self-update was tried) |
 
 *Critical* means work has stopped, *major* means work is slowed or wrong, *minor* means wrong but
 harmless. A detector that crashes shows up as a finding "Detector X failed"; the others still run.
@@ -4127,7 +4132,7 @@ watchers:
 | `status_labels` | Your own names for the status labels above |
 | `remove_on_done` | Labels to remove when a run succeeds (e.g. the trigger label) |
 | `one_at_a_time` | Never run two of this watcher's runs at once |
-| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
+| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed (an issue closed as *not planned* is not done, so the story keeps waiting and Your turn shows it), a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue. An `owner/name#N` in **Depends on** names an issue of another repository, which holds the story while it is open, as described under *It waits for another issue* |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
 | `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. Its question comments then say "Nothing needed from you", and the questions are not in **Your turn**: an issue that waits for other issues is answered when it can start, and you may answer first. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
@@ -4561,7 +4566,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
 - **It needs you:** a question (`Factory_needs_info`), a risky plan (`Factory_waiting`) or an
   error (`Factory_ERROR`).
 - **It waits for another issue.** If the issue has a **Depends on** (or **Blocked by**) line or
-  section, it starts only when those issues are done — closed, or `Factory_done` (in a gitflow
+  section, it starts only when those issues are done — closed (but not as *not planned*), or `Factory_done` (in a gitflow
   flow, where `develop_branch` is set; it is set after the merge into develop, but a hotfix can
   finish while develop is behind). You can name them as `#72` or by title (`Story 4 — Download the
   update safely`). An issue of another repository can be named as `owner/name#72`. It holds the story
@@ -5207,7 +5212,7 @@ Every 5 minutes it checks, in this order, and stops at the first reason that app
 6. The same commit did not fail after its last try. It waits for a newer commit. (A failed test run is tried again 20 minutes later, up to 3 tries in all; the wait is shown in the health line.)
 7. The checkout can fast-forward to `main`.
 
-Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 30-minute limit starts when they start, and a run that hits it counts as a failed try (the log says the tests ran out of time). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the health line says which try it is. The log and the health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
+Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 30-minute limit starts when they start, and a run that hits it counts as a failed try (the log says the tests ran out of time). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the health line says which try it is. The log and the health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. After the third failed try of one commit, the monitor also files one bug story for that commit (see "The monitor: the Foundry checks itself"). The story names the failing tests (at most 20), with private data removed; a name that cannot be cleaned with certainty is left out, and the story says so. A further failure of the same commit files no second story; a new commit that fails three times files a new one. A commit whose tests fail once or twice files no story. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
 
 **Stuck runs.** While the update waits, the health line and **Today** name the runs that look stuck, and the server log lists them once per change. A run is stuck when it waits for a code area (a lock another run holds), or when nothing in its run folder or `logs/` has changed for 30 minutes and no step has started or resumed in that time. A test run that writes its `tests.log` is not stuck. When every active run is stuck, the update does not wait for them: it interrupts them, waits up to 60 seconds for them to end, and then installs. A run that is interrupted ends as *interrupted* ("interrupted by a restart of the server — resume it to continue"), and its watcher resumes it after the restart. If they have not ended after 60 seconds, nothing is installed and the update waits again. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
 
@@ -9727,28 +9732,53 @@ the **Safety** section.
 These are the names as they appear in the log and in mutes. The thresholds are in the
 [table in chapter 6](#the-monitor-the-foundry-checks-itself).
 
-- `restart-loop` (critical): the same run is resumed again and again.
-- `watcher-error` (major): a watcher's checks fail one after the other.
-- `github-limit` (critical or major): GitHub's request limit is hit or nearly used up.
-- `watcher-silent` (critical): an enabled watcher finished no check.
-- `unexplained-failure` (minor): a run failed with an error no rule explains.
-- `stuck-run` (major): a running run wrote nothing to its log for too long.
-- `same-step-failing` (major): the same step ended runs as failed for different issues.
-- `label-mismatch` (major): an issue's status label does not match its newest run.
-- `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
-- `dead-chain` (minor): open stories with the trigger label wait, directly or through other issues, for an issue that will never be built: one closed as not planned, a parked one, or an open one without the trigger label. One finding per such issue; the evidence shows up to five chains like `#120 → #118 → #7`.
-- `orphan-lock` (major): a lock is held by a run that is not running. The server frees such markers and locks itself, at start and every minute (only those whose run is gone or has a dead process). Each one is named in the server log and the monitor's activity, and the finding clears at the next check.
-- `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
-- `restart-overdue` (major): a new version is installed and the server has not restarted.
-- `develop-red` (critical): the tests after a merge into `develop` fail one after the other.
-- `slow-step` (minor): a step took much longer than usual.
-- `policy-service-failure` (major): policy decisions said the policy was unavailable or invalid.
-- `evidence-finalization` (major): a run ended but its evidence has no `evidence.json`, or its stream stopped.
-- `step-latency-p95` (minor): the p95 of a step's durations is above the limit.
-- `repeated-tool-denial` (minor): the same tool was refused again and again in one repository.
-- `abnormal-output` (minor): a step wrote far more output than is usual for that step.
-- `self-update` (major or critical): an update failed.
-- `detector-failed`: a detector crashed, so its problem is not checked.
+Each detector and each automatic repair has a class: **fixes alone** (the Foundry does it by itself)
+or **asks you first** (it shows the problem and waits for you). The Problems page shows the class in
+its detectors table and lists the automatic repairs above it.
+
+The rule, in two sentences: the Foundry fixes a problem alone when the fix can be undone and touches
+only its own work. It asks you first for governance, security, secrets, force pushes, deleting data,
+merging or releasing to `main`, spending limits and turning a check off, except where you already
+agreed by turning on Hotfixes, the daily release or automatic demotion.
+
+| Detector | Class | What it finds |
+|---|---|---|
+| `restart-loop` | fixes alone | the same run is resumed again and again (critical) |
+| `watcher-error` | fixes alone | a watcher's checks fail one after the other (major) |
+| `github-limit` | fixes alone | GitHub's request limit is hit or nearly used up (critical or major) |
+| `watcher-silent` | fixes alone | an enabled watcher finished no check (critical) |
+| `unexplained-failure` | fixes alone | a run failed with an error no rule explains (minor) |
+| `stuck-run` | fixes alone | a running run wrote nothing to its log for too long (major) |
+| `same-step-failing` | fixes alone | the same step ended runs as failed for different issues (major) |
+| `label-mismatch` | fixes alone | an issue's status label does not match its newest run (major) |
+| `waiting-unlisted` | fixes alone | an open issue has a waiting label, but Needs you does not list it (minor) |
+| `dead-chain` | asks you first | open stories wait for an issue that will never be built; the owner decides (minor) |
+| `orphan-lock` | fixes alone | a lock is held by a run that is not running (major). The server frees such markers and locks itself, at start and every minute |
+| `queue-stalled` | fixes alone | jobs are queued, slots are free, and nothing starts (critical) |
+| `restart-overdue` | fixes alone | a new version is installed and the server has not restarted (major) |
+| `develop-red` | fixes alone | the tests after a merge into `develop` fail one after the other (critical) |
+| `slow-step` | fixes alone | a step took much longer than usual (minor) |
+| `policy-service-failure` | fixes alone | policy decisions said the policy was unavailable or invalid (major) |
+| `evidence-finalization` | fixes alone | a run ended but its evidence has no `evidence.json`, or its stream stopped (major) |
+| `step-latency-p95` | fixes alone | the p95 of a step's durations is above the limit (minor) |
+| `repeated-tool-denial` | asks you first | the same tool was refused again and again; the fix is a change to `allowed_tools` (minor) |
+| `abnormal-output` | fixes alone | a step wrote far more output than is usual for that step (minor) |
+| `self-update` | asks you first | an update failed; the checkout may need repairing by hand (major or critical). After the third failed test try of one commit, it files one bug story for that commit, naming the failing tests |
+| `skill-source-check` | asks you first | a scheduled check of a skill source ended with PROBLEM. It is dormant until that check is switched on |
+| `detector-failed` | fixes alone | a detector crashed, so its problem is not checked (the monitor needs a fix) |
+
+The automatic repairs the Foundry does today:
+
+| Repair | Class | What it does |
+|---|---|---|
+| `retry-after-time-limit` | fixes alone | a story run that ran out of time stops instead of failing, and the watcher starts it again |
+| `bug-story` | fixes alone | a problem that lasts gets one bug story on GitHub, which the watcher builds first |
+| `lower-autonomy` | fixes alone | with automatic demotion on, a new qualifying serious finding lowers the named component by one autonomy level |
+| `start-service` | fixes alone | a managed service that is not running is started again |
+| `safe-restart` | fixes alone | after a new version, a moved data folder or a changed setting, the server restarts once no run is active |
+| `correct-labels` | fixes alone | an issue's status label that does not match its newest run is corrected |
+| `completed-dependency` | fixes alone | a dependency on an issue closed as completed counts as done |
+| `hotfix-merge` | fixes alone | with Hotfixes on, a bug story is merged into `main` and then into `develop`. Any other merge to `main` asks you first |
 
 ### What a bug story looks like
 

@@ -241,7 +241,7 @@ describe("methods that call gh themselves send exactly these arguments", () => {
 
   it("listWithBodies", async () => {
     expect(await callsOf(() => store.listWithBodies(500))).toEqual([
-      `gh issue list --repo ${R} --state all --limit 500 --json number,title,labels,state,body`,
+      `gh issue list --repo ${R} --state all --limit 500 --json number,title,labels,state,body,stateReason`,
     ]);
   });
 
