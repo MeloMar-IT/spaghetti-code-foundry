@@ -6183,9 +6183,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/admin/view-as` | yes | no | secret | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | secret | the stored credentials of all accounts, without any secret |
 | `GET /api/admin/components` | yes | no | admin | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
-| `GET /api/changes` | yes | yes | inbox | your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; only your own |
+| `GET /api/changes` | yes | yes | inbox | your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; a published card has `issue`, the number of its GitHub issue (an unpublished card has none); only your own |
 | `POST /api/changes` | yes | yes | inbox | ask for a change in plain words, `{ repo, text, pictures? }` (text at most 10,000 characters; `pictures` is a list of at most 5 base64 strings, each a PNG, JPEG or WebP of at most 5 MB, found by its content, else 400; this route takes a body of up to 36 MiB, every other route 1 MB, else 413; 403 `not-yours` for a project that is not yours); the architect reads the pictures too; the architect then reads the code, asks its questions and writes the cards by itself (202, `thinking`) |
-| `GET /api/changes/:id` | yes | yes | inbox | one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words); only the owner (an admin who is not the owner: 403) |
+| `GET /api/changes/:id` | yes | yes | inbox | one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words; a published card also has `issue`, the number of its GitHub issue); only the owner (an admin who is not the owner: 403) |
 | `GET /api/changes/:id/pictures/:n` | yes | yes | inbox | one picture of a change request of yours (`n` from 1), as the raw image with its `image/*` type, `no-store` and `nosniff`; 404 for a number with no picture; only the owner (another account: 404, an admin who is not the owner: 403); no other route serves the pictures |
 | `POST /api/changes/:id/answers` | yes | yes | inbox | answer every open question of a change request at once, `{ answers: [{ question, option | text | unknown }] }`; the cards are then written (202); only the owner |
 | `PUT /api/changes/:id/cards/:did` | yes | yes | inbox | change the title and/or the criteria of a card of a change request; a card that is published is refused (409); only the owner |
@@ -9693,7 +9693,7 @@ Read the request with `GET /api/changes/:id` (or `GET /api/changes?repo=…` for
 - `thinking`: the architect is working. Ask again later.
 - `questions`: answer every question of the round at once with `POST /api/changes/:id/answers`. Each question has its options and a recommended one.
 - `cards`: the drafts, each with a title, the sentence "This is what I understood" and its criteria. Change a card with `PUT /api/changes/:id/cards/:did`.
-- `planned`: the cards are published. Nothing more to do here.
+- `planned`: the cards are published. Nothing more to do here. Each published card has `issue`, the number of the issue it became, so you can link the change to the runs for those issues.
 - `stuck`: the architect could not finish. `POST /api/changes/:id/retry` starts the step again.
 
 Then choose once:
