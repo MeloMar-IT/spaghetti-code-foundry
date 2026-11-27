@@ -138,6 +138,11 @@ export class SelfUpdater {
     }
   }
 
+  /** An update drained the queue and the updater restarts the server once no run is active. */
+  waitsToInstall(): boolean {
+    return this.drained;
+  }
+
   private say(m: string) {
     try {
       this.o.log(m);
