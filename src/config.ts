@@ -617,7 +617,8 @@ export const ConfigSchema = z
       .default({ enabled: true, model: "haiku" }),
     /**
      * Ask Foundry, the help assistant: off until an admin switches it on. A turn is one question; it runs through the
-     * provider of `model` with no tools, and stops at these limits.
+     * provider of `model` and stops at these limits. A model call never has tools of its own; with `investigate` the
+     * server does read-only look-ups between the calls of one answer.
      */
     help: z
       .object({
@@ -625,8 +626,9 @@ export const ConfigSchema = z
         /** Lets Ask Foundry propose a resume or cancel of a person's own run (and, after #568, carry it out once they confirm). Off: every proposed action is dropped. */
         actions: z.boolean().default(false),
         /**
-         * Emergency stop: nobody can ask, try again or check a page; turns that already run finish and every account keeps
-         * reading, exporting and deleting its conversations. `enabled: false` is "never set up" and shows no button.
+         * Emergency stop: nobody can ask, try again or check a page; an answer that is looking things up is stopped, other
+         * running turns finish, and every account keeps reading, exporting and deleting its conversations.
+         * `enabled: false` is "never set up" and shows no button.
          */
         paused: z.boolean().default(false),
         /** Who may ask when Ask Foundry is on: every account (also without the setting), administrators only, or administrators and `pilot_accounts`. */
@@ -639,15 +641,15 @@ export const ConfigSchema = z
         keep_days: z.number().int().min(1).max(3650).optional(),
         /** Model spec for a help turn; without it `default_model`. Only a Claude Code target can answer: it is the one that runs with no tools at all. */
         model: z.string().optional(),
-        /** A turn that takes longer is stopped. */
-        timeout_seconds: z.number().int().min(5).max(600).default(60),
+        /** One model call of an answer that takes longer is stopped. */
+        timeout_seconds:z.number().int().min(5).max(600).default(60),
         /** Turns answered at the same time, over all accounts. One account has one turn at a time. */
         max_parallel: z.number().int().min(1).max(8).default(1),
         /** Turns that may wait for a free place; one more is refused. */
         max_queued: z.number().int().min(0).max(100).default(10),
         /** Turns one account may start per day (UTC). */
         turns_per_user_per_day: z.number().int().min(1).max(10_000).default(30),
-        /** The most one turn may cost (not applied with `cost_limits: false` or a model without a price). */
+        /** The most one model call of an answer may cost (not applied with `cost_limits: false` or a model without a price). */
         max_cost_usd_per_turn: z.number().positive().max(100).default(0.1),
         /** The most all help turns of a day may cost together; without it only the limits above apply. */
         daily_budget_usd: z.number().positive().optional(),
@@ -656,6 +658,17 @@ export const ConfigSchema = z
          * credentials and the common shapes of tokens and keys. What matches is taken out of every text before Ask Foundry stores it or sends it to a model.
          */
         sensitive_patterns: z.array(z.string().min(1).max(PATTERN_MAX).refine(usablePattern, { message: "not a regular expression, or one that matches the empty text" })).max(PATTERN_LIMIT).optional(),
+        /** While it answers, the server can look the person's runs up for the model: read-only, within these limits of one question. */
+        investigate: z
+          .object({
+            enabled: z.boolean().default(true),
+            max_rounds: z.number().int().min(1).max(10).default(3),
+            max_seconds: z.number().int().min(10).max(1800).default(180),
+            /** Not applied without cost limits or for a model without a price. The one last call that has to answer is not bound by it. */
+            max_cost_usd: z.number().positive().max(100).default(0.5),
+          })
+          .strict()
+          .prefault({}),
       })
       .strict()
       .prefault({}),

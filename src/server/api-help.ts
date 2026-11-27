@@ -41,6 +41,7 @@ import type { Config } from "../config.js";
 import { currentAccount, helpSnapshot, snapshotResolver } from "./help-context.js";
 import { handoffsFor, recordHandoff } from "./help-handoff.js";
 import { CheckNotStored, liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
+import { helpTools } from "./help-tools.js";
 import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
@@ -135,6 +136,8 @@ export function helpTurnsOf(ctx: ApiContext): HelpTurns {
       resolve: helpResolver(ctx),
       allow: (asker) => helpAllowed(ctx, asker),
       projects: helpProjects,
+      tools: helpTools(ctx),
+      accountBudget: (owner) => effectiveLimits(owner, ctx.diagLog).dailyBudgetUsd,
       evidence: (input) => {
         const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
         const who = currentAccount({ id: input.owner, role: input.role });

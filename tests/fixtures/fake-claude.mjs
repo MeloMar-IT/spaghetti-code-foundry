@@ -214,7 +214,9 @@ let canned;
 let cost = 0.01;
 if (prompt.includes("You are Ask Foundry, the help assistant")) {
   // A help turn of Ask Foundry. FAKE_HELP replaces the JSON answer; FAKE_HELP=ECHO puts the CLI arguments, the working folder, its content and the token state in the explanation.
-  const h = process.env.FAKE_HELP;
+  // FAKE_HELP_FIRST, when set, answers the call that offers look-ups and has made none yet (for example with a look-up request).
+  const first = process.env.FAKE_HELP_FIRST;
+  const h = first && prompt.includes("TOOLS (") && !prompt.includes('"round":') ? first : process.env.FAKE_HELP;
   const echo = `args=${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} cwd=${process.cwd()} files=${readdirSync(".").join(",")} gh_token=${ghSeen}`;
   canned = h === "ECHO" ? JSON.stringify({ type: "product-help", summary: "Echo.", explanation: echo, certainty: "confirmed" }) : h ?? JSON.stringify({ type: "product-help", summary: "A run is one start of a flow.", explanation: "It goes through the steps of the flow.", certainty: "confirmed", recommendations: ["Open the run to see its steps."], links: [{ to: "#/runs" }] });
   cost = 0.003;

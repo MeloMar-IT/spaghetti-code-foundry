@@ -1,4 +1,5 @@
 import { TASK_LINE_MAX, type RunBrief, type RunStatus } from "../engine/state.js";
+import { sinceMs } from "../since-date.js";
 import { HttpError, NAME_RE } from "./http.js";
 import { userTask } from "./user-view.js";
 
@@ -22,18 +23,11 @@ export interface RunFilter {
 
 const STATUSES: Record<RunStatus, true> = { running: true, succeeded: true, failed: true, cancelled: true, stopped: true, waiting: true };
 
-const SINCE_RE = /^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/;
 const SINCE_TEXT = "since must be an ISO date, like 2026-10-01 or 2026-10-01T08:00:00Z";
 
 function parseSince(v: string): number {
-  const m = SINCE_RE.exec(v);
-  if (!m) throw new HttpError(400, SINCE_TEXT);
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const day = new Date(Date.UTC(y, mo - 1, d));
-  // 2026-02-30 would be moved to March; refuse it.
-  if (day.getUTCFullYear() !== y || day.getUTCMonth() !== mo - 1 || day.getUTCDate() !== d) throw new HttpError(400, SINCE_TEXT);
-  const ms = Date.parse(v);
-  if (Number.isNaN(ms)) throw new HttpError(400, SINCE_TEXT);
+  const ms = sinceMs(v);
+  if (ms === undefined) throw new HttpError(400, SINCE_TEXT);
   return ms;
 }
 

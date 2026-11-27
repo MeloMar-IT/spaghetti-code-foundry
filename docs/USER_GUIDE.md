@@ -10035,13 +10035,40 @@ Ask Foundry answers from three things, and nothing else:
 - **The current state your account can see**: the run, repository, refinement session, queue or server state that your question names or that the page you are on shows. An administrator also sees board issues, monitor findings and the server's health. Each piece says when it was read; a record that is known to be old says so.
 - **What you sent**: your question, the address of the page you were on, and the one thing you selected there, if you sent it.
 
-It does not read logs, transcripts or the output of a step, and it cannot see the work, the repositories or the conversations of another account. A secret that it finds in a text is taken out before anything is kept or sent. It has no tools: it cannot run a command, change anything or look at the internet.
+It does not read logs, transcripts or the output of a step, and it cannot see the work, the repositories or the conversations of another account. A secret that it finds in a text is taken out before anything is kept or sent. It cannot run a command, change anything or look at the internet. While it answers, it can look up your runs, read-only, as described in "Look-ups while it answers".
 
 **To check an answer:**
 
 1. Read the line **How sure it is** first (see "Reading an answer"). A "?" or "–" line means there is no source of the kind the question needs: treat the answer as a guess.
 2. Open the **Sources and assumptions** and look at the places named there. A run or a repository page shows its own current state, which is the most recent thing to trust.
 3. Do not act on a "!" line (two sources disagree) until you have looked yourself.
+
+### Look-ups while it answers
+
+While it writes an answer, Ask Foundry may ask the server for up to two read-only look-ups:
+
+- **`list_runs`**: the newest runs you may see, with optional filters (status, repository, flow, words, a date, archived).
+- **`show_run`**: the detail of one run you may see: its steps, errors, status and the reason it stopped.
+
+Each look-up uses your own permissions. You see only the runs you may see; an unknown run and a run of another
+account get the same answer. A look-up never shows a cost, a model, a folder or an owner, and it never changes
+anything: no run is started, cancelled, resumed or changed. Text from a run that reads like an instruction is
+held back, and an answer can cite a run it found, with a link to that run's page.
+
+The answer stops looking things up after the limits of `help.investigate` (defaults in brackets):
+
+- **`max_rounds`** (3): the most look-ups; after them one last model call has to answer.
+- **`max_seconds`** (180): the most time; when it is used up, one last model call has to answer.
+- **`max_cost_usd`** (0.5): the most cost per question; when it is used up, one last model call has to answer.
+- **`enabled`** (on): off means one model call per answer, as before.
+
+The per-call cost and time limits (`timeout_seconds`, `max_cost_usd_per_turn`) and the daily budget
+(`daily_budget_usd`) apply to every model call of an answer, and they are checked again before each one. When the
+daily budget is used up, the question ends with the message that the budget for Ask Foundry is used up; no further call is made. A pause or a
+stop ends the answer at once, and nothing that is still being looked up is accepted.
+
+The reply records how many look-ups it made and how long they took. An administrator also sees the cost. The
+Ask Foundry drawer does not show these figures yet.
 
 ### Rate an answer
 
@@ -10492,12 +10519,17 @@ help:
   audience: everyone            # or admins, or pilot: administrators and pilot_accounts
   pilot_accounts: []            # account ids that may ask in the pilot stage, besides the administrators
   model: haiku                  # a model spec; without it, default_model
-  timeout_seconds: 60           # a turn that takes longer is stopped
+  timeout_seconds: 60           # one model call of an answer that takes longer is stopped
   max_parallel: 1               # turns answered at the same time, over all accounts
   max_queued: 10                # turns that may wait; one more is refused
   turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
-  max_cost_usd_per_turn: 0.1
+  max_cost_usd_per_turn: 0.1    # the most one model call of an answer may cost
   daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
+  investigate:                  # look-ups of your runs while it answers (see "Look-ups while it answers")
+    enabled: true
+    max_rounds: 3               # most look-ups per question (1 to 10)
+    max_seconds: 180            # most time per question (10 to 1800)
+    max_cost_usd: 0.5           # most cost per question (up to 100)
   sensitive_patterns:           # optional: texts to keep out of Ask Foundry, as regular expressions
     - 'CUSTOMER-\d{5}'          # at most 20, each at most 200 characters; upper and lower case are the same
 ```
@@ -10509,8 +10541,9 @@ settings are read.
 **Pause (the emergency stop).** Set **Pause Ask Foundry** on the Ask Foundry card (`help.paused: true`) to stop
 new work at once, without switching Ask Foundry off. Nobody can ask a question, try again or check a page
 context: each gets 503 with the sentence "Ask Foundry is paused by an administrator for now." A question
-that already waits in the queue fails as "not set up" without a call to the model, and an answer that
-is being written is finished. Reading, exporting, deleting, archiving, restoring and closing
+that already waits in the queue fails as "not set up" without a call to the model. An answer that is
+looking things up is stopped at once, with nothing accepted from it; any other answer that is being written is
+finished. Reading, exporting, deleting, archiving, restoring and closing
 conversations, and rating answers, keep working, and the button stays in the top bar. Use it when an
 answer is wrong in a way that matters, or when a provider or a setting needs to be fixed. `enabled: false`
 is different: it is "never set up" and shows no button. Pausing counts as a refusal, `paused`, in the

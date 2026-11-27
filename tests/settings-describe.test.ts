@@ -137,7 +137,16 @@ describe("what is described", () => {
     expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
     expect(described.find((d) => d.key === "restarts.drain_limit_minutes")).toMatchObject({ kind: "number", integer: true, min: 0, max: 10080, default: 60, effect: "now", control: "generated" });
-    expect(described).toHaveLength(161);
+    expect(described).toHaveLength(165);
+  });
+
+  it("describes the look-ups of Ask Foundry, and says that the limits of one call are per model call", () => {
+    const of = (key: string) => described.find((d) => d.key === key)!;
+    expect(of("help.investigate.enabled")).toMatchObject({ label: "Ask Foundry may look things up", kind: "yes-no", default: true, control: "generated" });
+    expect(of("help.investigate.max_rounds")).toMatchObject({ label: "Most look-ups per question", integer: true, min: 1, max: 10, default: 3 });
+    expect(of("help.investigate.max_seconds")).toMatchObject({ label: "Most time per question (seconds)", integer: true, min: 10, max: 1800, default: 180 });
+    expect(of("help.investigate.max_cost_usd")).toMatchObject({ label: "Most cost per question ($)", exclusiveMin: 0, max: 100, default: 0.5 });
+    for (const key of ["help.timeout_seconds", "help.max_cost_usd_per_turn"]) expect(of(key).help, key).toMatch(/one model call of an answer/i);
   });
 
   it("describes server.memory_limit_mb", () => {
