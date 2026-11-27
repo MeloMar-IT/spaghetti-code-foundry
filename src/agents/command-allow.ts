@@ -20,7 +20,9 @@ export const IMAGE_GATE = join(TOOLS_DIR, "image-gate.mjs");
 
 const MAX_SCRIPT_RULES = 40;
 const SCRIPT_NAME = /^(build|test)([:._-][A-Za-z0-9:._-]{1,40})?$/;
-const MARKER = /^[ \t]*REFUSED_COMMAND:[ \t]*(.*)$/m;
+const MARKER = /^[ \t]*REFUSED_COMMAND:[ \t]*(.*)$/gm;
+/** Marker values that say nothing was refused (`<the command>` is the placeholder of the prompt). */
+const NO_REFUSAL = /^(?:none|n\/a|-|nothing|<the command>)?$/i;
 
 /** Is `dir` or a folder inside it in `skip`? */
 function skipped(dir: string, skip: readonly string[]): boolean {
@@ -203,11 +205,18 @@ export function deniedProgram(denial: string): string | undefined {
   return word ? basename(word) : undefined;
 }
 
+/** The command named by the last marker line of an answer, or undefined when that line names none. */
+function markedCommand(output: string): string | undefined {
+  const last = [...output.matchAll(MARKER)].at(-1)?.[1];
+  if (last === undefined) return undefined;
+  const named = clean(last.replace(/`/g, ""), 120);
+  return NO_REFUSAL.test(named.replace(/[. ]+$/, "")) ? undefined : named;
+}
+
 /** The command a step needs and was refused, or undefined. */
 export function refusedCommand(o: { output: string; denied?: string[]; earlierDenied?: string[] }): string | undefined {
-  const marker = MARKER.exec(o.output)?.[1]?.replace(/`/g, "");
-  const named = marker === undefined ? "" : clean(marker, 120);
-  if (named && !/^<the command>$/i.test(named)) return named;
+  const named = markedCommand(o.output);
+  if (named) return named;
   const denied = o.denied ?? [];
   const image = denied.find((d) => (IMAGE_TOOLS as readonly string[]).includes(deniedProgram(d) ?? ""));
   if (image) return clean(image.replace(/^Bash: /, ""), 120);

@@ -539,8 +539,9 @@ real limit.
 **A refused command stops the run.** When a step needs a command it may not run, the run stops once, as needs you, and
 the reason names the command, for example `needs a command that is not allowed: magick photo.jpg photo.png`. The step is
 not retried by its `on_failure` branch. The agent is asked to end its answer with the line `REFUSED_COMMAND: <the command>`
-when it cannot finish a part of the issue without it. A refused image-tool call stops the run even when the agent does
-not write that line. A stop from a sub-flow stops the parent run too.
+when it cannot finish a part of the issue without it, and to leave the line out when nothing was refused. Only the last
+such line counts. A value of `none`, `n/a`, `-`, `nothing` or an empty value means nothing was refused and does not stop
+the run. A refused image-tool call stops the run even when the agent does not write that line. A stop from a sub-flow stops the parent run too.
 
 To go on, first fix the cause: install the tool, or, in a custom flow, add the set the step needs to `allow_commands`
 and save the flow. Then **Retry from the failing step** on the run's page, or `scf resume <run>`. The step runs again

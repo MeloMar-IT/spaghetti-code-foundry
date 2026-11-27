@@ -81,7 +81,7 @@ const RETIRED = new Set(["chore", "ci-fix", "github-auto", "github-issue", "gith
 // and that say so when a refused command stops them (the engine then stops the run once and names the command).
 const ALLOW_COMMAND_STEPS = new Set(["implement", "fix_guard", "fix_tests", "fix_tests_1", "fix_tests_2", "fix_fixed_tests", "address_review_1", "address_review_2", "resolve_conflicts", "resolve_back", "fix_develop", "fix_back"]);
 const ALLOW_COMMAND_FLOWS = new Set(["issue-gitflow", "issue-code-daily"]);
-const REFUSED_HINT = "If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.";
+const REFUSED_HINT = "If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.";
 
 function write(name, header, flow) {
   if (ALLOW_COMMAND_FLOWS.has(name)) {
