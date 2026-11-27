@@ -136,7 +136,8 @@ describe("what is described", () => {
     expect(isCovered("simple.help_contact")).toBe(true);
     expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
-    expect(described).toHaveLength(160);
+    expect(described.find((d) => d.key === "restarts.drain_limit_minutes")).toMatchObject({ kind: "number", integer: true, min: 0, max: 10080, default: 60, effect: "now", control: "generated" });
+    expect(described).toHaveLength(161);
   });
 
   it("describes server.memory_limit_mb", () => {

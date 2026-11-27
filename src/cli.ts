@@ -18,7 +18,8 @@ import { startServer } from "./server/server.js";
 import { previewsOf } from "./server/api-preview.js";
 import { withServicesStopped } from "./services/supervisor.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
-import { safeRestartFor, uncuttableRuns, type SafeRestart } from "./safe-restart.js";
+import { restartIdle, safeRestartFor, uncuttableRuns, type SafeRestart } from "./safe-restart.js";
+import { DrainLimit } from "./drain-limit.js";
 import { memoryRestartGapMs, MemoryWatch, restartOnGrowth } from "./memory-watch.js";
 import { createRestartGate } from "./restart-gate.js";
 import { startHeartbeat } from "./heartbeat.js";
@@ -530,7 +531,7 @@ async function main(argv: string[]): Promise<number> {
       if (hint) process.stdout.write(`  ${hint}\n`);
       if (cmd === "ui" && !values["no-open"] && !process.env.FACTORY_NO_OPEN && process.platform === "darwin") execFile("open", [url]);
       // While the server waits to restart nothing queued starts, so only the active runs are waited for (queued jobs are saved).
-      const queueIdle = () => { const q = ctx.scheduler.queue(); return q.active.length === 0 && (ctx.scheduler.draining || q.pending.length === 0); };
+      const queueIdle = () => restartIdle(ctx.scheduler);
       const drain = () => {
         // a health restart that waits keeps its reason: it is the one that stops runs
         if (ctx.restart?.why !== "health") ctx.restart = { why: "new_version", since: new Date().toISOString() };
@@ -583,8 +584,10 @@ async function main(argv: string[]): Promise<number> {
       const settingsRestart: SettingsRestart = settingsRestartFor(ctx, { idle, beforeExit: () => { settingsRestart.stop(); beforeExit(); }, log });
       ctx.settingsRestart = settingsRestart;
       // waits only for push, merge and release steps (and the updater); the health checks ask for it
-      const safeRestart: SafeRestart = safeRestartFor(ctx, { busy: () => updater.busy(), beforeExit: () => { safeRestart.stop(); settingsRestart.stop(); beforeExit(); }, log });
+      const safeRestart: SafeRestart = safeRestartFor(ctx, { busy: () => updater.busy(), handOff: () => updater.waitsToInstall(), beforeExit: () => { safeRestart.stop(); settingsRestart.stop(); beforeExit(); }, log });
       ctx.safeRestart = safeRestart;
+      // a restart that waits too long for the runs switches to the safe restart (#963)
+      new DrainLimit({ restart: () => ctx.restart, limitMinutes: () => ctx.config().restarts.drain_limit_minutes, safeRestart, log }).start();
       new MemoryWatch({
         limitMb: () => ctx.config().server.memory_limit_mb,
         gapMs: () => memoryRestartGapMs(ctx.config().monitor.cooldown_minutes),
