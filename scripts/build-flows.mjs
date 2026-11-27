@@ -957,9 +957,41 @@ write("issue-plan", {
   // Used on every full run that gates a push or merge (the report files of this very run are read, never a cache).
   // The old reports go first, so a runner that skips unchanged work (Gradle's UP-TO-DATE) has to write new ones.
   const withPurge = (run) => swap(run, 'touch "$marker"', 'touch "$marker"\nnode "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"');
+  // A step that follows a fix first runs only the test files that failed last time (tools/failed-first.mjs). One of them
+  // still failing fails the step at once; else the whole suite runs as before, so the gate is the same. Only a full run or
+  // such a failure writes <run-dir>/failed-tests.txt. Every first run is checked (REALLY_RAN) before the marker, the
+  // reports or tests.log change. Order: wrap the finished templates (testsRunRetry built later would add its second run
+  // to the first run), and wrap before withPurge and the swaps of `exit "$code"`: their anchors are the template's own.
+  const RECORD = 'node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true';
+  const FAILED_FIRST = [
+    'first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")',
+    'if [ -n "$first" ]; then',
+    '  full="$cmd"; cmd="$first"',
+    '  echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\\$ $cmd"',
+    '  ' + RUN_TESTS,
+    '  cmd="$full"',
+    '  if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then',
+    '    tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="',
+    '    { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"',
+    '    ' + REALLY_RAN,
+    '    exit 1',
+    '  fi',
+    '  ' + REALLY_RAN,
+    '  if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi',
+    '  touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi',
+    'fi',
+  ].join("\n");
+  // RECORD goes in first: after FAILED_FIRST the first REALLY_RAN would be the one of the first run.
+  const withFailedFirst = (run) => {
+    const pad = run.includes("\n  " + REALLY_RAN) ? "  " : ""; // testsRunReuse runs them inside an `if`
+    const recorded = swap(run, REALLY_RAN, RECORD + "\n" + pad + REALLY_RAN);
+    const first = swap(recorded, DOCKER_UP, DOCKER_UP + "\n" + pad + FAILED_FIRST.split("\n").join("\n" + pad));
+    // A pass taken from an earlier run (only testsRunReuse) is a pass too: the list goes.
+    return first.replace('code=0; echo "not run again:', () => 'code=0; rm -f "{{run.dir}}/failed-tests.txt"; echo "not run again:');
+  };
   const verifyCheck ='if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" verify "$marker" "{{run.dir}}" || code=1; fi';
   const tests = (id, fixId, next) => [
-    { id, type: "shell", timeout_sec: 7200, run: testsRun, on_failure: fixId, ...(next ? { on_success: next } : {}) },
+    { id, type: "shell", timeout_sec: 7200, run: withFailedFirst(testsRun), on_failure: fixId, ...(next ? { on_success: next } : {}) },
     {
       id: fixId,
       type: "claude",
@@ -1140,7 +1172,7 @@ write("issue-plan", {
       description: "A story that fixes failing tests: the named tests pass now and every test that passed before still passes",
       run: [
         '[ -f "{{run.dir}}/baseline-red.json" ] || { echo "nothing to check: the tests passed before the change"; exit 0; }',
-        swap(withPurge(testsRunRetry), 'exit "$code"', verifyCheck + '\nif [ "$code" -ne 0 ]; then exit 1; fi'),
+        swap(withPurge(withFailedFirst(testsRunRetry)), 'exit "$code"', verifyCheck + '\nif [ "$code" -ne 0 ]; then exit 1; fi'),
       ].join("\n"),
       on_success: "commit",
       on_failure: "fix_fixed_tests",
@@ -1811,7 +1843,7 @@ write("issue-plan", {
     jump_only: true,
     timeout_sec: 3600,
     description: "Hotfix: develop with main merged in must pass the tests before it is pushed",
-    run: testsRunRetry,
+    run: withFailedFirst(testsRunRetry),
     on_success: "push_back",
     on_failure: "red_back",
   };
@@ -2063,7 +2095,7 @@ write("issue-plan", {
       'tested=$(git rev-parse HEAD)',
       'export FACTORY_VAR_TEST_SLOTS=0',
       '[ -f "{{run.dir}}/baseline-red.json" ] && export FACTORY_VAR_REUSE_TEST_RESULTS=no',
-      swap(withPurge(testsRunReuse), '\nexit "$code"', "\n" + verifyCheck +
+      swap(withPurge(withFailedFirst(testsRunReuse)), '\nexit "$code"', "\n" + verifyCheck +
         '\n# Recorded only when the tests passed on exactly this commit: HEAD did not move and no tracked file changed meanwhile.' +
         '\nif [ "$code" -eq 0 ] && [ "$(git rev-parse HEAD)" = "$tested" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then printf \'%s\\n\' "$tested" > "{{run.dir}}/develop-tested"; fi' +
         '\nexit "$code"'),
