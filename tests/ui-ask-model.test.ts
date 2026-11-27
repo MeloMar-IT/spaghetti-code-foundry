@@ -449,6 +449,13 @@ describe("proposals as cards", () => {
 });
 
 describe("a reply as the server checked it", () => {
+  it("links a run a look-up found to the page of that run", () => {
+    const offered = [{ id: "state-run-0123456789", kind: "state" as const, title: "A run of the flow deliver", ref: "#/runs/20261127-125011-6e0f", observedAt: SEEN }];
+    const checked = checkReply({ type: "status", summary: "It failed.", evidence: [offered[0]!.id] }, { role: "user", offered })!.reply;
+    const layout = m.replyLayout({ ...checked, investigation: { rounds: 1, seconds: 3 } }, "user");
+    expect(layout.basis.sources).toMatchObject([{ href: "#/runs/20261127-125011-6e0f" }]);
+  });
+
   it("is laid out from its parts, and what the server let through is checked again", () => {
     const offered = [{ id: "s1", kind: "state" as const, title: "Run r-1 waits for your answer", ref: "#/runs/r-1", observedAt: SEEN }];
     const raw = { type: "status", summary: "Your run waits for an answer. <script>alert(1)</script>", explanation: "See https://evil.example/now", certainty: "confirmed", evidence: ["s1", "made-up"], recommendations: ["Answer the question on the run page."], links: [{ label: "Win", to: "https://evil.example" }, { label: "x", to: "#/runs" }], drafts: [], actions: [{ id: "rm -rf", title: "Delete all", impact: "x" }] };

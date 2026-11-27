@@ -293,6 +293,27 @@ const ActionSchema = z
   .strict();
 const LimitSchema = z.object({ code: z.enum(LIMIT_CODES), limitation: line(TEXT_MAX.item), nextStep: line(TEXT_MAX.item), to: line(TEXT_MAX.ref).optional() }).strict();
 
+/** Why the look-ups of an answer were ended: the limit of one question that was reached (`help.investigate`). */
+export const STOP_REASONS = ["rounds", "time", "cost"] as const;
+export type StopReason = (typeof STOP_REASONS)[number];
+/** The fixed words for it. They hold no amounts. */
+export const STOP_WORDS: Record<StopReason, string> = {
+  rounds: "It stopped at the most look-ups per question.",
+  time: "It stopped at the most time per question.",
+  cost: "It stopped at the most cost per question.",
+};
+
+/** What looking things up took for one answer. The server writes it, never the model. `costUsd` is for administrators only (`forRole`). */
+export const InvestigationSchema = z
+  .object({
+    rounds: z.number().int().min(0).max(10),
+    seconds: z.number().int().min(0),
+    costUsd: z.number().min(0).optional(),
+    stoppedBy: z.enum(STOP_REASONS).optional(),
+  })
+  .strict();
+export type Investigation = z.infer<typeof InvestigationSchema>;
+
 /** A reply after the server's checks: this is what is stored and shown. */
 export const ReplySchema = z
   .object({
@@ -308,6 +329,7 @@ export const ReplySchema = z
     plan: z.array(PlanStepSchema).max(PLAN_MAX).optional(),
     offers: z.array(OfferSchema).max(OFFER_MAX).optional(),
     limit: LimitSchema.optional(),
+    investigation: InvestigationSchema.optional(),
   })
   .strict();
 export type Reply = z.infer<typeof ReplySchema>;
@@ -510,6 +532,8 @@ export function displayText(reply: Reply): string {
     if (reply.evidence.length) out.push("", "Sources:", ...reply.evidence.map((e) => `- ${e.title} (${e.ref}${e.observedAt ? `, seen ${e.observedAt}` : ""})`));
     out.push("", CERTAINTY_WORDS[reply.certainty]);
   }
+  const looked = reply.investigation;
+  if (looked) out.push("", `Looked things up ${looked.rounds} time(s) in ${looked.seconds} s.${looked.stoppedBy ? ` ${STOP_WORDS[looked.stoppedBy]}` : ""}`);
   return out.join("\n");
 }
 

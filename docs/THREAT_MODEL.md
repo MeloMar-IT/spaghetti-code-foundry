@@ -455,6 +455,18 @@ move the install's retries, and only until the 7-day limit of the push. Nothing 
 - The access log of the web server in front of the receiver is a deployment setting that the code cannot check.
 - The endpoint can still be changed through `PUT /api/config` (see "Shared metrics push (#889)" above).
 
+## Ask Foundry investigation (#970)
+
+Ask Foundry can look up the asker's runs while it answers (`src/help/investigate.ts`, `src/help/tools.ts`, `src/server/help-tools.ts`).
+
+- **No tools in a model call.** A model call never has a tool of its own. The model can only write a short JSON request for one of the two look-ups; the server checks it and carries it out, or refuses it.
+- **A fixed, read-only list.** Only `list_runs` and `show_run` exist. Each maps to the `GET` route for runs. The server checks the route rule (`findRule`, `authorize`) for the account that asks now, not for the account that asked earlier, and uses the same scoping as `GET runs`. A request with another name, an extra key, a bad id or a bad date is refused before anything is read. Refused names are never repeated to the model: the next prompt holds fixed words only.
+- **One answer for no access.** An unknown run and another account's run give the same result, so a look-up cannot tell them apart. The result leaves out the cost, the model, the run folder and the owner.
+- **Guarded, capped results.** Each value from a run (step errors, issue titles, task lines) is guarded on its own before it reaches the model: a secret is removed, and text that reads like an instruction is held back. The note in the tool log is guarded again and cut to a fixed length. A source that a read limit cuts or drops is named as such. Excerpts stay in the JSON part of the prompt; a reply may cite only the sources the server gave it.
+- **Cost, time and daily budget.** The per-call cost (`max_cost_usd_per_turn`), the time of one call (`timeout_seconds`), the question's limits (`max_rounds`, `max_seconds`, `max_cost_usd`) and the daily budget (`daily_budget_usd`) are checked before every model call. The cap of each call is the smaller of what is left of the question and of the day. Spend of another source between two calls counts. A used-up daily budget ends the question; the last call that has to answer is not made in that case.
+- **Stop and pause.** A stop or a pause ends the answer: no further model call, no further look-up and no accepted answer, and the temporary folder of each call is removed.
+- **Remaining risk.** Turns that run at the same time can each see the same daily amount left and go past it together, and the model CLI can go slightly past its own cap. Model-chosen look-ups cross the permission boundary only inside the asker's own rights; a misled model can read only the runs that the asker may read.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

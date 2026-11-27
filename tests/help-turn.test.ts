@@ -319,7 +319,7 @@ describe("when a turn does not end with an answer", () => {
 
 describe("limits, fair use and separate accounts", () => {
   it("is off until an administrator switches it on, and then stores and calls nothing", () => {
-    expect(ConfigSchema.parse({}).help).toEqual({ enabled: false, paused: false, actions: false, timeout_seconds: 60, max_parallel: 1, max_queued: 10, turns_per_user_per_day: 30, max_cost_usd_per_turn: 0.1 });
+    expect(ConfigSchema.parse({}).help).toEqual({ enabled: false, paused: false, actions: false, timeout_seconds: 60, max_parallel: 1, max_queued: 10, turns_per_user_per_day: 30, max_cost_usd_per_turn: 0.1, investigate: { enabled: true, max_rounds: 3, max_seconds: 180, max_cost_usd: 0.5 } });
     expect(() => ConfigSchema.parse({ help: { tools: ["Bash"] } })).toThrow();
     config = ConfigSchema.parse({});
     const s = svc();

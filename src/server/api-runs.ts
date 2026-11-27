@@ -32,7 +32,7 @@ import { runSkillView, type RunSkillView } from "./skill-view.js";
 import type { JobMeta, RunEvent } from "../queue/scheduler.js";
 import { pausedSince } from "../steps/slot-waits.js";
 import { gateRun } from "../run-gate.js";
-import { matchesRun, parseRunFilter, runFilterValues } from "./run-filter.js";
+import { matchesRun, parseRunFilter, runFilterValues, type RunFilter } from "./run-filter.js";
 import type { ApiContext, Route } from "./server.js";
 
 const NEXT_RECHECK_MS = 2_000;
@@ -83,6 +83,23 @@ export function runsListFor(ctx: ApiContext, owner?: string, archived = false): 
     .filter((b) => (owner === undefined || (b.owner === owner && inWorkspaces(ws, b.workspace))) && !!b.archived === archived)
     .slice(0, 200)
     .flatMap((b) => slimRow(ctx.scheduler, b.dirName, owner) ?? []);
+}
+
+/**
+ * The rows of `GET /api/runs` for one account: the newest 200 runs that match the filter. For a user the owner is
+ * always the account itself, whatever the filter says. The run index must be ready (`whenIndexReady`).
+ */
+export function runsFor(ctx: ApiContext, user: User, filter: RunFilter): RunSummary[] {
+  const want = user.role === "admin" ? filter.owner : user.id;
+  const wanted = { ...filter, owner: want };
+  const ws = callerWorkspaces(user);
+  // The archive choice, the owner and q, repo, flow, status and since are applied before the cap. Loaded by folder name;
+  // with an owner, the runId and owner inside the file must agree with it, else the run is left out.
+  // The rows are slim runs from the run index (the full file is read only for one named run, see GET /api/runs/:id).
+  return ctx.scheduler.briefs()
+    .filter((b) => matchesRun(b, wanted) && briefInScope(user, ws, b))
+    .slice(0, 200)
+    .flatMap((b) => slimRow(ctx.scheduler, b.dirName, want) ?? []);
 }
 
 export type ResumeAction = "resume" | "approve" | "reject";
@@ -177,16 +194,8 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   if (!id && method === "GET") {
     const parsed = parseRunFilter(new URL(req.url ?? "/", "http://x").searchParams, admin);
-    const want = admin ? parsed.owner : user.id;
-    const filter = { ...parsed, owner: want };
-    // The archive choice, the owner and q, repo, flow, status and since are applied before the cap. Loaded by folder name;
-    // with an owner, the runId and owner inside the file must agree with it, else the run is left out.
-    // The rows are slim runs from the run index (the full file is read only for one named run, see GET /api/runs/:id).
     await scheduler.whenIndexReady();
-    const runs = scheduler.briefs()
-      .filter((b) => matchesRun(b, filter) && briefInScope(user, ws, b))
-      .slice(0, 200)
-      .flatMap((b) => slimRow(scheduler, b.dirName, want) ?? []);
+    const runs = runsFor(ctx, user, parsed);
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
     const aside = asideCheck();

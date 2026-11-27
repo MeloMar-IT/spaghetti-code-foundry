@@ -183,6 +183,19 @@ describe("Settings → Ask Foundry", () => {
     expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
   });
 
+  it("shows the four controls of the look-ups, and saves them nested", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { help: { ...stored, investigate: { enabled: true, max_rounds: 3, max_seconds: 180, max_cost_usd: 0.5 } } });
+    const card = cardOf(main, "Ask Foundry");
+    for (const label of ["Ask Foundry may look things up", "Most look-ups per question", "Most time per question (seconds)", "Most cost per question ($)"]) expect(card.textContent).toContain(label);
+    const rounds = card.all("input").find((i) => i.attrs.type === "number" && (i as any).value === "3") as any;
+    rounds.value = "5";
+    rounds.fire("change", { target: rounds });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].help.investigate).toEqual({ enabled: true, max_rounds: 5, max_seconds: 180, max_cost_usd: 0.5 });
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
   it("shows the hint of the redesign switch", async () => {
     const { main } = await render({});
     expect(cardOf(main, "Redesign").textContent).toContain("Takes effect at once.");

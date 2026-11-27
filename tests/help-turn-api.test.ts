@@ -6,6 +6,7 @@ import { ADMIN_ONLY_KEYS, CERTAINTY_WORDS } from "../src/help/contract.js";
 import { FAILURE_WORDS } from "../src/help/store.js";
 import { REFUSAL_WORDS } from "../src/help/turn.js";
 import { NOT_IN_PREVIEW, helpTurnsOf } from "../src/server/api-help.js";
+import { stateId } from "../src/server/help-evidence.js";
 import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { freePort } from "./helpers/remote.js";
@@ -116,6 +117,24 @@ describe("asking a question", () => {
       expect(echo).toMatch(/gh_token=none$/);
     } finally {
       delete process.env.GH_TOKEN;
+    }
+  });
+
+  it("looks the asker's run up while it answers, and shows a user the look-ups without their cost", async () => {
+    const id = "run-looked-up";
+    const dir = join(tmp, "runs", id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ runId: id, flow: "deliver", task: "", vars: {}, repo: tmp, source: "ui", status: "failed", runDir: dir, owner: ann.user.id, startedAt: "2026-01-01T00:00:00.000Z", history: [], state: { next: null, steps: {}, visits: {} } }));
+    process.env.FAKE_HELP_FIRST = JSON.stringify({ tool: "show_run", args: { id } });
+    process.env.FAKE_HELP = JSON.stringify({ type: "status", summary: "The run failed.", certainty: "confirmed", evidence: [stateId("run", id)] });
+    try {
+      const c = await asked(ann, "Why did my last run fail?");
+      const reply = c.messages[1].reply;
+      expect(reply.evidence).toMatchObject([{ id: stateId("run", id), ref: `#/runs/${id}` }]);
+      expect(reply.investigation).toEqual({ rounds: 1, seconds: expect.any(Number) });
+      expect(c.messages[1].text).toContain("Looked things up 1 time(s) in ");
+    } finally {
+      delete process.env.FAKE_HELP_FIRST;
     }
   });
 
