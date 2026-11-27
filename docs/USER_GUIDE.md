@@ -4577,15 +4577,21 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   it writes `WAITS_FOR: owner/name#72` (with `#N` for this repository; at most 10 references in all)
   and does not ask you whether that issue is merged. A name that is not one of your Foundry
   repositories is reported as a problem ("is not a repository of the Foundry") and not recorded.
-  The other issue is read with that repository's own sign-in (at most 20 reads per check). When it
+  The other issue is read in this order (at most 20 reads per check): first with that repository's own
+  sign-in, if it has one; then, when both repositories are under the same GitHub account or organisation
+  (case is ignored), with the sign-in of this watcher's repository. The first readable issue is the answer,
+  whatever its state. A 403 or 404 means "cannot read", never "done", so the story keeps waiting. When it
   is closed as not planned, the story shows in Your turn with the reason, because it will never be
   done; reopen it or take it out of **Depends on**.
-  When that repository has no sign-in of its own (its method is `none`), the Foundry may not read the
-  issue, and the story waits for you. Its status comment names the issue, says it could not be read and
-  why, and gives the two ways out: give that repository a sign-in under My repositories, or take the line
-  out of **Depends on** once that issue is done. Your turn shows one notice for it, not one on every
-  check, and the notice goes away when the story is no longer held. The service log writes the refusal
-  once per story and reason.
+  A repository with no sign-in of its own (its method is `none`) is read with the server's own access
+  only when you added it and you are an admin. A `none` repository that another user or a team member
+  added is never read, and neither is a non-admin's `none` repository, with any sign-in. When no way can
+  read the issue, the story waits for you. Its status comment names the issue, says it could not be read
+  and which ways were tried, and gives the two ways out: give that repository a sign-in under My
+  repositories, or take the line out of **Depends on** once that issue is done. A read that times out or
+  fails for another reason is not taken as "no sign-in": the story keeps waiting and the next check tries
+  again. Your turn shows one notice for it, not one on every check, and the notice goes away when the
+  story is no longer held. The service log writes the refusal once per story and reason.
   A blocker in another repository is shown as an `owner/name#72` link to its issue on GitHub (it opens
   in a new tab), on the Work page, in the story panel, on the run page under "What happens next" and
   on the Board. A blocker in this repository is shown as `#72`, as before.
