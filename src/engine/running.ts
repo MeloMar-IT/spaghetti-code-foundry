@@ -3,8 +3,9 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdi
 import { uptime } from "node:os";
 import { join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
+import { acquireLock, releaseLock } from "../home-migrate.js";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
-import { pidAlive, runDirOf, workspaceFolderIn, workspaceFoldersIn } from "./state.js";
+import { appendLiveLog, pidAlive, rewriteRunMark, runDirOf, runFile, saveRun, workspaceFolderIn, workspaceFoldersIn, type RunSummary } from "./state.js";
 
 /**
  * A small "running" marker per run in `<lock folder>/.running`, so `tools/area-lock` can tell that a run is still running
@@ -157,6 +158,9 @@ export const RUNNING_SWEEP_MS = 60_000;
 export const RESTART_INTERRUPT = "scf:restart-interrupt";
 export const RESTART_INTERRUPTED = "interrupted by a restart of the server — resume it to continue";
 
+/** A run that a restart or the end of its process interrupted, as it is stored. */
+export const restartInterrupted = (r: { status?: string; reason?: string }): boolean => (r.status === "failed" || r.status === "cancelled") && r.reason === RESTART_INTERRUPTED;
+
 export interface FreedLock {
   runId: string;
   repo: string;
@@ -167,6 +171,57 @@ export interface StaleSweep {
   locks: FreedLock[];
 }
 
+/** "live": it says running and a process that can still be its driver is alive. Otherwise nobody drives it. */
+function ownerState(run: { status?: unknown; pid?: unknown }, mtimeMs: number, bootMs: number, ownPidDead: boolean): "live" | "dead" {
+  const alive = pidAlive(run.pid) && !(ownPidDead && run.pid === process.pid);
+  return run.status === "running" && alive && mtimeMs >= bootMs - 60_000 ? "live" : "dead";
+}
+
+const bootTime = (): number => Date.now() - uptime() * 1000;
+
+/**
+ * Runs `write` while holding the run's state lock. Saving a run as interrupted and starting a resume both take it, so
+ * the one cannot overwrite the other between its read and its write, also across processes. Throws when it stays held.
+ */
+export function withRunStateLock<T>(runDir: string, write: () => T, waitMs = 5_000): T {
+  const lock = join(runDir, ".state.lock");
+  if (!acquireLock(lock, waitMs)) throw new Error("another scf process is writing the state of this run; try again");
+  try {
+    return write();
+  } finally {
+    releaseLock(lock);
+  }
+}
+
+/** The first save of a resumed run: from here on it has a live process again. */
+export function saveResumedRun(run: RunSummary, waitMs?: number): void {
+  withRunStateLock(run.runDir, () => saveRun(run), waitMs);
+}
+
+/**
+ * Saves a `running` run whose process is gone as interrupted (`failed` with RESTART_INTERRUPTED). A live run is never
+ * touched. `ownPidDead`: this process's pid counts as gone (only true at the start of a server). Returns true when
+ * run.json was replaced; false when there was nothing to do or the write did not work (try again later). Never throws.
+ */
+export function markRunInterrupted(runDir: string, o: { ownPidDead?: boolean; bootMs?: number; hooks?: { beforeSwap?: () => void } } = {}): boolean {
+  const bootMs = o.bootMs ?? bootTime();
+  const change = (s: Record<string, unknown>): Record<string, unknown> | undefined => {
+    const mtimeMs = lstatSync(runFile(runDir)).mtimeMs;
+    if (s.status !== "running" || ownerState(s, mtimeMs, bootMs, o.ownPidDead === true) === "live") return undefined;
+    const next: Record<string, unknown> = { ...s, status: "failed", reason: RESTART_INTERRUPTED, finishedAt: s.finishedAt ?? new Date(Math.round(mtimeMs)).toISOString() };
+    delete next.stepStartedAt;
+    delete next.waiting;
+    return next;
+  };
+  try {
+    const done = withRunStateLock(runDir, () => rewriteRunMark(runDir, change, o.hooks), 0);
+    if (done) appendLiveLog(runDir, "■ interrupted: its process was gone, so the server saved it as interrupted");
+    return done;
+  } catch {
+    return false;
+  }
+}
+
 /** Who owns a run folder: a live process of another server/CLI, nobody, or a run.json that cannot be read. */
 function owner(runDir: string, bootMs: number): "live" | "dead" | "missing" | "unreadable" {
   const file = join(runDir, "run.json");
@@ -175,8 +230,7 @@ function owner(runDir: string, bootMs: number): "live" | "dead" | "missing" | "u
   if (!("text" in r)) return "unreadable";
   try {
     const run = JSON.parse(r.text) as { status?: unknown; pid?: unknown };
-    if (run.status === "running" && pidAlive(run.pid) && run.pid !== process.pid && lstatSync(file).mtimeMs >= bootMs - 60_000) return "live";
-    return "dead";
+    return ownerState(run, lstatSync(file).mtimeMs, bootMs, true);
   } catch {
     return "unreadable";
   }
@@ -188,7 +242,7 @@ function owner(runDir: string, bootMs: number): "live" | "dead" | "missing" | "u
  */
 export function sweepStaleRunning(runsDir: string, isActive: (runId: string) => boolean, o: { atStart?: boolean; bootMs?: number } = {}): StaleSweep {
   const out: StaleSweep = { markers: [], locks: [] };
-  const bootMs = o.bootMs ?? Date.now() - uptime() * 1000;
+  const bootMs = o.bootMs ?? bootTime();
   for (const r of allLockRoots()) sweepStaleIn(r.dir, runsDir, isActive, o, bootMs, out);
   return out;
 }

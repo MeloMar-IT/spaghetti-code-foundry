@@ -39,6 +39,10 @@ import { notCodeStop, parkedComment, wantsPark } from "./park.js";
 import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSince, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
 import { filesToCheck, idleAnswers, openOwnerAsk, OWNER_FILE_MARK } from "./owner-action.js";
 import { validBranchName } from "../auth/repo-settings.js";
+import { restartInterrupted } from "../engine/running.js";
+import { releasedLater, retainedSuccesses, SUPERSEDED_BY } from "../release/superseded.js";
+import { RELEASE_FLOWS } from "../next-step.js";
+import { interruptedLockKey } from "./interrupted-runs.js";
 
 /** Status labels the watcher puts on issues. Remove one to have the issue picked up again. */
 export const STATUS_LABELS = {
@@ -532,10 +536,47 @@ export class Watcher {
     const needsGitHub = this.access.local ? localWatcherProblem(this.cfg) : undefined;
     if (needsGitHub) throw new Error(needsGitHub);
     await this.setup();
+    if (token === this.tickToken) this.resumeInterrupted();
     if (this.cfg.source === "issues") await this.tickIssues(token, checkStartedAt);
     else if (this.cfg.source === "pr-feedback") await this.tickPrs();
     else if (this.cfg.source === "ci-failures") await this.tickCi();
     else await this.tickSchedule(token);
+  }
+
+  /** The interruptions (run id and end time) this watcher queued a resume for: a resume that cannot start is not queued again and again. */
+  private resumedInterruptions = new Set<string>();
+
+  /**
+   * Resumes the runs of this watcher that a restart or the end of their process interrupted, the oldest first (not issue
+   * runs, see interruptedLockKey). A release run that a later release already did is archived as superseded instead;
+   * that is checked here, just before the resume, so it does not matter what else has run before.
+   */
+  private resumeInterrupted(): void {
+    let retained: ReturnType<typeof retainedSuccesses> | undefined;
+    const prefix = `watcher ${this.cfg.id} `;
+    const sch = this.d.scheduler;
+    for (const b of sch.briefs().reverse()) {
+      if (!b.interrupted || b.archived || !b.source?.startsWith(prefix)) continue;
+      try {
+        if (sch.isActive(b.runId) || sch.isQueued(b.runId)) continue;
+        sch.markInterrupted(b.runId); // still stored as running: save it first (a live run is left alone)
+        const run = sch.get(b.runId);
+        if (!run || !restartInterrupted(run) || run.archivedAt || run.vars?.github_repo !== this.repo || flowRetired(run)) continue;
+        const lockKey = interruptedLockKey(this.cfg.id, this.repo, run);
+        if (!lockKey) continue;
+        if (RELEASE_FLOWS.includes(run.flow) && releasedLater(run, [...sch.briefs(), ...(retained ??= retainedSuccesses(this.d.runsDir))])) {
+          if (sch.setArchived(run.runId, true, SUPERSEDED_BY) === "done") this.act(`run ${run.runId} was interrupted and a later ${run.flow} run succeeded → archived as superseded`);
+          continue;
+        }
+        const key = `${run.runId}|${run.finishedAt}`;
+        if (this.resumedInterruptions.has(key) || sch.isLocked(lockKey) || !this.budgetLeft() || !this.budgetLeftFor(run.owner) || !this.projectLeftNow()) continue;
+        this.queue({ kind: "resume", runId: run.runId }, { lockKey, source: run.source });
+        this.resumedInterruptions.add(key);
+        this.act(`run ${run.runId} was interrupted → resuming it`);
+      } catch (e) {
+        this.d.log(`[${this.cfg.id}] ! could not resume interrupted run ${b.runId}: ${errorLine((e as Error).message)}`);
+      }
+    }
   }
 
   /** Latest run per issue/PR number for this repo (newest first in the list). */

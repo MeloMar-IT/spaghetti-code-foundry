@@ -269,7 +269,9 @@ export interface RunBrief {
   ciRun?: string;
   /** `vars.chore_day` of a schedule run (the day of its slot), when it is a string. */
   choreDay?: string;
-  /** A "running" run.json with no live process (set by the scheduler). */
+  /** `vars.chore_watcher` of a schedule run: the watcher that started it, when it is a string. */
+  choreWatcher?: string;
+  /** Interrupted: stored as failed or cancelled because it was, or a "running" run.json with no live process (set by the scheduler). */
   interrupted?: boolean;
   /** The first line of the task, at most 200 characters. Absent when the task is empty. */
   taskLine?: string;
@@ -552,7 +554,7 @@ export function noteRunWritten(runDir: string, run: object, o: { stat?: boolean 
 }
 
 function briefFrom(s: RunSummary, id: string, mtimeMs: number): RunBrief {
-  return { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(Array.isArray(s.timeLimits) ? { timeLimits: s.timeLimits } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}), ...(s.autonomy !== undefined ? { autonomy: s.autonomy } : {}), ...(s.localTest ? { localTest: true as const } : {}), ...(typeof s.workspace === "string" ? { workspace: s.workspace } : {}) };
+  return { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(Array.isArray(s.timeLimits) ? { timeLimits: s.timeLimits } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(typeof s.vars?.chore_watcher === "string" ? { choreWatcher: s.vars.chore_watcher } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}), ...(s.autonomy !== undefined ? { autonomy: s.autonomy } : {}), ...(s.localTest ? { localTest: true as const } : {}), ...(typeof s.workspace === "string" ? { workspace: s.workspace } : {}), ...((s.status === "failed" || s.status === "cancelled") && /^interrupted\b/.test(s.reason ?? "") ? { interrupted: true as const } : {}) };
 }
 
 export const runFile = (runDir: string) => join(runDir, "run.json");

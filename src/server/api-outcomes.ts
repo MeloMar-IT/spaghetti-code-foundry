@@ -22,6 +22,12 @@ const NAME_MAX = 200;
 const LOAD_YIELD = 25;
 /** The file check of a run folder (evidence stream, manifest, marker) is kept this long, so a request does not look at every folder (#934). */
 const FILE_CHECK_TTL_MS = 2000;
+/**
+ * A run that ended this long ago is looked at far less often: one look at 5,000 folders costs about half a second of CPU,
+ * more than a whole request may take. A change of its run.json (a resume) is seen at once.
+ */
+const FILE_CHECK_SETTLED_AFTER_MS = 3_600_000;
+const FILE_CHECK_SETTLED_TTL_MS = 5 * 60_000;
 
 export interface OutcomeFilter { days: number; repo?: string; flow?: string; model?: string; policy?: string }
 
@@ -192,7 +198,7 @@ const caches = new WeakMap<ApiContext, OutcomeFactsCache>();
 export function factsCacheOf(ctx: ApiContext): OutcomeFactsCache {
   let c = caches.get(ctx);
   if (!c) {
-    c = new OutcomeFactsCache({ freshTtlMs: FILE_CHECK_TTL_MS });
+    c = new OutcomeFactsCache({ freshTtlMs: FILE_CHECK_TTL_MS, settledTtlMs: FILE_CHECK_SETTLED_TTL_MS, settledAfterMs: FILE_CHECK_SETTLED_AFTER_MS });
     caches.set(ctx, c);
   }
   return c;

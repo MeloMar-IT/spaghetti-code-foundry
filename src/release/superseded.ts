@@ -5,7 +5,7 @@ import type { Scheduler } from "../queue/scheduler.js";
 /** The `archivedBy` of a run the server archived by itself because a later release of its repository succeeded. Not an account id. */
 export const SUPERSEDED_BY = "foundry:superseded-release";
 
-export type ReleaseBrief = Pick<RunBrief, "runId" | "flow" | "status" | "startedAt" | "githubRepo" | "archived">;
+export type ReleaseBrief = Pick<RunBrief, "runId" | "flow" | "status" | "startedAt" | "githubRepo" | "archived" | "choreWatcher">;
 export type DoneRun = Pick<RunSummary, "runId" | "flow" | "status" | "startedAt" | "finishedAt" | "vars">;
 type Archiver = Pick<Scheduler, "briefs" | "setArchived">;
 type Log = (m: string) => void;
@@ -28,6 +28,17 @@ export function supersededReleases(briefs: ReleaseBrief[]): ReleaseBrief[] {
     const win = newest.get(keyOf(b.flow, b.githubRepo!));
     return !Number.isNaN(t) && win !== undefined && t < win;
   });
+}
+
+/**
+ * Did a later run of this release run's flow, repository and watcher succeed? The run's own status does not matter.
+ * A run with no watcher (started by hand or by the CLI) is compared with every run of its flow and repository.
+ */
+export function releasedLater(run: DoneRun, briefs: ReleaseBrief[]): boolean {
+  const watcher = run.vars?.chore_watcher;
+  const self: ReleaseBrief = { runId: run.runId, flow: run.flow, status: "failed", startedAt: run.startedAt, githubRepo: run.vars?.github_repo, choreWatcher: watcher };
+  const others = briefs.filter((b) => b.runId !== run.runId && (watcher === undefined || b.choreWatcher === watcher));
+  return supersededReleases([...others, self]).some((b) => b.runId === run.runId);
 }
 
 /** The runs Your turn does not list: archived runs of any flow and superseded release runs. */
@@ -58,7 +69,7 @@ export function retainedSuccesses(runsDir: string): ReleaseBrief[] {
       try {
         const s = loadRun(runsDir, id);
         if (!s || s.status !== "succeeded" || !RELEASE_FLOWS.includes(s.flow) || !s.vars?.github_repo) return [];
-        return [{ runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, githubRepo: s.vars.github_repo }];
+        return [{ runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, githubRepo: s.vars.github_repo, ...(typeof s.vars.chore_watcher === "string" ? { choreWatcher: s.vars.chore_watcher } : {}) }];
       } catch {
         return [];
       }
@@ -68,10 +79,21 @@ export function retainedSuccesses(runsDir: string): ReleaseBrief[] {
   }
 }
 
+/** The release runs that a scope covers: one flow and repository, and with `watcher` only the runs of that watcher. */
+export interface ReleaseScope {
+  flow: string;
+  repo: string;
+  /** Only the runs this watcher started (`vars.chore_watcher`). Absent: every run of the flow and repository. */
+  watcher?: string;
+}
+
+/** The scope of a finished release run: its watcher, if it has one. */
+const scopeOf = (done: DoneRun, repo: string): ReleaseScope => ({ flow: done.flow, repo, ...(typeof done.vars?.chore_watcher === "string" ? { watcher: done.vars.chore_watcher } : {}) });
+
 interface Reconcile {
   log?: Log;
   done?: DoneRun;
-  only?: { flow: string; repo: string };
+  only?: ReleaseScope;
   /** Succeeded runs kept in runs-archive (see `retainedSuccesses`), read when the sweep starts. */
   retained?: () => ReleaseBrief[];
 }
@@ -86,9 +108,11 @@ function candidates(scheduler: Archiver, o: Reconcile): ReleaseBrief[] {
     }
     if (o.done) {
       const d = o.done;
-      briefs = [...briefs.filter((b) => b.runId !== d.runId), { runId: d.runId, flow: d.flow, status: d.status, startedAt: d.startedAt, githubRepo: d.vars?.github_repo }];
+      briefs = [...briefs.filter((b) => b.runId !== d.runId), { runId: d.runId, flow: d.flow, status: d.status, startedAt: d.startedAt, githubRepo: d.vars?.github_repo, choreWatcher: d.vars?.chore_watcher }];
     }
     const only = o.only;
+    // another watcher's release does not replace this one's runs: its runs are left out before the comparison
+    if (only?.watcher !== undefined) briefs = briefs.filter((b) => b.choreWatcher === only.watcher);
     return supersededReleases(briefs).filter((b) => !only || (b.flow === only.flow && b.githubRepo!.toLowerCase() === only.repo.toLowerCase()));
   } catch {
     return [];
@@ -117,7 +141,7 @@ export async function reconcileSupersededInBatches(scheduler: Archiver, o: Recon
 export function archiveSupersededReleases(scheduler: Archiver, done: DoneRun, log?: Log): string[] {
   const repo = done.vars?.github_repo;
   if (done.status !== "succeeded" || !RELEASE_FLOWS.includes(done.flow) || !repo) return [];
-  return reconcileSupersededReleases(scheduler, { log, done, only: { flow: done.flow, repo } });
+  return reconcileSupersededReleases(scheduler, { log, done, only: scopeOf(done, repo) });
 }
 
 /** A run has fully settled (it has left the active list). */
@@ -125,6 +149,6 @@ export function releaseSettled(scheduler: Archiver, done: DoneRun, log?: Log): s
   const repo = done.vars?.github_repo;
   if (!RELEASE_FLOWS.includes(done.flow) || !repo) return [];
   if (done.status === "succeeded") return archiveSupersededReleases(scheduler, done, log);
-  if (done.status === "failed" || done.status === "stopped") return reconcileSupersededReleases(scheduler, { log, done, only: { flow: done.flow, repo } });
+  if (done.status === "failed" || done.status === "stopped") return reconcileSupersededReleases(scheduler, { log, done, only: scopeOf(done, repo) });
   return [];
 }

@@ -18,6 +18,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
 import { sweepSignInDirs } from "../engine/repo-access.js";
 import { RUNNING_SWEEP_MS, sweepStaleRunning, type StaleSweep } from "../engine/running.js";
+import { settleDeadRuns } from "./dead-runs.js";
 import { cleanLine } from "../errors.js";
 import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-glass.js";
 import { Scheduler } from "../queue/scheduler.js";
@@ -549,15 +550,20 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
   const tidyReleases = () => {
     reconcileSupersededInBatches(scheduler, { log, retained: () => retainedSuccesses(opts.runsDir) }).catch((e: Error) => log(`! could not archive old release runs: ${e.message}`));
   };
-  if (runIndex.ready) {
+  // Runs whose process is gone are saved as interrupted: those behind a freed marker at once, every other stored running
+  // run when the run index is there and then with every sweep, so a write that did not work is tried again.
+  const settle = (o: { ids?: string[]; ownPidDead?: boolean } = {}) =>
+    void settleDeadRuns(scheduler, { ...o, log, act: (m) => watchers.monitorAct(m), retained: () => retainedSuccesses(opts.runsDir) });
+  let closed = false;
+  const firstLook = () => {
     adopt();
+    if (closed) return;
+    // Nothing runs yet in this process: a run that names this pid is a leftover of a process that had the same pid.
+    settle({ ownPidDead: true });
     tidyReleases();
-  } else {
-    void runIndex.build().then(() => {
-      adopt();
-      tidyReleases();
-    });
-  }
+  };
+  if (runIndex.ready) firstLook();
+  else void runIndex.build().then(firstLook);
   const adoptTimer = setInterval(adopt, opts.adoptEveryMs ?? 60_000);
   adoptTimer.unref();
   const sweepTimer = setInterval(sweep, opts.accountSweepMs ?? ACCOUNT_SWEEP_MS);
@@ -609,7 +615,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     servicesWatch.start();
   }
   // What the sweeps freed goes to the log and the monitor's activity; the monitor closes the orphan-lock finding at its next check.
-  const reportFreed = (s: StaleSweep) => {
+  const reportFreed = (s: StaleSweep, atStart = false) => {
     for (const id of s.markers) {
       const m = `freed the running marker of run ${id} (it is not running)`;
       log(m);
@@ -620,12 +626,17 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
       log(m);
       watchers.monitorAct(m);
     }
+    // saved before the watchers look again: they must not find a dead run that still says running
+    settle({ ids: s.markers, ownPidDead: atStart });
     if (s.locks.length) watchers.locksFreed([...new Set(s.locks.map((l) => l.repo))]);
   };
-  reportFreed(startSweep);
+  reportFreed(startSweep, true);
   const busyTimer = setInterval(() => renewBusy(ctx.config().governor.busy_runs), BUSY_RENEW_MS);
   busyTimer.unref();
-  const staleTimer = setInterval(() => reportFreed(sweepStaleRunning(opts.runsDir, (id) => scheduler.isActive(id))), RUNNING_SWEEP_MS);
+  const staleTimer = setInterval(() => {
+    reportFreed(sweepStaleRunning(opts.runsDir, (id) => scheduler.isActive(id)));
+    if (scheduler.runIndexReady()) settle();
+  }, RUNNING_SWEEP_MS);
   staleTimer.unref();
   const notices = new NoticeLog({ log });
   ctx.notices = notices;
@@ -658,6 +669,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     ctx,
     notifier,
     close: () => {
+      closed = true;
       clarity.stop();
       feed.stop();
       clearInterval(adoptTimer);
