@@ -4708,6 +4708,14 @@ flowchart LR
   that left the command's process group, so a later call with a limit can stop them, and
   `FACTORY_TEST_SLOT_TRACK_MS` (default `2000`) sets how often they are noted while a limit or a track
   file is set.
+- **Failing tests first after a fix (#983).** When a test run fails, the Foundry writes the failing
+  tests to `failed-tests.txt` in the run folder: the test file and the test name, from the test output
+  (vitest, jest, pytest, Go, Maven and Gradle with a test filter are read). The test step that follows
+  a fix step first runs only those test files, with the test command limited to them. If one still
+  fails, the step fails at once with that output, and the next fix step starts; the whole suite does
+  not run. If they pass, the whole suite runs as before, and a story still merges only after a passing
+  full run. A run that passes clears the list. When the test command is not a known runner, or the
+  list has no usable target (or more than 50), the step runs the whole suite as before.
 - **Tests that did not really run are never green.** A test step first checks Docker when its tests
   need it: a Testcontainers or Docker Compose dependency in a build file (up to 3 folders deep), or a
   `docker` command in `test_cmd`. If Docker does not answer, on macOS the Foundry starts Docker
