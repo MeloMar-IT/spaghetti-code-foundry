@@ -6,6 +6,7 @@ import { ConfigSchema } from "../src/config.js";
 import { RESTART_INTERRUPTED } from "../src/engine/running.js";
 import { parseFlow } from "../src/flow/load.js";
 import { Scheduler, type Job } from "../src/queue/scheduler.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 const SLOW = `name: slow\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: "sleep 0.6"}\n`;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -65,7 +66,11 @@ describe("Scheduler.drain", () => {
 
 describe("Scheduler.interrupt", () => {
   const dirs: string[] = [];
-  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  const watched = new Watched();
+  afterEach(() => {
+    watched.kill(); // before the folders go: it reads the pid files
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
   const BG = `name: bg
 workspace: inplace
 steps:
@@ -81,6 +86,7 @@ steps:
     const repo = join(tmp, "repo");
     mkdirSync(repo);
     const config = () => ({ ...ConfigSchema.parse({}), concurrency: 1 });
+    watched.file(join(repo, "child.pid"));
     const s = new Scheduler({ runsDir: join(tmp, "runs"), queueFile: join(tmp, "queue.json"), config });
     const id = s.submit({ kind: "run", flow: parseFlow(BG), task: "t", repo, vars: {} }, { source: "ui" });
     return { s, id, repo };

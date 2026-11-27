@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Finding } from "./findings.js";
+import { isMemorySample, type Finding } from "./findings.js";
 
 /** The hidden marker in a bug story: a hash of the fingerprint (the fingerprint itself may name things of this install). */
 export const markerHash = (fingerprint: string): string => createHash("sha256").update(fingerprint).digest("hex").slice(0, 16);
@@ -86,6 +86,14 @@ const TEMPLATES: Record<string, Template> = {
     reproduce: ["Check out the commit named in the evidence.", "Run `npm ci`, then `npm run build`.", "Run `npm test`: the tests named in the evidence fail."],
     where: ["The tests named in the evidence, and the code they cover.", "`src/self-update.ts` (the test tries of an update)"],
   },
+  "memory-growth": {
+    title: "The server's memory grows past its limit",
+    happened: "The memory of the server stayed above its limit. The server restarts for this at a moment when no push, merge or release step runs.",
+    effect: "A server that keeps growing gets slow or stops answering. The restart interrupts the runs, which are resumed after it.",
+    expected: "The memory of the server stays well under the limit while it works.",
+    reproduce: ["Run the server under the supervisor with a low `server.memory_limit_mb`.", "Wait for a few memory samples: the server asks for a restart.", "With the usual limit, watch which work makes the memory grow and not come down again."],
+    where: ["`src/memory-watch.ts` (the memory samples and the limit)", "`src/safe-restart.ts` (the restart at a safe moment)", "what the server keeps in memory for as long as it runs (caches, lists, timers, listeners)"],
+  },
   "detector-failed": {
     title: "A detector of the monitor crashes",
     happened: "A detector of the monitor threw an error, so the problems it looks for are not checked.",
@@ -161,8 +169,11 @@ export function buildStory(f: Finding, o: StoryOptions): { title: string; body: 
   const testsText = !rawTests ? ""
     : o.tests === undefined ? "The names of the failing tests are left out: they could not be cleaned with certainty."
     : `Failing tests:\n\n${fenced(o.tests)}${rawTests > o.tests.length ? `\n\n${rawTests - o.tests.length} more name${rawTests - o.tests.length === 1 ? " is" : "s are"} left out.` : ""}`;
+  const samples = (Array.isArray(ev.memory) ? ev.memory : []).filter(isMemorySample).slice(-12);
+  const memoryText = samples.length ? `Memory samples (MB):\n\n${fenced(samples.map((m) => `${m.at}  ${m.mb} MB`))}` : "";
   const evidenceText = [
     evidence.length ? list(evidence) : "No numbers were recorded.",
+    memoryText,
     testsText,
     o.lines === undefined ? "The log lines are left out: they could not be cleaned with certainty." : o.lines.length ? fenced(o.lines) : "",
   ].filter(Boolean).join("\n\n");

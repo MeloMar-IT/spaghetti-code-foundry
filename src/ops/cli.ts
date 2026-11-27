@@ -6,7 +6,7 @@ import { loadConfig } from "../config.js";
 import { listAllRunIds, listRunIds, loadRun, pidAlive, runsArchiveDir, type RunSummary } from "../engine/state.js";
 import { sendDesktop } from "../notify.js";
 import { storeFor } from "../stories/store.js";
-import type { ServiceHost } from "../service.js";
+import { macHost, type ServiceHost } from "../service.js";
 import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } from "./blockage.js";
 import { governorBusyApps } from "./busy.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
@@ -17,6 +17,7 @@ import { belowLine, capHistory, heldCap, logSince } from "./governor-history.js"
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, thresholdRuns, usageThreshold, type Family, type LimitsState } from "./limits.js";
 import { measureUsage, measurement, readCpuTable, runRepos, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
+import { runWatchdog } from "./watchdog.js";
 
 export const JOBS: Record<string, Job> = {
   governor: { name: "governor", everySec: 60 },
@@ -25,12 +26,14 @@ export const JOBS: Record<string, Job> = {
   blockage: { name: "blockage", everySec: 3600 },
   digest: { name: "digest", daily: { hour: 7, minute: 30 } },
   housekeeping: { name: "housekeeping", everySec: 3 * 3600 },
+  watchdog: { name: "watchdog", everySec: 300 },
 };
 
 export const OPS_USAGE = `usage: scf governor|flaky|limits|blockage|digest|housekeeping run   Do one check now
        scf governor|flaky|limits|blockage|digest report     Print the last result
        scf governor|flaky|limits|blockage|digest install    Run it by itself (macOS login agent); uninstall removes it
        scf governor|flaky|limits|blockage|digest status
+       scf watchdog run|report|install|uninstall|status   Restart the server when its queue or watchers stand still
        scf governor reset                    Take away the limits the governor set
        scf flaky auto on|off                 Make bug stories for unreliable tests by itself, or only report
        scf limits set claude|codex <percent used> <next reset, e.g. 2026-10-19T23:00>
@@ -62,6 +65,20 @@ function loadRuns(): RunSummary[] {
 
 const configured = () => loadConfig().concurrency;
 type Out = (line: string) => void;
+
+/** One check of the watchdog. A config that cannot be read must not stop it: the default limits then count. */
+async function watchdog(dir: string, host: ServiceHost, out: Out) {
+  let settings = { pump_minutes: 30, watcher_minutes: 30 };
+  let note = "";
+  try {
+    settings = loadConfig().watchdog;
+  } catch {
+    note = " (config.yaml could not be read: the default limits count)";
+  }
+  const r = runWatchdog({ dir, dataDir: dataDir(), host, settings });
+  for (const text of r.notices) await sendDesktop({ title: "Foundry watchdog", message: text });
+  out(r.line + note);
+}
 const atOnce = (n: number) => (n === 0 ? "0 runs at once, so nothing new starts" : `${n} runs at once`);
 
 function governor(out: Out, now = new Date()) {
@@ -333,6 +350,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
     case "run": {
       const now = new Date();
       if (name === "governor") governor(out, now);
+      else if (name === "watchdog") await watchdog(dir, host ?? macHost(), out);
       else if (name === "housekeeping") {
         const { runHousekeeping, readPs } = await import("./housekeeping.js");
         // when the config cannot be read, nothing is moved

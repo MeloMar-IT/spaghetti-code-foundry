@@ -19,6 +19,7 @@
 //      FACTORY_TEST_SLOT_WAIT_DIR (a folder of the step: each wait for a slot is recorded there as <startMs>-<pid>.wait, touched
 //        at least every 5 s while it lasts and renamed to .done when it ends, so the step's time limit can leave the wait out;
 //        a folder that cannot be written changes nothing),
+//      FACTORY_TEST_SLOT_PGID_FILE (the id of the command's process group is written here; the command does not get the variable),
 //      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
 // Workspace limit (#819): FACTORY_WORKSPACE (a workspace id, checked against ^[a-z0-9][a-z0-9-]{0,39}$ before it is used in a
 // path; anything else is ignored) and FACTORY_WORKSPACE_TEST_SLOTS (1 or more) limit the test runs of one workspace: the
@@ -257,6 +258,9 @@ function releaseAll() {
 const release = releaseAll;
 const nice = num(process.env.FACTORY_TEST_NICE, 10);
 const env = { ...process.env, FACTORY_IN_TEST_SLOT: "1" };
+// Where the group of the command is named, for the watchdog of tools/test-env; a test-slot inside the command must not write it.
+const pgidFile = process.env.FACTORY_TEST_SLOT_PGID_FILE || "";
+delete env.FACTORY_TEST_SLOT_PGID_FILE;
 
 /** The last org.gradle.workers.max (1 or more) in a text of options; undefined when there is none. */
 function lastOpt(text) {
@@ -374,6 +378,13 @@ const more = Math.min(nice, 19) - have;
 // Always in a group of its own: only this process signals it (the pause below, the limit, the forwarded signals).
 const opts = { stdio: "inherit", env, detached: true };
 const child = more > 0 ? spawn("nice", ["-n", String(more), cmd, ...args], opts) : spawn(cmd, args, opts);
+if (pgidFile && child.pid) {
+  try {
+    writeFileSync(pgidFile, `${child.pid}\n`);
+  } catch (e) {
+    console.error(`test-slot: cannot write the group file (${e.message})`);
+  }
+}
 let ending = false;
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(sig, () => {

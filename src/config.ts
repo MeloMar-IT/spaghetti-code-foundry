@@ -291,6 +291,8 @@ const ServerSchema = z
     allow_insecure_http: z.boolean().default(false),
     /** The https address people use to reach this server, for links in notifications and issue comments. Not set: links use this Mac's local address. */
     public_url: z.string().max(2048).refine(isPublicUrl, PUBLIC_URL_MESSAGE).optional(),
+    /** When the server's memory stays above this many MB, it restarts at a safe moment and the monitor files one bug story (0: off). */
+    memory_limit_mb: z.number().int().min(0).max(1_048_576).default(2048),
   })
   .strict()
   .prefault({});
@@ -561,6 +563,11 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /**
+     * Watchdog (`scf watchdog`, #961): how long, while a job could start, the queue (`pump_minutes`) or every watcher
+     * (`watcher_minutes`, at least three of the shortest watcher interval) may stand still before the server is restarted.
+     */
+    watchdog: z.object({ pump_minutes: z.number().int().min(5).max(1440).default(30), watcher_minutes: z.number().int().min(5).max(1440).default(30) }).strict().prefault({}),
     /**
      * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
      * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.

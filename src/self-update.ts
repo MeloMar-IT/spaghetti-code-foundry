@@ -4,7 +4,7 @@ import { githubKey, tryParseRepoUrl } from "./auth/repo-url.js";
 import type { SelfUpdateConfig } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import { cleanLine } from "./errors.js";
-import { detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
+import { TESTED_DIR, detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
 import {
   branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, TEST_TRIES, updateFile, updateState,
   type FailStage, type UpdateStep,
@@ -41,6 +41,8 @@ export interface UpdaterOptions {
   drain: () => void;
   beforeExit: () => void;
   log: (m: string) => void;
+  /** Called at every change of `busy()`; when it turns true, before the first step of the work. */
+  busyChanged?: () => void;
   /** The active runs that are stuck; `all`: every active run is stuck. */
   stuck?: () => { runs: StuckRun[]; all: boolean };
   /** Stops these runs so that they can be resumed after the restart. True when they ended. */
@@ -125,6 +127,15 @@ export class SelfUpdater {
   /** One round. Never throws; one at a time. `force`: check now, not only every few minutes. */
   tick(force = false): Promise<void> {
     return (this.inflight ??= this.round(force).catch((e) => this.say(`self-update: stopped by an unexpected error (${cleanLine(String((e as Error)?.message ?? e)).slice(0, 120)})`)).finally(() => { this.inflight = undefined; }));
+  }
+
+  private setWorking(working: boolean) {
+    this.working = working;
+    try {
+      this.o.busyChanged?.();
+    } catch {
+      // a hook that fails must not stop the update
+    }
   }
 
   private say(m: string) {
@@ -386,7 +397,7 @@ export class SelfUpdater {
    * `retry` is written. "failed": `failed` is written. "stopped": it was cut off and nothing is written.
    */
   private async stage(commit: string, n: number): Promise<"ok" | "failed" | "retry" | "stopped"> {
-    this.working = true;
+    this.setWorking(true);
     try {
       updateState((s) => {
         s.tested = undefined;
@@ -447,7 +458,7 @@ export class SelfUpdater {
       } catch {
         // the next staging removes what is left
       }
-      this.working = false;
+      this.setWorking(false);
     }
   }
 
@@ -470,7 +481,7 @@ export class SelfUpdater {
   private testedBefore(step: UpdateStep, k: { tree?: string; cmd?: string }): string | undefined {
     try {
       if (!k.tree || !k.cmd || !sameTests(step, k.cmd)) return undefined;
-      return passedBefore(join(dirname(this.file), "tested"), k.tree, k.cmd);
+      return passedBefore(join(dirname(this.file), TESTED_DIR), k.tree, k.cmd);
     } catch {
       return undefined;
     }
@@ -499,7 +510,7 @@ export class SelfUpdater {
 
   /** Puts the tested commit in place, journals it, and restarts. The checkout is on main, clean and can fast-forward. */
   private async install(commit: string, from: string, repo: string): Promise<void> {
-    this.working = true;
+    this.setWorking(true);
     try {
       // The check was a while ago (git calls, the idle test): everything it relied on must still hold, right before the journal.
       const changed = await this.changed(commit, from, repo);
@@ -525,7 +536,7 @@ export class SelfUpdater {
       updateState((s) => { s.pending = { from, to: commit, phase: "installed", stamp }; }, this.file);
       this.say(`self-update: installed ${short(commit)}; restarting`);
     } finally {
-      this.working = false;
+      this.setWorking(false);
     }
     if (this.stopped) return;
     this.o.beforeExit();

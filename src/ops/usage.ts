@@ -31,7 +31,7 @@ export const TOP_KEPT = 5;
 /** A process may have started this long before the previous check and still count as new (clock slack). */
 const START_SLACK_MS = 5000;
 /** The helpers of the Foundry (`scf <name> run`); tests keep this equal to the keys of JOBS in cli.ts. */
-export const HELPERS = ["governor", "flaky", "limits", "blockage", "digest", "housekeeping"];
+export const HELPERS = ["governor", "flaky", "limits", "blockage", "digest", "housekeeping", "watchdog"];
 /** The folder of this install's entry points (`dist/` or `src/`). */
 export const ENTRY_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

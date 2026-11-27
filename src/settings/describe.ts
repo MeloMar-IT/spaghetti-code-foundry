@@ -144,7 +144,7 @@ export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
   if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns" || key === "governance.owner" || key === "metrics_sharing.endpoint" || key === "metrics_sharing.timeout_ms" || key.startsWith("skills.releases.auto_key.")) return false;
   if (["ui.redesign", "runs_archive_days", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "simple_project_daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
-  return ["limits.", "monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry.", "simple.", "metrics_sharing."].some((p) => key.startsWith(p));
+  return ["limits.", "monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry.", "simple.", "metrics_sharing.", "watchdog."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -163,6 +163,8 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
   runs_archive_days: A("Move old runs to the archive after (days)", "Housekeeping moves runs that ended this many days ago (failed and stopped ones after at least 90) to runs-archive once a night; they still open by their address but are in no list.", "now"),
+  "watchdog.pump_minutes": G("Queue stands still (minutes)", "When a job could start but the queue has not moved for this long, the watchdog (scf watchdog install) restarts the server, at most once in 24 hours, and a second time it asks you."),
+  "watchdog.watcher_minutes": G("Watchers stand still (minutes)", "When a job could start and no watcher has finished a check for this long (at least three of its intervals), the watchdog restarts the server, at most once in 24 hours."),
   "governor.priority": N("Priority of runs", "How much processor time the agents, builds and tests of a run leave to your other programs; background can slow runs a lot on macOS."),
   "governor.usage_percent": G("Slow down at this share of a weekly limit (%)", "When about this share (1 to 100) of the Claude or Codex weekly limit is used, the limits helper keeps the runs at once at 1, or at Lowest runs at the same time when that is higher, until the reset; needs scf limits auto on and a reading (scf limits set), and not set means it only slows down when a limit would be reached before its reset."),
   "governor.floor": G("Lowest runs at the same time", "The lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded, not set means half of Runs at the same time (at least 2), and a higher number than that setting counts as that setting."),
@@ -290,6 +292,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "server.allowed_hosts": A("Allowed host names", "Host names, besides localhost, that people may type to reach this page.", "now"),
   "server.public_url": A("Public address", "The https address of this server for links in notifications and in the Foundry's issue comments; empty uses this Mac's local address.", "now"),
   "server.allow_insecure_http": A("Allow plain HTTP", "Accept other computers over plain HTTP, which sends passwords and cookies unencrypted.", "now"),
+  "server.memory_limit_mb": A("Memory limit (MB)", "When the server's memory stays above this, it restarts at the next safe moment and the monitor files one bug story with the samples; 0 turns this off.", "now"),
   "audit.retention_days": A("Keep the audit log (days)", "Audit lines older than this are removed when the server starts and once a day.", "now"),
   protected_branches: A("Protected branches", "Pushes to these branches are refused during runs; glob patterns are allowed.", "new-runs"),
   hotfix_to_main: A("Hotfixes", "Build bug stories of the built-in issue-gitflow on a hotfix branch and merge them into main without a person.", "new-runs"),

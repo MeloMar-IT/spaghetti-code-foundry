@@ -69,6 +69,12 @@ export function markFinder(mark: string): { push(piece: string): string; found()
   };
 }
 
+/**
+ * The folder (next to `runs/`) of the records of passed tests. The number goes up when what a record promises changes: since
+ * 2, container tests that were skipped never count as passed, so the records in the old `tested/` are not read any more.
+ */
+export const TESTED_DIR = "tested-v2";
+
 /** The key of a test record: as the flows compute it, `printf '%s\n%s\n' tree cmd | shasum | cut -c1-40`. */
 export function testedKey(tree: string, cmd: string): string {
   return createHash("sha1").update(`${tree}\n${cmd}\n`).digest("hex");

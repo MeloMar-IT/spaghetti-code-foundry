@@ -25,6 +25,7 @@ import { ownDir, runSandbox, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, w
 import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
 import { isTimedOut } from "../errors.js";
 import { stepContextUncited } from "./context-index.js";
+import { clearEnvStop, envStopFile, readEnvStop } from "./env-stop.js";
 import { claimAfterResolve } from "./release-claim.js";
 import { planPointsAfter } from "./plan-points.js";
 import { readDecidedQuestions } from "./questions.js";
@@ -71,6 +72,8 @@ export interface LoopResult {
   lastOutput: string;
   /** Evidence only: the step whose failure ended the loop. */
   failedStep?: StepIdentity;
+  /** The loop ended at a step whose test environment could not be used (see StepRecord.envFailed). */
+  envFailed?: boolean;
 }
 
 export interface Engine {
@@ -135,7 +138,7 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held" | "slotWaitMs"> & {
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held" | "slotWaitMs" | "envFailed"> & {
   /** A shell step printed more than it kept. Not stored in the record: it shows as the `oversize` signal of its label. */
   oversize?: boolean;
   /** A step with `allow_commands` needed a command that was refused (the command): the loop stops the run there. Not stored. */
@@ -431,6 +434,9 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       if (held && step.sandbox && configured) engine.log(`    · ${step.id}: a team's run does not use the Docker image; the step runs in the OS sandbox`);
       else if (step.sandbox && !image && !held) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
       const env = stepEnv(scope, engine, step);
+      const envStop = envStopFile(engine.summary.runDir, logFile);
+      clearEnvStop(envStop);
+      env.FACTORY_ENV_STOP_FILE = envStop;
       // The stored token of the repository, looked up now, only for a step with repo_access (or the old grant by name).
       const access = stepRepoAccess(step, scope.depth, scope.flow.name, engine.summary, ctx.vars);
       // A step that cannot sign in ends the run there: `on_failure` is not followed.
@@ -582,7 +588,9 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
       }
       const spent = shellStepCost(r.output);
-      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(spent > 0 ? { costUsd: spent } : {}), ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
+      // only a command that ended with a failure code: a time limit or a cancel keeps its own reason
+      const noEnv = !r.ok && r.error?.startsWith("exit code") ? readEnvStop(envStop) : undefined;
+      return { ok: r.ok, output: r.output, ...(noEnv ? { envFailed: true } : {}), error: noEnv ?? r.error,exitCode: r.exitCode, ...(spent > 0 ? { costUsd: spent } : {}), ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
     }
 
     case "parallel": {
@@ -628,10 +636,12 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         const reason = "content held for approval inside a parallel step; run that step outside the parallel block";
         return { ok: false, output: reason, error: reason };
       }
+      const noEnv = results.find((r) => !r.res.ok && r.res.envFailed);
       return {
         ok: failed.length === 0,
         output: results.map((r) => `## ${r.id}\n${r.res.output}`).join("\n\n"),
-        error: failed.length ? `failed: ${failed.join(", ")}` : undefined,
+        error: failed.length ? `failed: ${failed.join(", ")}${noEnv ? ` — ${noEnv.id}: ${noEnv.res.error}` : ""}` : undefined,
+        ...(noEnv ? { envFailed: true } : {}),
       };
     }
 
@@ -655,7 +665,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const r = await engine.runLoop(subScope, null);
       const ok = r.outcome === "succeeded";
       // a limit or plugin stop inside the sub-flow sets engine.nestedStop: the parent loop ends the run there, `on_failure` is not followed
-      return { ok, output: r.lastOutput, error: ok ? undefined : `sub-flow ${flow.name} ${r.outcome}${r.reason ? `: ${r.reason}` : ""}` };
+      return { ...(!ok && r.envFailed ? { envFailed: true } : {}), ok, output: r.lastOutput,error: ok ? undefined : `sub-flow ${flow.name} ${r.outcome}${r.reason ? `: ${r.reason}` : ""}` };
     }
 
     case "approval":

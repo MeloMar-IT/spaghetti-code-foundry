@@ -558,8 +558,9 @@ describe("repair classes", () => {
   });
 
   it("the repair list has unique names, one-sentence descriptions and sources that exist", () => {
-    expect(REPAIRS).toHaveLength(8);
-    expect(new Set(REPAIRS.map((r) => r.name)).size).toBe(8);
+    expect(REPAIRS).toHaveLength(10);
+    expect(new Set(REPAIRS.map((r) => r.name)).size).toBe(10);
+    expect(REPAIRS.find((r) => r.name === "restart-wedged-server")!.repair).toBe("auto");
     const detectors = detectorInfo().map((d) => d.name);
     for (const r of REPAIRS) {
       expect(detectors, r.name).not.toContain(r.name);
@@ -575,8 +576,8 @@ describe("repair classes", () => {
 describe("descriptions", () => {
   it("every detector has a unique name and a description of two sentences, at most 240 characters", () => {
     const info = detectorInfo();
-    expect(info).toHaveLength(23); // 21 (with the 5 SLO detectors), the self-update detector and the skill source check
-    expect(new Set(info.map((d) => d.name)).size).toBe(23);
+    expect(info).toHaveLength(24); // 21 (with the 5 SLO detectors), the self-update and memory detectors and the skill source check
+    expect(new Set(info.map((d) => d.name)).size).toBe(24);
     expect(info.map((d) => d.name)).toContain("skill-source-check");
     expect(info.map((d) => d.name)).toContain("detector-failed");
     for (const d of info) {
