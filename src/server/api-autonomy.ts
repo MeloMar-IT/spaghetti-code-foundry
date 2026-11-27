@@ -266,8 +266,10 @@ export async function autonomyStatus(ctx: ApiContext, now: Date, viewer?: string
 export type GateOf = (kind: AutonomyKind, id: string, to: AutonomyLevel, now: Date) => Promise<PromotionGate>;
 const liveGate =
   (ctx: ApiContext): GateOf =>
-  (kind, id, to, now) =>
-    promotionGate(kind, id, to, now, gateDepsFor(ctx, now));
+  (kind, id, to, now) => {
+    factsCacheOf(ctx).forgetFileChecks(); // a decision looks at the evidence files as they are now
+    return promotionGate(kind, id, to, now, gateDepsFor(ctx, now));
+  };
 
 /** Maps the errors of a change to answers. No answer holds a path or quotes the input. */
 async function guarded<T>(ctx: ApiContext, fn: () => Promise<T>): Promise<T> {

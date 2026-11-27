@@ -106,7 +106,16 @@ export interface OutcomeFactsCacheOptions {
    * look at every run folder (#934). A manifest or marker then shows up at most this long late.
    */
   freshTtlMs?: number;
+  /**
+   * A longer `freshTtlMs` for a run that ended at least `settledAfterMs` ago: its files practically never change any more.
+   * It holds only while the run's `updatedAt` stays the same. Both must be set, else `freshTtlMs` counts for every run.
+   */
+  settledTtlMs?: number;
+  settledAfterMs?: number;
 }
+
+/** A positive number of milliseconds, else 0 (not set). */
+const millis = (n: number | undefined): number => (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 0);
 
 // The facts are small. A server with thousands of runs in the outcome window must not evict them on every call (#934).
 const MAX_ENTRIES = 10_000;
@@ -124,25 +133,36 @@ export class OutcomeFactsCache {
   private readonly maxBytes: number;
   private readonly reader: typeof readEvidenceEvents;
   private readonly freshTtlMs: number;
-  /** The last file check of each run folder, kept for `freshTtlMs`. */
-  private checked = new Map<string, { at: number; files: Awaited<ReturnType<typeof evidenceFiles>> }>();
+  private readonly settledTtlMs: number;
+  private readonly settledAfterMs: number;
+  /** The last file check of each run folder, kept for `freshTtlMs` (or `settledTtlMs`). */
+  private checked = new Map<string, { at: number; updatedAt: string; files: Awaited<ReturnType<typeof evidenceFiles>> }>();
 
   constructor(opts: OutcomeFactsCacheOptions = {}) {
     this.maxEntries = Math.max(1, Math.floor(opts.maxEntries ?? MAX_ENTRIES));
     this.maxBytes = opts.maxBytes ?? MAX_EVIDENCE_BYTES;
     this.reader = opts.reader ?? readEvidenceEvents;
-    this.freshTtlMs = Number.isFinite(opts.freshTtlMs) && (opts.freshTtlMs as number) > 0 ? (opts.freshTtlMs as number) : 0;
+    this.freshTtlMs = millis(opts.freshTtlMs);
+    this.settledAfterMs = millis(opts.settledAfterMs);
+    this.settledTtlMs = this.settledAfterMs ? millis(opts.settledTtlMs) : 0;
   }
 
-  /** The evidence files of a run folder: looked at again unless a check younger than `freshTtlMs` is kept. */
-  private async filesOf(runDir: string): Promise<Awaited<ReturnType<typeof evidenceFiles>>> {
-    if (this.freshTtlMs <= 0) return evidenceFiles(runDir);
+  /** Drops the kept file checks, so the next call looks at every run folder again (before a decision). */
+  forgetFileChecks(): void {
+    this.checked.clear();
+  }
+
+  /** The evidence files of a run folder: looked at again unless a young enough check of this `updatedAt` is kept. */
+  private async filesOf(runDir: string, updatedAt: string, endedAgoMs: number): Promise<Awaited<ReturnType<typeof evidenceFiles>>> {
+    const settled = this.settledTtlMs > 0 && endedAgoMs >= this.settledAfterMs;
+    const ttl = settled ? this.settledTtlMs : this.freshTtlMs;
+    if (ttl <= 0) return evidenceFiles(runDir);
     const kept = this.checked.get(runDir);
     const now = Date.now();
-    if (kept && now - kept.at < this.freshTtlMs) return kept.files;
+    if (kept && kept.updatedAt === updatedAt && now - kept.at < ttl) return kept.files;
     const files = await evidenceFiles(runDir);
     this.checked.delete(runDir);
-    this.checked.set(runDir, { at: now, files });
+    this.checked.set(runDir, { at: now, updatedAt, files });
     while (this.checked.size > this.maxEntries) this.checked.delete(this.checked.keys().next().value as string);
     return files;
   }
@@ -169,7 +189,7 @@ export class OutcomeFactsCache {
         }
         facts = await pending;
       }
-      const fresh = await this.filesOf(run.runDir);
+      const fresh = await this.filesOf(run.runDir, updatedAt, now.getTime() - finished);
       return { ...facts, evidence: { stream: fresh.stream, read: fresh.stream && facts.evidence.read, manifest: fresh.manifest, incomplete: fresh.incomplete } };
     } catch {
       return undefined;

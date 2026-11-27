@@ -301,6 +301,23 @@ describe("files", () => {
       await vi.waitFor(async () => expect((await cache.get(ended(d), "u", NOW))?.evidence.manifest).toBe(true), { timeout: 2000, interval: 20 });
     });
 
+    it("keeps the check of a run that ended long ago for longer, until its updatedAt changes or the checks are forgotten", async () => {
+      const d = folder("settled", delivered());
+      // no freshTtlMs: a run that ended less than settledAfterMs ago is looked at on every call
+      const ago = NOW.getTime() - (T0 + 100_000);
+      const young = new OutcomeFactsCache({ settledTtlMs: 60_000, settledAfterMs: ago + 1 });
+      const old = new OutcomeFactsCache({ settledTtlMs: 60_000, settledAfterMs: ago });
+      const manifest = async (c: OutcomeFactsCache, updatedAt = "u") => (await c.get(ended(d), updatedAt, NOW))?.evidence.manifest;
+      expect([await manifest(young), await manifest(old)]).toEqual([false, false]);
+      writeFileSync(join(d, EVIDENCE_MANIFEST_FILE), "{}");
+      expect([await manifest(young), await manifest(old)]).toEqual([true, false]);
+      expect(await manifest(old, "u2")).toBe(true); // run.json was written again
+      rmSync(join(d, EVIDENCE_MANIFEST_FILE));
+      expect(await manifest(old, "u2")).toBe(true);
+      old.forgetFileChecks();
+      expect(await manifest(old, "u2")).toBe(false);
+    });
+
     it("an unusable freshTtlMs means a look on every call", async () => {
       const d = folder("ttl0", delivered());
       for (const freshTtlMs of [0, -5, Number.NaN]) {
