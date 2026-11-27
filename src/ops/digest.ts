@@ -1,3 +1,4 @@
+import { restartInterrupted } from "../engine/running.js";
 import { pidAlive, type RunSummary } from "../engine/state.js";
 import { retriesOf, retryOutcome } from "../engine/auto-retry.js";
 import { SUPERSEDED_BY } from "../release/superseded.js";
@@ -66,7 +67,7 @@ export function digestFacts(runs: RunSummary[], now: Date, hours = 24, alive: (p
   const stories = runs.filter((r) => r.vars?.issue);
   for (const r of newestRuns(stories)) {
     const ended = endedAt(r);
-    if (r.status === "running" && !alive(r.pid)) f.interrupted.push(`${titleOf(r)} — its process is gone; resume it`);
+    if ((r.status === "running" && !alive(r.pid)) || (restartInterrupted(r) && !r.archivedAt)) f.interrupted.push(`${titleOf(r)} — its process is gone; resume it`);
     else if (r.status === "running") f.working++;
     else if (r.status === "waiting") f.waiting.push(`${titleOf(r)} — ${r.waiting?.message?.split("\n")[0]?.slice(0, 120) ?? "waits for your answer"}`);
     else if (ended < since) continue;

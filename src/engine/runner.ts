@@ -38,7 +38,7 @@ import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPub
 import { heldWorkspace, stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, runSandbox } from "./os-sandbox.js";
 import { localRepoEnv, ownerReposEnv, removeSignInDir } from "./repo-access.js";
-import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
+import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, saveResumedRun, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
 import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
@@ -394,7 +394,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, parkedAt: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
-  claimRunStart(opts.runsDir, () => saveRun(summary));
+  claimRunStart(opts.runsDir, () => saveResumedRun(summary));
   dropRunEvidence(summary.runDir); // the run is no longer at the end its manifest describes
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);

@@ -9,7 +9,7 @@ import { knownWorkspace, limitsOf as workspaceLimitsOf, workspaceForJob } from "
 import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../workspaces/list.js";
 import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
-import { RESTART_INTERRUPT } from "../engine/running.js";
+import { markRunInterrupted, RESTART_INTERRUPT } from "../engine/running.js";
 import { RunIndex } from "../engine/run-index.js";
 import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, noteRunWritten, projectOfVars, readIndexSlot, slimRunOf, spentToday, type SlimRun, type RunIndexEntry, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
@@ -511,6 +511,27 @@ export class Scheduler {
     const summary = this.get(runId);
     if (summary) for (const fn of [...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
     return "done";
+  }
+
+  /**
+   * Saves a stored `running` run whose process is gone as interrupted, and shows it to viewers. Refuses a run that is
+   * active or queued here, or read-only. Returns the saved run, or undefined when nothing was written. Never throws.
+   */
+  markInterrupted(runId: string, o: { ownPidDead?: boolean } = {}): RunSummary | undefined {
+    try {
+      if (this.isActive(runId) || this.isQueued(runId) || this.inRunsArchive(runId) || this.removedRun(runId)) return undefined;
+      if (!markRunInterrupted(runDirOf(this.o.runsDir, runId) ?? join(this.o.runsDir, runId), o)) return undefined;
+      const summary = this.get(runId);
+      if (summary) this.announce(summary);
+      return summary;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The runs that are stored as running but are not active or queued here. From the run index: old runs are not read. */
+  staleRunIds(): string[] {
+    return this.rawBriefs().filter((b) => b.status === "running" && !this.isActive(b.runId) && !this.isQueued(b.runId)).map((b) => b.runId);
   }
 
   /** Cancel a run that waits for approval (no process runs for it). */

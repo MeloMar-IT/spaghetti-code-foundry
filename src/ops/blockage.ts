@@ -1,3 +1,4 @@
+import { restartInterrupted } from "../engine/running.js";
 import { pidAlive, type RunSummary } from "../engine/state.js";
 
 /** Why a story cannot go on: it waits for files another run holds, or for a story it depends on. */
@@ -100,7 +101,7 @@ export function blockers(waits: Wait[], runs: RunSummary[], now: Date, alive: (p
     const r = newest.get(story);
     if (!r) return "not started";
     // "running" with no process behind it: the server or the machine stopped under it
-    if (r.status === "running" && !alive(r.pid)) return "interrupted — resume it";
+    if ((r.status === "running" && !alive(r.pid)) || restartInterrupted(r)) return "interrupted — resume it";
     if (r.status === "running") return `working on ${r.state?.next ?? "a step"}${r.stepStartedAt ? ` for ${Math.round((now.getTime() - Date.parse(r.stepStartedAt)) / 60_000)} minutes` : ""}`;
     if (r.status === "failed") return "failed — needs a look";
     if (r.status === "waiting") return "waits for an answer from you";

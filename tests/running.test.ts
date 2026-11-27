@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -7,7 +7,8 @@ import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import { resetSandboxCache, SANDBOX_REFUSED } from "../src/engine/os-sandbox.js";
 import { runFlow, resumeRun } from "../src/engine/runner.js";
-import { markRunning, sweepRunning, sweepStaleRunning, unmarkRunning } from "../src/engine/running.js";
+import { markRunInterrupted, markRunning, restartInterrupted, RESTART_INTERRUPTED, saveResumedRun, sweepRunning, sweepStaleRunning, unmarkRunning, withRunStateLock } from "../src/engine/running.js";
+import type { RunSummary } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
 import { claudeBin } from "./helpers/fake-github.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
@@ -60,6 +61,91 @@ describe("the running marker", () => {
     writeFileSync(file, "x");
     process.env.FACTORY_LOCK_DIR = file;
     expect(markRunning("r1")).toBeUndefined();
+  });
+});
+
+describe("markRunInterrupted", () => {
+  const old = new Date(Math.floor(Date.now() / 1000) * 1000 - 30_000);
+  const beforeOld = old.getTime() - 3_600_000;
+  const dir = () => join(lock(), "runs", "r1");
+  const make = (o: Record<string, unknown> = {}) => {
+    mkdirSync(dir(), { recursive: true });
+    writeFileSync(join(dir(), "run.json"), JSON.stringify({ runId: "r1", runDir: dir(), flow: "quick", status: "running", pid: 999999, startedAt: old.toISOString(), stepStartedAt: old.toISOString(), vars: {}, history: [], ...o }));
+    utimesSync(join(dir(), "run.json"), old, old);
+    return dir();
+  };
+  const read = () => JSON.parse(readFileSync(join(dir(), "run.json"), "utf8")) as RunSummary;
+
+  it("saves a run with a dead pid as interrupted and keeps the file time", () => {
+    expect(markRunInterrupted(make())).toBe(true);
+    expect(read()).toMatchObject({ status: "failed", reason: RESTART_INTERRUPTED, finishedAt: old.toISOString() });
+    expect(read()).not.toHaveProperty("stepStartedAt");
+    expect(statSync(join(dir(), "run.json")).mtimeMs).toBe(old.getTime());
+    expect(readFileSync(join(dir(), "live.log"), "utf8")).toContain("interrupted: its process was gone");
+    expect(readdirSync(dir()).sort()).toEqual(["live.log", "run.json"]);
+  });
+
+  it("leaves the run of another live process alone, but not one from before the last boot", () => {
+    make({ pid: process.ppid });
+    expect(markRunInterrupted(dir(), { bootMs: beforeOld })).toBe(false);
+    expect(read().status).toBe("running");
+    expect(markRunInterrupted(dir(), { bootMs: old.getTime() + 3_600_000 })).toBe(true);
+  });
+
+  it("counts its own pid as gone only when told so", () => {
+    make({ pid: process.pid });
+    expect(markRunInterrupted(dir(), { bootMs: beforeOld })).toBe(false);
+    expect(markRunInterrupted(dir(), { bootMs: beforeOld, ownPidDead: true })).toBe(true);
+  });
+
+  it("changes no run that does not say running, and nothing it cannot read", () => {
+    for (const status of ["failed", "waiting", "stopped", "succeeded", "cancelled"]) {
+      expect(markRunInterrupted(make({ status }))).toBe(false);
+      expect(read().status).toBe(status);
+    }
+    writeFileSync(join(make(), "run.json"), "{ nope");
+    expect(markRunInterrupted(dir())).toBe(false);
+    expect(markRunInterrupted(join(lock(), "runs", "gone"))).toBe(false);
+  });
+
+  it("keeps a resume out between its read and its write", () => {
+    make();
+    const resumed: RunSummary = { ...read(), pid: process.pid };
+    let refused = "";
+    const beforeSwap = () => {
+      try {
+        saveResumedRun(resumed, 0);
+      } catch (e) {
+        refused = (e as Error).message;
+      }
+    };
+    expect(markRunInterrupted(dir(), { hooks: { beforeSwap } })).toBe(true);
+    expect(refused).toContain("another scf process is writing");
+    // the resume that waited writes afterwards, and the run is live: it is not interrupted again
+    saveResumedRun(resumed, 0);
+    expect(markRunInterrupted(dir(), { bootMs: beforeOld })).toBe(false);
+    expect(read()).toMatchObject({ status: "running", pid: process.pid });
+  });
+
+  it("writes nothing while a resume holds the lock, and works at the next try", () => {
+    make();
+    withRunStateLock(dir(), () => expect(markRunInterrupted(dir())).toBe(false), 0);
+    expect(read().status).toBe("running");
+    expect(markRunInterrupted(dir())).toBe(true);
+  });
+
+  it("does not overwrite a run.json that changed while it worked", () => {
+    make();
+    const other = JSON.stringify({ status: "succeeded" });
+    expect(markRunInterrupted(dir(), { hooks: { beforeSwap: () => writeFileSync(join(dir(), "run.json"), other) } })).toBe(false);
+    expect(readFileSync(join(dir(), "run.json"), "utf8")).toBe(other);
+  });
+
+  it("restartInterrupted is true only for a stored restart interruption", () => {
+    expect(restartInterrupted({ status: "failed", reason: RESTART_INTERRUPTED })).toBe(true);
+    expect(restartInterrupted({ status: "cancelled", reason: RESTART_INTERRUPTED })).toBe(true);
+    expect(restartInterrupted({ status: "running", reason: RESTART_INTERRUPTED })).toBe(false);
+    expect(restartInterrupted({ status: "cancelled", reason: "cancelled by user" })).toBe(false);
   });
 });
 

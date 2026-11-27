@@ -1807,7 +1807,17 @@ content, or ask for approval. It never gives access that a rule denied.
   monitor still count it; Your turn does not list it.
 
 Runs survive restarts: if the Foundry stops mid-run, the run is marked *interrupted* and can be
-resumed (watchers do this automatically).
+resumed. A run is never left as *running* when nothing drives it any more. At start-up, and then
+every minute, the server saves each stored *running* run whose process is gone as interrupted. The
+run's stored status is `failed` with the reason "interrupted by a restart of the server — resume it
+to continue"; the run list and the digest show it as interrupted, and `runs cancel` and the lists agree on it. A live run is never touched.
+
+A watcher resumes the interrupted runs it started (chore, CI, pull request, release build and
+pre-check runs), oldest first, at its next check. Issue runs resume through the issue check, as
+before. A run you started by hand (or from the command line) is not resumed by itself: resume it on
+its page. The exception is a `release-daily` or `daily-pr` run that a later run of the same flow,
+repository and watcher has already completed successfully: it is archived as superseded instead of
+being resumed. The archive keeps it, and the change page still shows it.
 
 **Answer a run's questions.** When a run stopped with questions (it stopped at `send_back` or
 `ask_for_info` and that step printed something), its owner or an admin can answer with
@@ -1998,7 +2008,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | starting soon | Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself. |
 | queued | It waits in the queue until a run finishes. Nothing to do — it starts by itself. |
 | working | The Foundry is working on it right now. Nothing to do — you can follow it on the run page. |
-| interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page. |
+| interrupted | The run was cut off, for example by a restart of the server. A watched issue, and a chore, CI, pull request, release-build or pre-check run that a watcher started, resumes by itself at the next check; any other run you resume on its page. |
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
 | cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
 | parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |

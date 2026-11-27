@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
+import { RESTART_INTERRUPTED } from "../src/engine/running.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { blockers, cycles, dependencyWaits, fileWaits, watcherRepos } from "../src/ops/blockage.js";
 import { capsPath, loadCaps, runLimit, setCap } from "../src/ops/caps.js";
@@ -855,6 +856,13 @@ describe("the digest", () => {
   ];
   // the process of r2 is gone: the server or the machine stopped under it
   const alive = (pid: unknown) => pid === 11;
+
+  it("says interrupted for a run the server saved as interrupted, however old, but not once it is archived", () => {
+    const saved = (o: Partial<RunSummary> = {}) => run("i1", { issue: "8", status: "failed", reason: RESTART_INTERRUPTED, at: NOW.getTime() - 90 * HOUR, ...o });
+    expect(digestFacts([saved()], NOW, 24, alive)).toMatchObject({ failed: [], interrupted: ["#8 — its process is gone; resume it"] });
+    expect(digestFacts([saved({ archivedAt: NOW.toISOString() })], NOW, 24, alive).interrupted).toEqual([]);
+    expect(blockers([{ story: "acme/app#9", on: "acme/app#8", why: "files" }], [saved()], NOW, alive)[0]!.state).toBe("interrupted — resume it");
+  });
 
   it("takes the newest run of each story from the last day; what waits for you stays however old", () => {
     expect(digestFacts(runs, NOW, 24, alive)).toEqual({ done: ["#1: Add a page"], split: ["#2"], failed: ["#3 — the tests still fail"], waiting: ["#4 — Approve the plan?"], working: 1, interrupted: ["#7 — its process is gone; resume it"] });
