@@ -1,8 +1,11 @@
 /**
  * "Depends on" issues in other repositories ("owner/name#12"): which of them still hold a story. Only a GitHub repository the
- * watcher's account added to the Foundry counts, and its issue is read with that repository's own sign-in, never the watcher's.
+ * watcher's account added to the Foundry counts. Its issue is read the repository's own way first (its sign-in, or the server's
+ * own access for an admin's `none` repository). Under the same GitHub owner, the sign-in of the watcher's repository is next.
+ * A non-admin's `none` repository is never read. Only a readable issue counts; every failure keeps the story held.
  */
 import { findOwnedRepo, type RepoRecord } from "../auth/repos.js";
+import { getUser } from "../auth/users.js";
 import { errorLine } from "../errors.js";
 import { restIssue, withGhEnv, type RestIssue } from "../github.js";
 import { crossDependencies, crossState, type CrossState, type DoneRule } from "./deps.js";
@@ -14,6 +17,10 @@ export const CROSS_READS_PER_CHECK = 20;
 export const CROSS_READ_MS = 20_000;
 
 export const NO_OWN_SIGN_IN = "the repository has no sign-in of its own";
+export const NOT_ALLOWED = `${NO_OWN_SIGN_IN}; tried: nothing, because the server's own access is only for an admin`;
+
+/** Error texts that mean "this sign-in cannot read the issue" (not a passing problem). */
+const CANNOT_READ = /HTTP 40[134]\b|not found|forbidden|not accessible|bad credentials/i;
 
 /** An issue of another repository that holds a story. */
 export interface CrossBlocker {
@@ -21,7 +28,7 @@ export interface CrossBlocker {
   issue: number;
   /** It was closed as not planned: only the owner can sort that out. */
   notPlanned?: true;
-  /** (method none) Its repository has no sign-in of its own: only the owner can sort that out. */
+  /** (method none) No allowed way could read the issue: only the owner can sort that out. */
   noSignIn?: true;
 }
 
@@ -33,6 +40,10 @@ export interface CrossDepOptions {
   rule: () => DoneRule;
   /** The sign-in of a stored repository (kept by the caller). */
   identity: (repoId: string) => RepoGhIdentity | undefined;
+  /** The sign-in of the watcher's own repository (kept by the caller). */
+  selfIdentity?: () => RepoGhIdentity | undefined;
+  /** Is this account an admin? The default reads the accounts of the Foundry. */
+  isAdmin?: (userId: string) => boolean;
   /** A line for Recent activity. */
   act: (msg: string) => void;
   /** A warning line for the log. */
@@ -42,11 +53,17 @@ export interface CrossDepOptions {
   cap?: number;
 }
 
-type Lookup = { kind: "skip" } | { kind: "refused"; why: string; noSignIn?: true } | { kind: "ok"; rec: RepoRecord };
-type Result = { state: CrossState } | { failed: string };
+/** A way to read an issue: the other repository's own way, or the sign-in of the watcher's repository. */
+type Way = "own" | "story";
+type Try = { way: Way; why: string; cannotRead: boolean };
+type Readable = { kind: "ok"; rec: RepoRecord; ways: Way[] };
+type Lookup = { kind: "skip" } | { kind: "refused"; why: string; noSignIn?: true } | Readable;
+type Result = { state: CrossState } | { failed: string; noSignIn?: true };
 type CrossRef = { repo: string; issue: number };
 
 const keyOf = (repo: string, issue: number) => `${repo.toLowerCase()}#${issue}`;
+/** The GitHub account or organisation of "owner/name". */
+const githubOwner = (repo: string) => repo.split("/")[0]!.toLowerCase();
 
 /** One per watcher. `startCheck(bodies)` at the start of every check. */
 export class CrossDeps {
@@ -68,11 +85,13 @@ export class CrossDeps {
   private readonly find: (owner: string, name: string) => RepoRecord | undefined;
   private readonly read: (repo: string, issue: number, timeoutMs: number) => Promise<RestIssue | undefined>;
   private readonly cap: number;
+  private readonly isAdmin: (userId: string) => boolean;
 
   constructor(private o: CrossDepOptions) {
     this.find = o.find ?? findOwnedRepo;
     this.read = o.read ?? restIssue;
     this.cap = o.cap ?? CROSS_READS_PER_CHECK;
+    this.isAdmin = o.isAdmin ?? ((id) => getUser(id)?.role === "admin");
   }
 
   /**
@@ -110,7 +129,7 @@ export class CrossDeps {
 
   /**
    * The cross references of an issue that still hold it, sorted. `alive` throws when the check must stop (the watcher was
-   * stopped, the check given up): it runs after the sign-in is prepared and after the read, and its error is passed on as it is.
+   * stopped, the check given up): it runs after a sign-in is prepared and after a read, and its error is passed on as it is.
    */
   async blockers(issue: { number: number; body?: string }, markedOnly: boolean, alive: () => void = () => {}): Promise<CrossBlocker[]> {
     const refs = crossDependencies(issue.body ?? "", { markedOnly });
@@ -121,20 +140,24 @@ export class CrossDeps {
       const name = `${ref.repo}#${ref.issue}`;
       const look = this.lookup(ref.repo);
       const rk = `${issue.number}|${keyOf(ref.repo, ref.issue)}`;
-      if (look.kind !== "refused") this.refusals.delete(rk);
       if (look.kind === "skip") {
+        this.refusals.delete(rk);
         this.once("act", `#${issue.number}: ${name} is not a repository of the Foundry; not waited for`);
         continue;
       }
       if (look.kind === "refused") {
-        const was = this.refusals.get(rk);
-        this.refusals.set(rk, { why: look.why, seen: this.serial });
-        if (was?.why !== look.why) this.o.warn(`#${issue.number}: ${name} could not be read: ${look.why}`);
+        this.refuse(rk, `#${issue.number}: ${name}`, look.why);
         out.push({ repo: ref.repo, issue: ref.issue, ...(look.noSignIn ? { noSignIn: true as const } : {}) });
         continue;
       }
-      const r = await this.result(look.rec, ref.repo, ref.issue, alive);
+      const r = await this.result(look, ref.repo, ref.issue, alive);
       alive(); // also for a result another call read: a stopped check goes no further
+      if ("failed" in r && r.noSignIn) {
+        this.refuse(rk, `#${issue.number}: ${name}`, r.failed);
+        out.push({ repo: ref.repo, issue: ref.issue, noSignIn: true });
+        continue;
+      }
+      this.refusals.delete(rk);
       if ("failed" in r) {
         this.once("warn", `#${issue.number}: ${name} could not be read: ${r.failed}`);
         out.push({ repo: ref.repo, issue: ref.issue });
@@ -142,6 +165,13 @@ export class CrossDeps {
       else if (r.state === "open") out.push({ repo: ref.repo, issue: ref.issue });
     }
     return out;
+  }
+
+  /** Something only the owner can sort out: told once per story and reason, also across checks. */
+  private refuse(key: string, what: string, why: string) {
+    const was = this.refusals.get(key);
+    this.refusals.set(key, { why, seen: this.serial });
+    if (was?.why !== why) this.o.warn(`${what} could not be read: ${why}`);
   }
 
   private once(kind: "act" | "warn", msg: string) {
@@ -159,8 +189,12 @@ export class CrossDeps {
       try {
         const rec = this.find(this.o.owner, repo);
         if (!rec || rec.owner !== this.o.owner) l = { kind: "skip" };
-        else if (rec.method === "none") l = { kind: "refused", why: NO_OWN_SIGN_IN, noSignIn: true };
-        else l = { kind: "ok", rec };
+        // Before any way is chosen: a non-admin's `none` repository is not read at all, also not with the watcher's sign-in.
+        else if (rec.method === "none" && !this.isAdmin(rec.owner)) l = { kind: "refused", why: NOT_ALLOWED, noSignIn: true };
+        else {
+          const story = githubOwner(repo) === githubOwner(this.o.selfRepo) && this.o.selfIdentity?.() !== undefined;
+          l = { kind: "ok", rec, ways: story ? ["own", "story"] : ["own"] };
+        }
       } catch (e) {
         l = { kind: "refused", why: errorLine((e as Error).message) };
       }
@@ -170,7 +204,7 @@ export class CrossDeps {
   }
 
   /** Each issue is read once per check, and only when it has a slot in this check. A rejection is the `alive()` error. */
-  private result(rec: RepoRecord, repo: string, issue: number, alive: () => void): Promise<Result> {
+  private result(look: Readable, repo: string, issue: number, alive: () => void): Promise<Result> {
     const k = keyOf(repo, issue);
     let p = this.results.get(k);
     if (p) return p;
@@ -181,32 +215,57 @@ export class CrossDeps {
       }
       p = Promise.resolve({ failed: `not read in this check: at most ${this.cap} issues of other repositories are read per check` });
     } else {
-      p = this.readOne(rec, repo, issue, alive);
+      p = this.readOne(look, repo, issue, alive);
     }
     this.results.set(k, p);
     return p;
   }
 
-  private async readOne(rec: RepoRecord, repo: string, issue: number, alive: () => void): Promise<Result> {
-    const id = this.o.identity(rec.id);
-    if (!id) return { failed: "its sign-in is not available here" };
-    let session;
-    try {
-      session = await id.prepare();
-    } catch (e) {
+  /** Tries the allowed ways in order; the first readable issue is the answer, whatever its state. */
+  private async readOne({ rec, ways }: Readable, repo: string, issue: number, alive: () => void): Promise<Result> {
+    const tries: Try[] = [];
+    /** The sessions already read with: the same one is not asked twice. */
+    const stamps = new Set<string>();
+    for (const way of ways) {
+      const failed = (why: string, cannotRead = CANNOT_READ.test(why)) => { tries.push({ way, why, cannotRead }); };
+      const id = way === "own" ? this.o.identity(rec.id) : this.o.selfIdentity?.();
+      if (!id) {
+        failed("its sign-in is not available here", true);
+        continue;
+      }
+      let session;
+      try {
+        session = await id.prepare();
+      } catch (e) {
+        alive();
+        failed(errorLine((e as Error).message), true);
+        continue;
+      }
+      alive(); // a stopped watcher does not start the read
+      if (stamps.has(session.stamp)) continue;
+      stamps.add(session.stamp);
+      let got: RestIssue | undefined;
+      try {
+        got = await withGhEnv(session, () => this.read(repo, issue, CROSS_READ_MS));
+      } catch (e) {
+        alive(); // a stopped watcher's check ends here, without a read failure
+        failed(errorLine((e as Error).message));
+        continue;
+      }
       alive();
-      return { failed: errorLine((e as Error).message) };
+      if (typeof got?.state === "string") return { state: crossState(got, this.o.rule()) };
+      failed("GitHub does not know it", true);
     }
-    alive(); // a stopped watcher does not start the read
-    let got: RestIssue | undefined;
-    try {
-      got = await withGhEnv(session, () => this.read(repo, issue, CROSS_READ_MS));
-    } catch (e) {
-      alive(); // a stopped watcher's check ends here, without a read failure
-      return { failed: errorLine((e as Error).message) };
-    }
-    alive();
-    if (!got) return { failed: "GitHub does not know it" };
-    return { state: crossState(got, this.o.rule()) };
+    const why = this.failedLine(rec, tries);
+    return rec.method === "none" && tries.every((t) => t.cannotRead) ? { failed: why, noSignIn: true } : { failed: why };
+  }
+
+  /** Why no way worked. A repository with a sign-in of its own and only one try keeps that try's text. */
+  private failedLine(rec: RepoRecord, tries: Try[]): string {
+    const none = rec.method === "none";
+    if (!none && tries.length === 1) return tries[0]!.why;
+    const label = (way: Way) => (way === "story" ? `the sign-in of ${this.o.selfRepo}` : none ? "the server's own access" : "its own sign-in");
+    const start = none ? `${NO_OWN_SIGN_IN} that works` : "no sign-in could read it";
+    return `${start}; tried: ${tries.map((t) => `${label(t.way)}: ${t.why}`).join("; ")}`;
   }
 }
