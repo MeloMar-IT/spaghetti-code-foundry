@@ -23,6 +23,7 @@ import { cleanLine } from "../errors.js";
 import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-glass.js";
 import { Scheduler } from "../queue/scheduler.js";
 import { reconcileSupersededInBatches, releaseSettled, retainedSuccesses } from "../release/superseded.js";
+import { reportDockerApi } from "../test-env-report.js";
 import { RunIndex } from "../engine/run-index.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
@@ -51,6 +52,7 @@ import { busyRoutes } from "./api-busy.js";
 import { onboardingRoutes } from "./api-onboarding.js";
 import { stopSignIns } from "../onboarding.js";
 import { restartRoutes, type SettingsRestart } from "./api-restart.js";
+import type { SafeRestart } from "../safe-restart.js";
 import { BUSY_RENEW_MS, syncBusyCap } from "../ops/busy.js";
 import { loadPlugins, type PluginRegistry } from "../plugins/load.js";
 import { PLUGIN_PATH, servePluginFile } from "./plugin-files.js";
@@ -157,7 +159,7 @@ export interface ApiContext {
   /** Stored watchers that cannot run now, each with its `problem`. */
   blockedWatchers: () => BlockedWatcher[];
   reloadConfig: () => void;
-  /** Set while the server waits to restart (new version, moved data folder). */
+  /** Set while the server waits to restart (new version, moved data folder, changed setting, health). */
   restart?: RestartState;
   /** The self-updater of the running server: which version runs and whether an update waits. */
   selfUpdate?: { view(): UpdateView };
@@ -165,6 +167,8 @@ export interface ApiContext {
   listen: string;
   /** The restart an admin asked for after a settings change; only on a server started by the CLI. */
   settingsRestart?: SettingsRestart;
+  /** The restart at a safe moment, for the health checks; only on a server started by the CLI. */
+  safeRestart?: SafeRestart;
   /** config.yaml as it was when the server started (settings that apply after a restart). */
   started?: Config;
   /** The plugins, loaded once at start; absent on a context built without startServer. */
@@ -292,7 +296,11 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
     accountActive,
     userLimits: (id) => effectiveLimits(id, log),
     // The run has left the active list: a release run can be archived (a later success replaces older failures).
-    onSettled: (s) => void releaseSettled(scheduler, s, log),
+    // A refused Docker API version files a bug story in the repository, also when no watcher watches it.
+    onSettled: (s) => {
+      void releaseSettled(scheduler, s, log);
+      void reportDockerApi({ run: s, others: () => scheduler.list(1000), runsDir: opts.runsDir, config: () => effective, log });
+    },
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);

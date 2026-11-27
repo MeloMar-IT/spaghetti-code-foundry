@@ -51,7 +51,7 @@ import { contextBeforeStep } from "./run-context.js";
 import { checkedReferences, prepareReferences, referenceHold, removeReferences } from "./reference-repos.js";
 import type { Actor } from "../evidence/identity.js";
 import { logAutonomyProblems, recordRunAutonomy, runAutonomyAtStart, runAutonomyOnResume } from "../governance/run-autonomy.js";
-import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
+import { AutonomyLevelSchema, autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
 import { flowFileId } from "../promotion/flow-id.js";
@@ -110,6 +110,8 @@ export interface RunOptions extends CommonOptions {
   vars?: Record<string, string>;
   /** `vars` is the final set: the folder's own settings are not read (they were applied when the run was queued). */
   frozenVars?: boolean;
+  /** The run's level when its job was queued (#968), read from the queue file: checked here, used only for the start line. */
+  queuedAutonomy?: unknown;
   /** Files copied into the workspace right after it is made (only server code sets this; a failure ends the run with INPUT_FILES_MISSING). */
   files?: RunInputFile[];
   /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
@@ -261,7 +263,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
   const log = liveLog(summary, opts);
-  recordRunAutonomy(autonomy, log, evidence);
+  const queued = AutonomyLevelSchema.safeParse(opts.queuedAutonomy);
+  recordRunAutonomy(autonomy, log, evidence, queued.success ? { queued: queued.data } : {});
   if (opts.localTest) log(LOCAL_TEST_LINE);
   // the packs are read once: the run and the promotion check below use the same list
   const packs = loadRunPacks(summary, config);
@@ -809,6 +812,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     setNext(step.id);
     const here = () => ({ next: summary.state.next, lastOutput });
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason("cancelled by user"), ...here() };
+    // no await between the abort check and stopBefore: a safe restart relies on it to never cut a push or merge step
     const stopNow = top ? engine.stopBefore?.(step.id) : undefined;
     if (stopNow) {
       engine.log(`■ stopped before "${step.id}": ${stopNow}`);
@@ -961,7 +965,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     // after a retry: once the areas are claimed again, go on at the step that ran out of time (a WAIT_AREA route keeps it)
     const retryStep = top && res.ok && !routed && step.id === "claim_areas" && summary.retryStep && indexOf.has(summary.retryStep) ? summary.retryStep : undefined;
     if (retryStep) summary.retryStep = undefined;
-    const target = res.ok ? (routed ?? retryStep ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
+    // a step that could not sign in, or whose test environment could not be used, ends the run: `on_failure` is not followed
+    const target = res.ok ? (routed ?? retryStep ?? step.on_success ?? "next") : engine.accessFailed || res.envFailed ? "fail" : (step.on_failure ?? "fail");
     if (skillStop && target === "end") {
       // the gate ends the flow: stop at the gate itself, so a resume runs it again and checks the skills again
       setNext(step.id);
@@ -1001,7 +1006,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
         engine.save();
         continue;
       }
-      return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity };
+      return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity, ...(res.envFailed ? { envFailed: true } : {}) };
     }
     if (target === "stop") {
       if (top) summary.state.next = resumePoint(step, scope, engine);

@@ -50,7 +50,7 @@ describe("sameOrigin", () => {
     expect(sameOrigin(o, "https", "foundry.test")).toBe(false));
 });
 
-const cfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({ listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, ...over });
+const cfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({ listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, memory_limit_mb: 2048, ...over });
 const req = (peer: string, host: string, headers: Record<string, string> = {}, method = "GET") => ({ peer, method, headers: { host, ...headers } });
 
 describe("access", () => {
@@ -141,7 +141,7 @@ describe("localUrl", () => {
 
 describe("server settings schema", () => {
   const parse = (server: unknown) => ConfigSchema.safeParse({ server });
-  it("has defaults", () => expect(ConfigSchema.parse({}).server).toEqual({ listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false }));
+  it("has defaults", () => expect(ConfigSchema.parse({}).server).toEqual({ listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, memory_limit_mb: 2048 }));
   it("accepts an https public_url", () => expect(parse({ public_url: "https://foundry.example.com" }).success).toBe(true));
   it.each(["http://foundry.example.com", "ftp://x", "https://u:p@x.example.com", "https://x.example.com/?a=1", "https://x.example.com/#/a", "foundry.example.com", "https://x.example.com/a b", "https://x.example.com/(a)"])(
     "refuses public_url %s", (public_url) => {

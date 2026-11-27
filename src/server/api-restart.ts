@@ -149,14 +149,17 @@ export const restartRoutes: Route = async (ctx, _req, res, seg, method, user) =>
   if (method === "GET") return send(res, 200, restartView(ctx)), true;
   const sr = ctx.settingsRestart;
   const otherWaits = !!ctx.restart && ctx.restart.why !== "settings";
+  const otherText = () => ctx.restart?.why === "health"
+    ? "The server already waits to restart at a safe moment; that restart applies the settings too"
+    : "The server already waits to restart on a new version or a moved data folder; that restart applies the settings too";
   if (method === "POST") {
     if (!sr?.available()) throw new HttpError(409, "This server cannot restart itself: stop it and start it again");
-    if (otherWaits) throw new HttpError(409, "The server already waits to restart on a new version or a moved data folder; that restart applies the settings too");
+    if (otherWaits) throw new HttpError(409, otherText());
     const needed = restartNeeded(ctx);
     if (needed.length === 0 && !sr.waiting()) throw new HttpError(409, "No saved setting needs a restart");
     const r = sr.request();
     if (r === "unsupervised") throw new HttpError(409, "This server cannot restart itself: stop it and start it again");
-    if (r === "other") throw new HttpError(409, "The server already waits to restart on a new version or a moved data folder; that restart applies the settings too");
+    if (r === "other") throw new HttpError(409, otherText());
     if (r === "started") {
       const detail = clean(needed.map((n) => `${n.key}: ${n.running} -> ${n.saved}`).join("; ")).slice(0, DETAIL_MAX);
       auditAction(ctx.diagLog, user.id, "restart-request", "server", detail || undefined);

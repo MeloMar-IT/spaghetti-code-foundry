@@ -8,6 +8,7 @@ import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { BOT_MARKER, BOT_MARKERS, commentsAfter, isBot } from "../src/github.js";
 import { USER_BUDGET_REASON, loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
 import { issueStatesDir, knownIssueState, readIssueStates, saveIssueStates } from "../src/issue-states.js";
+import { readIssueList } from "../src/queue/issue-list.js";
 import { WatcherManager } from "../src/queue/watchers.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { failureComment, parseInterval, Watcher } from "../src/queue/watcher.js";
@@ -1259,6 +1260,24 @@ describe("watcher", () => {
     await w.tick();
     expect(w.status.holds).toMatchObject([{ issue: 5, next: { kind: "dependency", until: "after #6" } }]);
     expect(w.status.holds![0]!.reason).toContain("waits for #6, which waits for #7, which is to be done");
+  });
+
+  it("keeps a story waiting for a blocker of its repository that was closed as not planned (#959)", async () => {
+    process.env.FAKE_GH_LABEL_FILTER = "1";
+    try {
+      process.env.FAKE_GH_ISSUES = JSON.stringify([
+        { number: 4, title: "four", state: "CLOSED", stateReason: "NOT_PLANNED", labels: [], body: "" },
+        { number: 5, title: "five", state: "OPEN", labels: [{ name: "claude-factory" }], body: "### Depends on\n#4\n" },
+      ]);
+      const w = watcher({ wait_for_dependencies: true });
+      await w.tick();
+      expect(w.status.holds).toMatchObject([{ issue: 5, next: { kind: "dependency" } }]);
+      expect(w.status.holds![0]!.reason).toContain("waits for #4");
+      expect(scheduler.list()).toHaveLength(0);
+      expect(readIssueList("acme/app")?.issues.find((i) => i.number === 4)?.stateReason).toBe("not_planned");
+    } finally {
+      delete process.env.FAKE_GH_LABEL_FILTER;
+    }
   });
 
   it("shows a hold for a run that waits for a code area", async () => {

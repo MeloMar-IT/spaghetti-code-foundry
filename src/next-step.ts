@@ -182,7 +182,7 @@ export interface NextData {
   now?: Date;
   timeZone?: string;
   /** Text for `restart`. */
-  restartWhy?: "new_version" | "data_folder" | "settings";
+  restartWhy?: "new_version" | "data_folder" | "settings" | "health";
   /** The run was replaced by a newer run on the same work. */
   superseded?: boolean;
   /** The issue is known closed on GitHub (the store of the watcher). */
@@ -658,6 +658,19 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     }
     case "restart": {
       who = "Foundry";
+      if (d.restartWhy === "health") {
+        const safely = "it restarts once no push, merge or release step runs";
+        if (d.runsLeft !== undefined) {
+          why = "A health check asked for a restart";
+          say = d.runsLeft > 0 ? `${safely}; the other runs are resumed after it` : "it restarts in a moment";
+          w = RUNS;
+        } else {
+          why = "The server waits to restart at a safe moment";
+          say = `nothing to do, ${safely}`;
+          w = WATCHERS;
+        }
+        break;
+      }
       if (d.runsLeft !== undefined) {
         why = d.restartWhy === "data_folder" ? "The data folder moved" : d.restartWhy === "settings" ? "A changed setting needs a restart" : "A new version is waiting";
         say = d.runsLeft > 0 ? `it restarts after ${plural(d.runsLeft, "run")}` : "it restarts in a moment";

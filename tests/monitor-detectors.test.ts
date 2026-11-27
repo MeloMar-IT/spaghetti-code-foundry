@@ -310,4 +310,54 @@ describe("self-update", () => {
     const [b] = check({}, true);
     expect(b).toMatchObject({ severity: "critical", fingerprint: "self-update|state", summary: "The self-update record could not be read; self-update is stopped until a person checks the checkout." });
   });
+
+  it("names the commit once the tests failed three times, with the failing tests", () => {
+    const [f] = check({ failed: failed({ tries: 3, tests: ["a.test.ts > adds", "b.test.ts > subtracts"] }) });
+    expect(f).toMatchObject({
+      severity: "major", fingerprint: `self-update|test|${sha}`, about: "foundry",
+      evidence: { counts: { failed_tries: 3 }, steps: ["test"], commit: sha, tests: ["a.test.ts > adds", "b.test.ts > subtracts"] },
+    });
+    const other = check({ failed: failed({ commit: "b".repeat(40), tries: 3 }) })[0]!;
+    expect(other.fingerprint).toBe(`self-update|test|${"b".repeat(40)}`);
+    expect(other.evidence).not.toHaveProperty("tests");
+    expect(check({ failed: failed({ tries: 3, tests: Array.from({ length: 20 }, (_, i) => `t${i}`) }) })[0]!.evidence.tests).toHaveLength(20);
+  });
+
+  it("keeps the old fingerprint for a record without three tries, another stage, or a failed way back", () => {
+    expect(check({ failed: failed() })[0]!.fingerprint).toBe("self-update|test");
+    expect(check({ failed: failed({ tries: 2 }) })[0]!.fingerprint).toBe("self-update|test");
+    expect(check({ failed: failed({ stage: "build", tries: 3 }) })[0]!.fingerprint).toBe("self-update|build");
+    expect(check({ failed: failed({ tries: 3, backOk: false }) })[0]).toMatchObject({ severity: "critical", fingerprint: "self-update|test" });
+  });
+});
+
+describe("memory growth", () => {
+  const samples = [{ at: ago(2 * MIN), mb: 2100 }, { at: ago(MIN), mb: 2300 }];
+  const record = (when: string, handed?: string) => ({ at: when, limit_mb: 2048, samples, ...(handed ? { handed } : {}) });
+
+  it("finds nothing without a record", () => {
+    expect(find("memory-growth")).toEqual([]);
+  });
+
+  it("makes one finding with a fixed fingerprint and the samples", () => {
+    const f = find("memory-growth", { memory: record(ago(MIN)) });
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({
+      fingerprint: "memory-growth", severity: "major", about: "foundry",
+      evidence: { counts: { limit_mb: 2048, highest_mb: 2300, samples: 2 }, times: [ago(MIN)], memory: samples },
+    });
+    expect(f[0]!.summary).toContain("2300 MB");
+  });
+
+  it("keeps a growth until a bug story took it over, then shows it for 24 hours", () => {
+    expect(find("memory-growth", { memory: record(ago(100 * HOUR)) })).toHaveLength(1);
+    expect(find("memory-growth", { memory: record(ago(23 * HOUR), ago(HOUR)) })).toHaveLength(1);
+    expect(find("memory-growth", { memory: record(ago(25 * HOUR), ago(HOUR)) })).toEqual([]);
+  });
+
+  it("leaves out a time that cannot be read or is far in the future", () => {
+    expect(find("memory-growth", { memory: record("soon") })).toEqual([]);
+    expect(find("memory-growth", { memory: record(ago(-6 * MIN)) })).toEqual([]);
+    expect(find("memory-growth", { memory: record(ago(-4 * MIN)) })).toHaveLength(1);
+  });
 });

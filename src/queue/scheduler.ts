@@ -9,7 +9,7 @@ import { knownWorkspace, limitsOf as workspaceLimitsOf, workspaceForJob } from "
 import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../workspaces/list.js";
 import type { RunInputFile } from "../engine/workspace.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
-import { markRunInterrupted, RESTART_INTERRUPT } from "../engine/running.js";
+import { markRunInterrupted, RESTART_INTERRUPT, RESTART_INTERRUPTED } from "../engine/running.js";
 import { RunIndex } from "../engine/run-index.js";
 import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, noteRunWritten, projectOfVars, readIndexSlot, slimRunOf, spentToday, type SlimRun, type RunIndexEntry, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunReferences, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
@@ -17,6 +17,8 @@ import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { projectDailyBudget as storedProjectBudget } from "../auth/repos.js";
+import type { AutonomyLevel } from "../governance/autonomy.js";
+import { runAutonomyAtStart } from "../governance/run-autonomy.js";
 
 /**
  * A schedule chore of a watcher (the daily release, the daily report): `watcher <id> schedule`. Chores have their own lane:
@@ -26,7 +28,7 @@ import { projectDailyBudget as storedProjectBudget } from "../auth/repos.js";
 export const choreWatcherOf = (source?: string): string | undefined => /^watcher (\S+) schedule$/.exec(source ?? "")?.[1];
 export const isChoreRun =(source?: string): boolean => typeof source === "string" && /^watcher \S+ schedule$/.test(source);
 /** Runs that use no story slot: architect runs of a refinement session and schedule chores. */
-const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
+export const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
 import { runIdsStartedToday } from "./usage.js";
 import { MERGE_GUARD, mergeStarted } from "./overrule.js";
 import { stepIs } from "../next-step.js";
@@ -65,6 +67,19 @@ export interface QueuedJob {
   asNewRun?: boolean;
   /** The workspace (#816), decided when the job was queued. Absent: "default". */
   workspace?: string;
+  /** The level the run had when the job was queued (#968), for its start line only; the run works its level out again when it starts. Absent: a resume, an older entry, or a store that could not be read. */
+  autonomy?: AutonomyLevel;
+}
+
+/** The level a run job has now, or undefined for a resume or when a store has a problem. Never throws. */
+function levelAtQueue(job: Job): AutonomyLevel | undefined {
+  if (job.kind !== "run") return undefined;
+  try {
+    const r = runAutonomyAtStart({ githubRepo: job.vars.github_repo ?? job.flow.vars?.github_repo, flow: job.flow.name });
+    return r.problems.length ? undefined : r.autonomy.level;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The workspace of a queued job; "default" when it has none (also older entries). */
@@ -95,6 +110,10 @@ interface Active {
   cancelledBy?: Actor;
   /** Set once the run reached a merge: a stop request is not taken any more. */
   merging?: boolean;
+  /** The top-level step the run reached last in this process. */
+  step?: string;
+  /** Queue a resume when the run ends as interrupted by a restart. */
+  requeue?: boolean;
 }
 
 /** Which per-user limit holds a job back. */
@@ -180,6 +199,9 @@ export class Scheduler {
   /** Stop requests of active runs: the reason they stop with before their next step. Memory only. */
   private stopRequests = new Map<string, string>();
   private lastStartAt = new Date().toISOString();
+  private pumpedAt?: string;
+  /** Publishes what must not be cut (the restart guard); a reason stops the run before its step. */
+  private stepGate?: () => string | undefined;
   private recent = new Map<string, Active>(); // finished, kept briefly for late subscribers
   /** Viewers of runs that are not running right now; attached when the run starts. */
   private pendingListeners = new Map<string, Set<(e: RunEvent) => void>>();
@@ -192,6 +214,8 @@ export class Scheduler {
   private lastStartOfWorkspace = new Map<string, number>();
   /** New runs this scheduler started that are still active: they count before and after their run.json exists. */
   private started = new Map<string, { account: string; day: string }>();
+  /** Resumes of runs a restart stopped that are not saved in the queue file yet. Memory only. */
+  private unsavedResumes = new Map<string, QueuedJob>();
 
   private runIndex?: RunIndex;
 
@@ -360,10 +384,12 @@ export class Scheduler {
     if (!knownWorkspace(workspace)) throw new Error(WORKSPACE_REMOVED);
     // the id is looked up here, once, and never taken from the caller: a file edited while the job waits keeps its id
     const flowId = job.kind === "run" && !this.o.localTest ? flowFileId(job.flow, job.repo) : undefined;
+    const autonomy = levelAtQueue(job);
     const q: QueuedJob = {
       runId,
       job,
       ...rest,
+      ...(autonomy ? { autonomy } : {}),
       ...(repoLock ? { repoLock } : {}),
       ...(flowId ? { flowId } : {}),
       ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
@@ -453,6 +479,7 @@ export class Scheduler {
     // A run that stopped but is still finishing (its notification runs): the stop is saved, so cancel it like a stopped run.
     if (a.summary?.status === "stopped" && !a.controller.signal.aborted && this.cancelStopped(runId, by)) return true;
     a.cancelledBy ??= by;
+    a.requeue = false;
     a.controller.abort();
     return true;
   }
@@ -467,11 +494,29 @@ export class Scheduler {
     return true;
   }
 
-  /** Stops these active runs for a restart (they end as interrupted and the watchers resume them). True when none of them is active within timeoutMs. */
-  async interrupt(runIds: string[], timeoutMs = 60_000): Promise<boolean> {
+  /**
+   * The top-level step an active run is in, or undefined. It is recorded in `stopBefore`, in the same synchronous turn as the
+   * engine's abort check: an abort made right after this answer lands before any later step starts.
+   */
+  currentStep(runId: string): string | undefined {
+    const a = this.active.get(runId);
+    return a ? (a.step ?? a.summary?.state?.next ?? undefined) : undefined;
+  }
+
+  /**
+   * Stops these active runs for a restart (they end as interrupted and the watchers resume them). True when none of them is
+   * active within timeoutMs. `resume` picks the jobs no watcher resumes: when such a run has ended as interrupted (also after
+   * the timeout), a resume job with the same scheduling data is saved in the queue. Call drain() first, or it starts at once.
+   */
+  async interrupt(runIds: string[], timeoutMs = 60_000, o: { resume?: (job: QueuedJob) => boolean } = {}): Promise<boolean> {
     const list = runIds.map((id) => this.active.get(id)).filter((a): a is Active => a !== undefined);
     if (!list.length) return true;
-    for (const a of list) if (!a.controller.signal.aborted) a.controller.abort(RESTART_INTERRUPT);
+    for (const a of list) {
+      const resume = o.resume?.(a.queued) === true;
+      if (!a.controller.signal.aborted) a.controller.abort(RESTART_INTERRUPT);
+      // a run that was cancelled before keeps its own reason and is not resumed
+      if (resume && a.controller.signal.reason === RESTART_INTERRUPT) a.requeue = true;
+    }
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<boolean>((r) => {
       timer = setTimeout(() => r(false), timeoutMs);
@@ -480,6 +525,34 @@ export class Scheduler {
     const ok = await Promise.race([Promise.allSettled(list.map((a) => a.done)).then(() => true), timeout]);
     clearTimeout(timer);
     return ok && runIds.every((id) => !this.active.has(id));
+  }
+
+  /** Queues the resume of a run a restart stopped. Does nothing when one is queued already. A save that fails is kept and tried again by retryResumes(). */
+  private requeueInterrupted(q: QueuedJob, log: (line: string) => void): void {
+    if (this.isQueued(q.runId)) return;
+    this.unsavedResumes.set(q.runId, q);
+    if (!this.saveResumes()) log(`✘ the resume after the restart is not saved yet; the restart waits until it is`);
+  }
+
+  /** Saves the resumes of interrupted runs that could not be saved yet. True when none is left: only then may a restart go on. */
+  retryResumes(): boolean {
+    return this.saveResumes();
+  }
+
+  private saveResumes(): boolean {
+    for (const [runId, q] of this.unsavedResumes) {
+      try {
+        if (this.isQueued(runId)) this.persist(); // put() queues the job before it writes the file
+        else {
+          const { lockKey, source, owner, queuedBy, priority, storyAt, asNewRun, workspace } = q;
+          this.put({ kind: "resume", runId }, { lockKey, source, owner, queuedBy, priority, storyAt, asNewRun, workspace });
+        }
+      } catch {
+        return false;
+      }
+      this.unsavedResumes.delete(runId);
+    }
+    return true;
   }
 
   /** Sets or removes the archive mark of a finished run. Refuses a run that is queued, active, running or waiting. */
@@ -589,7 +662,9 @@ export class Scheduler {
     }
     if (!opts.stopWork) return counts;
     for (const [runId, a] of this.active) {
-      if (this.ownerOf(runId) !== accountId || a.controller.signal.aborted) continue;
+      if (this.ownerOf(runId) !== accountId) continue;
+      a.requeue = false; // also for a run that a restart is stopping right now
+      if (a.controller.signal.aborted) continue;
       if (a.summary !== undefined && a.summary.status !== "running") continue;
       a.controller.abort();
       counts.running++;
@@ -1211,6 +1286,7 @@ export class Scheduler {
         this.monthTimer.unref();
       }
     } else this.stopMonthTimer();
+    this.pumpedAt = new Date().toISOString();
     this.persist();
   }
 
@@ -1245,6 +1321,28 @@ export class Scheduler {
   /** Looks again at what can start, e.g. after a limit changed. */
   recheck(): void {
     this.pump();
+  }
+
+  /** When the queue was last pumped to the end (not while it drains or is closed). */
+  lastPump(): string | undefined {
+    return this.pumpedAt;
+  }
+
+  /**
+   * `gate` is called before every step, after every run that ends, and once now (for the runs already active).
+   * It is synchronous; a reason it returns stops the run before that step.
+   */
+  setStepGate(gate: () => string | undefined): void {
+    this.stepGate = gate;
+    this.passGate();
+  }
+
+  private passGate(): string | undefined {
+    try {
+      return this.stepGate?.();
+    } catch {
+      return "the restart guard failed";
+    }
   }
 
   /** When a job last started, or the scheduler was created. */
@@ -1304,6 +1402,9 @@ export class Scheduler {
       cancelledBy: () => a.cancelledBy,
       // a stop request (an overrule) ends the run before this step, never once a merge started
       stopBefore: (stepId: string) => {
+        a.step = stepId;
+        const refused = this.passGate();
+        if (refused) return refused;
         const why = this.stopRequests.get(q.runId);
         this.stopRequests.delete(q.runId);
         if (stepIs(stepId, MERGE_GUARD) || (a.summary && mergeStarted(a.summary, 0))) {
@@ -1328,11 +1429,14 @@ export class Scheduler {
             workspace: queuedWorkspace(q),
             source: q.source,
             owner: q.owner,
+            ...(q.autonomy !== undefined ? { queuedAutonomy: q.autonomy } : {}),
             ...(this.o.localTest ? { localTest: true } : { flowId: q.flowId ?? flowFileId(j.flow, j.repo) }),
           })
         : resumeRun({ ...common, runId: j.runId, from: j.from, decision: j.decision });
+    let ended: RunSummary | undefined;
     a.done = promise
       .then((summary) => {
+        ended = summary;
         this.o.onFinished?.(summary, q);
         return summary;
       })
@@ -1343,6 +1447,9 @@ export class Scheduler {
       .finally(() => {
         this.stopRequests.delete(q.runId);
         this.active.delete(q.runId);
+        this.passGate();
+        // saved before `done` resolves, so a restart that waits for this run cannot exit without it
+        if (a.requeue && ended?.status === "cancelled" && ended.reason === RESTART_INTERRUPTED) this.requeueInterrupted(q, common.log);
         this.recent.set(q.runId, a);
         setTimeout(() => this.recent.delete(q.runId), 10 * 60_000).unref();
         this.pump();

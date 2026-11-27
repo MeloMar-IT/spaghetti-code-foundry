@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isBot } from "../src/github.js";
 import { DETECTORS } from "../src/monitor/detectors.js";
-import type { Finding } from "../src/monitor/findings.js";
+import { evidenceLines, type Finding } from "../src/monitor/findings.js";
 import { cleanLines, type Names } from "../src/monitor/clean.js";
 import { makeRedactor } from "../src/credentials/redact.js";
 import { buildStory, FIXED_MARKER, fixedComment, hashIn, isFixedComment, markerHash, seenAgainComment } from "../src/monitor/story.js";
@@ -96,6 +96,28 @@ describe("buildStory", () => {
     expect(isFixedComment({ body: seenAgainComment(finding({})) })).toBe(false);
   });
 
+  it("has its own story when the tests of a commit failed three times", () => {
+    const sha = "a1b2c3d".padEnd(40, "0");
+    const f = finding({
+      detector: "self-update", fingerprint: `self-update|test|${sha}`,
+      evidence: { counts: { failed_tries: 3 }, steps: ["test"], commit: sha, tests: ["a.test.ts > adds", "b.test.ts > subtracts", "c.test.ts > mul"] },
+    });
+    const { title, body } = buildStory(f, { lines: [], tests: ["a.test.ts > adds", "b.`test` > x"], builtinSteps: steps });
+    expect(title).toBe("The tests of main fail, so the Foundry does not update itself");
+    for (const h of HEADINGS) expect(body).toContain(`## ${h}`);
+    expect(body).toContain("Commit: `a1b2c3d`");
+    expect(body).not.toContain(sha);
+    expect(body).toContain("Failing tests:");
+    expect(body).toContain("a.test.ts > adds");
+    expect(body).toContain("b.'test' > x");
+    expect(body).toContain("1 more name is left out.");
+    expect(body).toContain("npm test");
+    expect(hashIn(body)).toBe(markerHash(`self-update|test|${sha}`));
+    expect(buildStory(f, { lines: [], tests: undefined, builtinSteps: steps }).body).toContain("The names of the failing tests are left out");
+    const old = buildStory(finding({ detector: "self-update", fingerprint: "self-update|test" }), { lines: [], builtinSteps: steps });
+    expect(old.title).toBe("A self-update of the Foundry fails");
+  });
+
   it("proves the cleaning: a private repository, an e-mail address, a path with a user name and a token do not get into a story", async () => {
     const names: Names = { target: "melo/foundry", users: ["Jane Doe"], emails: ["jane@acme.example"], repos: ["acme/secret-app"], watchers: [], complete: true };
     const raw = [`cannot push to acme/secret-app: jane@acme.example denied`, `cannot read /Users/jane/work/file with ${TOKEN}`];
@@ -103,5 +125,19 @@ describe("buildStory", () => {
     const { title, body } = buildStory(finding({ evidence: { lines: raw } }), { lines, builtinSteps: steps });
     for (const bad of ["secret-app", "acme", "jane", "/Users", "ghp_", TOKEN]) expect(title + body).not.toContain(bad);
     expect(body).toContain("cannot");
+  });
+});
+
+describe("the story of a memory growth", () => {
+  it("shows the valid samples and leaves out anything else", () => {
+    const memory = [
+      { at: "2026-10-01T12:00:00.000Z", mb: 2100 }, { at: "2026-10-01T12:01:00.000Z", mb: 1.5 }, { at: "2026-10-01T12:02:00.000Z", mb: "x" as never },
+      { at: "/Users/x", mb: 7 }, { at: "2026-10-01T12:03:00.000Z", mb: -1 }, null as never, { at: "2026-10-01T12:04:00.000Z", mb: 2200, host: "secret-host" } as never,
+    ];
+    const { title, body } = buildStory(finding({ detector: "memory-growth", fingerprint: "memory-growth", evidence: { memory } }), { lines: [], builtinSteps: steps });
+    expect(title).toBe("The server's memory grows past its limit");
+    expect(body).toContain("Memory samples (MB):\n\n````\n2026-10-01T12:00:00.000Z  2100 MB\n2026-10-01T12:04:00.000Z  2200 MB\n````");
+    for (const bad of ["1.5 MB", "x MB", "/Users", "-1 MB", "secret-host", "12:02"]) expect(body).not.toContain(bad);
+    expect(evidenceLines({ memory })).toEqual(["Memory (MB): 2026-10-01T12:00:00.000Z 2100, 2026-10-01T12:04:00.000Z 2200"]);
   });
 });

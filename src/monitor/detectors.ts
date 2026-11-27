@@ -4,10 +4,11 @@ import type { RunSummary } from "../engine/state.js";
 import { cleanLine, errorKind, explainError, GITHUB_LIMIT_RE, NOT_EXPLAINED } from "../errors.js";
 import { classifyFailure, failedIndex } from "../failure.js";
 import type { RateReading } from "../github.js";
+import { MEMORY_FUTURE_MS, type MemoryRecord } from "../memory-watch.js";
 import type { IssueRecord } from "../queue/issue-list.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/watcher.js";
-import type { UpdateState } from "../self-update-state.js";
+import { TEST_TRIES, type UpdateState } from "../self-update-state.js";
 import type { Evidence, FindingInput, Severity } from "./findings.js";
 import type { MeasureOwner } from "./measures.js";
 import type { RepairClass } from "./repairs.js";
@@ -49,11 +50,13 @@ export interface DetectorInput {
   /** Saved issue lists of watched repositories; undefined: not known (then nothing is judged). */
   issueLists?: IssueListInput[];
   /** Set while the server waits to restart. */
-  restart?: { why: "new_version" | "data_folder" | "settings"; since: string };
+  restart?: { why: "new_version" | "data_folder" | "settings" | "health"; since: string };
   /** Usual step times from older succeeded runs. */
   history?: DurationHistory;
   /** The record of the self-update (`broken`: it could not be read). */
   update?: { state: UpdateState; broken: boolean };
+  /** The saved memory growth of the server (undefined: none, or the record cannot be read). */
+  memory?: MemoryRecord;
   /** Observations of runs within the SLO windows (from run.json and evidence.jsonl only; never telemetry). */
   measures?: MeasuredRun[];
   /** The evidence files of the runs that ended within the SLO windows. */
@@ -345,6 +348,20 @@ const selfUpdate: Detector = {
     const f = update.state.failed;
     if (!f) return [];
     const sha = f.commit.slice(0, 7);
+    if (f.stage === "test" && (f.tries ?? 0) >= TEST_TRIES && f.backOk !== false) {
+      // The third failed try of one commit: one finding (and so one story) per commit.
+      return [{
+        detector: "self-update",
+        fingerprint: `self-update|test|${f.commit}`,
+        severity: "major",
+        summary: `The tests of ${sha} failed ${f.tries} times; the old version keeps running.`,
+        evidence: {
+          counts: { failed_tries: f.tries ?? TEST_TRIES }, times: [f.at], steps: ["test"], lines: f.lines ?? [], commit: f.commit,
+          ...(f.tests?.length ? { tests: f.tests.slice(0, 20) } : {}),
+        },
+        about: "foundry",
+      }];
+    }
     const [severity, summary]: [Severity, string] =
       f.backOk === false ? ["critical", `The update to ${sha} failed and the Foundry could not go back to the version before it; the checkout must be repaired by hand.`]
       : f.stage === "start" ? ["critical", `The update to ${sha} did not start healthy; the Foundry went back to the version before it.`]
@@ -360,7 +377,32 @@ const selfUpdate: Detector = {
   },
 };
 
-export const DETECTORS: Detector[] = [restartLoop, watcherError, githubLimit, watcherSilent, unexplainedFailure, selfUpdate];
+/** How long a growth that the bug stories took over is still shown. */
+const MEMORY_SHOWN_MS = 24 * HOUR;
+
+/** The server's memory stayed above its limit (see memory-watch.ts, which also restarts the server). */
+const memoryGrowth: Detector = {
+  name: "memory-growth",
+  repair: "auto",
+  description: "The server's memory stayed above its limit, so it restarts at the next safe moment. A slow leak should be fixed before it wedges the server.",
+  run({ now, memory }) {
+    if (!memory) return [];
+    const age = now.getTime() - Date.parse(memory.at);
+    // A growth that no bug story took over yet stays, however old: the quiet time, a closed gate or downtime may delay it.
+    if (Number.isNaN(age) || age < -MEMORY_FUTURE_MS || (memory.handed && age > MEMORY_SHOWN_MS)) return [];
+    const highest = Math.max(...memory.samples.map((s) => s.mb));
+    return [{
+      detector: "memory-growth",
+      fingerprint: "memory-growth",
+      severity: "major",
+      summary: `The server's memory reached ${highest} MB, above its limit of ${memory.limit_mb} MB; it restarts at the next safe moment.`,
+      evidence: { counts: { limit_mb: memory.limit_mb, highest_mb: highest, samples: memory.samples.length }, times: [memory.at], memory: memory.samples },
+      about: "foundry",
+    }];
+  },
+};
+
+export const DETECTORS: Detector[] = [restartLoop, watcherError, githubLimit, watcherSilent, unexplainedFailure, selfUpdate, memoryGrowth];
 
 /** Hides what an error message of a crashed detector may hold: folders and long numbers. */
 const safeMessage = (e: unknown) => cleanLine(String((e as Error)?.message ?? e)).slice(0, 200);

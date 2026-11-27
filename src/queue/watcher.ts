@@ -24,6 +24,7 @@ import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } f
 import { effectiveVars } from "../engine/runner.js";
 import { DEPS_MARK, dependencies, foundryDependsOn, openDependencies, type DoneRule } from "./deps.js";
 import { checkReleaseBuild, inOrder, mainBranchOf, readMain, releaseCheckEvery } from "./release-trigger.js";
+import { dockerApiProblem, dockerApiStateFile, fileDockerApiStories } from "../test-env-story.js";
 import { NO_STORY_AUTONOMY, NO_STORY_HOTFIX, checkRed, greenOf, labelNames as issueLabelNames, readBaseStop, readCommits, redBaseFacts, redComment, redFile, redLine, readRed, runBody, writeRed, stoppedOnRed, storyHeld, judgeStops, type BaseGreen, type BaseStop, type RedResult } from "../red-base.js";
 import { hotfixState } from "../engine/guards.js";
 import { runAutonomyAtStart } from "../governance/run-autonomy.js";
@@ -432,6 +433,7 @@ export class Watcher {
       owner: watcherAccount(this.cfg),
       rule: () => this.doneRule(),
       identity: (id) => this.otherIdentity(id),
+      selfIdentity: () => this.d.gh, // owned by the caller: not disposed with the others
       act: (m) => { if (!this.status.lastActions.some((a) => a.endsWith(m))) this.act(m); },
       warn: (m) => this.d.log(`[${this.cfg.id}] ! ${m}`),
     }));
@@ -1361,6 +1363,7 @@ export class Watcher {
     if (list.ok) {
       everyIssue = list.issues.map((i) => ({
         number: i.number, title: i.title, labels: i.labels.map((l) => ({ name: typeof l === "string" ? l : l.name ?? "" })), state: i.state, body: i.body ?? "",
+        ...(typeof i.state_reason === "string" && i.state_reason ? { stateReason: i.state_reason } : {}),
       }));
       if (list.saveError) this.d.log(`[${this.cfg.id}] ! issue list not saved: ${list.saveError}`);
     } else {
@@ -1424,6 +1427,13 @@ export class Watcher {
       });
       return { issue: b, next };
     };
+    // A Docker version story that could not be filed when its run ended is tried again here (see src/test-env-story.ts).
+    try {
+      await fileDockerApiStories({ repo: this.repo, runs: this.repoRuns().filter((r) => !r.localTest), store: this.store, stateFile: dockerApiStateFile(this.d.runsDir), log: (m) => this.act(m) });
+    } catch (e) {
+      this.d.log(`[${this.cfg.id}] ! ${dockerApiProblem(e)}`);
+    }
+    alive();
     const runs = this.latestRuns("issue");
     const redFlow = this.redFlow();
     if (redFlow) {

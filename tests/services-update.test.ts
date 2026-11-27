@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import type { ServiceConfig } from "../src/config.js";
 import { ServiceSupervisor, type ServiceAuditEvent, type SupervisorOptions } from "../src/services/supervisor.js";
 import { accountProblem, managedAccounts } from "../src/services/setup.js";
 import { rawPublicKey } from "../src/skills/release-signature.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 // Applying a changed `services:` list while the supervisor runs (#941).
 
@@ -29,7 +30,16 @@ beforeEach(() => {
   chmodSync(program, 0o755);
 });
 afterEach(async () => {
-  for (const s of sups) await s.stop();
+  const watched = new Watched();
+  try {
+    for (const s of sups) await s.stop();
+  } finally {
+    // a program that ignores SIGTERM leads a group of its own: it is killed whatever happened above
+    for (const f of readdirSync(home).filter((n) => n.endsWith(".out"))) {
+      for (const r of starts(f.slice(0, -4))) if (r.argv.includes("--ignore-term")) watched.pid(r.pid, r.pid);
+    }
+    watched.kill();
+  }
   sups = [];
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;

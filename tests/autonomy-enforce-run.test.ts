@@ -167,7 +167,7 @@ describe("a resumed run", () => {
     const autonomyEvents = events(s).filter((e) => e.type === "run.autonomy");
     expect(autonomyEvents).toHaveLength(2);
     expect(autonomyEvents[1]).toMatchObject({ level: "delivery-handoff", resumed: true });
-    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was guarded-write");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("; resumed, was guarded-write, raised guarded-write→delivery-handoff");
     expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
   });
 
@@ -181,6 +181,7 @@ describe("a resumed run", () => {
     expect(again.status).toBe("failed");
     expect(remoteBranches()).toEqual(["refs/heads/main"]);
     expect(loadRun(join(gh.tmp, "runs"), s.runId)!.autonomy).toMatchObject({ level: "guarded-write" });
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("lowered delivery-handoff→guarded-write");
     expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
   });
 });

@@ -17,6 +17,18 @@ export interface Evidence {
   flows?: string[];
   watchers?: string[];
   repos?: string[];
+  /** Names of failing tests (at most 20), as the test output printed them: cleaned before a story shows them. */
+  tests?: string[];
+  /** The commit (40 hex digits) the finding is about. */
+  commit?: string;
+  /** Memory samples (at most 12): times and whole MB only. */
+  memory?: { at: string; mb: number }[];
+}
+
+/** A memory sample that is safe to show: an ISO time and a whole number of MB. */
+export function isMemorySample(x: unknown): x is { at: string; mb: number } {
+  const m = x as { at?: unknown; mb?: unknown } | null;
+  return !!m && typeof m.at === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(m.at) && !Number.isNaN(Date.parse(m.at)) && Number.isInteger(m.mb) && (m.mb as number) >= 0;
 }
 
 /** What a detector returns. */
@@ -118,7 +130,11 @@ export function evidenceLines(e: Evidence | undefined): string[] {
     const parts = Object.entries(e.counts).filter(([k, v]) => /^[\w.-]{1,40}$/.test(k) && typeof v === "number" && Number.isFinite(v)).slice(0, 6).map(([k, v]) => `${k} ${v}`);
     if (parts.length) out.push(cleanText(`Counts: ${parts.join(", ")}`));
   }
-  out.push(...list("Times", e.times, 5), ...list("Steps", e.steps, 5));
+  out.push(...list("Times", e.times, 5), ...list("Steps", e.steps, 5), ...list("Failing tests", e.tests, 5));
+  if (Array.isArray(e.memory)) {
+    const samples = e.memory.filter(isMemorySample).slice(-5).map((m) => `${m.at} ${m.mb}`);
+    if (samples.length) out.push(cleanText(`Memory (MB): ${samples.join(", ")}`));
+  }
   if (Array.isArray(e.lines)) for (const l of e.lines.filter((x): x is string => typeof x === "string").slice(0, 5)) if (cleanText(l)) out.push(cleanText(l));
   return out.slice(0, MAX_EVIDENCE_LINES);
 }
