@@ -190,7 +190,7 @@ steps:
 
       Finish with a short summary of what you changed (files and why).
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     allow_commands:
       - images
       - project_scripts
@@ -226,7 +226,7 @@ steps:
 
       {{steps.guard.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     on_success: guard
     allow_commands:
       - images
@@ -279,7 +279,7 @@ steps:
 
       {{steps.run_tests.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     on_success: run_tests
     allow_commands:
       - images
@@ -316,7 +316,7 @@ steps:
 
       {{steps.review_1.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     allow_commands:
       - images
       - project_scripts
@@ -368,7 +368,7 @@ steps:
 
       {{steps.run_tests_1.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     on_success: run_tests_1
     allow_commands:
       - images
@@ -405,7 +405,7 @@ steps:
 
       {{steps.review_2.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     allow_commands:
       - images
       - project_scripts
@@ -457,7 +457,7 @@ steps:
 
       {{steps.run_tests_2.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     on_success: run_tests_2
     allow_commands:
       - images
@@ -563,7 +563,7 @@ steps:
 
       {{steps.fixed_tests.output}}
 
-      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`.
+      If a command you need is refused and you cannot finish a part of the issue without it (for example a picture you cannot make), do not leave that part out: end your answer with the line `REFUSED_COMMAND: <the command>`. Write this line only when a command was refused; otherwise leave it out, and never write `REFUSED_COMMAND: none`.
     on_success: final_guard
     allow_commands:
       - images

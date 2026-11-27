@@ -187,6 +187,28 @@ describe("refusals", () => {
     expect(refusedCommand({ output: `REFUSED_COMMAND: ${"x".repeat(300)}` })).toHaveLength(120);
   });
 
+  it.each(["", "   ", "none", "NONE", "`none`.", "`none.`", "none .", "n/a", "N/A.", "-", "Nothing.", "none\r\n"])("reads the marker value %j as no refusal", (value) => {
+    expect(refusedCommand({ output: `done\nREFUSED_COMMAND: ${value}` })).toBeUndefined();
+  });
+
+  it("does not take a command that only looks like \"none\" for no refusal", () => {
+    expect(refusedCommand({ output: "REFUSED_COMMAND: magick" })).toBe("magick");
+    expect(refusedCommand({ output: "REFUSED_COMMAND: none-tool x" })).toBe("none-tool x");
+    expect(refusedCommand({ output: "REFUSED_COMMAND: nothing-to-do.sh" })).toBe("nothing-to-do.sh");
+  });
+
+  it("reads only the last marker line", () => {
+    expect(refusedCommand({ output: "Example:\nREFUSED_COMMAND: magick a b\nAll done.\nREFUSED_COMMAND: none" })).toBeUndefined();
+    expect(refusedCommand({ output: "REFUSED_COMMAND: none\r\nREFUSED_COMMAND: magick a b\r\n" })).toBe("magick a b");
+    // the same answer gives the same result when it is read again
+    expect(refusedCommand({ output: "REFUSED_COMMAND: none\nREFUSED_COMMAND: magick a b" })).toBe("magick a b");
+  });
+
+  it("still looks at the denials when the marker names nothing", () => {
+    expect(refusedCommand({ output: "REFUSED_COMMAND: none", denied: ["Bash: magick x y"] })).toBe("magick x y");
+    expect(refusedCommand({ output: "REFUSED_COMMAND: none", denied: ["Bash: curl x"], earlierDenied: ["Bash: curl y"] })).toBe("curl x");
+  });
+
   it("finds an image-tool denial, and a program refused on the earlier visit", () => {
     expect(refusedCommand({ output: "ok", denied: ["Bash: magick /etc/hosts out.png"] })).toBe("magick /etc/hosts out.png");
     expect(refusedCommand({ output: "ok", denied: ["Bash: curl x"] })).toBeUndefined();
@@ -208,6 +230,14 @@ describe("refusals", () => {
     expect(marked).toMatchObject({ ok: false, refusedCommand: "cwebp a" });
     expect(marked.error).toContain("cwebp a");
     expect(refusedCommandStop(step(), { prefix: "" }, engine(), { ...ok, denied: ["Bash: magick /etc/hosts o"] }).refusedCommand).toBe("magick /etc/hosts o");
+  });
+
+  it("does not stop a finished step that says nothing was refused", () => {
+    for (const marker of ["REFUSED_COMMAND: none", "REFUSED_COMMAND:", "REFUSED_COMMAND: `none`."]) {
+      const res = { ...ok, output: `done\n${marker}` };
+      expect(refusedCommandStop(step(), { prefix: "" }, engine(), res)).toBe(res);
+    }
+    expect(refusedCommandStop(step(), { prefix: "" }, engine(), { ...ok, output: "REFUSED_COMMAND: magick" })).toMatchObject({ ok: false, refusedCommand: "magick" });
   });
 
   it("uses the latest earlier record of the same step, scoped by prefix", () => {
@@ -237,6 +267,7 @@ describe("the shipped flows", () => {
         if (WITH.includes(s.id)) {
           expect(s.allow_commands, s.id).toEqual(["images", "project_scripts"]);
           expect(s.prompt, s.id).toContain("REFUSED_COMMAND:");
+          expect(s.prompt, s.id).toContain("only when a command was refused");
         } else if (/^review_|^docs$/.test(s.id)) {
           expect(s.allow_commands, s.id).toBeUndefined();
           expect(s.prompt, s.id).not.toContain("REFUSED_COMMAND:");
