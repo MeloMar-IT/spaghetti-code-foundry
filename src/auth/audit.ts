@@ -74,6 +74,8 @@ export const EVENT_ACTIONS = [
   "service-start",
   "service-stop",
   "service-refuse",
+  "ai-token-set",
+  "ai-token-clear",
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;

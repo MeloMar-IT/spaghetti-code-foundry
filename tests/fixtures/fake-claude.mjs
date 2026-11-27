@@ -25,6 +25,7 @@
 // Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const probeRead = (p) => (statSync(p).isDirectory() ? readdirSync(p).length : readFileSync(p).length);
 const CHILD_READ = 'const fs=require("fs");const p=process.argv[1];console.log(fs.statSync(p).isDirectory()?fs.readdirSync(p).length:fs.readFileSync(p).length)';
@@ -150,6 +151,9 @@ for (const line of prompt.split("\n")) {
   // "SHOWVARS A B": one A=<value> or A=(unset) line per name; "SHOWGHDIR": what $GH_CONFIG_DIR is.
   const sv = line.match(/^SHOWVARS (.*)$/);
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  // "SHOWHASH A": "hash of A: <SHA-256>" (or "(unset)"), to prove which value a step got when the output hides it.
+  const sh = line.match(/^SHOWHASH (\S+)$/);
+  if (sh) shown.push(`hash of ${sh[1]}: ${process.env[sh[1]] === undefined ? "(unset)" : createHash("sha256").update(process.env[sh[1]]).digest("hex")}`);
   // "SHOWALLENV": "env: " and the sorted names (no values) of its environment.
   if (line === "SHOWALLENV") shown.push(`env: ${Object.keys(process.env).sort().join(" ")}`);
   if (line === "SHOWGHDIR") {

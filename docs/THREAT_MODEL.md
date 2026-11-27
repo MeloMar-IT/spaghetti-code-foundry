@@ -85,6 +85,7 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 
 **Still open.**
 - The Mac account's agent login, files and Keychain are out of reach of a user's run (SR-O1, fixed in #302). The server's token variable is visible to the agent's shell tool (see "OS sandbox for steps of a user's run").
+- The Claude token kept by `scf auth set-token` (#977) is a generic password item of the Mac account, service `spaghetti-code-foundry`, account `claude-oauth-token`. Anyone who runs commands as that account can read it (for example with `security find-generic-password -w`). The Keychain lookups of a sandboxed step are denied, but every Claude step on `anthropic` still gets the value as `CLAUDE_CODE_OAUTH_TOKEN` when no variable is set, so the agent's shell tool can read it, as it can read a token variable. The value is never written to a file, the audit log, a log line or an error; the time it was set is in `ai-token.json` and holds no secret. A Keychain problem gives no token and one log line. Do not set the token for a user account you do not trust with it.
 - Global redaction uses every account's secrets on every answer. It is not only protection: a short token such as a common word is replaced in everyone's answers and confirms a guess of another account's secret (SR-O10).
 - The Slack webhook is shown to admins, and `GET /api/since` uses the server's login (SR-O9).
 - The agent's own provider key is still visible to the agent's shell tool unless the agent CLI hides it (left open from SR-O2).
