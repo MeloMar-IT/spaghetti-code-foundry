@@ -4,6 +4,7 @@
 // names that group in FACTORY_TEST_SLOT_PGID_FILE. Time spent waiting for a test slot, or paused by the load governor,
 // is not silence (the records in FACTORY_TEST_SLOT_WAIT_DIR). The second run starts only when every process of the first
 // one that is known (the group, and the descendants seen with ps) is gone. A signal (the step is cancelled) ends it all.
+// So does the loss of the parent process (checked twice a second): the watchdog never goes on without its caller.
 // Env: FACTORY_VAR_TEST_SILENCE_MINUTES (0 to 720; default 20; 0 = off), FACTORY_TEST_SILENCE_SEC (seconds instead, for
 //      tests), FACTORY_TEST_SILENCE_GRACE_MS (from SIGTERM to SIGKILL; 10000), FACTORY_TEST_SLOT_TRACK_MS (2000).
 import { spawn } from "node:child_process";
@@ -17,6 +18,44 @@ const WAIT_FRESH_MS = 15_000;
 const KILL_WAIT_MS = 5000;
 /** After a cancel: the time the command has to end before it is killed. */
 const CANCEL_GRACE_MS = 3000;
+/** How often the watchdog looks whether its parent is still there. */
+const PARENT_POLL_MS = 500;
+/** Writing to the output of a parent that is gone. */
+const PIPE_GONE = new Set(["EPIPE", "ERR_STREAM_DESTROYED"]);
+
+/** An output nobody reads must not end the watchdog before it has cleaned up. Any other error is thrown, as without a listener. */
+export function ignoreClosedPipe(e) {
+  if (!PIPE_GONE.has(e.code)) throw e;
+}
+
+const pidAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+
+/**
+ * Calls `gone` once when the parent of this process goes away: the parent pid changed, or the first parent is no more.
+ * A process that is already under pid 1 lost its parent before the watch began: `gone` is called at once.
+ * Returns the function that ends the watch.
+ */
+export function watchParent(gone, everyMs = PARENT_POLL_MS, ppid = () => process.ppid) {
+  const first = ppid();
+  if (first <= 1) {
+    gone();
+    return () => {};
+  }
+  const timer = setInterval(() => {
+    if (ppid() === first && pidAlive(first)) return;
+    clearInterval(timer);
+    gone();
+  }, everyMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
 
 const num = (v, d) => (/^\d+$/.test(v ?? "") ? Number(v) : d);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -199,6 +238,10 @@ export async function silence(cmd, args) {
   };
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   for (const s of signals) process.on(s, onSignal);
+  const outputs = [process.stdout, process.stderr];
+  for (const s of outputs) s.on("error", ignoreClosedPipe);
+  // SIGTERM, not SIGHUP: the same stop as a cancel, with SIGKILL after the grace time
+  const unwatch = watchParent(() => onSignal("SIGTERM"));
   try {
     for (let attempt = 1; ; attempt++) {
       if (o.cancelled) return 128 + constants.signals[o.cancelled];
@@ -216,7 +259,9 @@ export async function silence(cmd, args) {
       say(`test-silence: no output for ${minutes} min — the tests were stopped and run once more`);
     }
   } finally {
+    unwatch();
     for (const s of signals) process.removeListener(s, onSignal);
+    for (const s of outputs) s.removeListener("error", ignoreClosedPipe);
     rmSync(own, { recursive: true, force: true });
   }
 }

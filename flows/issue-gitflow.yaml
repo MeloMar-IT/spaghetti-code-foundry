@@ -1130,10 +1130,27 @@ steps:
       if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi
       echo "\$ $cmd"
       node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+      first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")
+      if [ -n "$first" ]; then
+        full="$cmd"; cmd="$first"
+        echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\$ $cmd"
+        node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        cmd="$full"
+        if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then
+          tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="
+          { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"
+          node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+          exit 1
+        fi
+        node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+        if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi
+        touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi
+      fi
       node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true
       node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
       exit "$code"
     on_failure: fix_tests
@@ -1208,10 +1225,27 @@ steps:
       if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi
       echo "\$ $cmd"
       node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+      first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")
+      if [ -n "$first" ]; then
+        full="$cmd"; cmd="$first"
+        echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\$ $cmd"
+        node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        cmd="$full"
+        if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then
+          tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="
+          { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"
+          node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+          exit 1
+        fi
+        node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+        if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi
+        touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi
+      fi
       node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true
       node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
       exit "$code"
     on_failure: fix_tests_1
@@ -1299,10 +1333,27 @@ steps:
       if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi
       echo "\$ $cmd"
       node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+      first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")
+      if [ -n "$first" ]; then
+        full="$cmd"; cmd="$first"
+        echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\$ $cmd"
+        node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        cmd="$full"
+        if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then
+          tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="
+          { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"
+          node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+          exit 1
+        fi
+        node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+        if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi
+        touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi
+      fi
       node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true
       node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
       exit "$code"
     on_failure: fix_tests_2
@@ -1386,11 +1437,28 @@ steps:
       node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"
       echo "\$ $cmd"
       node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+      first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")
+      if [ -n "$first" ]; then
+        full="$cmd"; cmd="$first"
+        echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\$ $cmd"
+        node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        cmd="$full"
+        if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then
+          tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="
+          { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"
+          node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+          exit 1
+        fi
+        node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+        if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi
+        touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi
+      fi
       node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       if [ "$code" -ne 0 ] && ! grep -q "^test-silence: " "{{run.dir}}/tests.log"; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true
       node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
       if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" verify "$marker" "{{run.dir}}" || code=1; fi
       if [ "$code" -ne 0 ]; then exit 1; fi
@@ -1603,15 +1671,32 @@ steps:
       if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then key=$(printf '%s\n%s\n' "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" "$cmd" | shasum | cut -c1-40); fi
       echo "\$ $cmd"
       if [ -n "$key" ] && [ -f "$passed_dir/$key" ]; then
-        code=0; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"
+        code=0; rm -f "{{run.dir}}/failed-tests.txt"; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"
         echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"
       else
         node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+        first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")
+        if [ -n "$first" ]; then
+          full="$cmd"; cmd="$first"
+          echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\$ $cmd"
+          node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+          cmd="$full"
+          if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then
+            tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="
+            { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"
+            node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+            exit 1
+          fi
+          node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+          if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi
+          touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi
+        fi
         node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
         if [ "$code" -ne 0 ] && ! grep -q "^test-silence: " "{{run.dir}}/tests.log"; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
         tail -150 "{{run.dir}}/tests.log"
         echo; echo "=== summary ==="
         { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+        node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true
         node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
         # Remember a pass of a clean tree (it must still be clean: the tests may not have changed tracked files).
         if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi
@@ -1965,11 +2050,28 @@ steps:
       marker="{{run.dir}}/tests.marker"; touch "$marker"
       echo "\$ $cmd"
       node "$FACTORY_TOOLS/test-env" docker "{{run.dir}}" "$cmd" || exit 1
+      first=""; [ -s "{{run.dir}}/failed-tests.txt" ] && first=$(node "$FACTORY_TOOLS/failed-first.mjs" command "{{run.dir}}" "$cmd")
+      if [ -n "$first" ]; then
+        full="$cmd"; cmd="$first"
+        echo "first the tests that failed last time (the whole suite runs when they pass):"; echo "\$ $cmd"
+        node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        cmd="$full"
+        if [ "$code" -ne 0 ] && node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code"; then
+          tail -150 "{{run.dir}}/tests.log"; echo; echo "=== summary ==="
+          { "$FACTORY_TOOLS/test-summary" "$marker"; echo "result: FAILED (exit $code) — tests that failed before still fail; the whole suite did not run"; } | tee "{{run.dir}}/last-tests.txt"
+          node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+          exit 1
+        fi
+        node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
+        if [ "$code" -eq 0 ]; then echo "they pass now — running the whole suite"; else tail -20 "{{run.dir}}/tests.log"; echo "the first run named no failing test — running the whole suite"; fi
+        touch "$marker"; if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"; fi
+      fi
       node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       if [ "$code" -ne 0 ] && ! grep -q "^test-silence: " "{{run.dir}}/tests.log"; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; node "$FACTORY_TOOLS/test-env" silence "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      node "$FACTORY_TOOLS/failed-first.mjs" record "$marker" "{{run.dir}}" "$code" || true
       node "$FACTORY_TOOLS/test-env" check "$marker" "{{run.dir}}" || exit 1
       exit "$code"
     on_success: push_back

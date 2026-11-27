@@ -58,9 +58,9 @@ describe("a story that depends on an issue of another repository (#880)", () => 
   });
 
   const made: RepoGhIdentity[] = [];
-  const watcher = (over: Record<string, unknown> = {}, repoGh?: (id: string) => RepoGhIdentity) =>
+  const watcher = (over: Record<string, unknown> = {}, repoGh?: (id: string) => RepoGhIdentity, own?: RepoGhIdentity) =>
     new Watcher(WatcherSchema.parse({ id: "w", github_repo: "acme/app", owner: "ann@example.com", vars: {}, flow: oldFlowFor({}), status_comment: false, ...over }), {
-      scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: (m) => { logged.push(m); },
+      scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: (m) => { logged.push(m); }, gh: own,
       repoGh: repoGh ?? ((id) => { const i = repoGhIdentity(id, { config: () => config }); made.push(i); return i; }),
     });
   /** Story #4; with needs-info its question is answered, so only the dependency holds it. */
@@ -73,6 +73,10 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     process.env.FAKE_GH_REPO_ISSUES = JSON.stringify({
       "acme/lib": list.map((i) => ({ number: i.number, state: i.state ?? "open", state_reason: i.state_reason ?? null, title: `lib ${i.number}`, html_url: "", created_at: "", labels: (i.labels ?? []).map((name) => ({ name })) })),
     });
+  };
+  /** The issues of acme/app2 (method none, added by the admin); a number that is not listed is a 404. */
+  const app2 = (...list: { number: number; state: string; state_reason: string | null }[]) => {
+    process.env.FAKE_GH_REPO_ISSUES = JSON.stringify({ "acme/app2": list.map((i) => ({ ...i, title: "app2", html_url: "", created_at: "", labels: [] })) });
   };
   /** A call for acme/lib works only with its own token (each fake gh call then costs one more process: only where it is checked). */
   const onlyLibToken = () => { process.env.FAKE_GH_TOKEN_BY_REPO = JSON.stringify({ "acme/lib": TOKEN }); };
@@ -142,8 +146,27 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     w.stop();
   });
 
-  it("holds a story whose other repository has no sign-in of its own, and never uses the host login for it", async () => {
+  it("reads an admin's none repository with the server's own access: holds while open, starts once completed (#976)", async () => {
     story("- acme/app2#3", [T]);
+    app2({ number: 3, state: "open", state_reason: null });
+    const w = watcher();
+    await w.tick();
+    expect(hold(w)?.next.kind).toBe("dependency");
+    expect(hold(w)?.next.who).not.toBe("You");
+    expect(submit).not.toHaveBeenCalled();
+    expect(gh.ghLog()).toContain("api repos/acme/app2/issues/3");
+    expect(logged.join("\n")).not.toContain("no sign-in");
+
+    app2({ number: 3, state: "closed", state_reason: "completed" });
+    await w.tick();
+    expect(hold(w)).toBeUndefined();
+    expect(submit).toHaveBeenCalledOnce();
+    w.stop();
+  });
+
+  it("puts the story in Your turn when no way can read the issue, and logs that once", async () => {
+    story("- acme/app2#3", [T]);
+    app2();
     const w = watcher();
     await w.tick();
     const h = hold(w)!;
@@ -152,11 +175,9 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     expect(needsUser(h.next)).toBe(true);
     for (const part of ["acme/app2#3", "no sign-in of its own", "My repositories", "Depends on"]) expect(`${h.next.why}. ${h.next.action}`).toContain(part);
     expect(submit).not.toHaveBeenCalled();
-    const line = "[w] ! #4: acme/app2#3 could not be read: the repository has no sign-in of its own";
-    expect(logged.filter((l) => l === line)).toHaveLength(1);
     await w.tick();
-    expect(logged.filter((l) => l === line)).toHaveLength(1); // told once, not on every check
-    expect(gh.ghLog()).not.toContain("api repos/acme/app2");
+    expect(logged.filter((l) => l.includes("tried: the server's own access"))).toHaveLength(1); // told once, not on every check
+    expect(submit).not.toHaveBeenCalled();
     // The line is taken out of Depends on: the hold is gone and the story starts.
     story("", [T]);
     await w.tick();
@@ -167,11 +188,33 @@ describe("a story that depends on an issue of another repository (#880)", () => 
 
   it("says in the status comment which issue could not be read and why", async () => {
     story("- acme/app2#3", [T]);
+    app2();
     const w = watcher({ status_comment: true });
     await w.tick();
     const mine = gh.statusComments();
     expect(mine).toHaveLength(1);
     for (const part of ["acme/app2#3", "no sign-in of its own", "My repositories"]) expect(mine[0].body).toContain(part);
+    w.stop();
+  });
+
+  it("reads with the story repository's sign-in when the other one's does not work, under the same GitHub owner (#976)", async () => {
+    const storyToken = `${TOKEN}story`;
+    process.env.FAKE_GH_TOKEN_BY_REPO = JSON.stringify({ "acme/lib": storyToken });
+    const signIn = (token: string, stamp: string): RepoGhIdentity => ({ prepare: async (): Promise<GhSession> => ({ env: { GH_TOKEN: token }, stamp }), usesHostLogin: () => false, dispose() {} });
+    story("- acme/lib#3", [T]);
+    lib({ number: 3 });
+    const w = watcher({}, () => signIn("nope", "wrong"), signIn(storyToken, "story"));
+    await w.tick();
+    expect(hold(w)?.next.kind).toBe("dependency");
+    expect(submit).not.toHaveBeenCalled();
+
+    lib({ number: 3, state: "closed", state_reason: "completed" });
+    await w.tick();
+    expect(hold(w)).toBeUndefined();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(gh.ghLog()).toContain("api repos/acme/lib/issues/3");
+    expect(logged.join("\n")).not.toContain("could not be read");
+    expect(logged.join("\n")).not.toContain(TOKEN);
     w.stop();
   });
 

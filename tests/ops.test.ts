@@ -1070,6 +1070,29 @@ describe("the login agents of the helpers", () => {
     expect(jobState("governor", { ...gone, platform: "linux" })).toBe("loaded");
   });
 
+  it("the watchdog runs every five minutes; without a heartbeat a run says one line and restarts nothing", async () => {
+    const { JOBS } = await import("../src/ops/cli.js");
+    expect(JOBS.watchdog).toEqual({ name: "watchdog", everySec: 300 });
+    rmSync(join(process.env.FACTORY_HOME!, "heartbeat.json"), { force: true });
+    const calls: string[][] = [];
+    const host = fakeHost(() => "", calls);
+    const said: string[] = [];
+    expect(await opsCommand("watchdog", ["status"], "/x/cli.js", (l) => said.push(l), host)).toBe(0);
+    expect(said).toEqual(["watchdog is installed"]);
+    calls.length = 0;
+    expect(await opsCommand("watchdog", ["run"], "/x/cli.js", (l) => said.push(l), host)).toBe(0);
+    expect(said).toHaveLength(2);
+    expect(said[1]).toContain("no usable heartbeat");
+    expect(calls).toEqual([]);
+    const report: string[] = [];
+    await opsCommand("watchdog", ["report"], "/x/cli.js", (l) => report.push(l), host);
+    expect(report[0]).toContain("Last check:");
+    expect(installJob(JOBS.watchdog!, "/x/cli.js", fakeHost((a) => {
+      if (a[0] === "print") throw refused("Could not find service");
+      return "";
+    }))).toContain("runs every 5 minutes");
+  });
+
   it("uninstall stops the helper first and clears its cap after; status says when nothing runs", async () => {
     const home = process.env.FACTORY_HOME!;
     const calls: string[][] = [];

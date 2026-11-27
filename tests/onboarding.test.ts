@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseTool, startSignIn, stopSignIns, testCall, type OnboardingTool } from "../src/onboarding.js";
 import type { SetupReport } from "../src/setup-check.js";
+import { Watched } from "./helpers/stray-procs.js";
 
 const CLAUDE = resolve("tests/fixtures/fake-claude.mjs");
 const CODEX = resolve("tests/fixtures/fake-codex.mjs");
@@ -26,7 +27,9 @@ beforeEach(() => {
   process.env.FAKE_CODEX_AUTH_FILE = codexAuth;
   before = onboardingDirs();
 });
+const watched = new Watched();
 afterEach(() => {
+  watched.kill();
   for (const v of VARS) delete process.env[v];
   rmSync(dir, { recursive: true, force: true });
 });
@@ -160,7 +163,11 @@ describe("startSignIn", () => {
   it("stopSignIns ends a sign-in that ignores SIGTERM", async () => {
     process.env.FAKE_CLAUDE_LOGIN_HANG = "1";
     let child!: ChildProcess;
-    const spawnFn = ((c: string, a: string[], opts: object) => (child = spawn(c, a, opts))) as typeof spawn;
+    const spawnFn = ((c: string, a: string[], opts: object) => {
+      child = spawn(c, a, opts);
+      if (a.includes("login")) watched.pid(child.pid!); // it ignores SIGTERM
+      return child;
+    }) as typeof spawn;
     const a = await startSignIn("claude", { claudeBin: CLAUDE, spawnFn, startWaitMs: 300 });
     expect(a.state).toBe("started");
     const closed = once(child, "close");

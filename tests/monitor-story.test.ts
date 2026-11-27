@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isBot } from "../src/github.js";
 import { DETECTORS } from "../src/monitor/detectors.js";
-import type { Finding } from "../src/monitor/findings.js";
+import { evidenceLines, type Finding } from "../src/monitor/findings.js";
 import { cleanLines, type Names } from "../src/monitor/clean.js";
 import { makeRedactor } from "../src/credentials/redact.js";
 import { buildStory, FIXED_MARKER, fixedComment, hashIn, isFixedComment, markerHash, seenAgainComment } from "../src/monitor/story.js";
@@ -125,5 +125,19 @@ describe("buildStory", () => {
     const { title, body } = buildStory(finding({ evidence: { lines: raw } }), { lines, builtinSteps: steps });
     for (const bad of ["secret-app", "acme", "jane", "/Users", "ghp_", TOKEN]) expect(title + body).not.toContain(bad);
     expect(body).toContain("cannot");
+  });
+});
+
+describe("the story of a memory growth", () => {
+  it("shows the valid samples and leaves out anything else", () => {
+    const memory = [
+      { at: "2026-10-01T12:00:00.000Z", mb: 2100 }, { at: "2026-10-01T12:01:00.000Z", mb: 1.5 }, { at: "2026-10-01T12:02:00.000Z", mb: "x" as never },
+      { at: "/Users/x", mb: 7 }, { at: "2026-10-01T12:03:00.000Z", mb: -1 }, null as never, { at: "2026-10-01T12:04:00.000Z", mb: 2200, host: "secret-host" } as never,
+    ];
+    const { title, body } = buildStory(finding({ detector: "memory-growth", fingerprint: "memory-growth", evidence: { memory } }), { lines: [], builtinSteps: steps });
+    expect(title).toBe("The server's memory grows past its limit");
+    expect(body).toContain("Memory samples (MB):\n\n````\n2026-10-01T12:00:00.000Z  2100 MB\n2026-10-01T12:04:00.000Z  2200 MB\n````");
+    for (const bad of ["1.5 MB", "x MB", "/Users", "-1 MB", "secret-host", "12:02"]) expect(body).not.toContain(bad);
+    expect(evidenceLines({ memory })).toEqual(["Memory (MB): 2026-10-01T12:00:00.000Z 2100, 2026-10-01T12:04:00.000Z 2200"]);
   });
 });

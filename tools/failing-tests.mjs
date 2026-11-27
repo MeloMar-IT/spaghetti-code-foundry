@@ -32,7 +32,7 @@ const attr = (s, name) => {
   return m ? unxml(m[1] ?? m[2] ?? "") : undefined;
 };
 
-function reportFiles(root, since) {
+export function reportFiles(root, since) {
   const files = [];
   (function walk(dir, depth) {
     if (depth > 8) return;

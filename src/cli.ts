@@ -18,7 +18,12 @@ import { startServer } from "./server/server.js";
 import { previewsOf } from "./server/api-preview.js";
 import { withServicesStopped } from "./services/supervisor.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
-import { safeRestartFor, type SafeRestart } from "./safe-restart.js";
+import { restartIdle, safeRestartFor, uncuttableRuns, type SafeRestart } from "./safe-restart.js";
+import { DrainLimit } from "./drain-limit.js";
+import { memoryRestartGapMs, MemoryWatch, restartOnGrowth } from "./memory-watch.js";
+import { createRestartGate } from "./restart-gate.js";
+import { startHeartbeat } from "./heartbeat.js";
+import { dataDir } from "./ops/schedule.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
 import { controlsReportText, runEval, runSafetyEvals } from "./evals.js";
@@ -127,7 +132,7 @@ Usage:
   scf analyst run|report|install|uninstall|status|auto on|off|reset
                                                  Every 6 hours: how each model does per step, and where another level fits;
                                                  with \`auto on\` it tries that level by itself and puts it back when worse
-  scf governor|flaky|limits|blockage|digest|housekeeping run|report|install|uninstall|status
+  scf governor|flaky|limits|blockage|digest|housekeeping|watchdog run|report|install|uninstall|status
                                                  Helper processes: machine load, unreliable tests, usage limits,
                                                  what holds work up, and a daily digest (see the user guide)
   scf watch [flow] --var github_repo=o/r         Every 5 min, run the flow (default issue-gitflow) on
@@ -506,12 +511,18 @@ async function main(argv: string[]): Promise<number> {
       const stamp = buildStamp(dirname(fileURLToPath(import.meta.url)));
       // Before the server listens: the watchers start with it.
       pinBuiltinSkillsAtStart(loadConfig().skills, (m) => process.stdout.write(m + "\n"));
+      const startedAt = new Date().toISOString();
+      let logAt: string | undefined; // for the heartbeat
+      const log = (m: string) => {
+        logAt = new Date().toISOString();
+        process.stdout.write(`${logAt} ${m}\n`);
+      };
       const { url, ctx } = await startServer({
         repo,
         port,
         dev: values.dev === true,
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
-        log: (m) => process.stdout.write(`${new Date().toISOString()} ${m}\n`),
+        log,
       });
       const n = ctx.config().watchers.filter((w) => w.enabled).length;
       process.stdout.write(`Spaghetti Code Foundry → ${url}\n  repo: ${repo}\n  data: ${FACTORY_HOME}\n  watchers: ${n}\n${values.dev ? `  gallery: ${url}/gallery/\n` : ""}  Ctrl+C to stop\n`);
@@ -520,8 +531,7 @@ async function main(argv: string[]): Promise<number> {
       if (hint) process.stdout.write(`  ${hint}\n`);
       if (cmd === "ui" && !values["no-open"] && !process.env.FACTORY_NO_OPEN && process.platform === "darwin") execFile("open", [url]);
       // While the server waits to restart nothing queued starts, so only the active runs are waited for (queued jobs are saved).
-      const queueIdle = () => { const q = ctx.scheduler.queue(); return q.active.length === 0 && (ctx.scheduler.draining || q.pending.length === 0); };
-      const log = (m: string) => process.stdout.write(`${new Date().toISOString()} ${m}\n`);
+      const queueIdle = () => restartIdle(ctx.scheduler);
       const drain = () => {
         // a health restart that waits keeps its reason: it is the one that stops runs
         if (ctx.restart?.why !== "health") ctx.restart = { why: "new_version", since: new Date().toISOString() };
@@ -539,9 +549,15 @@ async function main(argv: string[]): Promise<number> {
           return { runs: s.runs, all: s.active > 0 && s.runs.length === s.active };
         },
         interrupt: (ids) => ctx.scheduler.interrupt(ids),
+        busyChanged: () => void gate.publish(),
       });
+      // before a push, merge or release step (or the updater) starts, the watchdog can see it
+      const gate = createRestartGate({ dir: dataDir(), uncuttable: () => uncuttableRuns(ctx.scheduler), updating: () => updater.busy(), log: ctx.opts.log ?? log });
+      ctx.scheduler.setStepGate(() => gate.publish());
+      let stopHeartbeat = () => {};
       // every restart path (self-update, new build, data folder, settings) stops the managed services first (#867)
       const beforeExit = withServicesStopped(() => {
+        stopHeartbeat();
         updater.stop();
         ctx.watchers.stopAll();
         void previewsOf(ctx).stopAll();
@@ -568,8 +584,33 @@ async function main(argv: string[]): Promise<number> {
       const settingsRestart: SettingsRestart = settingsRestartFor(ctx, { idle, beforeExit: () => { settingsRestart.stop(); beforeExit(); }, log });
       ctx.settingsRestart = settingsRestart;
       // waits only for push, merge and release steps (and the updater); the health checks ask for it
-      const safeRestart: SafeRestart = safeRestartFor(ctx, { busy: () => updater.busy(), beforeExit: () => { safeRestart.stop(); settingsRestart.stop(); beforeExit(); }, log });
+      const safeRestart: SafeRestart = safeRestartFor(ctx, { busy: () => updater.busy(), handOff: () => updater.waitsToInstall(), beforeExit: () => { safeRestart.stop(); settingsRestart.stop(); beforeExit(); }, log });
       ctx.safeRestart = safeRestart;
+      // a restart that waits too long for the runs switches to the safe restart (#963)
+      new DrainLimit({ restart: () => ctx.restart, limitMinutes: () => ctx.config().restarts.drain_limit_minutes, safeRestart, log }).start();
+      new MemoryWatch({
+        limitMb: () => ctx.config().server.memory_limit_mb,
+        gapMs: () => memoryRestartGapMs(ctx.config().monitor.cooldown_minutes),
+        onGrowth: restartOnGrowth(safeRestart, log),
+        log,
+      }).start();
+      stopHeartbeat = startHeartbeat({
+        dir: dataDir(),
+        source: () => ({
+          pid: process.pid,
+          supervisorPid: process.env.FACTORY_SUPERVISED === "1" ? process.ppid : undefined,
+          startedAt,
+          queue: ctx.scheduler.queue(),
+          pumpAt: ctx.scheduler.lastPump(),
+          lastStart: ctx.scheduler.lastStart(),
+          watchers: ctx.watchers.tracked().map(({ watcher, status }) => ({ every: watcher.every, lastTick: status.lastTick })),
+          logAt,
+          draining: ctx.scheduler.draining,
+          restartWaits: !!ctx.restart,
+        }),
+        beat: () => void gate.publish(),
+        log: ctx.opts.log ?? log,
+      });
       void confirmStart(url, { stamp, log });
       updater.start();
       return new Promise<number>(() => {}); // run until killed
@@ -675,7 +716,8 @@ async function main(argv: string[]): Promise<number> {
     case "flaky":
     case "limits":
     case "blockage":
-    case "digest": {
+    case "digest":
+    case "watchdog": {
       const { opsCommand } = await import("./ops/cli.js");
       return opsCommand(cmd, positionals.slice(1), fileURLToPath(import.meta.url), (line) => void process.stdout.write(line + "\n"));
     }

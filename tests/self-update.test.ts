@@ -85,7 +85,9 @@ describe("self-update: the update path", () => {
     f.publish({ "app.txt": "v2\n" });
     const t = updater(f);
     t.idle = false;
+    expect(t.u.waitsToInstall()).toBe(false);
     for (let i = 0; i < 4; i++) await t.u.tick(true);
+    expect(t.u.waitsToInstall()).toBe(true);
     expect(f.head()).toBe(v1);
     expect(t.drained).toBe(1);
     expect(t.exits).toEqual([]);

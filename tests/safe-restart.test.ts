@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mustNotCut, SafeRestart, safeRestartFor, uncuttableRuns, UNCUTTABLE_STEPS, watcherResumes, type SafeRestartOptions } from "../src/safe-restart.js";
+import { mustNotCut, restartIdle, SafeRestart,safeRestartFor, uncuttableRuns, UNCUTTABLE_STEPS, watcherResumes, type SafeRestartOptions } from "../src/safe-restart.js";
 import { settingsRestartFor } from "../src/server/api-restart.js";
 import { RESTART_CODE } from "../src/supervise.js";
 
@@ -36,6 +36,28 @@ describe("which steps must not be cut", () => {
     for (const source of ["watcher off issue #7", "watcher gone issue #7", "watcher w pr #7", "watcher w ci build", "watcher w schedule", "watcher w release-build", "ui", undefined]) {
       expect(watcherResumes(source, watchers)).toBe(false);
     }
+  });
+});
+
+describe("restartIdle", () => {
+  const scheduler = (active: number, pending: number, draining: boolean, saved = true) => ({
+    queue: () => ({ active: Array(active).fill({}), pending: Array(pending).fill({}), concurrency: 1 }) as any,
+    draining,
+    retryResumes: vi.fn(() => saved),
+  });
+
+  it("is idle only with no active run, nothing queued that would be lost and every resume saved", () => {
+    expect(restartIdle(scheduler(0, 0, false))).toBe(true);
+    expect(restartIdle(scheduler(1, 0, true))).toBe(false);
+    expect(restartIdle(scheduler(0, 1, false))).toBe(false);
+    expect(restartIdle(scheduler(0, 1, true))).toBe(true);
+    expect(restartIdle(scheduler(0, 0, true, false))).toBe(false);
+  });
+
+  it("does not try to save while a run is active", () => {
+    const s = scheduler(1, 0, true);
+    restartIdle(s);
+    expect(s.retryResumes).not.toHaveBeenCalled();
   });
 });
 

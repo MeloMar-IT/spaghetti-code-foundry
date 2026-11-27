@@ -35,11 +35,17 @@ describe.skipIf(!basic)("scheduler workspace limits (#819)", () => {
   let limits: Record<string, Lim> = {};
   let spend: Record<string, number> = {};
   let s: Scheduler | undefined;
+  /** Every scheduler a test made: a closed one still has its runs, and their shells wait for a gate. */
+  let made: Scheduler[] = [];
+  const track = (x: Scheduler): Scheduler => {
+    made.push(x);
+    return (s = x);
+  };
   let GATE = gateFlow("");
   let installCap: number | undefined;
   const cfg = (): Config => ({ ...ConfigSchema.parse({ bot: { name: "Bot", email: "bot@example.com" }, limits: installCap === undefined ? {} : { monthly_budget_usd: installCap } }), concurrency, cost_limits: costLimits });
   const mk = (extra: Partial<SchedulerOptions> = {}) =>
-    (s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, workspaceLimits: (w) => limits[w] ?? {}, spentThisMonthByWorkspace: (w) => spend[w] ?? 0, ...extra }));
+    track(new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, workspaceLimits: (w) => limits[w] ?? {}, spentThisMonthByWorkspace: (w) => spend[w] ?? 0, ...extra }));
   const job = (flow = GATE): Job => ({ kind: "run", flow, task: "t", repo: tmp, vars: {} });
   const submit = (source: string, workspace: string, extra: Record<string, unknown> = {}) => s!.submit(job(), { source, workspace, ...extra });
   const active = () => s!.queue().active.map((a) => a.source);
@@ -80,12 +86,13 @@ describe.skipIf(!basic)("scheduler workspace limits (#819)", () => {
   });
   afterEach(async () => {
     disposeWorkspaces("base");
-    if (s) {
-      for (const p of s.queue().pending) s.cancel(p.runId);
-      for (const a of s.queue().active) open(a.runId);
-      await waitFor(() => s!.queue().active.length === 0);
-      s.close();
+    for (const x of made) {
+      for (const p of x.queue().pending) x.cancel(p.runId);
+      for (const a of x.queue().active) open(a.runId);
+      await waitFor(() => x.queue().active.length === 0);
+      x.close();
     }
+    made = [];
     s = undefined;
     rmSync(tmp, { recursive: true, force: true });
   });
@@ -338,15 +345,15 @@ describe.skipIf(!basic)("scheduler workspace limits (#819)", () => {
       store: { list: () => [{ id: "team-a", name: "A", limits: { max_concurrent: 1, test_slots: 2 } }] },
     });
     try {
-      s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg });
+      const own = track(new Scheduler({ runsDir: join(tmp, "runs"), config: cfg }));
       // (the env.txt is written in the workspace's lock folder, which the held step can write)
       const envFlow = parseFlow(`name: env
 workspace: empty
 steps:
   - {id: a, type: shell, run: 'echo "$FACTORY_WORKSPACE $FACTORY_WORKSPACE_TEST_SLOTS" > "$SCF_LOCK_DIR/env.txt";${waitForFile(join(tmp, "gates"), "$FACTORY_RUN_ID")}'}
 `);
-      s.submit(job(envFlow), { source: "a1", workspace: "team-a" });
-      s.submit(job(), { source: "a2", workspace: "team-a" });
+      own.submit(job(envFlow), { source: "a1", workspace: "team-a" });
+      own.submit(job(), { source: "a2", workspace: "team-a" });
       expect(pending().find((p) => p.source === "a2")?.limit).toBe("workspace");
       await waitFor(() => {
         try {

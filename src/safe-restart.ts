@@ -23,6 +23,13 @@ export function uncuttableRuns(s: Pick<Scheduler, "queue" | "currentStep">): { r
   });
 }
 
+/** True when a restart may exit or install: no run is active, nothing queued would be lost, and every resume is saved. */
+export function restartIdle(s: Pick<Scheduler, "queue" | "draining" | "retryResumes">): boolean {
+  const q = s.queue();
+  // retryResumes() comes last: it tries to save only when the rest is already true
+  return q.active.length === 0 && (s.draining || q.pending.length === 0) && s.retryResumes();
+}
+
 /** True when an enabled watcher resumes this interrupted run by itself: only the issue runs of a watcher are. */
 export function watcherResumes(source: string | undefined, watchers: readonly Pick<WatcherConfig, "id" | "enabled">[]): boolean {
   const id = /^watcher (\S+) issue #\d+$/.exec(source ?? "")?.[1];
@@ -35,6 +42,10 @@ export interface SafeRestartOptions {
   drain: () => void;
   /** Something else must not be cut (the self-updater builds or installs): wait. */
   busy?: () => boolean;
+  /** Another restart exits by itself once no run is active (a self-update installs first). */
+  handOff?: () => boolean;
+  /** How many checks the other restart gets before this one exits itself (default 60). */
+  handOffChecks?: number;
   /** True for the source of a run that a watcher resumes. All other interrupted runs get a saved resume job. */
   watcherResumes?: (source: string | undefined) => boolean;
   beforeExit: () => void;
@@ -52,6 +63,8 @@ export class SafeRestart {
   private state?: { since: string; reason: string };
   private timer?: NodeJS.Timeout;
   private checking = false;
+  /** Checks the other restart has had so far. Busy checks do not count, and a busy period does not reset it. */
+  private handedOff = 0;
   /** What was logged last, so a line comes only when something changes. */
   private told = "";
 
@@ -98,6 +111,7 @@ export class SafeRestart {
     this.timer = undefined;
     this.state = undefined;
     this.told = "";
+    this.handedOff = 0;
   }
 
   private async check(): Promise<void> {
@@ -123,6 +137,11 @@ export class SafeRestart {
     if (!s.retryResumes()) return this.say("resume-unsaved", "health: a resume could not be saved; trying again");
     // looked at again after the wait, with nothing awaited from here to the exit
     if (!this.state || this.o.busy?.() || s.queue().active.length > 0) return;
+    if (this.o.handOff?.()) {
+      // bounded: the other restart may never get to its exit (its journal cannot be written, its check keeps failing)
+      if (++this.handedOff <= (this.o.handOffChecks ?? 60)) return this.say("hand-off", "health: the runs are stopped; the self-update installs its version and restarts");
+      this.o.log("health: the self-update did not restart the server; restarting without waiting for it");
+    }
     this.stop();
     this.o.log("health: restarting");
     this.o.beforeExit();
