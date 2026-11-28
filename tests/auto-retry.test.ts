@@ -11,6 +11,7 @@ import { runNextStep } from "../src/next-step.js";
 import { isPaused, openQuestion } from "../src/queue/waiting-issues.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { Comment } from "../src/github.js";
+import { repairFile, repairsSince, resetRepairMemory } from "../src/monitor/repair-log.js";
 
 const base = { top: true, stepType: "shell" as const, error: "timed out", storyRun: true, limit: 2, used: () => 0 };
 
@@ -173,6 +174,8 @@ describe("the engine", () => {
     tmp = mkdtempSync(join(tmpdir(), "auto-retry-"));
     repo = join(tmp, "repo");
     mkdirSync(repo);
+    rmSync(repairFile(), { recursive: true, force: true });
+    resetRepairMemory();
   });
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -255,7 +258,20 @@ steps:
     const late = await again(second.runId, 1);
     expect(late.status).toBe("failed");
     expect(late.timeLimits![0]!.startedAt).toBeUndefined();
+    // the repair log: one retry that started, and one that found no retry left
+    expect(repairsSince(0).map((e) => `${e.repair} ${e.result} ${e.where}: ${e.what}`)).toEqual([
+      "retry-after-time-limit done o/r: retry 1 of 1 after a time limit in x (issue #7)",
+      "retry-after-time-limit failed o/r: no retry left after a time limit in x (issue #7)",
+    ]);
   }, 40_000);
+
+  it("retries also when the repair log cannot be written", async () => {
+    mkdirSync(repairFile(), { recursive: true });
+    const first = await go();
+    const next = await again(first.runId);
+    expect(next.status).toBe("stopped");
+    expect(next.timeLimits![0]!.startedAt).toEqual(expect.any(String));
+  }, 30_000);
 
   it("claims the areas again before it goes on", async () => {
     const flow = parseFlow(`

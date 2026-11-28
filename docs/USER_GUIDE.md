@@ -5256,8 +5256,12 @@ come a few lines from the other helpers and the analyst; a result of a helper th
 **Automatic retries after a time limit**: how many stories, how many retries started, and how many of
 those finished, were split, failed or are still open. A retry that was cancelled while it waited is
 not counted, and a retry that ends in a later digest counts in the digest of the day it ended. Without
-retries there is no such section. It is `digest/report.md`, and one file per day, named by the local
-date; a desktop notification gives the counts.
+retries there is no such section. The digest also has an **Automatic repairs** section: one line for
+each automatic repair of the last 24 hours, newest first, with what it did, where, and whether it was
+**done** or **failed**. These repairs need no answer from you, so they add nothing to **Waits for you**.
+The lines come from `monitor-repairs.jsonl` in the data folder (at most 256 KB, then the older half
+is kept as `monitor-repairs.1.jsonl`); a damaged or missing file gives an empty section. It is
+`digest/report.md`, and one file per day, named by the local date; a desktop notification gives the counts.
 
 #### Self-update
 
@@ -9863,6 +9867,11 @@ The automatic repairs the Foundry does today:
 | `completed-dependency` | fixes alone | a dependency on an issue closed as completed counts as done |
 | `memory-restart` | fixes alone | when the server's memory stays above its limit, it restarts at the next safe moment |
 | `hotfix-merge` | fixes alone | with Hotfixes on, a bug story is merged into `main` and then into `develop`. Any other merge to `main` asks you first |
+
+Each automatic repair writes one line to `monitor-repairs.jsonl` in the data folder when it runs: what
+it did, where, and the result (`done` or `failed`). The text is cleaned before it is written, so
+other repositories, people, e-mail addresses, paths and keys are not kept. The daily digest lists these
+lines under **Automatic repairs** (see [Helper processes](#helper-processes), where the digest is described).
 
 ### What a bug story looks like
 

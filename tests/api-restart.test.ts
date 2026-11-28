@@ -6,7 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { auditPath } from "../src/auth/audit.js";
 import { ConfigSchema, WatcherSchema, type Config } from "../src/config.js";
 import { WatcherManager } from "../src/queue/watchers.js";
-import { SettingsRestart, settingsRestartFor, type SettingsRestartOptions } from "../src/server/api-restart.js";
+import { recordSafeRestart, SettingsRestart, settingsRestartFor, type SettingsRestartOptions } from "../src/server/api-restart.js";
+import { repairFile, repairsSince, resetRepairMemory } from "../src/monitor/repair-log.js";
 import { health } from "../src/server/health.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
@@ -100,6 +101,41 @@ describe("SettingsRestart", () => {
     vi.advanceTimersByTime(1000);
     expect(calls.exit).not.toHaveBeenCalled();
     expect(r.request()).toBe("other");
+  });
+});
+
+describe("recordSafeRestart", () => {
+  const clear = () => {
+    rmSync(repairFile(), { recursive: true, force: true });
+    resetRepairMemory();
+  };
+  afterEach(clear);
+
+  it("writes one line for a restart, with its reason, also when it did not have to wait", () => {
+    clear();
+    recordSafeRestart({ why: "data_folder", since: "2026-10-01T00:00:00Z" });
+    recordSafeRestart({ why: "data_folder", since: "2026-10-01T00:00:00Z" });
+    recordSafeRestart(undefined);
+    expect(repairsSince(0).map((e) => `${e.repair} ${e.result}: ${e.what}`)).toEqual([
+      "safe-restart done: server restarted for a moved data folder once no run was active",
+      "safe-restart done: server restarted once no run was active",
+    ]);
+  });
+
+  it("words a health restart, and gives a memory restart its own single line", () => {
+    clear();
+    recordSafeRestart({ why: "health", since: "2026-10-01T00:00:00Z" });
+    recordSafeRestart({ why: "health", since: "2026-10-02T00:00:00Z" }, { at: "2026-10-02T00:00:00Z", limit_mb: 900 });
+    expect(repairsSince(0).map((e) => `${e.repair} ${e.result}: ${e.what}`)).toEqual([
+      "safe-restart done: server restarted at a safe moment, with no push, merge or release step cut",
+      "memory-restart done: server restarted because its memory stayed above 900 MB",
+    ]);
+  });
+
+  it("never throws when the log cannot be written", () => {
+    clear();
+    mkdirSync(repairFile(), { recursive: true });
+    expect(() => recordSafeRestart({ why: "settings", since: "2026-10-01T00:00:00Z" })).not.toThrow();
   });
 });
 

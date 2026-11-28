@@ -4,6 +4,7 @@ import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { listAllRunIds, listRunIds, loadRun, pidAlive, runsArchiveDir, type RunSummary } from "../engine/state.js";
+import { digestRepairLines, repairsSince } from "../monitor/repair-log.js";
 import { sendDesktop } from "../notify.js";
 import { storeFor } from "../stories/store.js";
 import { macHost, type ServiceHost } from "../service.js";
@@ -306,6 +307,7 @@ export function runDigest(o: { runs: RunSummary[]; /** Runs of every folder; onl
     }),
     part("Unreliable tests", () => (latest<{ suspects: { test: string; failedIn: string[]; retriedIn?: string[] }[] }>("flaky").suspects ?? []).slice(0, 3).map((s) => `${s.test} — failed in ${s.failedIn.length} stories${s.retriedIn?.length ? `, passed only on a retry in ${s.retriedIn.length}` : ""}`)),
     part("Archived by itself", () => supersededLines(o.allRuns ?? o.runs, o.now)),
+    part("Automatic repairs", () => digestRepairLines(repairsSince(o.now.getTime() - 86_400_000, { file: join(o.home, "monitor-repairs.jsonl") }))),
   ];
   const text = digestReport({ ...facts, extra }, o.now);
   const dir = join(o.home, "digest");

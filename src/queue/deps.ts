@@ -276,6 +276,14 @@ export function crossState(i: { state?: string | null; state_reason?: string | n
   return labelsDone(names, rule) ? "done" : "open";
 }
 
+/** The dependencies that are known, closed issues (not as "not planned"): they count as done because they are closed. */
+export function closedDependencies(deps: number[], all: DepIssue[]): number[] {
+  return deps.filter((n) => {
+    const issue = all.find((x) => x.number === n);
+    return !!issue?.state && issue.state.toUpperCase() !== "OPEN" && !closedNotPlanned(issue.stateReason);
+  });
+}
+
 /** Dependencies that are not done yet. A string list is the old form: { doneLabels }. */
 export function openDependencies(deps: number[], all: DepIssue[], done: readonly string[] | DoneRule): number[] {
   const rule: DoneRule = Array.isArray(done) ? { doneLabels: done as readonly string[] } : (done as DoneRule);

@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readHeartbeat, type Heartbeat } from "../heartbeat.js";
+import { recordRepair, wedgedServerRestart } from "../monitor/repair-log.js";
 import { announceRestart, readGuard, withdrawRestart, writeAtomic, type Guard } from "../restart-gate.js";
 import { SERVICE_LABEL, type ServiceHost } from "../service.js";
 import { pidAlive, withStoryLockSync } from "../stories/story-lock.js";
@@ -247,6 +248,8 @@ function check(o: WatchdogOptions, clock: () => Date, held: () => boolean): Watc
         restarted = `the restart of the server failed (${message(e)}): ${stall}`;
       }
       events.push(`auto: ${restarted}`);
+      const result = restarted.startsWith("restarted") ? "done" : "failed";
+      recordRepair(wedgedServerRestart({ at: iso }, result), { now, file: join(o.dataDir, "monitor-repairs.jsonl") });
     } else withdrawRestart(o.dataDir);
   }
 

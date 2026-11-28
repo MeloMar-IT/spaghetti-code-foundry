@@ -17,7 +17,7 @@ import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.
 import { startServer } from "./server/server.js";
 import { previewsOf } from "./server/api-preview.js";
 import { withServicesStopped } from "./services/supervisor.js";
-import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
+import { recordSafeRestart, settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { restartIdle, safeRestartFor, uncuttableRuns, type SafeRestart } from "./safe-restart.js";
 import { DrainLimit } from "./drain-limit.js";
 import { memoryRestartGapMs, MemoryWatch, restartOnGrowth } from "./memory-watch.js";
@@ -561,9 +561,11 @@ async function main(argv: string[]): Promise<number> {
       const gate = createRestartGate({ dir: dataDir(), uncuttable: () => uncuttableRuns(ctx.scheduler), updating: () => updater.busy(), log: ctx.opts.log ?? log });
       ctx.scheduler.setStepGate(() => gate.publish());
       let stopHeartbeat = () => {};
+      let memoryGrowth: { at: string; limit_mb: number } | undefined; // set once the memory watch asks for a restart
       // every restart path (self-update, new build, data folder, settings) stops the managed services first (#867)
       const beforeExit = withServicesStopped(() => {
         stopHeartbeat();
+        recordSafeRestart(ctx.restart, memoryGrowth);
         updater.stop();
         ctx.watchers.stopAll();
         void previewsOf(ctx).stopAll();
@@ -597,7 +599,10 @@ async function main(argv: string[]): Promise<number> {
       new MemoryWatch({
         limitMb: () => ctx.config().server.memory_limit_mb,
         gapMs: () => memoryRestartGapMs(ctx.config().monitor.cooldown_minutes),
-        onGrowth: restartOnGrowth(safeRestart, log),
+        onGrowth: (r) => {
+          memoryGrowth = r;
+          restartOnGrowth(safeRestart, log)(r);
+        },
         log,
       }).start();
       stopHeartbeat = startHeartbeat({

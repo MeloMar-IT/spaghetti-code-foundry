@@ -58,7 +58,7 @@ type Way = "own" | "story";
 type Try = { way: Way; why: string; cannotRead: boolean };
 type Readable = { kind: "ok"; rec: RepoRecord; ways: Way[] };
 type Lookup = { kind: "skip" } | { kind: "refused"; why: string; noSignIn?: true } | Readable;
-type Result = { state: CrossState } | { failed: string; noSignIn?: true };
+type Result = { state: CrossState; closed?: true } | { failed: string; noSignIn?: true };
 type CrossRef = { repo: string; issue: number };
 
 const keyOf = (repo: string, issue: number) => `${repo.toLowerCase()}#${issue}`;
@@ -174,6 +174,19 @@ export class CrossDeps {
     if (was?.why !== why) this.o.warn(`${what} could not be read: ${why}`);
   }
 
+  /**
+   * The cross references of an issue that count as done because their issue is closed as completed. Only what `blockers()`
+   * read in this check: nothing is asked of GitHub here.
+   */
+  async completed(issue: { body?: string }, markedOnly: boolean): Promise<CrossRef[]> {
+    const out: CrossRef[] = [];
+    for (const ref of crossDependencies(issue.body ?? "", { markedOnly })) {
+      const r = await this.results.get(keyOf(ref.repo, ref.issue))?.catch(() => undefined);
+      if (r && "state" in r && r.state === "done" && r.closed) out.push(ref);
+    }
+    return out;
+  }
+
   private once(kind: "act" | "warn", msg: string) {
     if (this.said.has(msg)) return;
     this.said.add(msg);
@@ -253,7 +266,7 @@ export class CrossDeps {
         continue;
       }
       alive();
-      if (typeof got?.state === "string") return { state: crossState(got, this.o.rule()) };
+      if (typeof got?.state === "string") return { state: crossState(got, this.o.rule()), ...(got.state.toLowerCase() === "closed" ? { closed: true as const } : {}) };
       failed("GitHub does not know it", true);
     }
     const why = this.failedLine(rec, tries);

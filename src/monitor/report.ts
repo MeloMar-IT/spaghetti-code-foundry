@@ -8,6 +8,7 @@ import { dayOf, type Finding, type Severity, type StoryRef } from "./findings.js
 import { cameBack as fixCameBack, fixState, forgetFix, MAX_TRIES, triesOf } from "./fix.js";
 import type { LogEntry, Mute, Verdict } from "./guard.js";
 import { muteFor } from "./mutes.js";
+import { bugStoryMade, recordRepair } from "./repair-log.js";
 import { buildStory, fixedComment, hashIn, isFixedComment, markerHash, seenAgainComment, type BuiltinSteps } from "./story.js";
 
 const HOUR = 3_600_000;
@@ -458,6 +459,7 @@ export class Reporter {
         }
         // Written before the local save: a story that exists on GitHub must show in the log even when the save fails.
         this.d.record?.({ event: "story-made", detector: f.detector, fingerprint: f.fingerprint, repo: target, issue: issue.number });
+        recordRepair(bugStoryMade({ detector: f.detector, repo: target, issue: issue.number }));
         f.tries = triesOf(f) + 1;
         delete f.needsYou;
         f.report = { repo: target, issue: issue.number, url: issue.html_url, at: stamp, seen: 0, lookedAt: stamp };

@@ -1,4 +1,5 @@
 import { DETAIL_MAX, auditAction } from "../auth/audit.js";
+import { memoryRestartRepair, recordRepair, safeRestartRepair } from "../monitor/repair-log.js";
 import { describeSettings } from "../settings/describe.js";
 import { RESTART_CODE } from "../supervise.js";
 import { HttpError, send } from "./http.js";
@@ -82,6 +83,14 @@ export class SettingsRestart {
     this.o.beforeExit();
     (this.o.exit ?? process.exit)(RESTART_CODE);
   }
+}
+
+/**
+ * Right before the server exits to restart: one line in the repair log. Without `restart` it did not have to wait. With
+ * `memory` (memory growth was seen) the line is that of the memory restart, so one restart gives one line.
+ */
+export function recordSafeRestart(restart: RestartState | undefined, memory?: { at: string; limit_mb: number }): void {
+  recordRepair(memory ? memoryRestartRepair({ at: memory.at, limitMb: memory.limit_mb }) : safeRestartRepair(restart, new Date().toISOString()));
 }
 
 export function settingsRestartFor(ctx: ApiContext, o: Pick<SettingsRestartOptions, "idle" | "beforeExit" | "log" | "supervised" | "exit" | "everyMs">): SettingsRestart {

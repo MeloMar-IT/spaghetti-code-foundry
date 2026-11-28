@@ -41,6 +41,7 @@ import { readPlainFile, runSandbox } from "./os-sandbox.js";
 import { localRepoEnv, ownerReposEnv, removeSignInDir } from "./repo-access.js";
 import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, saveResumedRun, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
+import { recordRepair, retryRepair } from "../monitor/repair-log.js";
 import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, RUN_IN_ARCHIVE, isInRunsArchive, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
@@ -399,6 +400,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
   claimRunStart(opts.runsDir, () => saveResumedRun(summary));
+  if (retry) recordRepair(retryRepair({ runId: summary.runId, repo: summary.vars?.github_repo ?? "", issue: summary.vars?.issue ?? "", step: retry.step, attempt: retry.attempt, of: retry.of, at: retry.at }, !retryOver));
   dropRunEvidence(summary.runDir); // the run is no longer at the end its manifest describes
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);

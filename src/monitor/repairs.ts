@@ -7,7 +7,11 @@ export const isRepairClass = (x: unknown): x is RepairClass => x === "auto" || x
 export const REPAIR_RULE =
   "The Foundry fixes a problem alone when the fix can be undone and touches only its own work. It asks you first for governance, security, secrets, force pushes, deleting data, merging or releasing to main, spending limits and turning a check off, except where you already agreed by turning on Hotfixes, the daily release or automatic demotion.";
 
-export interface Repair { name: string; repair: RepairClass; description: string; where: string }
+/** The names of the automatic repairs; each one writes a line to the repair log (repair-log.ts). */
+export const REPAIR_NAMES = ["retry-after-time-limit", "bug-story", "lower-autonomy", "start-service", "restart-wedged-server", "safe-restart", "correct-labels", "completed-dependency", "memory-restart", "hotfix-merge"] as const;
+export type RepairName = (typeof REPAIR_NAMES)[number];
+
+export interface Repair { name: RepairName; repair: RepairClass; description: string; where: string }
 
 /** The automatic repairs the Foundry does today. */
 export const REPAIRS: readonly Repair[] = [
@@ -22,6 +26,8 @@ export const REPAIRS: readonly Repair[] = [
   { name: "memory-restart", repair: "auto", where: "src/memory-watch.ts", description: "When the server's memory stays above its limit, it restarts at the next safe moment." },
   { name: "hotfix-merge", repair: "auto", where: "scripts/build-flows.mjs", description: "With Hotfixes on, a bug story is merged into main and then into develop." },
 ];
+
+export const isRepairName = (x: unknown): x is RepairName => REPAIRS.some((r) => r.name === x);
 
 /** The names of entries without a valid class (empty when all are fine). */
 export function invalidRepairClasses(list: readonly { name: string; repair?: unknown }[]): string[] {

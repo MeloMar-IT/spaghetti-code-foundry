@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { writeHeartbeat, type Heartbeat } from "../src/heartbeat.js";
+import { repairsSince } from "../src/monitor/repair-log.js";
 import { runWatchdog, type WatchdogOptions, type WatchdogState } from "../src/ops/watchdog.js";
 import { createRestartGate, GUARD_FILE, INTENT_FILE, type Guard } from "../src/restart-gate.js";
 import type { ServiceHost } from "../src/service.js";
@@ -97,6 +98,7 @@ describe("watchdog", () => {
     expect(s.events()).toContain(`${iso(NOW)} auto: restarted the server: the queue has not moved for 120 minutes`);
     expect(s.state().restarts).toEqual([iso(NOW)]);
     expect(s.intent()).toBe(true); // the old server may still be shutting down
+    expect(repairsSince(0, { file: join(s.dataDir, "monitor-repairs.jsonl") }).map((e) => `${e.repair} ${e.result}`)).toEqual(["restart-wedged-server done"]);
 
     s.later(30 * MIN);
     s.beat();

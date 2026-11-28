@@ -1,6 +1,9 @@
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
+import { saveRun, type RunSummary } from "../src/engine/state.js";
+import { recordRepair, repairFile, repairsSince, resetRepairMemory } from "../src/monitor/repair-log.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
@@ -77,5 +80,103 @@ describe("needs-info label follows the record", () => {
     delete process.env.FAKE_GH_FAIL;
     await w.tick();
     expect(edits()).toHaveLength(2);
+  });
+});
+
+describe("the repair log of a watcher", () => {
+  let gh: ReturnType<typeof fakeGithub>;
+  let scheduler: Scheduler;
+  const config = ConfigSchema.parse({ protected_branches: ["main"], concurrency: 2 });
+  const runsDir = () => join(gh.tmp, "runs");
+  beforeEach(() => {
+    gh = fakeGithub();
+    scheduler = new Scheduler({ runsDir: runsDir(), config: () => config, claudeBin });
+    for (const k of FAKES) delete process.env[k];
+    rmSync(repairFile(), { recursive: true, force: true });
+    resetRepairMemory();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.FAKE_GH_FAIL;
+    rmSync(repairFile(), { recursive: true, force: true });
+    gh.restore();
+  });
+
+  const watcher = () => new Watcher(WatcherSchema.parse({ id: "go", github_repo: REPO, label: "Factory_go", flow: "issue-deliver", status_labels: LABELS }), { scheduler, runsDir: runsDir(), repo: gh.tmp, log: () => {} });
+  /** Issue 6 wears `label`, and its newest run failed. */
+  const wrongLabel = (label: string, status: RunSummary["status"] = "failed") => {
+    process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 6, title: "issue 6", state: "OPEN", labels: [{ name: "Factory_go" }, { name: label }], body: "" }]);
+    const runDir = join(runsDir(), "r6");
+    mkdirSync(runDir, { recursive: true });
+    saveRun({
+      runId: "r6", flow: "issue-deliver", flowDef: { name: "issue-deliver", steps: [] }, task: "t", vars: { github_repo: REPO, issue: "6" }, repo: gh.tmp, status, reason: status === "failed" ? "boom" : undefined, runDir,
+      startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z", totalCostUsd: 0, history: [], state: { next: null, steps: {}, visits: {} },
+    } as unknown as RunSummary);
+  };
+  const logged = () => repairsSince(0).map((e) => `${e.repair} ${e.result} ${e.where}: ${e.what}`);
+
+  // the two places that correct a label without starting work: a working label that is wrong, and any other status label
+  for (const label of [LABELS.working, LABELS.needs_info]) {
+    it(`logs a corrected label (${label})`, async () => {
+      wrongLabel(label);
+      await watcher().tick();
+      expect(logged()).toEqual([`correct-labels done ${REPO}: label of #6 set to Factory_ERROR to match its newest run`]);
+    });
+
+    it(`logs a correction that failed and keeps the error of the check (${label})`, async () => {
+      wrongLabel(label);
+      process.env.FAKE_GH_FAIL = "issue edit";
+      const w = watcher();
+      await w.tick().catch(() => {});
+      expect(w.status.lastError).toBeTruthy();
+      expect(logged()).toEqual([`correct-labels failed ${REPO}: label of #6 could not be set to Factory_ERROR to match its newest run`]);
+    });
+  }
+
+  it("logs the label set to working when its run is active", async () => {
+    wrongLabel(LABELS.needs_info, "running");
+    vi.spyOn(scheduler, "isActive").mockReturnValue(true);
+    await watcher().tick();
+    expect(gh.ghLog()).toContain("--add-label Factory_working");
+    expect(logged()).toEqual([`correct-labels done ${REPO}: label of #6 set to Factory_working to match its newest run`]);
+  });
+
+  it("writes a repeated occurrence once, also after a restart and when the cache of this process is full", async () => {
+    const entry = { repair: "correct-labels" as const, what: "label of #6 set to Factory_ERROR to match its newest run", where: REPO, result: "done" as const, key: "same" };
+    expect(recordRepair(entry)).toBe(true);
+    resetRepairMemory(); // a restart: this process knows nothing of what was written
+    expect(recordRepair(entry)).toBe(false);
+    for (let i = 0; i < 600; i++) recordRepair({ ...entry, what: `filler ${i}`, key: `other-${i}` }); // the cache holds 500 keys: the first one is forgotten
+    expect(recordRepair(entry)).toBe(false);
+    expect(logged().filter((l) => l.endsWith(entry.what))).toHaveLength(1);
+  });
+
+  it("corrects the label also when the log cannot be written", async () => {
+    mkdirSync(repairFile(), { recursive: true });
+    wrongLabel(LABELS.needs_info);
+    const w = watcher();
+    await w.tick();
+    expect(w.status.lastError).toBeUndefined();
+    expect(gh.ghLog()).toContain("--add-label Factory_ERROR");
+  });
+
+  it("logs a closed dependency once when it lets a story through, and nothing while it holds", async () => {
+    const issues = (state: "OPEN" | "CLOSED") => {
+      process.env.FAKE_GH_ISSUES = JSON.stringify([
+        { number: 4, title: "issue 4", state, labels: [], body: "" },
+        { number: 6, title: "issue 6", state: "OPEN", labels: [{ name: "Factory_go" }], body: "Depends on #4" },
+      ]);
+    };
+    const submit = vi.spyOn(scheduler, "submit").mockReturnValue("queued-1");
+    vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
+    const w = watcher();
+    issues("OPEN");
+    await w.tick();
+    expect(logged()).toEqual([]);
+    issues("CLOSED");
+    await w.tick();
+    await w.tick();
+    expect(submit).toHaveBeenCalled();
+    expect(logged()).toEqual([`completed-dependency done ${REPO}: dependency #4 of #6 is closed and counted as done`]);
   });
 });

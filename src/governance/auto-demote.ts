@@ -4,6 +4,7 @@ import { MONITOR_ACTOR } from "../auth/audit.js";
 import { StoreError } from "../auth/store.js";
 import { breakGlassReasonProblem } from "../engine/policy-break-glass.js";
 import { cleanText, type Finding } from "../monitor/findings.js";
+import { autonomyLowered, autonomyRefused, recordRepair } from "../monitor/repair-log.js";
 import { credentialProblem } from "../skills/credential-scan.js";
 import { AutonomyError, levelIn, readAutonomy, AUTONOMY_REASON_MAX, type AutonomyKind } from "./autonomy-store.js";
 import { AutonomyRefused, demoteLevel, type ComponentRef } from "./autonomy-change.js";
@@ -117,13 +118,16 @@ export function runAutoDemotions(findings: Finding[], saveClaim: (f: Finding[]) 
         problem(name, kindOf(e));
         continue;
       }
+      const repair = { kind: ref.kind, id: ref.id, name, detector: f.detector, fingerprint: f.fingerprint, at: mark.at };
       try {
         const r = demoteLevel({ ref, to, reason: autoDemoteReason(f), by: MONITOR_ACTOR, waitMs: 0 });
         out.demoted.push({ ref, name, from: r.from, to: r.to, detector: f.detector });
+        recordRepair(autonomyLowered({ ...repair, from: r.from, to: r.to }));
       } catch (e) {
         if (e instanceof AutonomyRefused) continue; // the level moved in the meantime: the claim stays
         if (e instanceof AutonomyError) {
           out.problems.push(`auto-demote: ${name} not lowered (refused)`);
+          recordRepair(autonomyRefused(repair));
           continue;
         }
         mark.left.push(key); // a store or lock error: this record is tried again at the next check
