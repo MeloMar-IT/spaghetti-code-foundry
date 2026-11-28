@@ -60,6 +60,33 @@ export function overruleSearchArgs(repo: string, since: string, limit: number): 
     "--limit", String(limit), "--json", "number,updatedAt"];
 }
 
+/**
+ * The gh arguments of the read-only look-ups of Ask Foundry (`server/help-github.ts`, which checks who may make them and runs
+ * them). The repository and a branch were checked by the schema of the look-up.
+ */
+export const lookUpArgs = {
+  issue: (repo: string, issue: number): string[] => ["issue", "view", String(number(issue, "an issue number")), "--repo", repo, "--json", "number,title,state,labels,comments"],
+  closing: (repo: string, issue: number): string[] => ["issue", "view", String(number(issue, "an issue number")), "--repo", repo, "--json", "closedByPullRequestsReferences"],
+  pull: (repo: string, n: number): string[] => ["api", `repos/${repo}/pulls/${number(n, "a pull request number")}`, "--method", "GET"],
+  timeline: (repo: string, issue: number, page: number): string[] => ["api", `repos/${repo}/issues/${number(issue, "an issue number")}/timeline?per_page=100&page=${number(page, "a page")}`, "--method", "GET"],
+  pulls: (repo: string, o: { head?: string; limit: number; fields: string }): string[] => [
+    "pr", "list", "--repo", repo, ...(o.head === undefined ? [] : ["--head", branchRef(o.head)]), "--state", "all", "--limit", String(listSize(o.limit, 100)), "--json", fieldList(o.fields),
+  ],
+};
+
+const TIMELINE_PATH = /^repos\/[\w.-]+\/[\w.-]+\/issues\/\d+\/timeline\?per_page=100&page=[1-3]$/;
+const PULL_PATH = /^repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+$/;
+
+/**
+ * Is this one of the forms the look-ups may run: an issue view, a pull request list, or a GET of an issue's timeline or of
+ * one pull request by its number?
+ */
+export function isLookUpCall(args: readonly string[]): boolean {
+  const call = `${args[0]} ${args[1]}`;
+  if (call === "issue view" || call === "pr list") return true;
+  return args.length === 4 && args[0] === "api" && (TIMELINE_PATH.test(args[1]!) || PULL_PATH.test(args[1]!)) && args[2] === "--method" && args[3] === "GET";
+}
+
 /** A story from a gh answer; undefined when it is not one. */
 function toStory(x: unknown): SyncStory | undefined {
   const o = x as Record<string, unknown> | null;

@@ -203,8 +203,12 @@ describe("the look-ups only read", () => {
   it("each is a read-only GET call that the permission table knows, with no word of a change in its name", () => {
     for (const t of TOOLS) {
       expect(t.readOnly, t.name).toBe(true);
-      expect(t.call.method, t.name).toBe("GET");
-      expect(findRule(t.call.method, t.call.path.split("/").map((s) => (s === ":id" ? "x" : s))), t.name).toBeDefined();
+      // GitHub's public status page has no API call of the Foundry that reads the same thing
+      if (t.name === "github_status") expect(t.call).toBeUndefined();
+      else {
+        expect(t.call!.method, t.name).toBe("GET");
+        expect(findRule(t.call!.method, t.call!.path.split("/").map((s) => (s === ":id" ? "x" : s))), t.name).toBeDefined();
+      }
       expect(t.name).not.toMatch(/cancel|resume|approve|reject|start|stop|delete|remove|write|set|create|update|post|push|merge/);
     }
   });

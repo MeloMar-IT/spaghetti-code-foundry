@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { subjectPage } from "../help/actions.js";
 import { aboutOf } from "../help/contract.js";
 import { GUARD_MAX, GuardError, guardExcerpt, type GuardOptions } from "../help/guard.js";
-import type { ListRunsArgs, ToolResult, ToolRunner } from "../help/tools.js";
+import type { ListRunsArgs, ToolCall, ToolResult, ToolRunner } from "../help/tools.js";
 import type { Asker, Source } from "../help/turn.js";
 import { sinceMs } from "../since-date.js";
 import { runsFor } from "./api-runs.js";
 import { currentAccount, runWithNext } from "./help-context.js";
 import { STATE_EXCERPT_MAX, stateId } from "./help-evidence.js";
+import { githubStatusTool } from "./help-github-status.js";
+import { issuePullsTool, issueTool, type GithubToolOptions } from "./help-github.js";
 import { nextFor, ownRecord } from "./next.js";
 import { authorize, findRule } from "./permissions.js";
 import type { RunFilter } from "./run-filter.js";
@@ -133,11 +135,24 @@ async function showRun(ctx: ApiContext, asker: Asker, id: string, guard: GuardOp
 }
 
 /** The look-ups of this server. A `GuardError` goes on to the caller: then nothing more may be sent. */
-export function helpTools(ctx: ApiContext): ToolRunner {
+export function helpTools(ctx: ApiContext, options: GithubToolOptions = {}): ToolRunner {
+  const run = (asker: Asker, call: ToolCall, guard: GuardOptions): Promise<ToolResult> => {
+    switch (call.tool) {
+      case "list_runs":
+        return listRuns(ctx, asker, call.args, guard);
+      case "show_run":
+        return showRun(ctx, asker, call.args.id, guard);
+      case "issue":
+        return issueTool(ctx, asker, call.args, guard, options);
+      case "issue_pulls":
+        return issuePullsTool(ctx, asker, call.args, guard, options);
+      case "github_status":
+        return githubStatusTool(guard, options);
+    }
+  };
   return async (asker, call) => {
     try {
-      const guard: GuardOptions = { patterns: ctx.config().help.sensitive_patterns ?? [] };
-      return call.tool === "list_runs" ? await listRuns(ctx, asker, call.args, guard) : await showRun(ctx, asker, call.args.id, guard);
+      return await run(asker, call, { patterns: ctx.config().help.sensitive_patterns ?? [] });
     } catch (e) {
       if (e instanceof GuardError) throw e;
       ctx.diagLog?.("help: a look-up could not be done");
