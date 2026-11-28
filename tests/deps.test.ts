@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEPS_MARK, DEPS_MARK_END, DEP_REF_SOURCE, cleanReason, dependencies, dependencyDone, dependencyRange, dependencyText, foundryDependsOn,
-  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart, crossDependencies, crossState,
+  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart, crossDependencies, crossState, closedDependencies,
 } from "../src/queue/deps.js";
 
 const all = [
@@ -11,6 +11,13 @@ const all = [
   { number: 6, title: "Story 6 — Prepare for installation", state: "OPEN", labels: [{ name: "Factory_done" }] },
   { number: 7, title: "Story 7 — Install the update", state: "OPEN" },
 ];
+
+describe("closedDependencies", () => {
+  it("names the known issues that are closed: not open ones, done labels or unknown numbers", () => {
+    expect(closedDependencies([1, 2, 6, 7, 99], all)).toEqual([1, 2]);
+    expect(closedDependencies([3, 4], [{ number: 3, title: "t", state: "closed" }, { number: 4, title: "u" }])).toEqual([3]);
+  });
+});
 
 describe("issue dependencies", () => {
   it("reads a Depends on section up to the next heading", () => {

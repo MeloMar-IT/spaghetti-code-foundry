@@ -17,7 +17,7 @@ import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.
 import { startServer } from "./server/server.js";
 import { previewsOf } from "./server/api-preview.js";
 import { withServicesStopped } from "./services/supervisor.js";
-import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
+import { recordSafeRestart, settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
 import { controlsReportText, runEval, runSafetyEvals } from "./evals.js";
@@ -537,6 +537,7 @@ async function main(argv: string[]): Promise<number> {
       });
       // every restart path (self-update, new build, data folder, settings) stops the managed services first (#867)
       const beforeExit = withServicesStopped(() => {
+        recordSafeRestart(ctx.restart);
         updater.stop();
         ctx.watchers.stopAll();
         void previewsOf(ctx).stopAll();

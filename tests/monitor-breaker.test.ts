@@ -8,6 +8,7 @@ import type { FindingInput } from "../src/monitor/findings.js";
 import { loadFindings, saveFindings, type Finding } from "../src/monitor/findings.js";
 import { breakerNow, guardFile, logFile, loadGuard, storiesVerdict, switchStories, type LogEntry } from "../src/monitor/guard.js";
 import { Monitor, type LockFile } from "../src/monitor/monitor.js";
+import { repairsSince } from "../src/monitor/repair-log.js";
 import { Reporter } from "../src/monitor/report.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { fakeGithub } from "./helpers/fake-github.js";
@@ -288,6 +289,7 @@ describe("the monitor with the circuit breaker", () => {
     expect(stored()[0]!.fixFailed).toEqual({ count: 3, at: iso(4) });
     expect(breakerNow()).toBeUndefined();
     expect(logLines().filter((l) => l.event === "fix-failed").map((l) => l.count)).toEqual([3]);
+    expect(repairsSince(0)).toMatchObject([{ repair: "bug-story", result: "failed", where: TARGET, what: "the fix of bug story #12 for restart-loop failed (3 times)" }]);
     storyRun("failed", 11);
     await check(15);
     expect(breakerNow()).toMatchObject({ reason: "failed_fixes" });

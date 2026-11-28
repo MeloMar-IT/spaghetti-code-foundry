@@ -1,4 +1,6 @@
+import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { repairFile, repairsSince, resetRepairMemory } from "../src/monitor/repair-log.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import type { Names } from "../src/monitor/clean.js";
@@ -93,6 +95,16 @@ describe("bug stories from the monitor", () => {
     }
     expect(stored()[0]!.report).toMatchObject({ repo: TARGET, issue: 101, seen: 0 });
     expect(stored()[0]!.due).toBeUndefined();
+  });
+
+  it("writes one line in the repair log for the story it made, also none for the checks without one", async () => {
+    rmSync(repairFile(), { force: true });
+    resetRepairMemory();
+    await check(0);
+    expect(repairsSince(0)).toEqual([]);
+    await check(1);
+    await check(2);
+    expect(repairsSince(0)).toMatchObject([{ repair: "bug-story", result: "done", where: TARGET, what: "bug story #101 made for restart-loop" }]);
   });
 
   it("writes only the label bug and says so when no watcher builds stories; picks the issue-gitflow watcher's label", async () => {

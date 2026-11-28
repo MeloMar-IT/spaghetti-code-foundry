@@ -6,6 +6,7 @@ import { writeAudit } from "../auth/audit.js";
 import type { ServiceConfig } from "../config.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream } from "../credentials/redact.js";
 import { sleepSync } from "../home-migrate.js";
+import { recordRepair, serviceNotStarted, serviceStarted } from "../monitor/repair-log.js";
 import { holdLiveGroup, stopGroup } from "../steps/process.js";
 import { ServiceLog, MAX_LOG_BYTES } from "./log.js";
 import { ServiceProblem, accountProblem, actsForState, programProblem, reconcileServiceTokens, revokeServiceTokenSafe, serviceToken, signatureProblem } from "./setup.js";
@@ -113,6 +114,8 @@ interface Slot {
   changeProblem?: string;
   pendingTimer?: NodeJS.Timeout;
   pendingFailures: number;
+  /** The program exited by itself and does not run again yet: its next start is a repair. */
+  afterExit?: boolean;
   /** The slot was started or changed by a config.yaml change: its start and refusals are audited. */
   fromChange?: boolean;
   lastAudited?: string;
@@ -217,6 +220,7 @@ export class ServiceSupervisor implements ServicesHandle {
       s.lastAudited = problem;
       this.audit({ action: "service-refuse", result: "failed", target: s.cfg.name, detail: problem });
     }
+    if (s.afterExit) recordRepair(serviceNotStarted({ name: s.cfg.name, restarts: s.restarts, at: now() }));
     this.schedule(s, "refused");
   }
 
@@ -274,6 +278,10 @@ export class ServiceSupervisor implements ServicesHandle {
     this.record(s, `started (pid ${child.pid})`);
     this.o.log(`services: ${cfg.name} started (pid ${child.pid})`);
     this.setState(s, "running");
+    if (s.afterExit) {
+      s.afterExit = false;
+      recordRepair(serviceStarted({ name: s.cfg.name, restarts: s.restarts, at: now() }));
+    }
     if (s.fromChange) {
       s.fromChange = false;
       s.lastAudited = undefined;
@@ -317,6 +325,7 @@ export class ServiceSupervisor implements ServicesHandle {
     if (run.open <= 0) run.settle();
     if (this.stopping || run.halted) return;
     s.restarts++;
+    s.afterExit = true;
     this.schedule(s, "waiting");
   }
 
@@ -466,6 +475,7 @@ export class ServiceSupervisor implements ServicesHandle {
       s.cfg = cfg;
       s.failures = 0;
       s.fromChange = true;
+      s.afterExit = false; // a start because of config.yaml is not a repair
       s.lastAudited = undefined;
       this.launch(s);
       return;
@@ -481,6 +491,7 @@ export class ServiceSupervisor implements ServicesHandle {
     s.cfg = cfg;
     s.failures = 0;
     s.fromChange = true;
+    s.afterExit = false;
     s.lastAudited = undefined;
     this.launch(s);
   }

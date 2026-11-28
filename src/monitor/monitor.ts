@@ -19,6 +19,7 @@ import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
 import { findingsFile, loadFindings, readFindings, type Finding, mergeFindings, saveFindings } from "./findings.js";
 import { describeEntry, inQuietTime, loadGuard, openBreaker, storiesState, writeLog, type Loaded } from "./guard.js";
 import { activeMutes, expireMutes, muteFor } from "./mutes.js";
+import { bugStoryFixFailed, recordRepair } from "./repair-log.js";
 import type { Reporter, StoryNowResult } from "./report.js";
 import { withStory } from "./state.js";
 import { SloInputCache, sloLookbackHours } from "./slo-input.js";
@@ -350,6 +351,7 @@ export class Monitor {
     for (const x of failed) {
       writeLog({ event: "fix-failed", detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.repo, issue: x.issue, count: x.count }, { now: start, onError: guard?.onLogError });
       this.act(describeEntry({ event: "fix-failed", detector: x.finding.detector, issue: x.issue, count: x.count }));
+      recordRepair(bugStoryFixFailed({ detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.repo, issue: x.issue, count: x.count, at: x.finding.fixFailed?.at }));
     }
     for (const x of fixEvents) {
       const entry = { event: x.event, detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.finding.report?.repo, issue: x.issue, ...(x.reason ? { reason: x.reason } : {}), ...(x.count !== undefined ? { count: x.count } : {}) };

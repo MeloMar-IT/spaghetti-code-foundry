@@ -302,12 +302,24 @@ export function logLine(e: LogEntry, at: Date): string {
   return line;
 }
 
-/** Appends one line to monitor-log.jsonl. Past MAX_LOG_BYTES the file moves to monitor-log.1.jsonl (the older one goes). Never throws. */
-export function writeLog(e: LogEntry, o: LogOptions = {}): void {
-  const file = o.file ?? logFile();
-  const older = join(dirname(file), "monitor-log.1.jsonl");
+export interface AppendOptions {
+  /** Where the file moves when it is full (the one that was there goes). */
+  older: string;
+  /** The lock folder of the rotation. */
+  lock: string;
+  maxBytes?: number;
+  /** While another process holds the lock, lines are still appended up to this size. Default: twice maxBytes. */
+  hardBytes?: number;
+  /** How the log is named in the text of onError. */
+  label?: string;
+  onError?: (msg: string) => void;
+}
+
+/** Appends one line (with its line end) to a capped log. Past maxBytes the file moves to `older`. Never throws; true when written. */
+export function appendCapped(file: string, line: string, o: AppendOptions): boolean {
+  const max = o.maxBytes ?? MAX_LOG_BYTES;
+  const label = o.label ?? "the monitor log";
   try {
-    const line = logLine(e, o.now ?? new Date()) + "\n";
     mkdirSync(dirname(file), { recursive: true });
     let size = 0;
     try {
@@ -315,10 +327,9 @@ export function writeLog(e: LogEntry, o: LogOptions = {}): void {
     } catch {
       // no file yet
     }
-    if (size + Buffer.byteLength(line) > MAX_LOG_BYTES) {
+    if (size + Buffer.byteLength(line) > max) {
       // Only one process rotates, under a lock of its own (a suspended switch must not stop the rotation).
-      const lock = join(dirname(file), "monitor-log.lock");
-      if (acquireLock(lock, 0)) {
+      if (acquireLock(o.lock, 0)) {
         try {
           let again = 0;
           try {
@@ -326,20 +337,38 @@ export function writeLog(e: LogEntry, o: LogOptions = {}): void {
           } catch {
             // already rotated
           }
-          if (again + Buffer.byteLength(line) > MAX_LOG_BYTES) renameSync(file, older);
+          if (again + Buffer.byteLength(line) > max) renameSync(file, o.older);
         } finally {
-          releaseLock(lock);
+          releaseLock(o.lock);
         }
-      } else if (size + Buffer.byteLength(line) > HARD_LOG_BYTES) {
+      } else if (size + Buffer.byteLength(line) > (o.hardBytes ?? 2 * max)) {
         // Another process holds the rotation lock and the file is far over the limit: the line is dropped, never the bound.
-        o.onError?.("the monitor log is over its size limit and cannot be rotated now; a line was dropped");
-        return;
+        o.onError?.(`${label} is over its size limit and cannot be rotated now; a line was dropped`);
+        return false;
       }
     }
     appendFileSync(file, line, { mode: 0o600 });
+    return true;
   } catch (err) {
-    o.onError?.(`the monitor log could not be written (${(err as NodeJS.ErrnoException).code ?? "error"})`);
+    o.onError?.(`${label} could not be written (${(err as NodeJS.ErrnoException).code ?? "error"})`);
+    return false;
   }
+}
+
+/** Appends one line to monitor-log.jsonl. Past MAX_LOG_BYTES the file moves to monitor-log.1.jsonl (the older one goes). Never throws. */
+export function writeLog(e: LogEntry, o: LogOptions = {}): void {
+  const file = o.file ?? logFile();
+  let line: string;
+  try {
+    line = logLine(e, o.now ?? new Date()) + "\n";
+  } catch {
+    o.onError?.("the monitor log could not be written (error)");
+    return;
+  }
+  appendCapped(file, line, {
+    older: join(dirname(file), "monitor-log.1.jsonl"), lock: join(dirname(file), "monitor-log.lock"),
+    maxBytes: MAX_LOG_BYTES, hardBytes: HARD_LOG_BYTES, onError: o.onError,
+  });
 }
 
 // ── the switch ──

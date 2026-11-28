@@ -12,6 +12,7 @@ import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
 import type { ProcessMeter } from "../steps/process.js";
 import { runShell } from "../steps/shell.js";
+import { hotfixMergeRepair, recordRepair } from "../monitor/repair-log.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
@@ -239,6 +240,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     } catch (e) {
       engine.log(`  release commit claim failed: ${(e as Error).message}`);
     }
+    const merge = hotfixMergeRepair({ hotfix: engine.hotfix, stepId: step.id, ok: res.ok, output: res.output ?? "", runId: engine.summary.runId, visit, at: rec.startedAt, vars: scope.ctx.vars });
+    if (merge) recordRepair(merge);
   }
   const outputs = readRunOutputs(engine.summary.runDir, engine.log);
   if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };

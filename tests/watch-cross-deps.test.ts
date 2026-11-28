@@ -1,4 +1,6 @@
+import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { repairFile, repairsSince, resetRepairMemory } from "../src/monitor/repair-log.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
 import { createUser } from "../src/auth/users.js";
@@ -47,6 +49,8 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     process.env.FAKE_GH_LABEL_FILTER = "1";
     logged = [];
     made.length = 0;
+    rmSync(repairFile(), { force: true });
+    resetRepairMemory();
     scheduler = new Scheduler({ runsDir: join(gh.tmp, "runs"), config: () => config, claudeBin });
     submit = vi.spyOn(scheduler, "submit").mockReturnValue("queued-1");
     vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
@@ -78,6 +82,8 @@ describe("a story that depends on an issue of another repository (#880)", () => 
   const onlyLibToken = () => { process.env.FAKE_GH_TOKEN_BY_REPO = JSON.stringify({ "acme/lib": TOKEN }); };
   const hold = (w: Watcher) => w.status.holds?.find((h) => h.issue === 4);
   const acts = (w: Watcher) => w.status.lastActions.join("\n");
+  /** The dependencies the repair log says were counted as done. */
+  const counted = () => repairsSince(0).filter((e) => e.repair === "completed-dependency").map((e) => e.what);
 
   it("holds the story while the issue is open, removes needs-info, and starts it once the issue is closed as completed", async () => {
     onlyLibToken();
@@ -101,6 +107,7 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     await w.tick();
     expect(hold(w)).toBeUndefined();
     expect(submit).toHaveBeenCalledOnce();
+    expect(counted()).toEqual(["dependency acme/lib#3 of #4 is closed and counted as done"]);
     w.stop();
   });
 
@@ -110,6 +117,7 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     const w = watcher({ dependency_done_labels: ["factory:done"] });
     await w.tick();
     expect(submit).toHaveBeenCalledOnce();
+    expect(counted()).toEqual([]); // open with a done label: no closed issue was counted
     w.stop();
   });
 
@@ -124,6 +132,7 @@ describe("a story that depends on an issue of another repository (#880)", () => 
     expect(h.next.why).toBe("acme/lib#3 was closed as not planned");
     expect(needsUser(h.next)).toBe(true);
     expect(submit).not.toHaveBeenCalled();
+    expect(counted()).toEqual([]);
     expect(acts(w)).toContain("#4: acme/lib#3 was closed as not planned");
     expect(acts(w)).not.toContain(`label ${ASKS} removed`);
     w.stop();

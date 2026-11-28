@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Self-repair: every automatic repair writes one line to `monitor-repairs.jsonl` in the data folder (what, where, `done` or `failed`; `src/monitor/repair-log.ts`, two files of at most 256 KB each). The daily digest lists the last 24 hours under "Automatic repairs" and adds no "Waits for you" item for them; a missing or broken log gives an empty section. The retry summary line stays. The user guide, chapter 13, lists the log (#957).
 - Self-repair: every monitor detector and every automatic repair now says whether the Foundry fixes it alone (`fixes alone`) or asks you first (`asks you first`). `GET /api/monitor` returns `repair` per detector and the list of repairs (`repairs`); the Problems page shows the class in the detectors table and lists the repairs; chapter 13 of the user guide has the table and the rule (#956).
 - Your turn no longer lists archived runs. A failed, stopped or interrupted `release-daily` or `daily-pr` run is archived by itself once a later run of the same flow and repository succeeds, and the digest names it under "Archived by itself" (#942).
 - Docs: the 39 guide screenshots are made again, so they show the spaghetti-flame mark in the header and Al Dente in empty states and the Ask Foundry drawer (#940). A docs test checks that `home.png`, the website's social image, keeps the size the website gives (1440 × 900).

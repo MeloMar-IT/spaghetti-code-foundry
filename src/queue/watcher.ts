@@ -22,7 +22,8 @@ import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
 import { effectiveVars } from "../engine/runner.js";
-import { DEPS_MARK, dependencies, foundryDependsOn, openDependencies, type DoneRule } from "./deps.js";
+import { closedDependencies, DEPS_MARK, dependencies, foundryDependsOn, openDependencies, type DoneRule } from "./deps.js";
+import { dependencyCountedDone, labelCorrected, recordRepair } from "../monitor/repair-log.js";
 import { checkReleaseBuild, inOrder, mainBranchOf, readMain, releaseCheckEvery } from "./release-trigger.js";
 import { NO_STORY_AUTONOMY, NO_STORY_HOTFIX, checkRed, greenOf, labelNames as issueLabelNames, readBaseStop, readCommits, redBaseFacts, redComment, redFile, redLine, readRed, runBody, writeRed, stoppedOnRed, storyHeld, judgeStops, type BaseGreen, type BaseStop, type RedResult } from "../red-base.js";
 import { hotfixState } from "../engine/guards.js";
@@ -1306,6 +1307,18 @@ export class Watcher {
     }
   }
 
+  /** Sets a status label that did not match the newest run (no work starts), and logs the repair with its result. */
+  private async correctLabel(n: number, label: string | undefined, runId: string, remove: string[]) {
+    const repair = { repo: this.repo, issue: n, label, runId, at: new Date().toISOString() };
+    try {
+      await this.store.setLabels(n, label, remove);
+    } catch (e) {
+      recordRepair(labelCorrected(repair, "failed"));
+      throw e;
+    }
+    recordRepair(labelCorrected(repair, "done"));
+  }
+
   private async tickIssues(mine: number, checkStartedAt: number) {
     // A check that was given up (timeout) must not start runs or store holds next to a newer check.
     // `mine` is the token of the tick itself, so a check whose sign-in or setup outlasted the timeout is already given up here.
@@ -1468,11 +1481,33 @@ export class Watcher {
     const limited = (issue: Issue, runId?: string) =>
       firstStarted > 0 ? this.held("bug_first", issue, { runId }) : this.held("starting", issue, { maxPerTick: this.cfg.max_per_tick, runId });
 
+    /** The gate let a story through: each dependency that counts as done because it is closed is one automatic repair. */
+    const noteClosedDeps = async (issue: Issue) => {
+      const body = issue.body ?? "";
+      const refs: string[] = [];
+      try {
+        if (/depends\s+on|blocked\s+by/i.test(body) || body.includes(DEPS_MARK)) {
+          const mine = this.cfg.wait_for_dependencies
+            ? dependencies(body, issue.number, await allIssues())
+            : foundryDependsOn(body).filter((n) => n !== issue.number);
+          if (mine.length) refs.push(...closedDependencies(mine, await allIssues()).map((n) => `#${n}`));
+        }
+        if (body.includes("#")) refs.push(...(await cross.completed(issue, !this.cfg.wait_for_dependencies)).map(refText));
+      } catch (e) {
+        this.d.log(`[${this.cfg.id}] ! #${issue.number} repair log: ${errorLine((e as Error).message)}`);
+      }
+      for (const dependency of refs) recordRepair(dependencyCountedDone({ repo: this.repo, issue: issue.number, dependency }));
+    };
+
     /** A story with open dependencies neither starts nor resumes: all "Depends on" issues with wait_for_dependencies, else only those in the Foundry's marked part. True when it is held. */
     const holdForDeps = async (issue: Issue, runId?: string): Promise<boolean> => {
       const blockers = await blockedBy(issue);
       alive();
-      if (!blockers.length) return false;
+      if (!blockers.length) {
+        await noteClosedDeps(issue);
+        alive();
+        return false;
+      }
       const msg = `#${issue.number} waits for ${blockers.map(refText).join(", ")} (depends on)`;
       if (!this.status.lastActions.some((a) => a.endsWith(msg))) this.act(msg);
       for (const b of blockers.filter((x) => x.notPlanned)) {
@@ -1713,7 +1748,7 @@ export class Watcher {
       if (workingRun || queuedId !== undefined) {
         // Mixed labels: the label goes to working whatever the order (the first status label may be working already).
         if (mixed || (status && status !== this.L.working)) {
-          await this.store.setLabels(n, this.L.working, this.allStatus);
+          await this.correctLabel(n, this.L.working, workingRun ? run!.runId : queuedId!, this.allStatus);
           this.act(`#${n} label → ${this.L.working} (its run is working)`);
           this.labelWhenDone(n, workingRun ? run!.runId : queuedId!);
         }
@@ -1927,7 +1962,7 @@ export class Watcher {
         } else if (!late) {
           // The comments could not be read: change nothing, say nothing (it is listed from its label).
         } else if (!resumable && labelFor(run, this.L) !== this.L.working) {
-          await this.store.setLabels(n, labelFor(run, this.L), this.allStatus);
+          await this.correctLabel(n, labelFor(run, this.L), run.runId, this.allStatus);
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
         } else if (!resumable) {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
@@ -1945,7 +1980,7 @@ export class Watcher {
         // Reconcile: the label does not match the newest run (e.g. approved in the UI, or the
         // server restarted meanwhile). A done label is left alone.
         const label = labelFor(run, this.L);
-        await this.store.setLabels(n, label, run.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus);
+        await this.correctLabel(n, label, run.runId, run.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus);
         this.act(`#${n} label → ${label}`);
       } else if (status === this.L.needsInfo && run?.status === "stopped") {
         const comments = await reads.read(n);
