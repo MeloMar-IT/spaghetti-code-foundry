@@ -13,6 +13,7 @@ import { checkRepoMethod } from "../src/server/permissions.js";
 import { GitHubStore } from "../src/stories/github-store.js";
 import { LocalStore } from "../src/stories/local-store.js";
 import { storeFor } from "../src/stories/store.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 
 const ANN = "11111111-1111-4111-8111-111111111111";
 const BOB = "22222222-2222-4222-8222-222222222222";
@@ -48,7 +49,9 @@ beforeAll(() => {
   repo = makeRepo("my-app");
 });
 afterAll(() => rmSync(base, { recursive: true, force: true }));
+let kc: ReturnType<typeof fakeKeychain>;
 beforeEach(() => {
+  kc = fakeKeychain();
   saved = process.env.FACTORY_HOME;
   home = mkdtempSync(join(tmpdir(), "local-repo-home-"));
   process.env.FACTORY_HOME = home;
@@ -57,6 +60,7 @@ afterEach(() => {
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
   rmSync(home, { recursive: true, force: true });
+  kc.remove();
 });
 
 describe("checkLocalPath", () => {

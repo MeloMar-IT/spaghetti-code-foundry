@@ -20,9 +20,11 @@ const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 let gh: ReturnType<typeof fakeGithub>;
 let home: string;
 let saved: string | undefined;
+let kc: ReturnType<typeof fakeKeychain>;
 
 beforeEach(() => {
   gh = fakeGithub();
+  kc = fakeKeychain();
   saved = process.env.FACTORY_HOME;
   home = mkdtempSync(join(tmpdir(), "repo-watchers-run-"));
   process.env.FACTORY_HOME = home;
@@ -33,6 +35,7 @@ afterEach(async () => {
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
   rmSync(home, { recursive: true, force: true });
+  kc.remove(); // last: a stopped server may still read the stored credentials while we wait
 });
 
 describe("a Watcher of a repository", () => {
@@ -108,7 +111,6 @@ describe("watchers of two repositories", () => {
   let admin: TestSession;
   let ann: TestSession;
   let logs: string[];
-  let kc: ReturnType<typeof fakeKeychain>;
   const begin = async () => {
     ({ close, ctx, base } = await startTestServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), claudeBin, watcherRetryMs: 50, accountSweepMs: 50, log: (m) => void logs.push(m) }));
   };
@@ -128,16 +130,12 @@ describe("watchers of two repositories", () => {
 
   beforeEach(async () => {
     logs = [];
-    kc = fakeKeychain();
     await begin();
     ctx.scheduler.drain();
     admin = await signInAs(base);
     ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   });
-  afterEach(() => {
-    close();
-    kc.remove();
-  });
+  afterEach(() => close());
 
   const call = async (who: TestSession, method: string, path: string, body?: unknown) => {
     const r = await fetch(base + path, { method, headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...who.headers(method) }, body: body === undefined ? undefined : JSON.stringify(body) });

@@ -12,6 +12,7 @@ import { limitsOf, knownWorkspace, workspaceForJob, workspaceOfRepo, workspaceOf
 import { WORKSPACE_ID_RE } from "../src/workspaces/list.js";
 import { UsageEventSchema } from "../src/usage/schema.js";
 import { loadPlugins } from "../src/plugins/load.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 
 const ANN = "11111111-1111-4111-8111-111111111111";
 const BOB = "22222222-2222-4222-8222-222222222222";
@@ -20,8 +21,10 @@ const OK = { ownerOk: () => true };
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 let home: string;
 let saved: string | undefined;
+let kc: ReturnType<typeof fakeKeychain>;
 
 beforeEach(() => {
+  kc = fakeKeychain();
   saved = process.env.FACTORY_HOME;
   home = mkdtempSync(join(tmpdir(), "workspaces-"));
   process.env.FACTORY_HOME = home;
@@ -30,6 +33,7 @@ afterEach(() => {
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
   rmSync(home, { recursive: true, force: true });
+  kc.remove();
 });
 
 const config = (text: string) => writeFileSync(join(home, "config.yaml"), text);
