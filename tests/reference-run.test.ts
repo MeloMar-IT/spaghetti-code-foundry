@@ -12,6 +12,7 @@ import { parseFlow } from "../src/flow/load.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
 /**
@@ -25,8 +26,11 @@ let admin: { id: string };
 let user: { id: string };
 const savedRemote = process.env.SCF_CONNECT_REMOTE;
 
+let kc: ReturnType<typeof fakeKeychain>;
+
 beforeEach(async () => {
   gh = fakeGithub();
+  kc = fakeKeychain();
   process.env.FACTORY_HOME = join(gh.tmp, "home");
   mkdirSync(process.env.FACTORY_HOME, { recursive: true });
   // every clone of a reference reads the fake remote (one commit on main with README.md)
@@ -47,6 +51,7 @@ afterEach(() => {
   if (savedRemote === undefined) delete process.env.SCF_CONNECT_REMOTE;
   else process.env.SCF_CONNECT_REMOTE = savedRemote;
   gh.restore();
+  kc.remove();
 });
 
 const runs = () => join(gh.tmp, "runs");

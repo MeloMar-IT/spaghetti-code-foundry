@@ -2,7 +2,10 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { setKeychainBackendForTests } from "../../src/credentials/keychain.js";
 import { resetRedactCache } from "../../src/credentials/redact.js";
+import { fakeSecurity } from "../fixtures/fake-keychain-core.mjs";
+import { allowToolBin, standInBackend } from "./keychain-spawns.js";
 
 const FAKE = resolve("tests/fixtures/fake-security.mjs");
 
@@ -17,14 +20,34 @@ export interface FakeKeychain {
   clearLog(): void;
   /** Sets or clears FAKE_KEYCHAIN_FAIL. */
   fail(op?: "find" | "add" | "delete"): void;
+  /** How often this fake's script ran: started by this process, or by another one (a child's Keychain call). */
+  toolRuns(): { self: number; children: number };
   remove(): void;
 }
 
-/** Points the credential store at a fake `security` tool. Call `remove()` when done. */
-export function fakeKeychain(): FakeKeychain {
+/** The in-process fake: what the script would do, without starting it. */
+function inProcessRun(args: string[], input?: string) {
+  try {
+    return fakeSecurity(args, input ?? "");
+  } catch (e) {
+    return { status: 1, stdout: "", stderr: String(e) }; // the script would end with status 1
+  }
+}
+
+/**
+ * Points the credential store at a fake Keychain. Calls of this process are answered in-process; child processes
+ * run the fake `security` script on the same files. Call `remove()` when done.
+ */
+export const fakeKeychain = (): FakeKeychain => setUp(true);
+
+/** Like `fakeKeychain()`, but every call runs the fake `security` script: for tests of the call to the tool. */
+export const fakeKeychainTool = (): FakeKeychain => setUp(false);
+
+function setUp(inProcess: boolean): FakeKeychain {
   const dir = mkdtempSync(join(tmpdir(), "fake-keychain-"));
   const bin = join(dir, "security");
-  writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" "$@"\n`);
+  const runs = join(dir, "spawns.log");
+  writeFileSync(bin, `#!/bin/sh\necho "$PPID" >> "${runs}"\nexec "${process.execPath}" "${FAKE}" "$@"\n`);
   chmodSync(bin, 0o755);
   const file = join(dir, "items.json");
   const log = join(dir, "calls.log");
@@ -33,6 +56,17 @@ export function fakeKeychain(): FakeKeychain {
   process.env.FAKE_KEYCHAIN_FILE = file;
   process.env.FAKE_KEYCHAIN_LOG = log;
   delete process.env.FAKE_KEYCHAIN_FAIL;
+  if (inProcess) {
+    try {
+      setKeychainBackendForTests({ bin, run: inProcessRun });
+    } catch {
+      // not a test run (the browser harness): the script is used. In vitest the spawn guard would report it.
+      setKeychainBackendForTests(undefined);
+    }
+  } else {
+    setKeychainBackendForTests(undefined);
+    allowToolBin(bin);
+  }
   resetRedactCache();
   return {
     dir,
@@ -51,7 +85,13 @@ export function fakeKeychain(): FakeKeychain {
       if (op) process.env.FAKE_KEYCHAIN_FAIL = op;
       else delete process.env.FAKE_KEYCHAIN_FAIL;
     },
+    toolRuns: () => {
+      const pids = existsSync(runs) ? readFileSync(runs, "utf8").split("\n").filter(Boolean) : [];
+      const self = pids.filter((p) => p === String(process.pid)).length;
+      return { self, children: pids.length - self };
+    },
     remove: () => {
+      setKeychainBackendForTests(standInBackend()); // outside vitest there is none
       if (before === undefined) delete process.env.SCF_SECURITY_BIN;
       else process.env.SCF_SECURITY_BIN = before;
       delete process.env.FAKE_KEYCHAIN_FILE;

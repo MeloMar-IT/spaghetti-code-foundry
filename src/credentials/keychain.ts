@@ -24,14 +24,48 @@ function securityBin(): string {
   return "/usr/bin/security";
 }
 
+interface SecurityResult {
+  status: number | null;
+  stdout: string;
+}
+
+export interface KeychainTestBackend {
+  /** The SCF_SECURITY_BIN path this backend stands in for. */
+  bin: string;
+  run(args: string[], input?: string): SecurityResult;
+}
+
+let testBackend: KeychainTestBackend | undefined;
+let spawnObserver: ((bin: string) => void) | undefined;
+
+/** Test hooks can only be set in a test run; clearing them is always allowed. */
+function testsOnly(value: unknown): void {
+  if (value !== undefined && !process.env.VITEST && process.env.NODE_ENV !== "test") throw new Error("the Keychain test hooks are for tests only");
+}
+
+/** Tests only: answers in this process instead of running the tool at `backend.bin`. */
+export function setKeychainBackendForTests(backend: KeychainTestBackend | undefined): void {
+  testsOnly(backend);
+  testBackend = backend;
+}
+
+/** Tests only: told the tool path (never arguments or input) before each time the tool is started. */
+export function setKeychainSpawnObserverForTests(observer: ((bin: string) => void) | undefined): void {
+  testsOnly(observer);
+  spawnObserver = observer;
+}
+
 /**
  * Runs the tool. `detached` gives it no controlling terminal, so a password prompt reads stdin.
  * The arguments never hold the key (it goes through stdin).
  */
-function security(args: string[], input?: string) {
+function security(args: string[], input?: string): SecurityResult {
+  const bin = securityBin();
+  if (testBackend?.bin === bin) return testBackend.run(args, input);
+  spawnObserver?.(bin);
   // `detached` is honoured by spawnSync but missing from its type
   const options = { input, encoding: "utf8", detached: true, timeout: TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"] } as SpawnSyncOptionsWithStringEncoding;
-  const r = spawnSync(securityBin(), args, options);
+  const r = spawnSync(bin, args, options);
   if (r.error) throw new KeyError("failed", `the Keychain tool could not run (${(r.error as NodeJS.ErrnoException).code ?? "error"})`);
   return r;
 }

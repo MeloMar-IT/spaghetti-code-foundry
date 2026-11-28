@@ -16,6 +16,7 @@ import {
 } from "../src/stories/move-to-github.js";
 import { type FileStory, formatStoryFile, parseStoryFile, storyFileName } from "../src/stories/story-file.js";
 import { fakeGithub } from "./helpers/fake-github.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
@@ -120,8 +121,11 @@ const target = (url = "acme/app") => addRepo(admin.id, { url, method: "github-to
 const mv = (o: Partial<Parameters<typeof moveToGithub>[0]> = {}) => moveToGithub({ local: name, target: "acme/app", owner: admin.id, config, ...o });
 const createdCalls = () => (gh.ghLog().match(/^--- created issue/gm) ?? []).length;
 
+let kc: ReturnType<typeof fakeKeychain>;
+
 beforeEach(async () => {
   gh = fakeGithub();
+  kc = fakeKeychain();
   process.env.FACTORY_HOME = join(gh.tmp, "home");
   mkdirSync(process.env.FACTORY_HOME, { recursive: true });
   admin = await createUser({ name: "Admin", email: "admin@example.com", password: TEST_PASSWORD, role: "admin" });
@@ -141,6 +145,7 @@ afterEach(() => {
   delete process.env.FAKE_GH_COMMENTS_FROM_LOG;
   gh.restore();
   rmSync(base, { recursive: true, force: true });
+  kc.remove();
 });
 
 const sample = () => {

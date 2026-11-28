@@ -9,6 +9,7 @@ import { PUBLISH_TTL_MS } from "../src/repos/publish-grants.js";
 import { MAX_COMMENT_CHARS } from "../src/stories/move-to-github.js";
 import { type FileStory, formatStoryFile, storyFileName } from "../src/stories/story-file.js";
 import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
@@ -63,9 +64,12 @@ const nothingSent = () => {
   expect(getRepo(local.id)).toBeDefined();
 };
 
+let kc: ReturnType<typeof fakeKeychain>;
+
 beforeAll(async () => {
   saved = process.env.FACTORY_HOME;
   gh = fakeGithub();
+  kc = fakeKeychain();
   process.env.FACTORY_HOME = join(gh.tmp, "home");
   mkdirSync(process.env.FACTORY_HOME, { recursive: true });
   fakeGit(gh, "https://github.com/acme/app");
@@ -82,6 +86,7 @@ afterAll(() => {
   rmSync(work, { recursive: true, force: true });
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
+  kc.remove();
 });
 
 beforeEach(() => {

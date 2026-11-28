@@ -14,6 +14,7 @@ import { addRepoWatcher, effectiveRepoWatchers, listRepoWatchers } from "../src/
 import { MAX_COMMENT_CHARS, moveLockFile } from "../src/stories/move-to-github.js";
 import { type FileStory, formatStoryFile, storyFileName } from "../src/stories/story-file.js";
 import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
@@ -41,8 +42,11 @@ const repoCreates = () => (gh.ghLog().match(/^--- repo create /gm) ?? []).length
 const mv = (o: Partial<ProjectMoveOptions> = {}) =>
   moveProjectToGithub({ localId: local.id, owner: admin.id, config, target: { create: { name: "acme/app", private: true } }, includeClosed: false, dryRun: false, ...o });
 
+let kc: ReturnType<typeof fakeKeychain>;
+
 const setup = async () => {
   gh = fakeGithub();
+  kc = fakeKeychain();
   process.env.FACTORY_HOME = join(gh.tmp, "home");
   mkdirSync(process.env.FACTORY_HOME, { recursive: true });
   fakeGit(gh, "https://github.com/acme/app");
@@ -73,6 +77,7 @@ const setup = async () => {
 const teardown = () => {
   gh.restore();
   rmSync(base, { recursive: true, force: true });
+  kc.remove();
 };
 
 describe("parseMoveBody", () => {
