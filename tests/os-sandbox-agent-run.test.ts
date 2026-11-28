@@ -10,6 +10,7 @@ import { ConfigSchema } from "../src/config.js";
 import { TOOLS_DIR } from "../src/engine/guards.js";
 import { resetSandboxCache } from "../src/engine/os-sandbox.js";
 import { runFlow } from "../src/engine/runner.js";
+import { addItem } from "../src/credentials/keychain.js";
 import { resetRedactCache } from "../src/credentials/redact.js";
 import { parseFlow } from "../src/flow/load.js";
 import { addSkillPins } from "../src/skills/lock.js";
@@ -109,6 +110,16 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(out(s, "c3")).toContain("ANTHROPIC_API_KEY");
     expect(out(s, "x3")).toContain("OPENAI_API_KEY");
     expect(out(s, "x3")).toContain("CODEX_API_KEY");
+  });
+
+  it("a boxed Claude step gets the token of the Keychain when no variable is set", async () => {
+    for (const k of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]) delete process.env[k];
+    const token = "tok-" + "Bx5".repeat(10);
+    addItem("spaghetti-code-foundry", "claude-oauth-token", token);
+    const s = await go(flowOf(step("c", "claude", "SHOWVARS CLAUDE_CODE_OAUTH_TOKEN")), user.id);
+    expect(s.status, s.reason).toBe("succeeded");
+    expect(out(s, "c")).toContain("CLAUDE_CODE_OAUTH_TOKEN=[redacted]");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain(token);
   });
 
   it("a boxed Codex step gets the locked skill block and the record, with no flag and no note", async () => {

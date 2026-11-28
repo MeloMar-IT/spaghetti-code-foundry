@@ -28,6 +28,7 @@ export function fakeKeychain(): FakeKeychain {
   chmodSync(bin, 0o755);
   const file = join(dir, "items.json");
   const log = join(dir, "calls.log");
+  const before = process.env.SCF_SECURITY_BIN;
   process.env.SCF_SECURITY_BIN = bin;
   process.env.FAKE_KEYCHAIN_FILE = file;
   process.env.FAKE_KEYCHAIN_LOG = log;
@@ -51,7 +52,8 @@ export function fakeKeychain(): FakeKeychain {
       else delete process.env.FAKE_KEYCHAIN_FAIL;
     },
     remove: () => {
-      delete process.env.SCF_SECURITY_BIN;
+      if (before === undefined) delete process.env.SCF_SECURITY_BIN;
+      else process.env.SCF_SECURITY_BIN = before;
       delete process.env.FAKE_KEYCHAIN_FILE;
       delete process.env.FAKE_KEYCHAIN_LOG;
       delete process.env.FAKE_KEYCHAIN_FAIL;

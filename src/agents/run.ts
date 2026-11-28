@@ -23,6 +23,7 @@ import { lockRoot } from "../engine/running.js";
 import { runSandbox, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, workspaceCacheEnv, workspaceJavaDir, workspaceSlotsDir } from "../engine/os-sandbox.js";
 import { modelHosts, proxyEnv, startEgress, type Egress } from "../engine/egress.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
+import { addAiToken } from "../auth/ai-token.js";
 import { type StepCommands, readGateRefusals, refusedCommandStop, stepCommands } from "./command-allow.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
@@ -119,6 +120,8 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     const short = shortEnvRun(engine.summary.owner, engine.summary.workspace);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
     if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, tokenVarNames(engine.config)) };
+    // the Claude token of the Keychain (`scf auth set-token`), when the step would get no key variable
+    addAiToken(env, t, Boolean(short), (m) => engine.log(`    ! ${m}`));
     // a team's Claude session sends nothing but the model calls (the proxy lets only the model host through)
     if (held && t.agent === "claude") env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder, except a team's step: its profile opens the slots.

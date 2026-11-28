@@ -1,6 +1,7 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Tests must behave the same everywhere — also inside a factory run, which sets FACTORY_* variables
 // and a git pre-push hook (through GIT_CONFIG_*) that blocks pushes to "main". The tests push to
@@ -9,6 +10,18 @@ import { join } from "node:path";
 for (const k of Object.keys(process.env)) {
   if (/^(FACTORY_|SCF_|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$|GH_TOKEN$|GH_CONFIG_DIR$|GITHUB_TOKEN$|CODEX_API_KEY$|CODEX_HOME$)/.test(k)) delete process.env[k];
 }
+// No test may reach the real Keychain: a stand-in `security` with its own, empty items file (`fakeKeychain()` replaces it where
+// a test looks at the items). While nothing is stored, a find answers "not found" without starting node.
+const keychainDir = mkdtempSync(join(tmpdir(), "test-keychain-"));
+const standIn = join(keychainDir, "security");
+const standInItems = join(keychainDir, "items.json");
+const fakeSecurity = fileURLToPath(new URL("./fixtures/fake-security.mjs", import.meta.url));
+writeFileSync(
+  standIn,
+  `#!/bin/sh\n[ "$1" = find-generic-password ] && [ ! -f '${standInItems}' ] && exit 44\nFAKE_KEYCHAIN_FILE='${standInItems}' exec '${process.execPath}' '${fakeSecurity}' "$@"\n`,
+);
+chmodSync(standIn, 0o755);
+process.env.SCF_SECURITY_BIN = standIn;
 // Keep tests away from the real ~/.claude-factory (config, hooks, learnings, locks) and notifications.
 process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-home-"));
 process.env.FACTORY_LOCK_DIR = join(process.env.FACTORY_HOME, "locks");

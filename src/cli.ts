@@ -108,6 +108,7 @@ Usage:
   scf user block <e-mail> [--stop-work] | unblock <e-mail>   Block or unblock an account
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
+  scf auth set-token | status | clear-token      Keep the Claude token in the macOS Keychain (set-token takes no option)
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
   scf metrics preview [--day YYYY-MM-DD]         Print the numbers-only shared metrics report of a day (default yesterday); nothing is sent
   scf metrics send [--day YYYY-MM-DD]            Send the shared metrics report of one ended day (default yesterday) to the receiver now
@@ -240,6 +241,8 @@ async function main(argv: string[]): Promise<number> {
     const code = await remoteCommand(argv, { io: terminalIo() });
     if (code !== undefined) return code;
   }
+  // `auth set-token` takes nothing: refused before anything is parsed, read or asked, also for an unknown option or --help.
+  if (argv[0] === "auth" && argv[1] === "set-token" && argv.length > 2) throw new Error((await import("./auth/ai-token-cli.js")).AUTH_USAGE);
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -309,6 +312,9 @@ async function main(argv: string[]): Promise<number> {
   });
   const [cmd, arg] = positionals;
   const repo = resolve(values.repo ?? process.cwd());
+
+  // the same for options before the command
+  if (cmd === "auth" && arg === "set-token" && argv.length !== 2) throw new Error((await import("./auth/ai-token-cli.js")).AUTH_USAGE);
 
   if (values.help || !cmd) {
     process.stdout.write(usage());
@@ -699,6 +705,13 @@ async function main(argv: string[]): Promise<number> {
       const { userCommand, terminalIo } = await import("./auth/cli.js");
       const { help: _h, ...given } = values;
       return userCommand({ positionals: positionals.slice(1), values: given }, terminalIo());
+    }
+
+    case "auth": {
+      const { aiTokenCommand } = await import("./auth/ai-token-cli.js");
+      const { terminalIo } = await import("./auth/cli.js");
+      const { help: _h, ...given } = values;
+      return aiTokenCommand({ positionals: positionals.slice(1), values: given }, terminalIo());
     }
 
     case "credential": {

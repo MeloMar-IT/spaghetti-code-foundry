@@ -6045,8 +6045,9 @@ server's GitHub login is not put into a user's run. On macOS, every step of a us
 agent, is held by a sandbox profile: it cannot read your Mac account's files, the Keychain or the
 agent login, and it writes only in its own run folder. Agent steps sign in by a token variable you
 set for the server: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` for
-Claude; `OPENAI_API_KEY` or `CODEX_API_KEY` for Codex; the provider's `api_key_env` for a compatible
-provider. A local model needs none. Without one the step is refused. Each run has its own empty
+Claude, or a Claude token stored once in the Keychain with `scf auth set-token` (used only when none of
+the three variables is set); `OPENAI_API_KEY` or `CODEX_API_KEY` for Codex; the provider's `api_key_env`
+for a compatible provider. A local model needs none. Without one the step is refused. Each run has its own empty
 agent folders, so your agent settings, MCP servers and skills do not reach it. The agent's shell tool
 can see the token. The limits are in `docs/THREAT_MODEL.md` (SR-O1): macOS only, and with
 `sandbox.user_runs: off` nothing is held. To switch user runs off, change the rule `POST runs` to
@@ -8261,6 +8262,16 @@ A user account can only do what "Roles and permissions" above allows, but a run 
 still run commands on this Mac, so only give accounts to people you trust. Links
 in Slack and notifications still point at `http://localhost:<port>`.
 
+**Claude token in the Keychain.** Claude steps sign in by a token. To keep it across a restart or a logout, without `launchctl setenv`, store it once in the macOS Keychain:
+
+```bash
+scf auth set-token      # asks for the token on a terminal, or reads its first line from stdin
+scf auth status         # prints source: environment, keychain or none, and set: <time> (never the value)
+scf auth clear-token    # removes the item
+```
+
+`set-token` takes no operand or option; anything else is refused before it reads the token. The item is a generic password, service `spaghetti-code-foundry`, account `claude-oauth-token`. The token must be 8 to 4096 characters with no spaces or control characters. The server reads it at start and at each Claude step on `anthropic`, which gets it as `CLAUDE_CODE_OAUTH_TOKEN`. If `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set, that one wins and nothing changes. Codex and other providers never get this token. Each set and clear writes one audit line without the value. Steps of your runs can read the token through the agent's shell tool, so keep it for accounts you trust.
+
 **Stored credentials.** A token or an ssh key can be stored through the API
 (`POST /api/credentials`); you cannot add one in the web interface, and runs do not use them yet.
 An admin can see them on the **Credentials** page (**Administration** → **Credentials** under People and access):
@@ -9082,6 +9093,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
+| `scf auth set-token` / `status` / `clear-token` | Store the Claude token in the macOS Keychain (stdin or a terminal; no operand or option), show where the sign-in comes from and when it was set, or remove it (chapter 7, "Claude token in the Keychain") |
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf delivery validate --contract f --signature f --public-key k [--repo dir] [--checks f] [--comment f] [--events f] [--json]` | Check a delivery contract against the checked-out commit, for a CI job. Exit code 0 no stop, 1 a stop, 2 a usage or read error ([Check a delivery contract in CI](#check-a-delivery-contract-in-ci)) |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |

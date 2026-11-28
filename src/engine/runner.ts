@@ -13,6 +13,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { claimRunStart, workspaceHome } from "../home.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { CANNOT_READ, hideKeyVars, redactText, requireRedaction } from "../credentials/redact.js";
+import { hideAiToken } from "../auth/ai-token.js";
 import { stepRepoOps, type Flow, type Step } from "../flow/schema.js";
 import { notifyRun } from "../notify.js";
 import {
@@ -458,6 +459,7 @@ async function drive(
   const lent = returnCodexLogin(summary.runDir);
   if (lent === "write-back-failed" || lent === "not-removed") return finish(summary, opts, config, { outcome: "failed", reason: CODEX_LOGIN_NOT_RETURNED, next: summary.state.next, lastOutput: "" });
   hideKeyVars(providerKeyVars(config));
+  hideAiToken();
   try {
     requireRedaction();
   } catch (e) {

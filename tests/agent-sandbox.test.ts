@@ -1,15 +1,17 @@
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, freeWhenBoxed, missingAgentKey, noAgentKey } from "../src/agents/boxed.js";
 import { providers, specOf, toTarget } from "../src/agents/targets.js";
+import { setAiToken } from "../src/auth/ai-token.js";
 import { addRepo } from "../src/auth/repos.js";
 import { createUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
 import { resetSandboxCache } from "../src/engine/os-sandbox.js";
 import { runFlow } from "../src/engine/runner.js";
-import { resetRedactCache } from "../src/credentials/redact.js";
+import { redactText, resetRedactCache } from "../src/credentials/redact.js";
 import { parseFlow } from "../src/flow/load.js";
 import { buildClaudeArgs } from "../src/steps/claude.js";
 import { buildCodexArgs } from "../src/steps/codex.js";
@@ -232,5 +234,83 @@ describe("steps of runs", () => {
     const s = await go(flowOf(agent("a", "SAY fine")), user.id);
     expect(s.status, s.reason).toBe("succeeded");
     expect(out(s, "a")).toMatch(/^fine/);
+  });
+
+  describe("the Claude token of the Keychain", () => {
+    // built at run time, so this file holds no token-shaped string
+    const A = "tok-" + "Aq7".repeat(10);
+    const B = "tok-" + "Bw8".repeat(10);
+    const SHOW = "SHOWVARS CLAUDE_CODE_OAUTH_TOKEN";
+    const HIDDEN = "CLAUDE_CODE_OAUTH_TOKEN=[redacted]";
+    const NONE = "CLAUDE_CODE_OAUTH_TOKEN=(unset)";
+    const asked = () => kc.calls().filter((c) => c.includes("spaghetti-code-foundry"));
+    const written = (s: { runDir: string }) => ["live.log", "run.json"].map((f) => readFileSync(join(s.runDir, f), "utf8")).join("\n");
+    const seed = (value: string) => {
+      setAiToken(value);
+      kc.clearLog();
+    };
+
+    it("goes to a Claude step on anthropic only", async () => {
+      seed(A);
+      const s = await go(flowOf(agent("cl", SHOW) + agent("cx", SHOW, "    agent: codex\n") + agent("gw", SHOW, "    model: gh:m\n")), admin.id);
+      expect(s.status, s.reason).toBe("succeeded");
+      expect(out(s, "cl")).toContain(HIDDEN);
+      expect(out(s, "cx")).toContain(NONE);
+      expect(out(s, "gw")).toContain(NONE);
+      expect(written(s)).not.toContain(A);
+      expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    });
+
+    it("goes to a user's run with the short environment", async () => {
+      seed(A);
+      const s = await go(flowOf(agent("cl", SHOW)), user.id);
+      expect(s.status, s.reason).toBe("succeeded");
+      expect(out(s, "cl")).toContain(HIDDEN);
+      expect(written(s)).not.toContain(A);
+    });
+
+    it("is not asked for when a variable is set", async () => {
+      seed(A);
+      for (const name of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) {
+        process.env[name] = "own-" + "k".repeat(20);
+        const s = await go(flowOf(agent("cl", SHOW)), admin.id);
+        expect(s.status, s.reason).toBe("succeeded");
+        if (name !== "CLAUDE_CODE_OAUTH_TOKEN") expect(out(s, "cl"), name).toContain(NONE);
+        delete process.env[name];
+      }
+      expect(asked()).toEqual([]);
+    });
+
+    it("is read again on each agent step", async () => {
+      seed(B);
+      const other = join(gh.tmp, "items-b.json");
+      writeFileSync(other, readFileSync(kc.file));
+      seed(A);
+      const shell = (id: string, run: string) => `  - id: ${id}\n    type: shell\n    run: ${JSON.stringify(run)}\n`;
+      const look = `${SHOW}\nSHOWHASH CLAUDE_CODE_OAUTH_TOKEN`;
+      const s = await go(
+        flowOf(agent("one", look) + shell("change", `cp '${other}' '${kc.file}'`) + agent("two", look) + shell("remove", `rm '${kc.file}'`) + agent("three", look)),
+        admin.id,
+      );
+      expect(s.status, s.reason).toBe("succeeded");
+      const hash = (v: string) => `hash of CLAUDE_CODE_OAUTH_TOKEN: ${createHash("sha256").update(v).digest("hex")}`;
+      expect(out(s, "one")).toContain(HIDDEN);
+      expect(out(s, "one")).toContain(hash(A));
+      expect(out(s, "two")).toContain(HIDDEN);
+      expect(out(s, "two")).toContain(hash(B));
+      expect(out(s, "three")).toContain(NONE);
+      expect(redactText(`${A} ${B}`)).toBe("[redacted] [redacted]");
+      expect(written(s)).not.toContain(A);
+      expect(written(s)).not.toContain(B);
+    });
+
+    it("a Keychain that cannot be read gives one line, and the step runs", async () => {
+      seed(A);
+      kc.fail("find");
+      const s = await go(flowOf(agent("cl", SHOW)), admin.id);
+      expect(s.status, s.reason).toBe("succeeded");
+      expect(out(s, "cl")).toContain(NONE);
+      expect(readFileSync(join(s.runDir, "live.log"), "utf8").match(/AI sign-in:/g)).toHaveLength(1);
+    });
   });
 });

@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -41,6 +41,64 @@ function scf(args: string[], input = "") {
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 const makeUser = (email: string, admin = false) => scf(["user", "create", ...(admin ? ["--admin"] : []), "--name", "N", "--email", email], PW + "\n");
+
+describe("scf auth", () => {
+  const VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+  let keys: Record<string, string | undefined>;
+  beforeEach(() => {
+    keys = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
+    for (const k of VARS) delete process.env[k];
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(keys)) if (v !== undefined) process.env[k] = v;
+  });
+
+  /** Runs the CLI with a stdin pipe that stays open: a command that reads it does not end, and is killed. */
+  const openStdin = (args: string[]) =>
+    new Promise<{ code: number | null; err: string }>((done) => {
+      const env: NodeJS.ProcessEnv = { ...process.env, SCF_HOME: home };
+      delete env.FACTORY_HOME;
+      const child = spawn(process.execPath, [CLI, ...args], { env, stdio: ["pipe", "ignore", "pipe"] });
+      let err = "";
+      child.stderr.on("data", (d) => (err += d));
+      const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        child.stdin.destroy();
+        done({ code, err });
+      });
+    });
+
+  it("set-token refuses any operand or option before it reads anything", async () => {
+    const cases = [["now"], ["--force"], ["--help"], ["-h"], ["--nope"]].map((extra) => ["auth", "set-token", ...extra]);
+    const results = await Promise.all([...cases, ["--help", "auth", "set-token"]].map(openStdin));
+    for (const r of results) {
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("usage: scf auth");
+    }
+    expect(kc.calls()).toEqual([]);
+    expect(existsSync(join(home, "audit.jsonl"))).toBe(false);
+  });
+
+  it("sets, shows and clears the token without ever printing it", () => {
+    const token = "tok-" + "Cl1".repeat(10);
+    expect(scf(["auth", "set-token"], token + "\n").out).toContain("the token is stored");
+    expect(Object.keys(kc.items())).toEqual(["spaghetti-code-foundry\0claude-oauth-token"]);
+    expect(scf(["auth", "status"]).out).toMatch(/^source: keychain\nset: \d{4}-.*Z\n$/);
+    const bad = scf(["auth", "set-token"], "has a space inside\n");
+    expect(bad.code).toBe(1);
+    expect(bad.err).not.toContain("has a space inside");
+    expect(scf(["auth", "clear-token"]).out).toContain("removed");
+    expect(scf(["auth", "status"]).out).toBe("source: none\n");
+    expect(outputs.join("\n")).not.toContain(token);
+    const audit = readFileSync(join(home, "audit.jsonl"), "utf8");
+    expect(audit).not.toContain(token);
+    const lines = audit.trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((l) => [l.action, l.by, l.result, l.target, l.detail])).toEqual(
+      ["ai-token-set", "ai-token-clear"].map((a) => [a, "cli", "ok", "claude-oauth-token", undefined]),
+    );
+  });
+});
 
 describe("scf user delete", () => {
   it("deletes an account and its credentials", () => {

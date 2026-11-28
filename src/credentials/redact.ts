@@ -183,8 +183,19 @@ export function hideKeyVars(names: Iterable<string>): string[] {
   return tooShort;
 }
 
+/** Other sources of secret values, by name (such as the AI token of the Keychain). Asked on every call, so they must be cheap. */
+const valueSources = new Map<string, () => Iterable<string>>();
+
+/** Hides the values this source gives, like those of the key variables. The same name replaces the earlier source. */
+export function hideValueSource(name: string, values: () => Iterable<string>): void {
+  valueSources.set(name, values);
+}
+
 function keyVarValues(): string[] {
   const out = new Set<string>();
+  for (const values of valueSources.values()) {
+    for (const v of values()) if (v.length >= TOKEN_MIN) out.add(v);
+  }
   for (const name of keyVarNames) {
     const v = process.env[name];
     if (v && v.length >= TOKEN_MIN) out.add(v);
@@ -285,4 +296,5 @@ export function redactText(text: string): string {
 export function resetRedactCache(): void {
   cache = undefined;
   keyVarNames.clear();
+  valueSources.clear();
 }

@@ -14,6 +14,7 @@ import { allRunsDirs, loadRun, type RunSummary } from "../engine/state.js";
 import { hideKeyVars, redactText } from "../credentials/redact.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { TOKEN_MIN } from "../credentials/store.js";
+import { aiTokenStartLine, hideAiToken } from "../auth/ai-token.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
 import { sweepSignInDirs } from "../engine/repo-access.js";
@@ -230,9 +231,11 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
       shortKeys.add(name);
       log(`! the key in ${name} is shorter than ${TOKEN_MIN} characters, so it is not hidden in output`);
     }
+    hideAiToken();
     return c;
   };
   let config = readConfig();
+  log(aiTokenStartLine(log));
   // The effective config: config.yaml plus the runnable stored watchers (refreshed in every sync()).
   let effective: Config = config;
   let blocked: BlockedWatcher[] = [];
