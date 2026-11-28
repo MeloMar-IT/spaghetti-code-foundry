@@ -16,6 +16,13 @@ export interface Explained {
   limit?: true;
 }
 
+/** The one notice when the Foundry has no working AI sign-in, and the steps that fix it. */
+export const NO_AI_SIGN_IN = "The Foundry has no AI sign-in";
+export const SIGN_IN_STEPS = 'run "claude setup-token", then "scf auth set-token"';
+export const SIGN_IN_REASON = `signed out — ${NO_AI_SIGN_IN}. Run "claude setup-token", then "scf auth set-token". The run continues by itself after that.`;
+/** Did a run stop because Claude has no sign-in? The wording of older versions counts too; a Codex stop never does. */
+export const isSignInStop = (reason?: string): boolean => /^signed out — (?:The Foundry has no AI sign-in\b|the Claude Code login has expired)/.test(reason ?? "");
+
 type Parts = { what: string; why: string; todo: string; startOver?: boolean; limit?: true };
 type Ctx = { step?: string };
 interface Row {
@@ -53,6 +60,7 @@ const ROWS: Row[] = [
   { re: /^timed out \(waited (\d+ (?:s|min)) for a test slot, which did not count\)/, make: (m, s) => ({ what: stepWhat(s), why: `it ran longer than its time limit; it waited ${m[1]} for a test slot, which did not count`, todo: "Look at the output of the step to see what took so long" }) },
   { re: /^timed out \(waited (\d+ (?:s|min)) for a test slot, more than the (\d+ (?:s|min)) that can be left out\)/, make: (m, s) => ({ what: stepWhat(s), why: `it ran longer than its time limit; it waited ${m[1]} for a test slot, capped at ${m[2]}`, todo: "Look at the output of the step to see what took so long" }) },
   { re: /^timed out\b/, make: (_m, s) => ({ what: stepWhat(s), why: "it ran longer than its time limit", todo: "Look at the output of the step to see what took so long" }) },
+  { re: /^signed out — (?:The Foundry has no AI sign-in|the Claude Code login has expired)|Failed to refresh OAuth token|can['’]t save to the Keychain|OAuth token has expired/i, only: "run", user: (_m, s) => ({ what: stepWhat(s), why: "the Foundry has no AI sign-in", todo: ASK }), make: (_m, s) => ({ what: stepWhat(s), why: "the Foundry has no AI sign-in", todo: 'Run "claude setup-token", then "scf auth set-token"' }) },
   { re: /^claude exited with code/, make: (_m, s) => ({ what: stepWhat(s), why: "the agent stopped without a result", todo: LOG }) },
   { re: /^codex CLI not found/, user: (_m, s) => ({ what: stepWhat(s), why: "an AI tool of the Foundry is not set up", todo: ASK }), make: (_m, s) => ({ what: stepWhat(s), why: "Codex is not installed on this computer", todo: "Install Codex on the computer that runs the Foundry" }) },
   { re: /codex login/i, only: "run", user: (_m, s) => ({ what: stepWhat(s), why: "the Foundry is signed out of an AI account", todo: ASK }), make: (_m, s) => ({ what: stepWhat(s), why: "Codex is not logged in", todo: "Log in to Codex on the computer that runs the Foundry" }) },

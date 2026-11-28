@@ -15,6 +15,8 @@ import { hideKeyVars, redactText } from "../credentials/redact.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { TOKEN_MIN } from "../credentials/store.js";
 import { aiTokenStartLine, hideAiToken } from "../auth/ai-token.js";
+import { aiSignIn, probeAiSignIn, recheckAiSignIn } from "../auth/ai-sign-in.js";
+import { startSignInSweep } from "./sign-in-sweep.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
 import { sweepSignInDirs } from "../engine/repo-access.js";
@@ -133,6 +135,8 @@ export interface ServerOptions {
   refinementSweepMs?: number;
   /** How often stopped runs that the daily cap of their project stopped are looked at again, in ms (#792; default 300000). */
   projectBudgetSweepMs?: number;
+  /** How often runs that stopped for the AI sign-in are looked at again, in ms (default 60000). */
+  signInSweepMs?: number;
   /** The clock of the sign-in waits and locks, in ms (default Date.now). A test moves it. */
   signInClock?: () => number;
   /** The clock of the "view as user" previews, in ms (default Date.now). A test moves it. */
@@ -287,10 +291,13 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
   const startSweep = sweepStaleRunning(opts.runsDir, () => false, { atStart: true });
   let gapSweep: SkillGapSweeper | undefined;
   // The run index is built in the background and refreshed every few seconds. Tests set FACTORY_RUN_INDEX_SYNC=1: every read looks at the files.
+  // Before the queue exists: restored jobs must not start before a missing AI sign-in is known. The probe has a time limit and never throws.
+  await probeAiSignIn({ claudeBin: opts.claudeBin });
   const runIndex = new RunIndex(opts.runsDir, { live: process.env.FACTORY_RUN_INDEX_SYNC !== "1" });
   loaded.runIndex = runIndex;
   runIndex.start();
   const scheduler = new Scheduler({
+    aiSignIn: { missing: () => aiSignIn().missing, recheck: () => void recheckAiSignIn() },
     runIndex,
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,
@@ -396,6 +403,11 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
   // Ask Foundry: a reply that a stopped server left unfinished is marked as interrupted, and the retention policy is applied.
   // Stopped runs of a project at its daily cap go on by themselves the next day (#792): at start, then every few minutes.
   const stopProjectSweep = startProjectBudgetSweep({ scheduler, runsDir: opts.runsDir, log: sink }, opts.projectBudgetSweepMs);
+  // Runs that stopped for the AI sign-in and that no issues watcher handles go on by themselves once it is set.
+  const stopSignInSweep = startSignInSweep(
+    { scheduler, runsDir: opts.runsDir, watchers: () => ctx.config().watchers, log: sink, reprobe: () => probeAiSignIn({ claudeBin: opts.claudeBin }) },
+    opts.signInSweepMs,
+  );
   const helpSweep = helpSweeper(log, () => ctx.config().help.keep_days);
   helpSweep();
   const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
@@ -679,6 +691,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry; r
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);
       stopProjectSweep();
+      stopSignInSweep();
       clearInterval(helpTimer);
       helpTurnsOf(ctx).stopAll();
       void previewsOf(ctx).stopAll();

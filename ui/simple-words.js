@@ -324,6 +324,7 @@ export const KIND_WORDS = {
   dependency: { line: "It starts after other work is done." },
   one_at_a_time: { line: "It waits for other work to finish." },
   area_lock: { line: "It waits for other work to finish." },
+  sign_in: { todo: "Set the AI sign-in", line: "The Foundry has no AI sign-in, so AI work waits." },
   usage_limit: { line: "It is paused for now and goes on by itself." },
   daily_budget: { line: "It is paused for now and goes on by itself." },
   user_limit: { line: "It is paused for now and goes on by itself." },

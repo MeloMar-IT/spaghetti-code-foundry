@@ -386,7 +386,7 @@ const USER_REPLACES = new Set<NextStep["kind"]>(["usage_limit", "daily_budget", 
 
 /** A hold in the words of a user: the kind and the rest of the hold stay, the sentences are built again without admin facts. */
 export function userWords(n: NextStep): NextStep {
-  const w = nextStep(n.kind, { repo: n.repo, issue: n.issue, title: n.title, runId: n.runId }, { forUser: true, cause: n.cause });
+  const w = nextStep(n.kind, { repo: n.repo, issue: n.issue, title: n.title, runId: n.runId }, { forUser: true, cause: n.cause, ...(n.signIn ? { userLimit: "sign_in" as const } : {}) });
   return { ...n, status: w.status, help: w.help, why: w.why, action: w.action, text: w.text };
 }
 

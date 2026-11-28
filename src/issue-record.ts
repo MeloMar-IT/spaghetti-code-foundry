@@ -1,5 +1,5 @@
 import type { RunSummary } from "./engine/state.js";
-import { nextStep, type NextBase, type NextData, type NextStep } from "./next-step.js";
+import { nextStep, type NextBase, type NextData, type NextStep, type QueueLimit } from "./next-step.js";
 
 /** Where the record of an issue comes from, in the order they are tried. */
 export type IssueSource = "live" | "queued" | "hold" | "run" | "done" | "start";
@@ -11,7 +11,7 @@ export interface IssueRecordInput {
   /** The issue's run is running or queued. */
   live: boolean;
   /** A queued job of the issue (used when it has no run file yet). */
-  queuedJob?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" | "install_budget" };
+  queuedJob?: { waitingFor?: string; behindPriority?: boolean; limit?: QueueLimit };
   /** The watcher's record for the issue (why it is not started, a question, a closed issue …). */
   hold?: NextStep;
   /** The issue carries the done label. */

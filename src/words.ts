@@ -20,6 +20,8 @@ export interface WordFacts {
   limit?: boolean;
   /** `usage_limit`: the agent is signed out. */
   signedOut?: boolean;
+  /** `usage_limit`: the Foundry has no AI sign-in. */
+  signIn?: boolean;
   /** `usage_limit`: the AI service could not be reached. */
   unreachable?: boolean;
   /** `user_limit`: the limit of runs per day (else the limit of runs at the same time). */
@@ -84,12 +86,20 @@ const GLOSSARY: Record<NextKind, Words> = {
       : "Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished."),
   },
   usage_limit: {
-    status: (f) => (f.signedOut ? "paused — signed out" : f.unreachable ? "paused — AI service not reachable" : "paused — usage limit"),
-    help: (f) => (f.signedOut
+    status: (f) => (f.signIn ? (f.user ? "waiting for the sign-in" : "paused — no AI sign-in") : f.signedOut ? "paused — signed out" : f.unreachable ? "paused — AI service not reachable" : "paused — usage limit"),
+    help: (f) => (f.signIn
+      ? (f.user
+        ? "The Foundry has no AI sign-in, and only an admin can set it. Nothing to do — it goes on by itself once it is set."
+        : "The Foundry has no AI sign-in, so AI steps cannot run. Run claude setup-token, then scf auth set-token — the run then goes on by itself.")
+      : f.signedOut
       ? "The Foundry is signed out of its AI account. Sign in again — the run then goes on by itself."
       : f.unreachable
         ? "The AI service could not be reached. Nothing to do — the Foundry tries again later."
         : "The usage limit of the AI account is reached. Nothing to do — the Foundry tries again after the limit resets."),
+  },
+  sign_in: {
+    status: "waiting for you — AI sign-in",
+    help: "The Foundry has no AI sign-in, so AI jobs wait in the queue and runs that need it are paused. Run claude setup-token, then scf auth set-token — the work then goes on by itself.",
   },
   daily_budget: {
     status: (f) => (f.user ? "paused — the administrator's limit was reached" : "paused — daily budget"),

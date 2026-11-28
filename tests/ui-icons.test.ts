@@ -78,7 +78,7 @@ describe("status", () => {
     const expected: Record<string, string[]> = {
       success: ["done"],
       running: ["running", "checking", "starting"],
-      danger: ["failed", "watcher_error", "monitor_stopped", "watcher_stale"],
+      danger: ["failed", "watcher_error", "monitor_stopped", "watcher_stale", "sign_in"],
       warning: ["usage_limit", "daily_budget", "user_limit", "interrupted", "restart", "chore_late", "closed_elsewhere"],
       waiting: ["questions", "planner_questions", "owner_action","approve_plan", "approve_split", "approval", "monitor_needs_you", "dependency", "red_base", "one_at_a_time", "area_lock", "queued", "release", "stopped", "bug_first"],
       disabled: ["cancelled", "superseded", "issue_closed", "epic"],

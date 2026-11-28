@@ -6,6 +6,8 @@ import { developWait } from "../src/server/next.js";
 import { WatcherSchema } from "../src/config.js";
 import { STOPPED_CANCEL_REASON, USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { statusName } from "../src/words.js";
+import { SIGN_IN_REASON } from "../src/errors.js";
+import { userWords } from "../src/server/next.js";
 import type { RunNextOptions } from "../src/next-step.js";
 import { blockerUrl, briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, splitMade, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
 import { needsUser } from "../src/your-turn.js";
@@ -582,10 +584,32 @@ describe("until", () => {
     expect(limited("usage limit reached: busy", "2026-10-01T09:00:00Z").until).toBe("the next check");
   });
   it("signed out: it is the owner's turn, with the exact command", () => {
-    const n = limited('signed out — the Claude Code login has expired. Sign in again: run "claude" in a terminal and type /login. The run continues by itself after that.');
+    const n = limited('signed out — the Codex login has expired. Sign in again: run "codex login". The run continues by itself after that.');
     expect(n.who).toBe("You");
-    expect(n.why).toBe("Claude Code is signed out (its login has expired)");
-    expect(JSON.stringify(n)).toContain("/login");
+    expect(n.why).toBe("Codex is signed out (its login has expired)");
+    expect(JSON.stringify(n)).toContain("codex login");
+    expect(n).not.toHaveProperty("signIn");
+  });
+  it("no AI sign-in: an admin gets the two steps, also for a stop of an older version", () => {
+    for (const reason of [SIGN_IN_REASON, 'signed out — the Claude Code login has expired. Sign in again: run "claude" in a terminal and type /login.']) {
+      const n = limited(reason);
+      expect(n).toMatchObject({ kind: "usage_limit", signIn: true, who: "You", why: "The Foundry has no AI sign-in", status: "paused — no AI sign-in" });
+      expect(n.text).toContain('run "claude setup-token", then "scf auth set-token"');
+    }
+  });
+  it("no AI sign-in: a user waits for an admin, without the steps", () => {
+    const stopped = run({ status: "stopped", reason: SIGN_IN_REASON });
+    const n = runNextStep(stopped, { ...watched, forUser: true });
+    expect(n).toMatchObject({ why: "Waiting for the sign-in; an admin must set it", status: "waiting for the sign-in", who: "Foundry", signIn: true });
+    expect(JSON.stringify(n)).not.toMatch(/setup-token|set-token|\/login/);
+    // a watcher's hold is worded again for a user: it stays the same record
+    expect(userWords(limited(SIGN_IN_REASON))).toMatchObject({ why: n.why, status: n.status, signIn: true });
+  });
+  it("no AI sign-in: a queued job it holds reads the same, and the notice counts the runs", () => {
+    expect(runNextStep(run({ status: "stopped" }), { queued: { limit: "sign_in" } })).toMatchObject({ kind: "usage_limit", signIn: true, why: "The Foundry has no AI sign-in" });
+    expect(nextStep("sign_in", {}, {})).toMatchObject({ who: "You", why: "The Foundry has no AI sign-in", where: { url: "#/runs" } });
+    expect(nextStep("sign_in", {}, { waitingRuns: 1 }).why).toBe("The Foundry has no AI sign-in; 1 run waits for it");
+    expect(nextStep("sign_in", {}, { waitingRuns: 2 }).why).toBe("The Foundry has no AI sign-in; 2 runs wait for it");
   });
   it("daily budget: tomorrow, no amount", () => {
     const n = limited("daily budget of $5 reached — resume tomorrow");
@@ -643,7 +667,7 @@ describe("paused runs", () => {
     expect(paused("daily budget of $5 reached — resume tomorrow").status).toBe("paused — daily budget");
   });
   it("signed out reads its own status, for an administrator and for a user", () => {
-    const reason = 'signed out — the Claude Code login has expired. Sign in again: run "claude" in a terminal and type /login.';
+    const reason = 'signed out — the Codex login has expired. Sign in again: run "codex login".';
     expect(paused(reason).status).toBe("paused — signed out");
     expect(paused(reason, [], { forUser: true }).status).toBe("paused — signed out");
     expect(paused(reason).failure).toBeUndefined();
@@ -1106,7 +1130,7 @@ describe("records for a user", () => {
     const budget = run({ status: "stopped", reason: "daily budget of $5 reached" });
     expect(asUser(budget).status).toBe("paused — the administrator's limit was reached");
     expect(runNextStep(budget).status).toBe("paused — daily budget");
-    const out = asUser(run({ status: "stopped", reason: "signed out — the Claude Code login has expired" }));
+    const out = asUser(run({ status: "stopped", reason: "signed out — the Codex login has expired" }));
     expect(out.who).not.toBe("You");
     expect(out.text).toContain("administrator");
     expect(asUser(failed("run budget of $2 reached")).status).toBe("stopped — the administrator's limit was reached");

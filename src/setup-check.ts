@@ -90,6 +90,26 @@ export function hasAuthCommand(help: ProbeResult): boolean {
   return help.code !== null && !help.missing && /^\s+auth\b/m.test(help.out);
 }
 
+/** What `claude auth status` says. Asked only when this Claude Code lists `auth`: an old one could take the words as a prompt. Never throws. */
+export async function claudeSignInState(o: { probe?: Probe; claudeBin?: string } = {}): Promise<"ok" | "signed-out" | "unknown"> {
+  try {
+    const probe = o.probe ?? createProbe();
+    const bin =
+      o.claudeBin ??
+      (await resolveClaudeBinAsync(async () => {
+        const r = await probe("claude", ["--version"]);
+        return r.code === 0 ? r.out : "";
+      }));
+    if (!hasAuthCommand(await probe(bin, ["--help"]))) return "unknown";
+    const s = await probe(bin, ["auth", "status"]);
+    if (/"loggedIn"\s*:\s*false/i.test(s.out) || /not (logged|signed) in/i.test(s.out)) return "signed-out";
+    if (s.code === 0) return "ok";
+    return s.code !== null && /\/login|log in|sign in/i.test(s.out) ? "signed-out" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export interface SetupCheckOptions {
   probe?: Probe;
   platform?: NodeJS.Platform;
@@ -183,15 +203,7 @@ export async function setupCheck(o: SetupCheckOptions = {}): Promise<SetupReport
   }
   if (claudeState === "ok") {
     const command = bare(claudeBin, "claude");
-    const item: SetupItem = { id: "claude-sign-in", name: "Claude Code sign-in", needed: true, state: "unknown", explain: "" };
-    const help = await probe(claudeBin, ["--help"]);
-    // `auth status` only when this Claude Code lists `auth`: an old one could take the words as a prompt.
-    if (hasAuthCommand(help)) {
-      const s = await probe(claudeBin, ["auth", "status"]);
-      if (/"loggedIn"\s*:\s*false/i.test(s.out) || /not (logged|signed) in/i.test(s.out)) item.state = "signed-out";
-      else if (s.code === 0) item.state = "ok";
-      else if (s.code !== null && /\/login|log in|sign in/i.test(s.out)) item.state = "signed-out";
-    }
+    const item: SetupItem = { id: "claude-sign-in", name: "Claude Code sign-in", needed: true, state: await claudeSignInState({ probe, claudeBin }), explain: "" };
     if (item.state === "signed-out") {
       item.explain = "Claude Code is not signed in. Type this in a terminal, then type /login and sign in with your Claude account in the window that opens. The Foundry never asks for your password.";
       item.command = command;

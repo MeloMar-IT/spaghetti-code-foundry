@@ -16,6 +16,8 @@ export interface TurnSource {
   watcher?: string;
   /** Title of the pull request, for a release. */
   prTitle?: string;
+  /** The runs and issues of an item that stands for several of them. */
+  members?: TurnMember[];
   /** The account of the item's run, and its name (admin views). */
   owner?: string;
   ownerName?: string;
@@ -52,7 +54,7 @@ export interface TurnItem {
   ownerName?: string;
 }
 
-/** A run or an issue behind a grouped release item. Server only: the page never gets it. */
+/** A run or an issue behind a grouped item. Server only: the page never gets it. */
 export interface TurnMember {
   runId?: string;
   repo: string;
@@ -176,6 +178,7 @@ export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: Y
       unblocks: s.next.issue === undefined ? 0 : unblocksOf(s.next.repo, [s.next.issue], deps),
       dismissable: s.dismissable, watcher: s.watcher, stamp: s.stamp,
       acts: actsFor(s.next.kind, s.watcher, s.next.issue, !!s.next.retired || !!s.next.splitMade),
+      ...(s.members ? { members: s.members } : {}),
       ...(s.owner ? { owner: s.owner } : {}),
       ...(s.ownerName ? { ownerName: s.ownerName } : {}),
     });

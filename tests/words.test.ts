@@ -8,8 +8,8 @@ const BANNED = ["hold", "precheck", "area lock", "jump_only"];
 const EXPLAIN = "how risky it is to create the smaller issues without you looking, 0–100";
 
 describe("glossary", () => {
-  it("has 35 distinct kinds", () => {
-    expect(new Set(KINDS).size).toBe(36);
+  it("has 37 distinct kinds", () => {
+    expect(new Set(KINDS).size).toBe(37);
   });
 
   const rows: [NextKind, WordFacts, string][] = [
@@ -26,6 +26,9 @@ describe("glossary", () => {
     ["area_lock", {}, "waiting for another run in the same code"],
     ["area_lock", { develop: true }, "waiting for develop"],
     ["usage_limit", {}, "paused — usage limit"],
+    ["usage_limit", { signIn: true }, "paused — no AI sign-in"],
+    ["usage_limit", { signIn: true, user: true }, "waiting for the sign-in"],
+    ["sign_in", {}, "waiting for you — AI sign-in"],
     ["daily_budget", {}, "paused — daily budget"],
     ["user_limit", { user: true, perDay: true }, "waiting — your limit for today is reached"],
     ["user_limit", { user: true }, "waiting — your limit of runs at the same time is reached"],
@@ -96,7 +99,7 @@ describe("user guide", () => {
     expect(guide).toContain("Words the Foundry uses");
     expect(guide).toContain(EXPLAIN);
     for (const k of KINDS) {
-      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }, { workspace: true }, { workspace: true, budget: true }, { workspace: true, user: true }, { workspace: true, budget: true, user: true }] : k === "cancelled" ? [{}, { ended: true }] : [{ blockers: [88] }];
+      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }, { workspace: true }, { workspace: true, budget: true }, { workspace: true, user: true }, { workspace: true, budget: true, user: true }] : k === "cancelled" ? [{}, { ended: true }] : k === "usage_limit" ? [{}, { signIn: true }, { signIn: true, user: true }] : [{ blockers: [88] }];
       for (const f of all) {
         expect(guide, statusName(k, f)).toContain(`| ${statusName(k, f)} |`);
         expect(guide, statusHelp(k, f)).toContain(statusHelp(k, f));

@@ -31,7 +31,8 @@ export const isChoreRun =(source?: string): boolean => typeof source === "string
 export const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
 import { runIdsStartedToday } from "./usage.js";
 import { MERGE_GUARD, mergeStarted } from "./overrule.js";
-import { stepIs } from "../next-step.js";
+import { stepIs, type QueueLimit } from "../next-step.js";
+import { needsClaudeSignIn } from "../agents/targets.js";
 import type { Actor } from "../evidence/identity.js";
 import { actorOf } from "../evidence/record.js";
 
@@ -117,7 +118,10 @@ interface Active {
 }
 
 /** Which per-user limit holds a job back. */
-export type UserLimit = "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" | "install_budget";
+export type UserLimit = QueueLimit;
+
+/** How often the queue looks again while a missing AI sign-in holds jobs back: a token set by another process sends no event. */
+const SIGN_IN_RECHECK_MS = 30_000;
 
 export interface SchedulerOptions {
   runsDir: string;
@@ -157,6 +161,10 @@ export interface SchedulerOptions {
   monthRecheckMs?: number;
   /** New runs of an account that started today. Default: counted from the run files. */
   startedToday?: (accountId: string) => number;
+  /** The AI sign-in of the server: while it is missing, jobs that need Claude wait. `missing` must not block (cached state). Without it (CLI, tests), no job is held. */
+  aiSignIn?: { missing: () => boolean; recheck: () => void };
+  /** Test hook: milliseconds between two looks while a missing sign-in holds jobs back. */
+  signInRecheckMs?: number;
   onFinished?: (summary: RunSummary, job: QueuedJob) => void;
   /** Called once the finished run has left the active list (after onFinished); errors are ignored. */
   onSettled?: (summary: RunSummary, job: QueuedJob) => void;
@@ -937,6 +945,7 @@ export class Scheduler {
   private closed = false;
   private capTimer?: NodeJS.Timeout;
   private monthTimer?: NodeJS.Timeout;
+  private signInTimer?: NodeJS.Timeout;
 
   /** The server shuts down: nothing starts from now on, and no timer is left. Active jobs and the queue file are not touched. */
   close(): void {
@@ -948,6 +957,12 @@ export class Scheduler {
     if (this.capTimer) clearTimeout(this.capTimer);
     this.capTimer = undefined;
     this.stopMonthTimer();
+    this.stopSignInTimer();
+  }
+
+  private stopSignInTimer(): void {
+    if (this.signInTimer) clearTimeout(this.signInTimer);
+    this.signInTimer = undefined;
   }
 
   private stopMonthTimer(): void {
@@ -1156,7 +1171,38 @@ export class Scheduler {
       if (valid(max) && wsActive(ws) >= max) return "workspace";
       return wsBudgetOver(ws) ? "workspace_budget" : undefined;
     };
+    // No AI sign-in: jobs with a Claude step wait. Asked once per pump; a job's flow is only looked at while it is missing.
+    let missing: boolean | undefined;
+    const noSignIn = (): boolean => {
+      if (missing !== undefined) return missing;
+      missing = false;
+      try {
+        if (!this.o.localTest) missing = this.o.aiSignIn?.missing() ?? false;
+      } catch {
+        missing = false;
+      }
+      return missing;
+    };
+    const claudeJobs = new Map<string, boolean>();
+    const signInHold = (q: QueuedJob): boolean => {
+      if (!noSignIn()) return false;
+      let needs = claudeJobs.get(q.runId);
+      if (needs === undefined) {
+        try {
+          if (q.job.kind === "run") needs = needsClaudeSignIn(q.job.flow, this.o.config(), q.job.repo);
+          else {
+            const run = loadRun(this.o.runsDir, q.runId);
+            needs = !!run?.flowDef && needsClaudeSignIn(run.flowDef, this.o.config(), run.repo);
+          }
+        } catch {
+          needs = false;
+        }
+        claudeJobs.set(q.runId, needs);
+      }
+      return needs;
+    };
     const limitOf = (q: QueuedJob): UserLimit | undefined => {
+      if (signInHold(q)) return "sign_in";
       const acc = accountOf(q);
       if (acc && this.o.userLimits) {
         const l = limitsOf(acc);
@@ -1191,7 +1237,7 @@ export class Scheduler {
     // takes no story slot and does not wait for stories or a helper's cap; only its lock, the account's state and the
     // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too, and so does a cap of 0 for a new one.
     if (limit >= 1 && ![...this.active.values()].some((a) => isChoreRun(a.queued.source))) {
-      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget" && !wsHold(p) && !installOver() && !projectOver(p));
+      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && !signInHold(p) && limitOf(p) !== "budget" && !wsHold(p) && !installOver() && !projectOver(p));
       if (q) {
         const account = accountOf(q);
         this.pending.splice(this.pending.indexOf(q), 1);
@@ -1244,7 +1290,7 @@ export class Scheduler {
       }
     }
     this.limited = new Map();
-    if (this.o.userLimits || this.o.projectDailyBudget || this.o.workspaceLimits || installOver() || this.pending.some((q) => queuedWorkspace(q) !== DEFAULT_WORKSPACE)) {
+    if (this.o.userLimits || this.o.projectDailyBudget || this.o.workspaceLimits || installOver() || noSignIn() || this.pending.some((q) => queuedWorkspace(q) !== DEFAULT_WORKSPACE)) {
       for (const q of this.pending) {
         if (held(q)) continue;
         const l = limitOf(q);
@@ -1286,6 +1332,25 @@ export class Scheduler {
         this.monthTimer.unref();
       }
     } else this.stopMonthTimer();
+    // A sign-in set by another process (`scf auth set-token`) sends no event either.
+    if ([...this.limited.values()].includes("sign_in")) {
+      if (!this.signInTimer) {
+        this.signInTimer = setTimeout(() => {
+          this.signInTimer = undefined;
+          try {
+            this.o.aiSignIn?.recheck();
+          } catch {
+            // looked at again next time
+          }
+          try {
+            this.pump();
+          } catch {
+            // the next queue change writes the file again
+          }
+        }, this.o.signInRecheckMs ?? SIGN_IN_RECHECK_MS);
+        this.signInTimer.unref();
+      }
+    } else this.stopSignInTimer();
     this.pumpedAt = new Date().toISOString();
     this.persist();
   }

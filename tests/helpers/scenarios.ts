@@ -120,7 +120,8 @@ const limitRun = run("r45", {
 const limit = nextStep("usage_limit", base(45), { ...data(45), runId: "r45", reason: limitRun.reason, finishedAt: limitRun.finishedAt });
 const signedRun = run("r55", {
   vars: { github_repo: REPO, issue: "55" }, status: "stopped", finishedAt: ago(0.01),
-  reason: 'signed out — the Claude Code login has expired. Sign in again: run "claude" in a terminal and type /login. The run continues by itself after that.',
+  // Codex: a Claude sign-in stop is folded into the one AI sign-in item (tests/server-your-turn.test.ts)
+  reason: 'signed out — the Codex login has expired. Sign in again: run "codex login". The run continues by itself after that.',
 });
 const signed = runNextStep(signedRun, { watched: true, issueUrl: issueUrl(55), title: "Story 55" });
 const closedRun = run("r8", { vars: { github_repo: REPO, issue: "8" }, status: "running", finishedAt: undefined, startedAt: ago(0.05) });
@@ -161,7 +162,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: "signed-out", sheet: true, realCase: "The agent is signed out; the owner has to sign in again", source: "changelog (hotfix: pause when the agent is signed out)",
     world: held(signed, { runs: [signedRun] }), record: () => signed,
-    expect: { who: "You", action: 'Sign in again: run "claude" in a terminal and type /login', text: 'Claude Code is signed out (its login has expired) — sign in again: run "claude" in a terminal and type /login. It continues by itself after that.', yourTurn: true, buttons: [], link: "Issue #55 ↗", dismissable: true },
+    expect: { who: "You", action: 'Sign in again: run "codex login"', text: 'Codex is signed out (its login has expired) — sign in again: run "codex login". It continues by itself after that.', yourTurn: true, buttons: [], link: "Issue #55 ↗", dismissable: true },
   },
   {
     id: "closed-while-working", realCase: "An issue is closed on GitHub while its run is still working", source: "changelog (hotfix: issues closed on GitHub)",

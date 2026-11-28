@@ -119,20 +119,24 @@ export function candidateId(c: Candidate): string {
   return repo ? `${repo} ${what}` : what;
 }
 
+/** What `onTurn` reads of an item; `members`: the runs and issues it stands for. */
+type TurnEntry = { key: string; next: NextStep; members?: { runId?: string; repo: string; issue?: number }[] };
+
 /** Is the candidate on Your turn: the same run, the same story, the same release pull request or the same key. */
-export function onTurn(c: Candidate, items: { key: string; next: NextStep }[]): boolean {
+export function onTurn(c: Candidate, items: TurnEntry[]): boolean {
   const n = c.next;
   return items.some((i) => {
     const m = i.next;
     if (c.key && i.key === c.key) return true;
-    if (n.runId && m.runId === n.runId) return true;
+    if (n.runId && (m.runId === n.runId || i.members?.some((x) => x.runId === n.runId))) return true;
+    if (n.issue !== undefined && i.members?.some((x) => x.issue === n.issue && x.repo.toLowerCase() === n.repo.toLowerCase())) return true;
     if (n.issue !== undefined && m.issue === n.issue && m.repo.toLowerCase() === n.repo.toLowerCase()) return true;
     return n.kind === "release" && !!n.where.url && m.kind === "release" && m.where.url === n.where.url;
   });
 }
 
 /** The candidates that need the user and are not on Your turn; one per id. */
-export function missing(candidates: Candidate[], items: { key: string; next: NextStep }[]): Missing[] {
+export function missing(candidates: Candidate[], items: TurnEntry[]): Missing[] {
   const out = new Map<string, Missing>();
   for (const c of candidates) {
     if (!needsUser(c.next) || onTurn(c, items)) continue;

@@ -1,7 +1,7 @@
 import { isLocalRepoName } from "./auth/local-name.js";
 import { validGithubName } from "./auth/repo-url.js";
 import type { WatcherConfig } from "./config.js";
-import { explainError } from "./errors.js";
+import { explainError, isSignInStop, NO_AI_SIGN_IN, SIGN_IN_STEPS } from "./errors.js";
 import { isIssueLimitStop, isProjectBudgetStop, isStoppedCancel, isTimeLimitStop, isUserBudgetStop, type RunSummary } from "./engine/state.js";
 import { classifyFailure, failureSummary, type FailureCause, type FailureSummary } from "./failure.js";
 import { parseWaitsFor } from "./queue/waits-for.js";
@@ -13,7 +13,10 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "red_base" | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "project_limit" | "parked" | "epic" | "owner_action" | "chore_late";
+  | "red_base" | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "project_limit" | "parked" | "epic" | "owner_action" | "chore_late" | "sign_in";
+
+/** Which limit holds a queued job; `sign_in`: the Foundry has no AI sign-in. */
+export type QueueLimit = "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" | "install_budget" | "sign_in";
 
 /** A run waits for a lock: the run that holds it, the areas (`@develop` is the merge turn), and for develop the holder's issue and lock time. */
 export interface AreaWait { runId: string; areas: string; issue?: number; since?: string }
@@ -78,6 +81,8 @@ export interface NextStep {
   ended?: true;
   /** `approval`: the daily release of a local project waits for "Make this version final" (the run's own approval, not a comment). */
   final?: true;
+  /** `usage_limit`: it waits for the AI sign-in. Your turn shows all of these as one item. */
+  signIn?: true;
 }
 
 /** The approval step of the daily release of a local project, and the title its record gets. */
@@ -167,7 +172,9 @@ export interface NextData {
   choreName?: "release" | "schedule run";
   choreWait?: ChoreWait;
   /** `user_limit`: which per-user limit holds the job. */
-  userLimit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" | "install_budget";
+  userLimit?: QueueLimit;
+  /** `sign_in`: how many runs wait for the sign-in. */
+  waitingRuns?: number;
   /** `user_limit` budget: the amount, for an administrator only. */
   budgetUsd?: number;
   /** The pull request the release waits for. */
@@ -318,7 +325,7 @@ function blockerClause(b: BlockerInfo): string {
     case "queued": case "one_at_a_time": case "starting": case "checking": return "which is queued";
     case "area_lock": return "which waits for a code area";
     case "bug_first": return "which waits for a bug story";
-    case "usage_limit": case "daily_budget": case "user_limit": case "project_limit": return "which is paused by a limit";
+    case "usage_limit": case "daily_budget": case "user_limit": case "project_limit": case "sign_in": return "which is paused by a limit";
     case "release": return n.until ? `which waits for the ${n.until}` : "which waits for the release pull request";
     case "issue_closed": return "which is closed";
     case "parked": return "which is parked";
@@ -396,6 +403,9 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
   const q = d.questions;
   // a queued job held by the cap of its project gets its own kind (#792)
   if (kind === "user_limit" && d.userLimit === "project") kind = "project_limit";
+  // without an AI sign-in, a queued job reads like a run that stopped for it
+  if (kind === "user_limit" && d.userLimit === "sign_in") kind = "usage_limit";
+  const signIn = kind === "usage_limit" && !d.unreachable && (d.userLimit === "sign_in" || isSignInStop(d.reason));
 
   switch (kind) {
     case "questions": case "planner_questions": {
@@ -546,6 +556,18 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
     }
     case "usage_limit": {
+      if (signIn) {
+        if (d.forUser) {
+          why = "Waiting for the sign-in; an admin must set it";
+          say = "nothing to do, it goes on by itself once it is set";
+          break;
+        }
+        who = "You";
+        why = NO_AI_SIGN_IN;
+        action = `Sign in: ${SIGN_IN_STEPS}`;
+        say = `${SIGN_IN_STEPS}. It continues by itself after that`;
+        break;
+      }
       if (d.unreachable) {
         who = "Foundry";
         why = "The AI service could not be reached";
@@ -583,6 +605,15 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       until = limitReset(d.reason) ?? limitRetry(d, LIMIT_RETRY_MS);
       say = "nothing to do, it is tried again after the limit resets";
       if (d.limitAgent) w = RUNS;
+      break;
+    }
+    case "sign_in": {
+      who = "You";
+      const n = d.waitingRuns ?? 0;
+      why = n ? `${NO_AI_SIGN_IN}; ${plural(n, "run")} ${n === 1 ? "waits" : "wait"} for it` : NO_AI_SIGN_IN;
+      action = `Sign in: ${SIGN_IN_STEPS}`;
+      say = `${SIGN_IN_STEPS}. The AI jobs and the stopped runs then continue by themselves`;
+      w = RUNS;
       break;
     }
     case "chore_late": {
@@ -828,7 +859,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => (b.repo ? refOf(b) : b.issue)), dropped: kind === "dependency" ? (d.blockers ?? []).filter((b) => b.notPlanned).map(refOf) : undefined, unread: kind === "dependency" ? (d.blockers ?? []).filter((b) => b.noSignIn).map(refOf) : undefined, factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && (d.userLimit === "budget" || d.userLimit === "workspace_budget" || d.userLimit === "install_budget"), month: kind === "user_limit" && d.userLimit === "install_budget", workspace: kind === "user_limit" && /^workspace/.test(d.userLimit ?? ""),signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => (b.repo ? refOf(b) : b.issue)), dropped: kind === "dependency" ? (d.blockers ?? []).filter((b) => b.notPlanned).map(refOf) : undefined, unread: kind === "dependency" ? (d.blockers ?? []).filter((b) => b.noSignIn).map(refOf) : undefined, factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && (d.userLimit === "budget" || d.userLimit === "workspace_budget" || d.userLimit === "install_budget"), month: kind === "user_limit" && d.userLimit === "install_budget", workspace: kind === "user_limit" && /^workspace/.test(d.userLimit ?? ""),signIn, signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
@@ -838,6 +869,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(kind === "dependency" ? { blockers: (d.blockers ?? []).map(withBlockerUrl) } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
+    ...(signIn ? { signIn: true as const } : {}),
     ...(kind === "failed" && d.issueClosed ? { issueClosed: true as const } : {}),
     ...(kind === "failed" && d.splitMade ? { splitMade: d.splitMade } : {}),
     ...(kind === "cancelled" && d.ended ? { ended: true as const } : {}),
@@ -949,7 +981,7 @@ function stoppedStep(reason: string | undefined): string | undefined {
 
 export interface RunNextOptions extends NextData {
   /** Pending-job info from Scheduler.queue(). */
-  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" | "install_budget" };
+  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: QueueLimit };
   title?: string;
 }
 

@@ -1,4 +1,5 @@
 import type { Config, ProviderConfig } from "../config.js";
+import { loadFlow } from "../flow/load.js";
 import { AGENTS, type ClaudeStep, type Flow } from "../flow/schema.js";
 
 export type Agent = (typeof AGENTS)[number];
@@ -178,9 +179,40 @@ export function isQuotaError(error: string | undefined, output: string): boolean
 
 const AUTH_RE = /OAuth session expired|Failed to authenticate|not (?:logged|signed) in|run \/login|codex login|invalid api key|authentication_error|\b401\b/i;
 
+const SIGN_IN_RE = /Failed to refresh OAuth token|can['’]t save to the Keychain|OAuth token has expired/i;
+
+/** Claude's own token is gone or cannot be renewed: a new sign-in fixes it, also for a boxed step. */
+export function isSignInError(error: string | undefined, output: string): boolean {
+  return SIGN_IN_RE.test(`${error ?? ""}\n${output.length < 400 ? output : ""}`);
+}
+
 /** The agent CLI is signed out (expired login, missing key): nothing a retry or another prompt fixes. */
 export function isAuthError(error: string | undefined, output: string): boolean {
-  return AUTH_RE.test(`${error ?? ""}\n${output.length < 400 ? output : ""}`);
+  return AUTH_RE.test(`${error ?? ""}\n${output.length < 400 ? output : ""}`) || isSignInError(error, output);
+}
+
+/** How deep sub-flows are looked into (the engine's own limit, MAX_FLOW_DEPTH). */
+const SUB_FLOW_DEPTH = 5;
+
+/**
+ * Does a step of this flow, or of a sub-flow, run Claude on an anthropic provider? A step whose target or sub-flow
+ * cannot be worked out does not count: it reports its own error when it runs.
+ */
+export function needsClaudeSignIn(flow: Flow, config: Config, repo: string, load: typeof loadFlow = loadFlow, seen: ReadonlySet<string> = new Set(), depth = 0): boolean {
+  return flow.steps.some((step) => {
+    try {
+      if (step.type === "claude") {
+        const t = resolveTarget(step, flow, config, 1);
+        return t.agent === "claude" && t.provider.kind === "anthropic";
+      }
+      if (step.type !== "flow" || depth >= SUB_FLOW_DEPTH) return false;
+      const child = load(step.flow, repo);
+      if (seen.has(child.path)) return false;
+      return needsClaudeSignIn(child.flow, config, repo, load, new Set([...seen, child.path]), depth + 1);
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Variables that usually hold a provider key. Their values are hidden in output, and no list passes them to a user's step. */
