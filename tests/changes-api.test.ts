@@ -46,6 +46,12 @@ const plain = (v: unknown) => {
   const t = JSON.stringify(v);
   for (const bad of ["runId", "cost", "model", "labels", "Factory_go"]) expect(t).not.toContain(bad);
 };
+const listed = async (id: string) => {
+  const list = (await w.call(w.ann, "GET", "/api/changes?repo=acme/app")).json();
+  return list.changes.find((c: any) => c.id === id);
+};
+const issues = (v: any) => v.cards.map((c: any) => c.issue);
+const unpublished = (v: any) => expect(v.cards.some((c: any) => "issue" in c)).toBe(false);
 const edits = (n: number) => w.gh.ghLog().split("\n").filter((l) => l.startsWith(`gh issue edit ${n} `) && l.includes("--add-label"));
 
 describe("one change from start to build, on GitHub", () => {
@@ -68,6 +74,8 @@ describe("one change from start to build, on GitHub", () => {
     expect(cards.cards).toHaveLength(1);
     expect(cards.cards[0]).toMatchObject({ title: "Export a report", criteria: ["The export downloads a CSV file."] });
     expect(cards.cards[0].understood).toMatch(/^This is what I understood: /);
+    unpublished(cards);
+    unpublished(await listed(id));
     expect((await post(`/${id}/answers`, { answers: [] })).status).toBe(409);
 
     const b = await post(`/${id}/build`);
@@ -77,6 +85,12 @@ describe("one change from start to build, on GitHub", () => {
     expect(w.gh.bugIssues()).toHaveLength(1);
     expect(w.gh.bugIssues()[0]!.labels.map((l) => l.name)).toEqual(["Factory_go"]);
     expect(w.gh.bugIssues()[0]!.body).not.toContain("### Pictures");
+    const made = [w.gh.bugIssues()[0]!.number];
+    expect(issues(b.json())).toEqual(made);
+    for (const v of [await read(id), await listed(id)]) {
+      expect(issues(v)).toEqual(made);
+      plain(v);
+    }
     // A second call writes nothing.
     const before = w.gh.ghLog();
     expect((await post(`/${id}/build`)).json().state).toBe("planned");
@@ -146,6 +160,7 @@ describe("one change from start to build, on GitHub", () => {
     expect(made.every((i) => i.labels.length === 0)).toBe(true);
     expect(made[2]!.body).toMatch(/#101/);
     expect(made[2]!.body).toMatch(/#102/);
+    expect(issues(await read(id))).toEqual([101, 102, 103]);
     expect((await w.call(w.ann, "PUT", `/api/changes/${id}/cards/${v.cards[1].id}`, { title: "again" })).status).toBe(409);
     expect(w.gh.ghLog()).not.toContain("--add-label");
 

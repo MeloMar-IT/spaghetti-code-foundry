@@ -57,9 +57,22 @@ describe("changeView", () => {
     expect(v.cards?.map((c) => c.title)).toEqual(["Card 3", "Card 6"]);
     expect(v.cards?.[0]).toEqual({ id: uuid(3), title: "Card 3", understood: "This is what I understood: 3", criteria: ["It works."] });
   });
+  const published = (issue: number) => ({ issue, url: `https://github.com/acme/app/issues/${issue}`, at: AT });
+  it("shows the issue number of a published card only", () => {
+    const v = changeView(withCards({ drafts: [draft(3, { published: published(4) }), draft(4)] }), arch("idle"));
+    expect(v.state).toBe("cards");
+    expect(v.cards?.[0]?.issue).toBe(4);
+    expect(Object.keys(v.cards![0]!).sort()).toEqual(["criteria", "id", "issue", "title", "understood"]);
+    expect("issue" in v.cards![1]!).toBe(false);
+    expect(JSON.stringify(v)).not.toContain("url");
+    expect(JSON.stringify(v)).not.toContain("issues/4");
+  });
   it("is planned once every card is published, with whether a build was asked for", () => {
-    const published = { issue: 4, url: "https://github.com/acme/app/issues/4", at: AT };
-    const drafts = [draft(3, { published }), draft(4, { published })];
+    const drafts = [draft(3, { published: published(4) }), draft(4, { published: published(5) })];
+    expect(changeView(withCards({ drafts }), arch("idle")).cards).toEqual([
+      { id: uuid(3), title: "Card 3", understood: "This is what I understood: 3", criteria: ["It works."], issue: 4 },
+      { id: uuid(4), title: "Card 4", understood: "This is what I understood: 4", criteria: ["It works."], issue: 5 },
+    ]);
     expect(changeView(withCards({ drafts }), arch("idle"))).toMatchObject({ state: "planned", building: false });
     expect(changeView(withCards({ drafts, changeRequest: { build: true } }), arch("idle"))).toMatchObject({ state: "planned", building: true });
   });
@@ -78,6 +91,7 @@ describe("changeView", () => {
       changeView(session({ architect: failedAt("brief") }), { state: "failed", kind: "brief", runId: "run-9", reason: "cost $1 model x" }),
       changeView(withCards(), { ...arch("idle"), runId: "run-9" }),
       changeView(session({ brief, talk: talk([round([question(1)])]) }), arch("idle")),
+      changeView(withCards({ drafts: [draft(3, { published: published(4) }), draft(4, { published: published(5) })], changeRequest: { build: true } }), { ...arch("idle"), runId: "run-9" }),
     ];
     for (const v of states) {
       const t = JSON.stringify(v);

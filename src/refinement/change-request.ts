@@ -10,6 +10,7 @@ import { answer, emptyTalk, type Question } from "./talk.js";
 /**
  * A change request (#812): the plain, small view of a refinement session of the Simple view. This file maps the session to the
  * five states a person sees, works out the next architect step, and checks the bodies of the answers and of a card edit.
+ * A published card shows the number of the issue it became (that is public on GitHub).
  * Nothing here shows a cost, a model, a run id or a label.
  */
 export type ChangeState = "thinking" | "questions" | "cards" | "planned" | "stuck";
@@ -25,6 +26,8 @@ export interface ChangeCard {
   title: string;
   understood?: string;
   criteria: string[];
+  /** The number of the issue this card became; only on a published card. */
+  issue?: number;
 }
 export interface ChangeView {
   id: string;
@@ -76,7 +79,13 @@ function questionsOf(s: Session): ChangeQuestion[] {
   return openQuestions(s).map((q) => ({ id: q.id, text: q.text, why: q.why, options: q.options.map((o) => o.text), recommended: q.recommended }));
 }
 
-const cardOf = (d: Draft): ChangeCard => ({ id: d.id, title: d.title!.text, ...(d.understood ? { understood: d.understood.summary } : {}), criteria: d.criteria.map((c) => c.text) });
+const cardOf = (d: Draft): ChangeCard => ({
+  id: d.id,
+  title: d.title!.text,
+  ...(d.understood ? { understood: d.understood.summary } : {}),
+  criteria: d.criteria.map((c) => c.text),
+  ...(d.published ? { issue: d.published.issue } : {}),
+});
 
 /** The plain view of a change request (as settled: call `settleSession` first). The first rule that fits wins. */
 export function changeView(s: Session, arch: ArchitectView): ChangeView {
