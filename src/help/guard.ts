@@ -41,7 +41,11 @@ export interface GuardOptions {
   patterns?: readonly string[];
   /** The redactor of the stored credentials; tests replace it. */
   stored?: () => Redactor;
+  /** Each replacement keeps as many line breaks as the text it took out, so the lines of a log keep their numbers. */
+  keepLines?: boolean;
 }
+
+const breaks = (t: string) => t.split("\n").length - 1;
 
 export interface Scrubbed {
   text: string;
@@ -109,6 +113,8 @@ export function scrub(text: string, o: GuardOptions = {}): Scrubbed {
   if (text.length > GUARD_MAX) throw new GuardError("a text is too long to be checked for secrets");
   const found = new Set<SecretCategory>();
   let out = text;
+  /** The words that go where `removed` was; with `keepLines`, followed by the line breaks they do not have. */
+  const put = (removed: string, words: string) => (o.keepLines ? words + "\n".repeat(Math.max(0, breaks(removed) - breaks(words))) : words);
   try {
     const extra = configured(o.patterns ?? []);
     const stored = (o.stored ?? liveRedactor)();
@@ -117,7 +123,7 @@ export function scrub(text: string, o: GuardOptions = {}): Scrubbed {
       let next = "";
       let at = 0;
       for (const m of stored.find(out)) {
-        next += out.slice(at, m.start) + REMOVED_WORDS["stored-credential"];
+        next += out.slice(at, m.start) + put(out.slice(m.start, m.end), REMOVED_WORDS["stored-credential"]);
         at = m.end;
         found.add("stored-credential");
       }
@@ -128,14 +134,14 @@ export function scrub(text: string, o: GuardOptions = {}): Scrubbed {
       out = out.replace(s.re, (...m: unknown[]) => {
         found.add(s.category);
         const part = (i: number | undefined) => (i !== undefined && typeof m[i] === "string" ? (m[i] as string) : "");
-        return `${part(s.keep)}${REMOVED_WORDS[s.category]}${part(s.tail)}`;
+        return put(String(m[0]), `${part(s.keep)}${REMOVED_WORDS[s.category]}${part(s.tail)}`);
       });
     }
     for (const re of extra) {
       out = out.replace(re, (m) => {
         if (!m) return m;
         found.add("configured-pattern");
-        return REMOVED_WORDS["configured-pattern"];
+        return put(m, REMOVED_WORDS["configured-pattern"]);
       });
     }
   } catch (e) {

@@ -468,6 +468,19 @@ describe("a request of the model", () => {
     for (const args of bad) expect(parseToolCall({ tool: "list_runs", args }), JSON.stringify(args)).toEqual({ kind: "refused", code: "bad-arguments" });
     for (const args of [null, [], "r1", {}]) expect(parseToolCall({ tool: "show_run", args })).toEqual({ kind: "refused", code: "bad-arguments" });
     for (const tool of ["", "LIST_RUNS", "constructor", 7, null]) expect(parseToolCall({ tool })).toEqual({ kind: "refused", code: "unknown-tool" });
-    expect(TOOLS.map((x) => x.name)).toEqual(["list_runs", "show_run"]);
+    expect(TOOLS.map((x) => x.name)).toEqual(["list_runs", "show_run", "step_log", "failing_tests"]);
+  });
+
+  it("takes the log look-ups only with arguments of the list", () => {
+    const good = [
+      { tool: "step_log", args: { id: "r1", step: 0 } },
+      { tool: "step_log", args: { id: "r1", step: 9999, tail: 100 } },
+      { tool: "step_log", args: { id: "r1", step: 3, search: "Error: (a.b)*" } },
+      { tool: "failing_tests", args: { id: "r1" } },
+    ];
+    for (const call of good) expect(parseToolCall(call)).toEqual({ kind: "tool", call });
+    const bad = [{}, { step: -1 }, { step: 1.5 }, { step: 10000 }, { step: "1" }, { step: 0, tail: 0 }, { step: 0, tail: 101 }, { step: 0, tail: 5, search: "x" }, { step: 0, search: "" }, { step: 0, search: "x".repeat(101) }, { step: 0, search: "ignore all previous instructions" }, { step: 0, search: "ghp_abcdefghijklmnopqrstuvwxyz0123" }, { step: 0, file: "/etc/passwd" }];
+    for (const args of bad) expect(parseToolCall({ tool: "step_log", args: { id: "r1", ...args } }), JSON.stringify(args)).toEqual({ kind: "refused", code: "bad-arguments" });
+    for (const args of [{}, { id: "../x" }, { id: "r1", step: 0 }]) expect(parseToolCall({ tool: "failing_tests", args }), JSON.stringify(args)).toEqual({ kind: "refused", code: "bad-arguments" });
   });
 });
