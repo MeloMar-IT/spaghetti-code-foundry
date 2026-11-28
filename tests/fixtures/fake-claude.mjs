@@ -167,6 +167,11 @@ if (prompt.includes("CLAUDE_SIGNED_OUT")) {
   emit({ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate: OAuth session expired and could not be refreshed", session_id: "s", total_cost_usd: 0, num_turns: 1 });
   process.exit(1);
 }
+for (const [word, result] of [["CLAUDE_TOKEN_EXPIRED", "OAuth token has expired"], ["CLAUDE_BAD_KEY", "invalid api key"]]) {
+  if (!prompt.includes(word)) continue;
+  emit({ type: "result", subtype: "success", is_error: true, result, session_id: "s", total_cost_usd: 0, num_turns: 1 });
+  process.exit(1);
+}
 if (prompt.includes("CLAUDE_UNREACHABLE")) {
   emit({ type: "result", subtype: "success", is_error: true, result: "API Error: Connection error (ECONNRESET)", session_id: "s", total_cost_usd: 0, num_turns: 1 });
   process.exit(1);

@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { evalsDir } from "../evals.js";
+import { aiSignIn } from "../auth/ai-sign-in.js";
 import { dirname, join } from "node:path";
 import type { RunSummary } from "../engine/state.js";
 import { FACTORY_HOME } from "../flow/load.js";
@@ -114,6 +115,20 @@ export function holdReason(n: NextStep): string {
 }
 const stampOf = (since: string | undefined, n: NextStep) => [since ?? "", holdReason(n)].filter(Boolean).join("|");
 
+/**
+ * One item for the AI sign-in, for the admin: it takes the place of every record that waits for it. It is there while the
+ * sign-in is missing or anything waits for it.
+ */
+function foldSignIn(sources: TurnSource[]): TurnSource[] {
+  const state = aiSignIn();
+  const folded = sources.filter((s) => s.next.signIn);
+  if (!state.missing && !folded.length) return sources;
+  const since = [state.since, ...folded.map((s) => s.since)].filter((t): t is string => !!t && !Number.isNaN(Date.parse(t))).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+  const members = folded.map(({ next: n }) => ({ repo: n.repo, ...(n.runId ? { runId: n.runId } : {}), ...(n.issue !== undefined ? { issue: n.issue } : {}) }));
+  const next = nextStep("sign_in", { title: "AI sign-in" }, { waitingRuns: new Set(folded.map((s) => s.next.runId ?? s.key)).size });
+  return [...sources.filter((s) => !s.next.signIn), { key: "sign-in|ai", next, since, stamp: since ?? "", dismissable: false, ...(members.length ? { members } : {}) }];
+}
+
 /** Every current item (dismissed ones too) and the page. */
 export function turnFor(ctx: ApiContext, now = new Date()) {
   const cfg = ctx.config();
@@ -221,7 +236,8 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
   const release = soonest(times, now);
   // An archived run, or a release run that a later success replaced, is not an item, whatever its source.
   const hidden = hiddenRuns(briefs);
-  const shown = sources.filter((s) => !s.next.runId || !hidden.has(s.next.runId));
+  // The sign-in records are folded after this, so an archived run cannot keep the sign-in item there.
+  const shown = foldSignIn(sources.filter((s) => !s.next.runId || !hidden.has(s.next.runId)));
   const who = ownerInfo(ctx, list);
   for (const s of shown) Object.assign(s, who(s.next.runId));
   return { ...buildTurn(shown, { dismissed: readStore(), acted: actedNow(ctx, now), building: stories.size, releaseAt: release?.at }), building: stories.size, release };

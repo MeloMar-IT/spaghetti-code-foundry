@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, freeWhenBoxed, missingAgentKey, noAgentKey } from "../src/agents/boxed.js";
 import { providers, specOf, toTarget } from "../src/agents/targets.js";
+import { aiSignIn, resetAiSignIn } from "../src/auth/ai-sign-in.js";
 import { setAiToken } from "../src/auth/ai-token.js";
+import { SIGN_IN_REASON } from "../src/errors.js";
 import { addRepo } from "../src/auth/repos.js";
 import { createUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
@@ -220,6 +222,30 @@ describe("steps of runs", () => {
     expect(out(s, "vars")).toContain(`CODEX_HOME=${codexHome}`);
     rmSync(codexHome, { recursive: true, force: true });
     expect(out(s, "env")).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+  });
+
+  it("a user's boxed step whose token expired waits for the sign-in; a refused key still ends the run", async () => {
+    boxedOn();
+    resetAiSignIn();
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "t".repeat(20);
+    const expired = await go(flowOf(agent("a", "CLAUDE_TOKEN_EXPIRED")), user.id);
+    expect(expired).toMatchObject({ status: "stopped", reason: SIGN_IN_REASON });
+    const bad = await go(flowOf(agent("a", "CLAUDE_BAD_KEY")), user.id);
+    expect(bad.status).toBe("failed");
+    expect(bad.reason).toContain(noAgentKey(CLAUDE_NAMES));
+  });
+
+  // Q1 B: the account's role decides, not the sandbox
+  it("only an admin's sign-in error says that the Foundry has no sign-in, also without the sandbox", async () => {
+    process.env.SCF_USER_SANDBOX = "off";
+    resetAiSignIn();
+    const mine = await go(flowOf(agent("a", "CLAUDE_TOKEN_EXPIRED")), user.id);
+    expect({ status: mine.status, reason: mine.reason }).toEqual({ status: "stopped", reason: SIGN_IN_REASON });
+    expect(aiSignIn().missing).toBe(false);
+    const theirs = await go(flowOf(agent("a", "CLAUDE_TOKEN_EXPIRED")), admin.id);
+    expect(theirs).toMatchObject({ status: "stopped", reason: SIGN_IN_REASON });
+    expect(aiSignIn()).toMatchObject({ missing: true, why: "step" });
+    resetAiSignIn();
   });
 
   it("a signed-out Codex in an admin's run still pauses with the codex login text", async () => {

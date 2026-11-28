@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefsOf } from "./helpers/briefs.js";
 import { flowRepo } from "./helpers/flow-repo.js";
 import { ConfigSchema } from "../src/config.js";
+import { noteSignInError, resetAiSignIn } from "../src/auth/ai-sign-in.js";
+import { SIGN_IN_REASON } from "../src/errors.js";
 import { markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
+import { listedIssues, onHome } from "../src/your-turn.js";
 import { saveFindings } from "../src/monitor/findings.js";
 import { saveGuard, switchStories } from "../src/monitor/guard.js";
 import { markerHash } from "../src/monitor/story.js";
@@ -124,6 +127,40 @@ describe("Your turn owners", () => {
     expect(out).toHaveLength(1);
     expect("owner" in out[0]!).toBe(false);
     expect("ownerName" in out[0]!).toBe(false);
+  });
+});
+
+describe("Your turn and the AI sign-in", () => {
+  const missing = () => noteSignInError(undefined, { source: () => ({ source: "none" }), now: new Date(ago(0.1)) });
+  const stoppedRun = (id: string, issue: string, days: number, over: Record<string, unknown> = {}) =>
+    run(id, { status: "stopped", reason: SIGN_IN_REASON, source: "ui", vars: { github_repo: "acme/app", issue }, finishedAt: ago(days), ...over });
+  beforeEach(() => resetAiSignIn());
+  afterEach(() => resetAiSignIn());
+
+  it("raises one notice while it is missing, which cannot be dismissed", () => {
+    expect(items(stub())).toEqual([]);
+    missing();
+    expect(items(stub())).toMatchObject([{ key: "sign-in|ai", next: { kind: "sign_in", why: "The Foundry has no AI sign-in" }, dismissable: false, since: ago(0.1) }]);
+    expect(() => dismissTurn(stub(), "sign-in|ai", NOW)).toThrow(expect.objectContaining({ status: 404 }));
+  });
+
+  it("folds every run that waits for it into the one item, with or without a missing sign-in", () => {
+    const runs = [stoppedRun("r1", "1", 2), stoppedRun("r2", "2", 1)];
+    for (const isMissing of [false, true]) {
+      if (isMissing) missing();
+      const turn = turnFor(stub({ runs }), NOW);
+      expect(items(stub({ runs }))).toMatchObject([{ key: "sign-in|ai", next: { kind: "sign_in", why: "The Foundry has no AI sign-in; 2 runs wait for it" }, dismissable: false, since: ago(2) }]);
+      expect(turn.all).toHaveLength(1);
+      // what reads Your turn (the monitor, the help pages) still finds the runs and their stories
+      expect(listedIssues(turn.all).map((i) => i.issue).sort()).toEqual([1, 2]);
+      for (const runId of ["r1", "r2"]) expect(onHome(turn, { runId })).toBe(true);
+    }
+  });
+
+  it("does not stay for an archived run", () => {
+    const archived = stoppedRun("r1", "1", 1, { archivedAt: ago(0.5) });
+    expect(items(stub({ runs: [archived] }))).toEqual([]);
+    expect(items(stub({ runs: [archived, stoppedRun("r2", "2", 1)] }))).toMatchObject([{ next: { why: "The Foundry has no AI sign-in; 1 run waits for it" } }]);
   });
 });
 

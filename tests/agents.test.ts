@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { analystSet, claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run.js";
-import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, stepRoute, toTarget } from "../src/agents/targets.js";
+import { isAuthError, isQuotaError, isSignInError, isTransientError, KNOWN_KEY_VARS, needsClaudeSignIn, parseSpec, providerKeyVars, resolveTarget, stepRoute, toTarget } from "../src/agents/targets.js";
+import { aiSignIn, resetAiSignIn } from "../src/auth/ai-sign-in.js";
+import { envAiTokenVar } from "../src/auth/ai-token.js";
+import { SIGN_IN_REASON } from "../src/errors.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { PROJECT_BUDGET_REASON, liveLogFile } from "../src/engine/state.js";
@@ -459,8 +462,57 @@ steps:
 `;
     const s = await runFlow(parseFlow(flow), { task: "t", repo, runsDir, claudeBin, config: cfg(), vars: { p: "CLAUDE_SIGNED_OUT" } });
     expect(s.status).toBe("stopped"); // paused and retried later, not failed
-    expect(s.reason).toBe('signed out — the Claude Code login has expired. Sign in again: run "claude" in a terminal and type /login. The run continues by itself after that.');
+    expect(s.reason).toBe(SIGN_IN_REASON);
     expect(s.state.next).toBe("b");
+  });
+
+  it("stops as waiting, not failed, when the token expired", async () => {
+    resetAiSignIn();
+    const s = await start(`
+name: t
+workspace: inplace
+steps:
+  - {id: b, type: claude, prompt: "CLAUDE_TOKEN_EXPIRED", on_failure: end}
+`);
+    expect(s).toMatchObject({ status: "stopped", reason: SIGN_IN_REASON, state: { next: "b" } });
+    // no token anywhere and an admin's (ownerless) run: the Foundry has no sign-in
+    expect(aiSignIn().missing).toBe(!envAiTokenVar(process.env));
+    resetAiSignIn();
+  });
+
+  it("knows the sign-in errors, but not a long answer that only quotes them", () => {
+    for (const m of ["Failed to refresh OAuth token", "Claude Code can't save to the Keychain", "Claude Code can’t save to the Keychain", "OAuth token has expired"]) {
+      expect(isSignInError(m, ""), m).toBe(true);
+      expect(isAuthError(undefined, m), m).toBe(true);
+      expect(isSignInError(undefined, `${"x".repeat(500)} ${m}`), m).toBe(false);
+    }
+    expect(isSignInError("invalid api key", "")).toBe(false);
+  });
+
+  it("knows which flows need the Claude sign-in, sub-flows included", () => {
+    const flow = (steps: string, name = "t") => parseFlow(`name: ${name}\nsteps:\n${steps}`);
+    const shell = flow('  - {id: a, type: shell, run: "true"}', "shell");
+    const claude = flow("  - {id: a, type: claude, prompt: x}", "claude");
+    const flows: Record<string, ReturnType<typeof flow>> = {
+      shell,
+      claude,
+      codex: flow("  - {id: a, type: claude, agent: codex, prompt: x}", "codex"),
+      loop: flow("  - {id: a, type: flow, flow: loop}", "loop"),
+      outer: flow("  - {id: a, type: flow, flow: claude}", "outer"),
+    };
+    const load = (name: string) => {
+      if (!flows[name]) throw new Error("no such flow");
+      return { flow: flows[name]!, path: `/flows/${name}.yaml` };
+    };
+    const needs = (f: ReturnType<typeof flow>, c = cfg()) => needsClaudeSignIn(f, c, "/repo", load);
+    expect(needs(shell)).toBe(false);
+    expect(needs(claude)).toBe(true);
+    for (const model of ["codex", "ollama:q", "nope:codex:ollama"]) expect(needs(flow(`  - {id: a, type: claude, model: "${model}", prompt: x}`)), model).toBe(model.startsWith("nope"));
+    expect(needs(flow("  - {id: a, type: claude, provider: nope, prompt: x}"))).toBe(false);
+    expect(needs(claude, cfg({ router: { rules: [{ step: "a", model: "codex" }] } }))).toBe(false);
+    for (const [sub, want] of [["shell", false], ["codex", false], ["claude", true], ["outer", true], ["loop", false], ["gone", false]] as const) {
+      expect(needs(flow(`  - {id: a, type: flow, flow: ${sub}}`)), sub).toBe(want);
+    }
   });
 
   it("recognises every wording of a plan limit (usage, session, weekly)", async () => {

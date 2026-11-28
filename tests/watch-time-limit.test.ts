@@ -1,6 +1,9 @@
-import { join } from "node:path";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { aiTokenPath } from "../src/auth/ai-token.js";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
+import { SIGN_IN_REASON } from "../src/errors.js";
 import { timeLimitReason } from "../src/engine/auto-retry.js";
 import { loadRun, saveRun } from "../src/engine/state.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -97,6 +100,32 @@ describe("a story that ran out of time", () => {
     await w.tick();
     expect(held.queue().pending).toHaveLength(0);
     expect(notes()).toHaveLength(0);
+  });
+
+  it("resumes a run that stopped for the AI sign-in as soon as it is ready, without the 30-minute wait", async () => {
+    const s = loadRun(runs(), runId)!;
+    Object.assign(s, { reason: SIGN_IN_REASON, finishedAt: new Date(Date.now() - 60_000).toISOString(), timeLimits: undefined });
+    saveRun(s);
+    await mk(held, {}, { signInReady: () => false }).tick();
+    expect(held.queue().pending).toHaveLength(0);
+    await mk(held, {}, { signInReady: () => true }).tick();
+    expect(held.queue().pending).toMatchObject([{ runId, kind: "resume" }]);
+  });
+
+  it("by default knows that a token was set after the run stopped", async () => {
+    const s = loadRun(runs(), runId)!;
+    Object.assign(s, { reason: SIGN_IN_REASON, finishedAt: new Date(Date.now() - 60_000).toISOString(), timeLimits: undefined });
+    saveRun(s);
+    await mk(held).tick();
+    expect(held.queue().pending).toHaveLength(0);
+    mkdirSync(dirname(aiTokenPath()), { recursive: true });
+    writeFileSync(aiTokenPath(),JSON.stringify({ version: 1, setAt: new Date().toISOString() }));
+    try {
+      await mk(held).tick();
+      expect(held.queue().pending).toMatchObject([{ runId, kind: "resume" }]);
+    } finally {
+      rmSync(aiTokenPath(), { force: true });
+    }
   });
 
   it("does not comment when the run stopped for another reason", async () => {

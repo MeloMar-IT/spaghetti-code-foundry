@@ -28,8 +28,8 @@ Goal: the owner can say what to do next, from the screen alone, within 10 second
 - Why: `The usage limit is reached`
 
 **5.** Title: `Story 55`
-- Action: `Sign in again: run "claude" in a terminal and type /login`
-- Why: `Claude Code is signed out (its login has expired)`
+- Action: `Sign in again: run "codex login"`
+- Why: `Codex is signed out (its login has expired)`
 
 ## Result
 

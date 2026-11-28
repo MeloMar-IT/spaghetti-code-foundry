@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { isTimedOut } from "../errors.js";
+import { isTimedOut, SIGN_IN_REASON } from "../errors.js";
+import { noteSignInError } from "../auth/ai-sign-in.js";
 import type { StepRecord } from "../engine/state.js";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
@@ -8,7 +9,7 @@ import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js"
 import type { ProcessMeter } from "../steps/process.js";
 import type { SlotWaitWatch } from "../steps/slot-waits.js";
 import { DEFAULT_PERMISSION_MODE, autonomyStop, pushLogFor, refuseByPolicy, slotWaitsFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
-import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, heldWorkspace, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, heldWorkspace, isolationEnv, stepIsolation, tokenVarNames, userAccount } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
@@ -35,7 +36,7 @@ import { GuardError } from "../help/guard.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
 import { discoverJavaHome, javaStandIn } from "./java-gate.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
-import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, stepRoute, type Target } from "./targets.js";
+import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isSignInError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, stepRoute, type Target } from "./targets.js";
 import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
@@ -720,13 +721,23 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     // Signed out: pause like a usage limit (the run is tried again by itself) instead of failing.
     if (isAuthError(r.error, r.output)) {
+      const ai = target.agent === "claude" && target.provider.kind === "anthropic";
       // A boxed step has no login of the Mac to renew: the server's key is missing or wrong, and the run ends here.
-      if (boxed && !LOCAL_KINDS.includes(target.provider.kind)) {
+      // A Claude token that expired or cannot be renewed is different: a new sign-in fixes it, so that run waits.
+      if (boxed && !LOCAL_KINDS.includes(target.provider.kind) && !(ai && isSignInError(r.error, r.output))) {
         engine.accessFailed = true;
         return { ...r, ...tries(), error: noAgentKey(agentKeyNames(target)) };
       }
-      const cli = target.agent === "codex" ? 'run "codex login"' : 'run "claude" in a terminal and type /login';
-      return { ...r, ...tries(), limited: true, error: `signed out — the ${target.agent === "codex" ? "Codex" : "Claude Code"} login has expired. Sign in again: ${cli}. The run continues by itself after that.` };
+      if (ai) {
+        // Only an admin's run says that the Foundry has no sign-in: a user's run waits alone (also without the sandbox).
+        if (userAccount(engine.summary.owner) === undefined) noteSignInError((m) => engine.log(`    ! ${m}`));
+        return { ...r, ...tries(), limited: true, error: SIGN_IN_REASON };
+      }
+      const error =
+        target.agent === "codex"
+          ? 'signed out — the Codex login has expired. Sign in again: run "codex login". The run continues by itself after that.'
+          : `signed out — Claude Code could not sign in to the ${target.providerName} provider. Check its key, or run "claude" in a terminal and type /login. The run continues by itself after that.`;
+      return { ...r, ...tries(), limited: true, error };
     }
     // Still unavailable after the retries: pause the run like a limit (it is tried again later).
     if (!isLimitError(r.error, r.output) && !isTransientError(r.error, r.output)) return refusedCommandStop(step, scope, engine, { ...r, ...tries() });

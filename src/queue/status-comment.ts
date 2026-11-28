@@ -154,7 +154,7 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
           if (rec.kind === h.next.kind) return rec;
         }
         // a watcher only makes a user_limit hold for the daily budget
-        return nextStep(h.next.kind, { ...base, runId: h.next.runId }, { ...data, failedLabel: v.failedLabel, forUser: true, cause: h.next.cause, userLimit: h.next.kind === "user_limit" ? "budget" : undefined });
+        return nextStep(h.next.kind, { ...base, runId: h.next.runId }, { ...data, failedLabel: v.failedLabel, forUser: true, cause: h.next.cause, userLimit: h.next.signIn ? "sign_in" : h.next.kind === "user_limit" ? "budget" : undefined });
       };
 
       const releases = run?.status === "succeeded" && !!v.releaseAt?.(run);

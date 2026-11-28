@@ -2007,6 +2007,9 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — the base branch has failing tests | The tests on the base branch fail, so this story waits. Nothing to do — it starts by itself when a new commit lands. |
 | paused — usage limit | The usage limit of the AI account is reached. Nothing to do — the Foundry tries again after the limit resets. |
 | paused — signed out | The Foundry is signed out of its AI account. Sign in again — the run then goes on by itself. |
+| paused — no AI sign-in | The Foundry has no AI sign-in, so AI steps cannot run. Run claude setup-token, then scf auth set-token — the run then goes on by itself. |
+| waiting for the sign-in | The Foundry has no AI sign-in, and only an admin can set it. Nothing to do — it goes on by itself once it is set. |
+| waiting for you — AI sign-in | The Foundry has no AI sign-in, so AI jobs wait in the queue and runs that need it are paused. Run claude setup-token, then scf auth set-token — the work then goes on by itself. |
 | paused — AI service not reachable | The AI service could not be reached. Nothing to do — the Foundry tries again later. |
 | paused — daily budget | Today's budget is used up. Nothing to do — it goes on tomorrow. |
 | paused — the project's limit for today is reached | This project did as much work today as its daily limit allows. Nothing to do — it goes on by itself tomorrow. |
@@ -8271,6 +8274,10 @@ scf auth clear-token    # removes the item
 ```
 
 `set-token` takes no operand or option; anything else is refused before it reads the token. The item is a generic password, service `spaghetti-code-foundry`, account `claude-oauth-token`. The token must be 8 to 4096 characters with no spaces or control characters. The server reads it at start and at each Claude step on `anthropic`, which gets it as `CLAUDE_CODE_OAUTH_TOKEN`. If `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set, that one wins and nothing changes. Codex and other providers never get this token. Each set and clear writes one audit line without the value. Steps of your runs can read the token through the agent's shell tool, so keep it for accounts you trust.
+
+**When the AI sign-in is missing.** Claude steps need a token, or Claude Code's own login on this Mac (`claude /login`). When neither works, the Foundry does not fail the runs. AI jobs wait in the queue, shell-only flows still run, and **Your turn** shows one item for admins, **AI sign-in**: "The Foundry has no AI sign-in", with the two steps `claude setup-token`, then `scf auth set-token`. Every run that stopped on the sign-in is listed under that one item. A user's own waiting run says "waiting for the sign-in" and shows no steps; an admin must set the token. The sign-in is treated as missing only when no token and no key variable is set, and Claude Code's start check says it is signed out, or a step stopped on a sign-in error (`Failed to refresh OAuth token`, `can't save to the Keychain`, `OAuth token has expired`). An install that works with Claude Code's own login is not held. A sign-in error from a user's run stops only that run and does not hold the queue for everyone.
+
+Once a token is set, in this process or another (for example `scf auth set-token` in a terminal), the held jobs start by themselves within about 30 seconds, and runs that stopped on the sign-in resume: runs of an issues watcher at its next check, runs started by hand within about a minute. You do not restart the server.
 
 **Stored credentials.** A token or an ssh key can be stored through the API
 (`POST /api/credentials`); you cannot add one in the web interface, and runs do not use them yet.

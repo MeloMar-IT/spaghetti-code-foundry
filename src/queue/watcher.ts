@@ -4,7 +4,8 @@ import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { isTimeLimitNote, retryComment, retryNoteMarker } from "../engine/auto-retry.js";
 import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isProjectBudgetStop, isTimeLimitStop, isUserBudgetStop, loadRun, readLiveLog, runDirOf, spentToday, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
-import { errorLine, explainError } from "../errors.js";
+import { errorLine, explainError, isSignInStop } from "../errors.js";
+import { signInRetry } from "../auth/ai-sign-in.js";
 import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
@@ -145,6 +146,8 @@ export interface WatcherDeps {
   repoGh?: (repoId: string) => RepoGhIdentity;
   /** Is every unknown skill of a skill-gap stop in the catalogue now? Without it, such a run is never resumed here. */
   skillReady?: (run: RunSummary) => boolean;
+  /** May a run that stopped for the AI sign-in go on now? Default: `signInRetry`. */
+  signInReady?: (run: RunSummary) => boolean;
 }
 
 export interface WatcherStatus {
@@ -1924,7 +1927,7 @@ export class Watcher {
         const resumable = run.status === "cancelled" || /interrupted/.test(run.reason ?? "") ||
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
           (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner) && (!isProjectBudgetStop(run.reason) || projectLeft)) ||
-          (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
+          (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && (isSignInStop(run.reason) ? (this.d.signInReady ?? signInRetry)(run) : retryLimitAfter(run))) ||
           (run.status === "stopped" && isSkillGapStop(run) && !paused && this.areaMayBeFree(run) && this.d.skillReady?.(run) === true) ||
           (run.status === "stopped" && isPaused(run) && !isSkillGapStop(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run) &&
             // a retry after a time limit waits for the budget like any run that starts again (it would stop at its first step)
@@ -1950,7 +1953,7 @@ export class Watcher {
           // the project reached its daily cap: the run would stop at its first step (#792)
           holds.push(this.held("project_limit", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isProjectBudgetStop(run.reason) ? "the project's limit allows it again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : isTimeLimitStop(run.reason) ? "trying again after it ran out of time" : isSkillGapStop(run) ? "the missing skill is in the catalogue now" : "can continue now"), undefined, false, first, undefined, isTimeLimitStop(run.reason));
+          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isProjectBudgetStop(run.reason) ? "the project's limit allows it again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : isSignInStop(run.reason) ? "trying again with the AI sign-in" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : isTimeLimitStop(run.reason) ? "trying again after it ran out of time" : isSkillGapStop(run) ? "the missing skill is in the catalogue now" : "can continue now"), undefined, false, first, undefined, isTimeLimitStop(run.reason));
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
