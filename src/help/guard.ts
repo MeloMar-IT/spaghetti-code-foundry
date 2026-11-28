@@ -220,3 +220,27 @@ export function guardExcerpt(text: string, o: GuardOptions = {}): GuardedExcerpt
   }
   return withheld ? { text: "", removed: s.removed, withheld } : { ...s, withheld };
 }
+
+/** The words that stand for a short text that reads like an order, or that cannot be checked. */
+export const HELD_BACK_LINE = "(held back)";
+
+/** Every way a line can end, besides the plain line feed. */
+const LINE_BREAKS = /\r\n|[\r\v\f\x85\p{Zl}\p{Zp}]/gu;
+
+/**
+ * A copied text as one short line. The guard sees the whole original text with its line breaks first: a made-up role
+ * turn is only found at the start of a line, so after flattening nothing could hold it back any more. Only then is the
+ * text made one line and cut to `max`. A text too long to check is held back. Throws `GuardError` like `scrub`.
+ */
+export function guardedLine(v: unknown, o: GuardOptions = {}, max: number = GUARD_MAX): string {
+  const text = String(v ?? "");
+  if (text.length > GUARD_MAX) return HELD_BACK_LINE;
+  const g = guardExcerpt(text.replace(LINE_BREAKS, "\n"), o);
+  if (g.withheld) return HELD_BACK_LINE;
+  const line = g.text.replace(/<!--[\s\S]*?(?:-->|$)/g, " ").replace(/[\s\p{Cc}]+/gu, " ").trim();
+  // dropping a marker or a line break can join words into an order that the whole text did not show
+  if (looksLikeOrders(line)) return HELD_BACK_LINE;
+  if (line.length <= max) return line;
+  // never half of a character that takes two places
+  return `${line.slice(0, max).replace(/[\uD800-\uDBFF]$/, "")}…`;
+}

@@ -8,6 +8,8 @@ import { sinceMs } from "../since-date.js";
 import { runsFor } from "./api-runs.js";
 import { currentAccount, runWithNext } from "./help-context.js";
 import { STATE_EXCERPT_MAX, stateId } from "./help-evidence.js";
+import { githubStatusTool } from "./help-github-status.js";
+import { issuePullsTool, issueTool, type GithubToolOptions } from "./help-github.js";
 import { NOT_FOUND, failingTests, stepLog } from "./help-log-tools.js";
 import { nextFor, ownRecord } from "./next.js";
 import { authorize, findRule } from "./permissions.js";
@@ -134,7 +136,7 @@ async function showRun(ctx: ApiContext, asker: Asker, id: string, guard: GuardOp
 }
 
 /** The look-ups of this server. A `GuardError` goes on to the caller: then nothing more may be sent. */
-export function helpTools(ctx: ApiContext): ToolRunner {
+export function helpTools(ctx: ApiContext, options: GithubToolOptions = {}): ToolRunner {
   const run = (asker: Asker, call: ToolCall, guard: GuardOptions): Promise<ToolResult> => {
     switch (call.tool) {
       case "list_runs":
@@ -145,6 +147,12 @@ export function helpTools(ctx: ApiContext): ToolRunner {
         return stepLog(ctx, asker, call.args, guard);
       case "failing_tests":
         return failingTests(ctx, asker, call.args, guard);
+      case "issue":
+        return issueTool(ctx, asker, call.args, guard, options);
+      case "issue_pulls":
+        return issuePullsTool(ctx, asker, call.args, guard, options);
+      case "github_status":
+        return githubStatusTool(guard, options);
     }
   };
   return async (asker, call) => {

@@ -100,6 +100,36 @@ case "$all" in "api repos/"*"/issues/comments/"*)
   esac
   echo '{}'; exit 0 ;;
 esac
+# The look-ups of Ask Foundry (their own field lists and paths; nothing else is changed by these):
+# $FAKE_GH_LOOKUP_PULLS (JSON {"owner/name#n": <a pr list entry>}): "api repos/R/pulls/n --method GET" answers that pull request, and a
+#   "pr list --head B" finds it by its branch too, although it is not in $FAKE_GH_LOOKUP_PRS (the newest 100 of the list).
+# $FAKE_GH_ISSUE_VIEW (JSON {"owner/name#4": {number,title,state,labels,comments}}): "issue view <n> --json number,title,state,labels,comments".
+# $FAKE_GH_CLOSING (JSON {"owner/name#4": [references]}, default none): "issue view <n> --json closedByPullRequestsReferences"; an issue that is
+#   neither there nor in $FAKE_GH_ISSUE_VIEW is "Could not resolve to an Issue". $FAKE_GH_CLOSING_UNKNOWN=1: an old gh, "Unknown JSON field".
+# $FAKE_GH_TIMELINE (JSON {"owner/name#4": [events]}, default none): "api repos/o/n/issues/4/timeline?per_page=100&page=P --method GET", one page.
+# $FAKE_GH_LOOKUP_PRS (JSON {"owner/name": [pull requests, newest first]}): "pr list --json …isCrossRepository" and "…statusCheckRollup". It
+#   honours --head, --limit and --state (without --state only open ones), answers only the asked fields, and fails on --search.
+LOOKUP_JS='const [what,...a]=process.argv.slice(1),e=process.env;const read=(n)=>JSON.parse(e[n]||"{}");const die=(m)=>{console.error(m);process.exit(1)};
+const opt=(n)=>{const i=a.indexOf(n);return i<0?undefined:a[i+1]};
+const none=(n)=>die("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");
+if(what==="view"){const k=opt("--repo")+"#"+a[2];const i=read("FAKE_GH_ISSUE_VIEW")[k];
+ if(opt("--json")==="closedByPullRequestsReferences"){if(e.FAKE_GH_CLOSING_UNKNOWN)die("Unknown JSON field: \"closedByPullRequestsReferences\"");const c=read("FAKE_GH_CLOSING")[k];if(c===undefined&&i===undefined)none(a[2]);console.log(JSON.stringify({closedByPullRequestsReferences:c||[]}))}
+ else{if(i===undefined)none(a[2]);console.log(JSON.stringify(i))}}
+if(what==="timeline"){const m=/^repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/timeline\?(.*)$/.exec(a[1]);const q=new URLSearchParams(m[3]);const pp=Number(q.get("per_page")||30),p=Number(q.get("page")||1);
+ console.log(JSON.stringify((read("FAKE_GH_TIMELINE")[m[1]+"#"+m[2]]||[]).slice((p-1)*pp,p*pp)))}
+if(what==="pull"){const m=/^repos\/([^/]+\/[^/]+)\/pulls\/(\d+)$/.exec(a[1]);const p=m&&read("FAKE_GH_LOOKUP_PULLS")[m[1]+"#"+m[2]];if(!p){console.error("gh: Not Found (HTTP 404)");process.exit(1)}
+ console.log(JSON.stringify({number:p.number,state:String(p.state).toLowerCase(),merged_at:p.state==="MERGED"?"2026-01-01T00:00:00Z":null,title:p.title,head:{ref:p.headRefName}}))}
+if(what==="pulls"){if(a.includes("--search"))die("fake gh: --search is not supported here");const repo=opt("--repo");const all=read("FAKE_GH_LOOKUP_PRS")[repo];if(all===undefined)die("GraphQL: Could not resolve to a Repository with the name. (repository)");
+ const state=opt("--state")||"open",head=opt("--head"),fields=opt("--json").split(",");
+ const pool=head===undefined?all:all.concat(Object.keys(read("FAKE_GH_LOOKUP_PULLS")).filter(k=>k.startsWith(repo+"#")).map(k=>read("FAKE_GH_LOOKUP_PULLS")[k]));
+ const l=pool.filter(x=>(state==="all"||String(x.state).toLowerCase()===state)&&(head===undefined||x.headRefName===head)).slice(0,Number(opt("--limit")||30));
+ console.log(JSON.stringify(l.map(x=>Object.fromEntries(fields.map(f=>[f,x[f]])))))}'
+case "$1 $2 $*" in
+  "issue view "*"--json number,title,state,labels,comments"|"issue view "*"--json closedByPullRequestsReferences") node -e "$LOOKUP_JS" view "$@"; exit $? ;;
+  "api repos/"*"/timeline?per_page="*" --method GET") node -e "$LOOKUP_JS" timeline "$@"; exit $? ;;
+  "api repos/"*"/pulls/"[0-9]*" --method GET") node -e "$LOOKUP_JS" pull "$@"; exit $? ;;
+  "pr list "*"isCrossRepository"*|"pr list "*"--json number,statusCheckRollup"|"pr list "*"headRefName,url,statusCheckRollup") node -e "$LOOKUP_JS" pulls "$@"; exit $? ;;
+esac
 # $FAKE_GH_JQ=1 (with FAKE_GH_STORIES and FAKE_GH_COMMENTS_FROM_LOG): the text steps run the REAL jq programs, as gh does. Needs a jq binary.
 #   "issue view <n> --json F [--jq|-q P]" for an issue of $FAKE_GH_LOG.issues.json builds the object gh builds for the fields F
 #   (number, title, body, url, state, labels, createdAt, updatedAt, closedAt, comments; sorted keys; comments with all the fields gh exports,

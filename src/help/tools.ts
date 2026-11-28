@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { sinceMs } from "../since-date.js";
 import { guardExcerpt, type GuardOptions } from "./guard.js";
 import type { Asker, Source } from "./turn.js";
@@ -9,7 +10,7 @@ import type { Asker, Source } from "./turn.js";
  * (`server/help-tools.ts`). A model call itself never has a tool: a request is only a text it answers with.
  */
 
-export const TOOL_NAMES = ["list_runs", "show_run", "step_log", "failing_tests"] as const;
+export const TOOL_NAMES = ["list_runs", "show_run", "step_log", "failing_tests", "issue", "issue_pulls", "github_status"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
 const ListRunsSchema = z
@@ -44,17 +45,46 @@ export type StepLogArgs = z.infer<typeof StepLogSchema>;
 const FailingTestsSchema = z.object({ id: ShowRunSchema.shape.id }).strict();
 export type FailingTestsArgs = z.infer<typeof FailingTestsSchema>;
 
+/** A repository as a look-up names it: GitHub's `owner/name` (never a `.` or `..` part) or a local project. */
+const RepoName = z
+  .string()
+  .max(200)
+  .refine((v) => isLocalRepoName(v) || (/^[\w.-]+\/[\w.-]+$/.test(v) && !v.split("/").some((p) => p === "." || p === "..")));
+/** The number of an issue; digits as text are taken too. */
+const IssueNumber = z.union([z.number(), z.string().regex(/^\d{1,9}$/).transform(Number)]).pipe(z.number().int().min(1).max(999_999_999));
+
+/** A branch name that may stand in a command line: it cannot become an option. */
+export const BRANCH_PATTERN = /^(?!-)(?!.*\.\.)[\w./-]{1,200}$/;
+
+/** The most comments one look-up of an issue shows, and how many it shows when none is asked for. */
+export const COMMENTS_MAX = 6;
+export const COMMENTS_DEFAULT = 5;
+
+const IssueSchema = z.object({ repo: RepoName, number: IssueNumber, comments: z.number().int().min(1).max(COMMENTS_MAX).optional() }).strict();
+export type IssueArgs = z.infer<typeof IssueSchema>;
+
+const IssuePullsSchema = z
+  .object({ repo: RepoName, issue: IssueNumber.optional(), branch: z.string().regex(BRANCH_PATTERN).optional() })
+  .strict()
+  .refine((a) => (a.issue === undefined) !== (a.branch === undefined));
+export type IssuePullsArgs = z.infer<typeof IssuePullsSchema>;
+
+const GithubStatusSchema = z.object({}).strict();
+
 export type ToolCall =
   | { tool: "list_runs"; args: ListRunsArgs }
   | { tool: "show_run"; args: ShowRunArgs }
   | { tool: "step_log"; args: StepLogArgs }
-  | { tool: "failing_tests"; args: FailingTestsArgs };
+  | { tool: "failing_tests"; args: FailingTestsArgs }
+  | { tool: "issue"; args: IssueArgs }
+  | { tool: "issue_pulls"; args: IssuePullsArgs }
+  | { tool: "github_status"; args: z.infer<typeof GithubStatusSchema> };
 
 export interface ToolDef {
   name: ToolName;
   readOnly: true;
-  /** The API call that reads the same thing: its rule decides who may make the look-up. */
-  call: { method: "GET"; path: "runs" | "runs/:id" | "runs/:id/transcript/:n" };
+  /** The API call that reads the same thing: its rule decides who may make the look-up. None: it reads a public page. */
+  call?: { method: "GET"; path: "runs" | "runs/:id" | "runs/:id/transcript/:n" | "your-turn/detail" };
   description: string;
   args: z.ZodType;
 }
@@ -87,6 +117,26 @@ export const TOOLS: readonly ToolDef[] = [
     call: { method: "GET", path: "runs/:id/transcript/:n" },
     description: 'The failing tests of one run, from its test log, with the error text around them and the end of that log. Only of a run this person started and only when their role may open the transcript of a step. `args`: "id" (the id of the run).',
     args: FailingTestsSchema,
+  },
+  {
+    name: "issue",
+    readOnly: true,
+    call: { method: "GET", path: "your-turn/detail" },
+    description: `An issue of a repository of this person: title, state, labels and its newest comments. \`args\`: "repo" ("owner/name", or a local project), "number", and optionally "comments" (1 to ${COMMENTS_MAX}, default ${COMMENTS_DEFAULT}).`,
+    args: IssueSchema,
+  },
+  {
+    name: "issue_pulls",
+    readOnly: true,
+    call: { method: "GET", path: "your-turn/detail" },
+    description: 'The pull requests of an issue or of a branch: number, state, title, branch and a summary of the checks. `args`: "repo" ("owner/name") and exactly one of "issue" (its number) or "branch".',
+    args: IssuePullsSchema,
+  },
+  {
+    name: "github_status",
+    readOnly: true,
+    description: "GitHub's public status page: the overall status, open incidents and parts that do not work normally. No `args`.",
+    args: GithubStatusSchema,
   },
 ];
 
@@ -130,7 +180,7 @@ export function parseToolCall(raw: unknown, guard: GuardOptions = {}): ParsedCal
   const args = def.args.safeParse(o.args === undefined ? {} : o.args);
   if (!args.success) return refused("bad-arguments");
   const values = args.data as Record<string, unknown>;
-  for (const key of ["q", "repo", "flow", "search"]) {
+  for (const key of ["q", "repo", "flow", "search", "branch"]) {
     const v = values[key];
     if (typeof v !== "string") continue;
     const g = guardExcerpt(v, guard);

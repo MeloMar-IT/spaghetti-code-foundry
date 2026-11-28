@@ -468,7 +468,7 @@ describe("a request of the model", () => {
     for (const args of bad) expect(parseToolCall({ tool: "list_runs", args }), JSON.stringify(args)).toEqual({ kind: "refused", code: "bad-arguments" });
     for (const args of [null, [], "r1", {}]) expect(parseToolCall({ tool: "show_run", args })).toEqual({ kind: "refused", code: "bad-arguments" });
     for (const tool of ["", "LIST_RUNS", "constructor", 7, null]) expect(parseToolCall({ tool })).toEqual({ kind: "refused", code: "unknown-tool" });
-    expect(TOOLS.map((x) => x.name)).toEqual(["list_runs", "show_run", "step_log", "failing_tests"]);
+    expect(TOOLS.map((x) => x.name)).toEqual(["list_runs", "show_run", "step_log", "failing_tests", "issue", "issue_pulls", "github_status"]);
   });
 
   it("takes the log look-ups only with arguments of the list", () => {
