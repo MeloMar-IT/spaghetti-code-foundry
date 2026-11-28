@@ -5,6 +5,7 @@ import { defaultGo, filterBar, filterEmpty, sameRepo } from "./filters.js";
 import { pageViews } from "./views.js";
 import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
+import { splitHash } from "./ia.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
 import { createRunHeader } from "./run-header.js";
 import { approveLabel } from "./run-checks.js";
@@ -446,8 +447,16 @@ export function actions(s, run = () => {}) {
   return b;
 }
 
-/** Live run page. Returns a cleanup function that closes the event stream. */
-export function renderRunDetail(main, runId, { admin = true, onName = null } = {}) {
+/** The step an address asks for (`…?step=3`), or null. */
+const stepOfHash = (hash) => new URLSearchParams(splitHash(hash).query).get("step");
+
+/**
+ * Live run page. Returns a cleanup function that closes the event stream. `step`: a history index to open under
+ * Details › Steps; without it an administrator's page reads it from the address.
+ */
+export function renderRunDetail(main, runId, { admin = true, onName = null, step = null } = {}) {
+  const wanted = String(step ?? (admin ? stepOfHash(globalThis.location?.hash) : null) ?? "");
+  let asked = /^\d{1,4}$/.test(wanted) ? Number(wanted) : null; // opened once, with the first summary that has it
   const log = createLog();
   const status = statusAnnouncer();
   const head = h("div");
@@ -572,6 +581,12 @@ export function renderRunDetail(main, runId, { admin = true, onName = null } = {
     header.update(s, { names });
     showFailedOnce(tabs, s, prev);
     tabs.update(s, prev);
+    if (asked !== null && s.history?.[asked]) {
+      const i = asked;
+      asked = null;
+      tabs.show("steps", { byUser: true });
+      timeline.open(i);
+    }
   };
 
   if (admin) api.users().then((list) => { names = ownerNames(list); if (open && (held ?? summary)) draw(held ?? summary); }).catch(() => {});

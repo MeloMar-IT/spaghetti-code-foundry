@@ -292,13 +292,24 @@ export const CERTAINTY_WORDS = {
 /** The kind of source each kind of question needs (QUESTION_RULES in src/help/contract.ts). */
 export const NEEDS = { "product-help": "doc", status: "state", troubleshooting: "state", "guided-resolution": "state" };
 
+const STEP_LINK = /^(#\/runs\/[^/?#]+)\?step=\d{1,4}$/;
+/** The id of a source that is an excerpt of a log: another place of a file, not another view of the same fact. */
+const EXCERPT_ID = /^(log|tests)-[0-9a-f]{10}$/;
+
 /**
  * A link to a page of this interface, or null: `to` must be an address of the form the Foundry uses, without a
  * query, that resolves for the role to itself (no fallback, no alias). `fixed`: only a page without an id in its
  * address, as a reply may link to. Anything else (another site, a script, a page of another role) is no link.
  */
 export function pageLink(role, to, { fixed = false } = {}) {
-  if (typeof to !== "string" || pageOf(to) !== to) return null;
+  if (typeof to !== "string") return null;
+  // the one query a source may have: a step of one run, on the run page itself
+  const step = fixed ? null : STEP_LINK.exec(to);
+  if (step) {
+    const run = pageLink(role, step[1]);
+    return run && resolve(role, step[1]).page.id === "run" ? { href: to, title: run.title } : null;
+  }
+  if (pageOf(to) !== to) return null;
   const r = resolve(role, to);
   if (r.redirected || r.hash !== to) return null;
   if (fixed && r.page.path !== to) return null;
@@ -321,7 +332,7 @@ export function sourcesOf(reply, role) {
 export function sourcesDisagree(sources) {
   const seen = new Map();
   for (const s of sources) {
-    if (!s.ref) continue;
+    if (!s.ref || EXCERPT_ID.test(s.id)) continue;
     const key = `${s.kind}|${s.ref}`;
     if (seen.has(key) && seen.get(key) !== s.title) return true;
     if (!seen.has(key)) seen.set(key, s.title);

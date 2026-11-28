@@ -9,7 +9,7 @@ import type { Asker, Source } from "./turn.js";
  * (`server/help-tools.ts`). A model call itself never has a tool: a request is only a text it answers with.
  */
 
-export const TOOL_NAMES = ["list_runs", "show_run"] as const;
+export const TOOL_NAMES = ["list_runs", "show_run", "step_log", "failing_tests"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
 const ListRunsSchema = z
@@ -27,13 +27,34 @@ export type ListRunsArgs = z.infer<typeof ListRunsSchema>;
 const ShowRunSchema = z.object({ id: z.string().regex(/^[\w-]{1,100}$/) }).strict();
 export type ShowRunArgs = z.infer<typeof ShowRunSchema>;
 
-export type ToolCall = { tool: "list_runs"; args: ListRunsArgs } | { tool: "show_run"; args: ShowRunArgs };
+/** The lines a `step_log` tail gives when no number is asked. */
+export const STEP_LOG_TAIL_DEFAULT = 30;
+
+const StepLogSchema = z
+  .object({
+    id: ShowRunSchema.shape.id,
+    step: z.number().int().min(0).max(9999),
+    tail: z.number().int().min(1).max(100).optional(),
+    search: z.string().min(1).max(100).optional(),
+  })
+  .strict()
+  .refine((a) => a.tail === undefined || a.search === undefined);
+export type StepLogArgs = z.infer<typeof StepLogSchema>;
+
+const FailingTestsSchema = z.object({ id: ShowRunSchema.shape.id }).strict();
+export type FailingTestsArgs = z.infer<typeof FailingTestsSchema>;
+
+export type ToolCall =
+  | { tool: "list_runs"; args: ListRunsArgs }
+  | { tool: "show_run"; args: ShowRunArgs }
+  | { tool: "step_log"; args: StepLogArgs }
+  | { tool: "failing_tests"; args: FailingTestsArgs };
 
 export interface ToolDef {
   name: ToolName;
   readOnly: true;
   /** The API call that reads the same thing: its rule decides who may make the look-up. */
-  call: { method: "GET"; path: "runs" | "runs/:id" };
+  call: { method: "GET"; path: "runs" | "runs/:id" | "runs/:id/transcript/:n" };
   description: string;
   args: z.ZodType;
 }
@@ -52,6 +73,20 @@ export const TOOLS: readonly ToolDef[] = [
     call: { method: "GET", path: "runs/:id" },
     description: 'The detail of one run: its steps, errors, status and what happens next. `args`: "id" (the id of the run).',
     args: ShowRunSchema,
+  },
+  {
+    name: "step_log",
+    readOnly: true,
+    call: { method: "GET", path: "runs/:id/transcript/:n" },
+    description: 'Lines of the log of one step, only of a run this person started and only when their role may open the transcript of a step. `args`: "id" (the id of the run), "step" (the number show_run names for the step), and at most one of "tail" (the last lines, 1 to 100, default 30) or "search" (plain text of 1 to 100 characters, any case; shows the lines around the matches).',
+    args: StepLogSchema,
+  },
+  {
+    name: "failing_tests",
+    readOnly: true,
+    call: { method: "GET", path: "runs/:id/transcript/:n" },
+    description: 'The failing tests of one run, from its test log, with the error text around them and the end of that log. Only of a run this person started and only when their role may open the transcript of a step. `args`: "id" (the id of the run).',
+    args: FailingTestsSchema,
   },
 ];
 
@@ -95,7 +130,7 @@ export function parseToolCall(raw: unknown, guard: GuardOptions = {}): ParsedCal
   const args = def.args.safeParse(o.args === undefined ? {} : o.args);
   if (!args.success) return refused("bad-arguments");
   const values = args.data as Record<string, unknown>;
-  for (const key of ["q", "repo", "flow"]) {
+  for (const key of ["q", "repo", "flow", "search"]) {
     const v = values[key];
     if (typeof v !== "string") continue;
     const g = guardExcerpt(v, guard);

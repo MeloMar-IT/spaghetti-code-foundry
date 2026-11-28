@@ -10036,7 +10036,7 @@ Ask Foundry answers from three things, and nothing else:
 - **The current state your account can see**: the run, repository, refinement session, queue or server state that your question names or that the page you are on shows. An administrator also sees board issues, monitor findings and the server's health. Each piece says when it was read; a record that is known to be old says so.
 - **What you sent**: your question, the address of the page you were on, and the one thing you selected there, if you sent it.
 
-It does not read logs, transcripts or the output of a step, and it cannot see the work, the repositories or the conversations of another account. A secret that it finds in a text is taken out before anything is kept or sent. It cannot run a command, change anything or look at the internet. While it answers, it can look up your runs, read-only, as described in "Look-ups while it answers".
+Apart from the log look-ups below, it does not read logs, transcripts or the output of a step, and it cannot see the work, the repositories or the conversations of another account. A secret that it finds in a text is taken out before anything is kept or sent. It cannot run a command, change anything or look at the internet. While it answers, it can look up your runs, read-only, as described in "Look-ups while it answers".
 
 **To check an answer:**
 
@@ -10046,15 +10046,24 @@ It does not read logs, transcripts or the output of a step, and it cannot see th
 
 ### Look-ups while it answers
 
-While it writes an answer, Ask Foundry may ask the server for up to two read-only look-ups:
+While it writes an answer, Ask Foundry may ask the server for read-only look-ups, of four kinds:
 
 - **`list_runs`**: the newest runs you may see, with optional filters (status, repository, flow, words, a date, archived).
-- **`show_run`**: the detail of one run you may see: its steps, errors, status and the reason it stopped.
+- **`show_run`**: the detail of one run you may see: its steps, errors, status and the reason it stopped. Each step has its number.
+- **`step_log`**: the log of one step of a run you own: its last lines (`tail`, default 30, at most 100), or the lines that hold a text (`search`, at most 100 characters), with 2 lines around each match.
+- **`failing_tests`**: the names of the failing tests in the run's test log, with the lines around each failure.
+
+The log look-ups never read a whole log. A tail reads at most 128 KB from the end of the file; a search or a test
+log reads at most 4 MB and stops there. They work only on runs you own, including archived ones. When your role
+may not read a step's transcript, the look-up refuses with a fixed sentence. A missing log, or a step with no log,
+gets a fixed answer too. Secrets and private keys are taken out of the log text, and the text is checked as
+described in "Secrets and copied text" before the model sees it.
 
 Each look-up uses your own permissions. You see only the runs you may see; an unknown run and a run of another
 account get the same answer. A look-up never shows a cost, a model, a folder or an owner, and it never changes
 anything: no run is started, cancelled, resumed or changed. Text from a run that reads like an instruction is
-held back, and an answer can cite a run it found, with a link to that run's page.
+held back, and an answer can cite a run it found, with a link to that run's page. An answer can also cite a log
+excerpt by run, step and line range; the link opens that step of the run under Details › Steps.
 
 The answer stops looking things up after the limits of `help.investigate` (defaults in brackets):
 

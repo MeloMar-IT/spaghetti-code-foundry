@@ -445,6 +445,45 @@ describe("renderRunDetail states", () => {
     expect(main.textContent).toContain("hello transcript");
   });
 
+  const TWO = { ...RUN, history: [0, 1].map((i) => ({ id: `code${i}`, type: "claude", ok: true, visit: 1, durationMs: 10, output: "x" })) };
+  /** Opens the page of a run with two steps, as a source link or an option asks for a step. */
+  const openAt = async (options: Record<string, unknown>, hash?: string) => {
+    table["/api/runs/r1"] = { body: TWO };
+    const had = (globalThis as any).location;
+    if (hash !== undefined) (globalThis as any).location = { hash };
+    try {
+      main = connected();
+      stop = runs.renderRunDetail(main, "r1", options);
+    } finally {
+      (globalThis as any).location = had;
+    }
+    await flush();
+  };
+  const openSteps = () => find(main, "summary").filter((s) => /^step-\d+$/.test(s.attrs["data-focus"] ?? "") && s.parent!.attrs.open !== undefined).map((s) => s.attrs["data-focus"]);
+
+  it.each([
+    ["the option", { step: "1" }, undefined],
+    ["the address", {}, "#/runs/r1?step=1"],
+  ])("opens Details on the step that %s asks for, once", async (_from, options, hash) => {
+    await openAt(options, hash);
+    expect(one(main, "button", { "data-tab": "details" }).attrs["aria-selected"]).toBe("true");
+    expect(openSteps()).toEqual(["step-1"]);
+    expect(asked).toContain("/api/runs/r1/transcript/1");
+    one(main, "button", { "data-tab": "diff" }).click();
+    update(0, TWO);
+    expect(one(main, "button", { "data-tab": "diff" }).attrs["aria-selected"]).toBe("true");
+  });
+
+  it.each([
+    ["a step the run does not have", {}, "#/runs/r1?step=7"],
+    ["a step that is no number", {}, "#/runs/r1?step=x"],
+    ["the address on a user's page", { admin: false }, "#/runs/r1?step=1"],
+  ])("opens nothing for %s", async (_what, options, hash) => {
+    await openAt(options, hash);
+    expect(one(main, "button", { "data-tab": "details" }).attrs["aria-selected"]).toBe("false");
+    expect(openSteps()).toEqual([]);
+  });
+
   it("a diff failure shows Retry, Retry draws the diff, and a late failure does not replace the log", async () => {
     await open();
     update(0);

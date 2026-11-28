@@ -319,6 +319,15 @@ describe("links", () => {
     // the name of the link is the page's own, not a text of the reply
     expect(m.pageLink("user", "#/runs", { fixed: true })!.title).toBe("My runs");
   });
+
+  it("takes one query: a step of one run, as a source names it", () => {
+    expect(m.pageLink("admin", "#/runs/r-1?step=3")).toEqual({ href: "#/runs/r-1?step=3", title: "Change" });
+    expect(m.sourcesOf({ evidence: [{ id: "log-0123456789", kind: "state", title: "A log", ref: "#/runs/r-1?step=0" }] }, "admin")[0].href).toBe("#/runs/r-1?step=0");
+    for (const to of ["#/runs?step=3", "#/runs/r-1?step=a", "#/runs/r-1?step=12345", "#/runs/r-1?step=", "#/runs/r-1?step=1&x=2", "#/runs/r-1?step=1?step=2", "#/repos/acme%2Fapp?step=1", "#/problems/p-1?step=1", "https://evil.example/#/runs/r-1?step=1"]) {
+      expect(m.pageLink("admin", to), to).toBeNull();
+    }
+    expect(m.pageLink("admin", "#/runs/r-1?step=3", { fixed: true })).toBeNull();
+  });
 });
 
 describe("how sure a reply is", () => {
@@ -365,6 +374,16 @@ describe("how sure a reply is", () => {
     expect(trust(reply({ type: "status", evidence: [stateSrc(), stateSrc({ id: "s2" })] })).state).toBe("confirmed");
     expect(trust(reply({ type: "status", evidence: [stateSrc(), stateSrc({ id: "s2", ref: "#/runs/r-2", title: "Run r-2 is done" })] })).state).toBe("confirmed");
     expect(m.sourcesDisagree([])).toBe(false);
+  });
+
+  it("log excerpts are places of a file, not views that can disagree", () => {
+    const step = "#/runs/r-1?step=2";
+    const chunks = [stateSrc({ id: "log-0000000001", ref: step, title: "lines 1–10" }), stateSrc({ id: "log-0000000002", ref: step, title: "lines 11–20" })];
+    expect(trust(reply({ type: "status", evidence: chunks }))).toMatchObject({ state: "confirmed" });
+    const tests = [stateSrc({ id: "tests-000000000a", title: "The failing tests of run r-1" }), stateSrc(), stateSrc({ id: "tests-000000000b", title: "The test log of run r-1, lines 1–9" })];
+    expect(trust(reply({ type: "status", evidence: tests }))).toMatchObject({ state: "confirmed" });
+    expect(trust(reply({ type: "status", evidence: [...tests].reverse() }))).toMatchObject({ state: "confirmed" });
+    expect(trust(reply({ type: "status", evidence: [...tests, stateSrc({ id: "s2", title: "Run r-1 is done" })] }))).toMatchObject({ state: "conflict" });
   });
 });
 

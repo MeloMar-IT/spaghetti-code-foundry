@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { subjectPage } from "../help/actions.js";
 import { aboutOf } from "../help/contract.js";
 import { GUARD_MAX, GuardError, guardExcerpt, type GuardOptions } from "../help/guard.js";
-import type { ListRunsArgs, ToolResult, ToolRunner } from "../help/tools.js";
+import type { ListRunsArgs, ToolCall, ToolResult, ToolRunner } from "../help/tools.js";
 import type { Asker, Source } from "../help/turn.js";
 import { sinceMs } from "../since-date.js";
 import { runsFor } from "./api-runs.js";
 import { currentAccount, runWithNext } from "./help-context.js";
 import { STATE_EXCERPT_MAX, stateId } from "./help-evidence.js";
+import { NOT_FOUND, failingTests, stepLog } from "./help-log-tools.js";
 import { nextFor, ownRecord } from "./next.js";
 import { authorize, findRule } from "./permissions.js";
 import type { RunFilter } from "./run-filter.js";
@@ -22,7 +23,7 @@ import { runInScope } from "./workspace-scope.js";
  * administrator: no cost, model, folder or owner). Nothing is written.
  */
 
-export const NOT_FOUND = "No run with that id was found for this person.";
+export { NOT_FOUND };
 export const NO_RUNS = "No runs were found.";
 const FAILED = "The look-up could not be done.";
 const HELD_BACK = "(held back)";
@@ -108,15 +109,15 @@ async function showRun(ctx: ApiContext, asker: Asker, id: string, guard: GuardOp
   } catch {
     next = undefined;
   }
-  // the newest first: when the text is cut, the oldest steps go
-  const steps = run.history.slice(-STEPS).reverse();
+  // the newest first: when the text is cut, the oldest steps go. `i` is the number `step_log` takes.
+  const steps = run.history.map((h, i) => ({ ...h, i })).slice(-STEPS).reverse();
   const observedAt = new Date().toISOString();
   const text = [
     `Observed by the server at ${observedAt}. These are facts as recorded, not conclusions.`,
     ...line("run", id), ...line("flow", run.flow), ...line("status", run.status), ...line("startedAt", run.startedAt), ...line("finishedAt", run.finishedAt),
     ...line("repository", run.vars.github_repo), ...line("issue", run.vars.issue), ...line("why it ended or waits", reason),
     ...line("nextStatus", next?.status), ...line("nextWho", next?.who), ...line("nextWhy", next?.why),
-    ...(steps.length ? ["steps, newest first:", ...steps.map((h) => `- ${v(h.id)} (visit ${h.visit}): ${h.ok ? "succeeded" : "failed"}${h.error ? ` · ${v(h.error)}` : ""}`)] : ["steps: none recorded"]),
+    ...(steps.length ? ["steps, newest first:", ...steps.map((h) => `- ${v(h.id)} (visit ${h.visit}, step ${h.i}): ${h.ok ? "succeeded" : "failed"}${h.error ? ` · ${v(h.error)}` : ""}`)] : ["steps: none recorded"]),
   ].join("\n");
   const about = ctx.scheduler.ownerOf(id) === asker.id ? aboutOf({ kind: "run", id }) : undefined;
   const source: Source = {
@@ -134,10 +135,21 @@ async function showRun(ctx: ApiContext, asker: Asker, id: string, guard: GuardOp
 
 /** The look-ups of this server. A `GuardError` goes on to the caller: then nothing more may be sent. */
 export function helpTools(ctx: ApiContext): ToolRunner {
+  const run = (asker: Asker, call: ToolCall, guard: GuardOptions): Promise<ToolResult> => {
+    switch (call.tool) {
+      case "list_runs":
+        return listRuns(ctx, asker, call.args, guard);
+      case "show_run":
+        return showRun(ctx, asker, call.args.id, guard);
+      case "step_log":
+        return stepLog(ctx, asker, call.args, guard);
+      case "failing_tests":
+        return failingTests(ctx, asker, call.args, guard);
+    }
+  };
   return async (asker, call) => {
     try {
-      const guard: GuardOptions = { patterns: ctx.config().help.sensitive_patterns ?? [] };
-      return call.tool === "list_runs" ? await listRuns(ctx, asker, call.args, guard) : await showRun(ctx, asker, call.args.id, guard);
+      return await run(asker, call, { patterns: ctx.config().help.sensitive_patterns ?? [] });
     } catch (e) {
       if (e instanceof GuardError) throw e;
       ctx.diagLog?.("help: a look-up could not be done");

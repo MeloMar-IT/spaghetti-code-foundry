@@ -121,7 +121,8 @@ describe("show_run", () => {
     expect(text(r)).toMatch(/flow: deliver\nstatus: failed\n/);
     expect(text(r)).toContain("repository: acme/app\nissue: 12");
     expect(text(r)).toContain("nextStatus: ");
-    expect(text(r)).toMatch(/- tests \(visit 2\): failed · .+\n- build \(visit 1\): succeeded/);
+    // the number of each step is its place in the history: what `step_log` takes
+    expect(text(r)).toMatch(/- tests \(visit 2, step 1\): failed · .+\n- build \(visit 1, step 0\): succeeded/);
     for (const hidden of [SECRET_MODEL, "4.37", tmp, ann.user.id]) expect(JSON.stringify(r)).not.toContain(hidden);
     expect(r.note).toBe("Read the run: its status is failed.");
   });
@@ -197,6 +198,10 @@ describe("the look-ups only read", () => {
     await list(asAdmin(), { q: "login" });
     await show(asUser(ann), "run-ann-1");
     await show(asUser(ann), "run-bob-1");
+    for (const who of [asUser(ann), asAdmin()]) {
+      await tools(who, { tool: "step_log", args: { id: "run-ann-1", step: 0 } });
+      await tools(who, { tool: "failing_tests", args: { id: "run-ann-1" } });
+    }
     expect({ files: hashes(), briefs: JSON.stringify(started.ctx.scheduler.briefs()) }).toEqual(before);
   });
 
